@@ -811,18 +811,20 @@ async function processStateOf(pid, owner, system) {
   return liveStart !== undefined && liveStart !== owner.start ? 'gone' : 'running';
 }
 
-/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwner` the learner named with `--gone-host` and `--gone-space`, if any: an owner judged `elsewhere` at that host name and space counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids, which names the way out for a place that cannot come back. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
-async function requireExited(recorded, { system, goneOwner }) {
+/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwners`, the places the learner named with `--gone-host` and `--gone-space`, one pair for each: an owner judged `elsewhere` at one of those host names and spaces counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids, which names the way out for a place that cannot come back: the two options set to that place, or, where the learner named places already, one more pair. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
+async function requireExited(recorded, { system, goneOwners }) {
   requireOwnerForm(recorded);
   const { pid, owner } = recorded;
   const state = await ownerStateOf({ pid, owner }, await ownerHere(system), system);
   // An owner in a place the learner confirmed gone counts as gone; the option never ends an owner that may still run here.
-  if (state === 'gone' || state === 'elsewhere' && isOwnerAt(owner, goneOwner)) return;
-  if (state === 'elsewhere') throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ', where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.');
+  if (state === 'gone' || state === 'elsewhere' && isOwnerAt(owner, goneOwners)) return;
+  // Where the learner named places already, the place of this owner is one more pair beside them: a stopped recovery may have run in a second place that cannot come back.
+  const wayOut = goneOwners.length === 0 ? '--gone-host and --gone-space set to that host name and space' : 'one more --gone-host and --gone-space pair set to that host name and space, keeping the pairs already named';
+  if (state === 'elsewhere') throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ', where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with ' + wayOut + ', only after the learner confirms that no publisher runs there.');
   throw new Error('The prior Wiki publisher process ' + pid + ' may still be running; inspect it before recovery.');
 }
 
-/** Refuses a journal or a recovery claim whose process id or owner is not in the form this publisher writes ({@link isOwnerForm}), before any refusal names its owner: a journal or a claim a cloned repository carries may name any text as its host name and space, which the agent would read and pass back on a command line. Called by {@link requireExited} and {@link requireGoneOwnerOf}. @param recorded - The parsed journal or claim. @throws The refusal of an invalid owner. @example requireOwnerForm({ pid: 4242, owner: { host: 'devbox$(touch owned)', space: 'linux@1', boot: { id: 'boot-1' } } }) // throws: The Wiki recovery owner is invalid. */
+/** Refuses a journal or a recovery claim whose process id or owner is not in the form this publisher writes ({@link isOwnerForm}), before any refusal names its owner: a journal or a claim a cloned repository carries may name any text as its host name and space, which the agent would read and pass back on a command line. Called by {@link requireExited}, {@link requireGoneOwnersOf} and {@link claimOwnersOf}. @param recorded - The parsed journal or claim. @throws The refusal of an invalid owner. @example requireOwnerForm({ pid: 4242, owner: { host: 'devbox$(touch owned)', space: 'linux@1', boot: { id: 'boot-1' } } }) // throws: The Wiki recovery owner is invalid. */
 function requireOwnerForm(recorded) {
   const { pid, owner } = recorded ?? {};
   if (!Number.isSafeInteger(pid) || pid < 1 || owner !== undefined && !isOwnerForm(owner)) throw new Error('The Wiki recovery owner is invalid.');
@@ -831,22 +833,52 @@ function requireOwnerForm(recorded) {
 /** The host name and the space of process ids of an owner, as a refusal names them. Called by {@link requireExited} and {@link goneOwnerRefusalOf}. @example placeOf({ host: 'devbox', space: 'linux@4026531836' }) // => '"devbox" (linux@4026531836)' */
 const placeOf = owner => JSON.stringify(owner.host) + ' (' + owner.space + ')';
 
-/** Whether a recorded owner ran at the host name and in the space of process ids the learner confirmed gone (`--gone-host`, `--gone-space`). Called by {@link requireExited} and {@link requireGoneOwnerOf}. @example isOwnerAt({ host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } }, { host: 'devbox', space: 'linux@1' }) // => true */
-const isOwnerAt = (owner, goneOwner) => goneOwner !== undefined && owner !== undefined && owner.host === goneOwner.host && owner.space === goneOwner.space;
+/** Whether a recorded owner ran at one of the places, each a host name and a space of process ids, that the learner confirmed gone (`--gone-host`, `--gone-space`, one pair for each place). Called by {@link requireExited} and {@link requireGoneOwnersOf}. @param owner - The owner a journal or a claim records; undefined for a record of an earlier version, which names none and is at no place. @param goneOwners - The places, each `{ host, space }`. @example isOwnerAt({ host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } }, [{ host: 'devbox', space: 'linux@1' }]) // => true */
+const isOwnerAt = (owner, goneOwners) => owner !== undefined && goneOwners.some(place => owner.host === place.host && owner.space === place.space);
 
-/** The refusal of `--gone-host` and `--gone-space` that name no owner a journal records: another host name or space than the journal's owner, or no journal with an owner at all. Called by {@link requireGoneOwnerOf} and {@link recoverWikiPublication}. @param owner - The journal's owner; undefined for a journal of an earlier version, which names none, and where no journal stands. @example goneOwnerRefusalOf({ host: 'devbox', space: 'linux@1' }, undefined) // => '--gone-host and --gone-space name "devbox" (linux@1), but no Wiki publication journal with an owner stands. …' */
-const goneOwnerRefusalOf = (goneOwner, owner) => '--gone-host and --gone-space name ' + placeOf(goneOwner) + ', but ' + (owner === undefined
-  ? 'no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.'
-  : 'the Wiki publication journal names ' + placeOf(owner) + '. Nothing was moved. Name the host name and the space that the refusal of --recover names, or run --recover without them.');
-
-/** Refuses the place the learner confirmed gone (`--gone-host`, `--gone-space`) unless it is the host name and the space of the owner the journal records, before the owner is judged, so the option never ends a publish it does not name; the journal's owner is held to its form first ({@link requireOwnerForm}), so the refusal never names an owner of another form; without the option nothing is refused here. Called by {@link resumeJournal}. @throws The refusal of an invalid owner, and that of {@link goneOwnerRefusalOf}. @example requireGoneOwnerOf({ pid: 4242, owner: { host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } } }, { host: 'devbox', space: 'linux@2' }) // throws */
-function requireGoneOwnerOf(record, goneOwner) {
-  // The journal's owner is held to its form before the refusal below may name it.
-  if (goneOwner !== undefined) requireOwnerForm(record);
-  if (goneOwner !== undefined && !isOwnerAt(record.owner, goneOwner)) throw new Error(goneOwnerRefusalOf(goneOwner, record.owner));
+/** The refusal of a `--gone-host` and `--gone-space` pair that names no owner's place: another host name or space than those the journal's owner and the stopped recovery claims of its chain record, or no journal with an owner at all. Called by {@link requireGoneOwnersOf} and {@link recoverWikiPublication}. @param goneOwner - The place named that no owner records. @param owner - The journal's owner, held to its form; undefined for a journal of an earlier version, which names none, and where no journal stands. @param claimOwners - The owners the stopped recovery claims of the journal's chain record, held to their form ({@link claimOwnersOf}); a place the journal's owner names too is named once. @example goneOwnerRefusalOf({ host: 'devbox', space: 'linux@1' }, undefined, []) // => '--gone-host and --gone-space name "devbox" (linux@1), but no Wiki publication journal with an owner stands. …' */
+function goneOwnerRefusalOf(goneOwner, owner, claimOwners) {
+  const claimPlaces = [...new Set(claimOwners.map(placeOf))].filter(place => owner === undefined || place !== placeOf(owner));
+  // A journal of an earlier version names no owner, while a claim beside it may.
+  if (owner === undefined && claimPlaces.length === 0) return '--gone-host and --gone-space name ' + placeOf(goneOwner) + ', but no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.';
+  return '--gone-host and --gone-space name ' + placeOf(goneOwner) + ', but the Wiki publication journal names ' + (owner === undefined ? 'no owner' : placeOf(owner)) +
+    (claimPlaces.length === 0 ? '' : ' and its stopped recoveries name ' + claimPlaces.join(', ')) + '. Nothing was moved. Name the host name and the space that the refusal of --recover names, or run --recover without them.';
 }
 
-/** Claims stopped recovery attempts through append-only exclusive records, without unlinking another contender's lock; each claim names its owner as the `system` of `ownerJudgement` tells it ({@link ownerHere}), and an earlier claim is judged by it ({@link requireExited}). @example await claimRecovery(journal, journalBytes, { system: SYSTEM_HERE }) */
+/** Refuses a place the learner confirmed gone (`--gone-host`, `--gone-space`, one pair for each place) unless it is the host name and the space of the owner the journal records or of an owner a stopped recovery claim of its chain records ({@link claimOwnersOf}), before any owner is judged, so the options never end a publish or a recovery they do not name; the journal's owner and the claims' are held to their form first ({@link requireOwnerForm}), so the refusal never names an owner of another form; without the options nothing is read or refused here. Called by {@link resumeJournal}. @param record - The parsed journal. @param journal - The journal's path, beside which its claims stand. @param bytes - The journal's bytes, whose digest names its first claim. @param goneOwners - The places, each `{ host, space }`. @throws The refusal of an invalid owner or claim, of claims that form a cycle, and that of {@link goneOwnerRefusalOf}. @example await requireGoneOwnersOf({ pid: 4242, owner: { host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } } }, journal, bytes, [{ host: 'devbox', space: 'linux@2' }]) // throws where no claim of 'devbox' (linux@2) stands */
+async function requireGoneOwnersOf(record, journal, bytes, goneOwners) {
+  if (goneOwners.length === 0) return;
+  requireOwnerForm(record);
+  const claimOwners = await claimOwnersOf(journal, bytes), owners = [record.owner, ...claimOwners];
+  const unnamed = goneOwners.find(place => !owners.some(owner => isOwnerAt(owner, [place])));
+  if (unnamed !== undefined) throw new Error(goneOwnerRefusalOf(unnamed, record.owner, claimOwners));
+}
+
+/** Reads a stopped recovery claim, the exclusive record of an earlier recovery of a journal ({@link claimRecovery}), which must name the id its successor's claim is named by. Called by {@link claimRecovery} and {@link claimOwnersOf}. @param optional - Whether a missing claim is answered with undefined instead of refused. @returns The claim's bytes and its record; undefined for a missing claim when `optional`. @throws The refusal of a claim without a valid id, and of one that is no regular file; it is preserved. @example await stoppedClaimAt(journal + '.recovery-' + digest(bytes), true) // => { bytes: <Buffer …>, record: { pid: 4242, owner: { host: 'devbox', … }, id: '11111111-1111-4111-8111-111111111111' } } */
+async function stoppedClaimAt(path, optional) {
+  const bytes = await regularBytes(path, optional);
+  if (bytes === undefined) return undefined;
+  const record = JSON.parse(bytes);
+  if (typeof record.id !== 'string' || !/^[a-f0-9-]{36}$/.test(record.id)) throw new Error('The Wiki recovery claim is invalid; it was preserved.');
+  return { bytes, record };
+}
+
+/** The owners the stopped recovery claims of a journal's chain record, in the chain's order, each held to the form {@link ownerHere} writes ({@link requireOwnerForm}) before a refusal may name it; a claim of an earlier version names none. It only reads, so the places the learner confirmed gone are checked before any owner is judged or a claim is written. Called by {@link requireGoneOwnersOf}. @returns The owners the claims name. @throws The refusals of {@link stoppedClaimAt} and of an invalid owner, and that of claims that form a cycle. @example await claimOwnersOf(journal, bytes) // => [{ host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' }, start: 'linux:42' }] */
+async function claimOwnersOf(journal, bytes) {
+  const owners = [], visited = new Set();
+  // The chain runs from the journal's digest through each claim's id, as {@link claimRecovery} walks it, and ends at the first id no claim is named by.
+  for (let parent = digest(bytes); !visited.has(parent);) {
+    visited.add(parent);
+    const claim = await stoppedClaimAt(journal + '.recovery-' + parent, true);
+    if (claim === undefined) return owners;
+    requireOwnerForm(claim.record);
+    if (claim.record.owner !== undefined) owners.push(claim.record.owner);
+    parent = claim.record.id;
+  }
+  throw new Error('The Wiki recovery claims form a cycle; all records were preserved.');
+}
+
+/** Claims stopped recovery attempts through append-only exclusive records, without unlinking another contender's lock; each claim names its owner as the `system` of `ownerJudgement` tells it ({@link ownerHere}), and an earlier claim ({@link stoppedClaimAt}) is judged by it and by the places the learner confirmed gone ({@link requireExited}). @example await claimRecovery(journal, journalBytes, { system: SYSTEM_HERE }) */
 async function claimRecovery(journal, bytes, ownerJudgement) {
   // Journal hash -> exclusive owner -> stopped owner ID -> exclusive successor; a live owner stops traversal.
   const claims = [], visited = new Set();
@@ -856,11 +888,10 @@ async function claimRecovery(journal, bytes, ownerJudgement) {
     const path = journal + '.recovery-' + parent, claimBytes = JSON.stringify({ pid: process.pid, owner: await ownerHere(ownerJudgement.system), id: randomUUID() });
     try { await writeFile(path, claimBytes, { flag: 'wx' }); claims.push({ path, bytes: claimBytes }); return claims; }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
-    const previousBytes = await regularBytes(path), previous = JSON.parse(previousBytes);
-    if (typeof previous.id !== 'string' || !/^[a-f0-9-]{36}$/.test(previous.id)) throw new Error('The Wiki recovery claim is invalid; it was preserved.');
-    await requireExited(previous, ownerJudgement);
-    claims.push({ path, bytes: previousBytes });
-    parent = previous.id;
+    const previous = await stoppedClaimAt(path, false);
+    await requireExited(previous.record, ownerJudgement);
+    claims.push({ path, bytes: previous.bytes });
+    parent = previous.record.id;
   }
   throw new Error('The Wiki recovery claims form a cycle; all records were preserved.');
 }
@@ -943,8 +974,8 @@ async function restoreManifestHeld(record, paths, requirePathHeld, isResumed) {
   catch (error) { if (error.isHoldRefusal) await removeWritten(written, []); throw error; }
 }
 
-/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @param options.goneOwner - The host name and the space of process ids of a journal's owner that the learner confirmed gone (`--gone-host`, `--gone-space`): a place that cannot come back, such as a rebuilt container or a machine that is gone, where no publisher runs; accepted only when they are those of the journal's owner ({@link requireGoneOwnerOf}), never taken without the learner. @param options.system - The system whose processes and boot the owner of a journal or a claim is judged by ({@link SYSTEM_HERE}, which the CLI passes). @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
-export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, goneOwner, system = SYSTEM_HERE }) {
+/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @param options.goneOwners - The places, each the host name and the space of process ids (`{ host, space }`), that the learner confirmed gone (`--gone-host`, `--gone-space`, one pair for each place): places that cannot come back, such as a rebuilt container or a machine that is gone, where no publisher or recovery runs; each accepted only when it is the place of the journal's owner or of an owner a stopped recovery claim of its chain records ({@link requireGoneOwnersOf}), never taken without the learner. @param options.system - The system whose processes and boot the owner of a journal or a claim is judged by ({@link SYSTEM_HERE}, which the CLI passes). @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, goneOwners = [], system = SYSTEM_HERE }) {
   // The read of this recovery's owner, which judges a journal's or a claim's owner and names its own, starts now and runs beside the steps before them.
   ownerHere(system);
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { journal } = paths;
@@ -953,9 +984,9 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
   const found = await regularBytes(journal, true);
   // A journal found here is one a stopped publish or recovery left; this recovery writes its own below.
   const isResumed = found !== undefined;
-  // A place confirmed gone names the owner of a journal; without one it names none.
-  if (goneOwner !== undefined && !isResumed) throw new Error(goneOwnerRefusalOf(goneOwner, undefined));
-  const opened = isResumed ? await resumeJournal(found, paths, requirePathHeld, { system, goneOwner }) : await startManifestRecovery(paths, requirePathHeld, system);
+  // A place confirmed gone names the owner of a journal or of its claims; without a journal it names none.
+  if (goneOwners.length > 0 && !isResumed) throw new Error(goneOwnerRefusalOf(goneOwners[0], undefined, []));
+  const opened = isResumed ? await resumeJournal(found, paths, requirePathHeld, { system, goneOwners }) : await startManifestRecovery(paths, requirePathHeld, system);
   if (opened.result !== undefined) return opened.result;
   const { record, bytes, claims } = opened;
   let completed = false, result;
@@ -974,12 +1005,12 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
   return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system });
 }
 
-/** Takes up the journal a stopped publish or recovery left: it must name this project and output and a known operation, a place the learner confirmed gone must be its owner's ({@link requireGoneOwnerOf}), its owner must have exited ({@link requireExited}, by `ownerJudgement`), and the path must hold before the claim ({@link claimRecovery}). Called by {@link recoverWikiPublication}. @returns The journal's record and bytes and the claims taken. @throws The refusal of a journal of another output, of a place confirmed gone that is not its owner's, of an owner that may still run and of a changed path. @example await resumeJournal(bytes, paths, requirePathHeld, { system: SYSTEM_HERE }) // => { record: { operation: 'publish', … }, bytes, claims: [{ path, bytes }] } */
+/** Takes up the journal a stopped publish or recovery left: it must name this project and output and a known operation, each place the learner confirmed gone must be its owner's or that of a stopped recovery claim of its chain ({@link requireGoneOwnersOf}), its owner must have exited ({@link requireExited}, by `ownerJudgement`), and the path must hold before the claim ({@link claimRecovery}). Called by {@link recoverWikiPublication}. @returns The journal's record and bytes and the claims taken. @throws The refusal of a journal of another output, of a place confirmed gone that is not its owner's, of an owner that may still run and of a changed path. @example await resumeJournal(bytes, paths, requirePathHeld, { system: SYSTEM_HERE }) // => { record: { operation: 'publish', … }, bytes, claims: [{ path, bytes }] } */
 async function resumeJournal(bytes, { root, output, journal }, requirePathHeld, ownerJudgement) {
   const record = JSON.parse(bytes);
   if (record?.projectRoot !== root || record.output !== output || !['publish', 'restore-manifest', undefined].includes(record.operation))
     throw new Error('The Wiki publication journal does not identify this output; inspect it without moving files.');
-  requireGoneOwnerOf(record, ownerJudgement.goneOwner);
+  await requireGoneOwnersOf(record, journal, bytes, ownerJudgement.goneOwners);
   await requireExited(record, ownerJudgement);
   await requirePathHeld();
   return { record, bytes, claims: await claimRecovery(journal, bytes, ownerJudgement) };
@@ -1082,28 +1113,31 @@ async function restorePriorWiki(record, paths, requirePathHeld) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   const mode = ['--prepare', '--recover'].includes(args[0]) ? args.shift() : 'publish';
-  // A recovery alone takes the place the learner confirmed gone.
-  const allowed = new Set(['--project', '--output', '--stage', ...(mode === '--recover' ? ['--gone-host', '--gone-space'] : [])]);
+  // A recovery alone takes the places the learner confirmed gone, one --gone-host and --gone-space pair for each place.
+  const repeated = new Set(mode === '--recover' ? ['--gone-host', '--gone-space'] : []);
+  const allowed = new Set(['--project', '--output', '--stage', ...repeated]);
   const flags = new Set(mode === '--prepare' ? ['--adopt-existing'] : mode === 'publish' ? ['--render-only'] : []);
-  const options = {}, seen = new Set();
+  const options = {}, gone = { '--gone-host': [], '--gone-space': [] }, seen = new Set();
   let valid = true;
   for (let index = 0; index < args.length; index++) {
     const key = args[index];
-    if (seen.has(key)) { valid = false; break; }
+    if (seen.has(key) && !repeated.has(key)) { valid = false; break; }
     seen.add(key);
     if (flags.has(key)) options[key] = true;
-    else if (allowed.has(key) && args[index + 1] && !args[index + 1].startsWith('--')) options[key] = args[++index];
-    else { valid = false; break; }
+    else if (allowed.has(key) && args[index + 1] && !args[index + 1].startsWith('--')) {
+      if (repeated.has(key)) gone[key].push(args[++index]);
+      else options[key] = args[++index];
+    } else { valid = false; break; }
   }
-  // The host name and the space of a place confirmed gone are given together or not at all.
-  if (!valid || !options['--project'] || !options['--output'] || mode === 'publish' && !options['--stage'] || (options['--gone-host'] === undefined) !== (options['--gone-space'] === undefined)) {
-    console.error('Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]');
+  // Each place confirmed gone has its host name and its space: the nth --gone-host pairs with the nth --gone-space.
+  if (!valid || !options['--project'] || !options['--output'] || mode === 'publish' && !options['--stage'] || gone['--gone-host'].length !== gone['--gone-space'].length) {
+    console.error('Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...');
     process.exitCode = 2;
   } else {
     const operation = mode === '--prepare' ? prepareWikiStage : mode === '--recover' ? recoverWikiPublication : publishWiki;
-    const goneOwner = options['--gone-host'] === undefined ? undefined : { host: options['--gone-host'], space: options['--gone-space'] };
+    const goneOwners = gone['--gone-host'].map((host, index) => ({ host, space: gone['--gone-space'][index] }));
     // The system the publisher runs on is the one its owner judgement asks ({@link SYSTEM_HERE}).
-    operation({ projectRoot: options['--project'], outputDirectory: options['--output'], stageDirectory: options['--stage'], adoptExisting: options['--adopt-existing'] === true, renderOnly: options['--render-only'] === true, goneOwner, system: SYSTEM_HERE })
+    operation({ projectRoot: options['--project'], outputDirectory: options['--output'], stageDirectory: options['--stage'], adoptExisting: options['--adopt-existing'] === true, renderOnly: options['--render-only'] === true, goneOwners, system: SYSTEM_HERE })
       .then(result => console.log(JSON.stringify(result)))
       .catch(error => { console.error(String(error)); process.exitCode = 1; });
   }

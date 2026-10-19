@@ -4882,8 +4882,8 @@ test('the bundled skill tells the agent that an asset is a PNG, JPEG, GIF, WebP 
   )
 })
 
-// Value: protects=the editor agent whose --recover is refused for a publish that ran in a place that cannot come back (a rebuilt dev container, a machine that is gone); fails_when=the skill does not tell the agent the options --gone-host and --gone-space, or lets it add them without the learner's confirmation that no publisher runs there, so the agent either leaves the Wiki locked for good or ends a publish that may still run, or lets it pass the host name and the space on its command line other than as literals; why_new=Cycle 0047 row 62 (ADV-3 = CORE-2 = RT-1), and row 112 (CORE2-1 = P2OCR1-1) for the quotes; seam=none
-test('the bundled skill tells the agent to recover a publish of a place that cannot come back with --gone-host and --gone-space only after the learner confirms that no publisher runs there, and never on its own', async () => {
+// Value: protects=the editor agent whose --recover is refused for a publish that ran in a place that cannot come back (a rebuilt dev container, a machine that is gone); fails_when=the skill does not tell the agent the options --gone-host and --gone-space, or lets it add them without the learner's confirmation that no publisher runs there, so the agent either leaves the Wiki locked for good or ends a publish that may still run, or lets it pass the host name and the space on its command line other than as literals, or does not tell it to add one more pair for a stopped recovery of a second such place; why_new=Cycle 0047 row 62 (ADV-3 = CORE-2 = RT-1), row 112 (CORE2-1 = P2OCR1-1) for the quotes and row 114 (P2SM-14 = ADV2-5 = CXA2-3 = CXS2-1) for one pair per place; seam=none
+test('the bundled skill tells the agent to recover a publish of a place that cannot come back with --gone-host and --gone-space, one pair for each such place, only after the learner confirms that no publisher runs there, and never on its own', async () => {
   // Arrange / Act
   const skill = await readFile(
     new URL('../../skills/codebook/SKILL.md', import.meta.url),
@@ -4893,7 +4893,7 @@ test('the bundled skill tells the agent to recover a publish of a place that can
   // Assert
   assert.equal(
     skill.includes(
-      "If recovery refuses because the stopped publisher ran on another host name or in another space of process ids, run `--recover` there after that publisher exits. When that place cannot come back (a rebuilt dev container, which gets a new pid namespace under the same boot, or a machine that is gone), do not delete or rewrite the journal: ask the learner to confirm that no publisher runs there, and only then run `--recover --project <root> --output <output> --gone-host '<host>' --gone-space '<space>'` with the host name the refusal names between double quotes and the space it names in parentheses, each passed in single quotes as a literal. Never add these two options on your own; the publisher refuses them for any owner other than the journal's.",
+      "If recovery refuses because the stopped publisher ran on another host name or in another space of process ids, run `--recover` there after that publisher exits. When that place cannot come back (a rebuilt dev container, which gets a new pid namespace under the same boot, or a machine that is gone), do not delete or rewrite the journal: ask the learner to confirm that no publisher runs there, and only then run `--recover --project <root> --output <output> --gone-host '<host>' --gone-space '<space>'` with the host name the refusal names between double quotes and the space it names in parentheses, each passed in single quotes as a literal. If that recovery is refused for one more such place, where a stopped recovery ran, confirm that place with the learner the same way and add it as one more `--gone-host '<host>' --gone-space '<space>'` pair, keeping the pairs already named. Never add these options on your own; the publisher refuses a pair that names no place the journal or its stopped recoveries record.",
     ),
     true,
   )
@@ -8350,6 +8350,205 @@ test('a --recover with --gone-host and --gone-space where no publication journal
         withHostAlone: { code: 2, usage: true },
         wikiPage: wiki.wikiPage,
       },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const { when, claimSpace, named, outcome, ended } of [
+  {
+    when: 'without --gone-host and --gone-space',
+    claimSpace: 'linux@1',
+    named: () => [],
+    outcome: 'is refused with the journal owner’s place named first',
+    ended: (record) => ({
+      code: 1,
+      out: `Error: The prior Wiki publisher process ${record.pid} ran on ${JSON.stringify(record.owner.host)} (linux@0), where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.`,
+      journal: 'kept',
+      claims: 1,
+    }),
+  },
+  {
+    when: 'with --gone-host and --gone-space naming the journal owner’s place',
+    claimSpace: 'linux@1',
+    named: (record) => [[record.owner.host, 'linux@0']],
+    outcome:
+      'is refused for the claim with its place named, to be added as one more pair',
+    ended: (record) => ({
+      code: 1,
+      out: `Error: The prior Wiki publisher process 4242 ran on ${JSON.stringify(record.owner.host)} (linux@1), where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with one more --gone-host and --gone-space pair set to that host name and space, keeping the pairs already named, only after the learner confirms that no publisher runs there.`,
+      journal: 'kept',
+      claims: 1,
+    }),
+  },
+  {
+    when: 'with --gone-host and --gone-space naming the claim’s place alone',
+    claimSpace: 'linux@1',
+    named: (record) => [[record.owner.host, 'linux@1']],
+    outcome:
+      'is refused for the journal with its place named, to be added as one more pair',
+    ended: (record) => ({
+      code: 1,
+      out: `Error: The prior Wiki publisher process ${record.pid} ran on ${JSON.stringify(record.owner.host)} (linux@0), where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with one more --gone-host and --gone-space pair set to that host name and space, keeping the pairs already named, only after the learner confirms that no publisher runs there.`,
+      journal: 'kept',
+      claims: 1,
+    }),
+  },
+  {
+    when: 'with one --gone-host and --gone-space pair for each of the two places',
+    claimSpace: 'linux@1',
+    named: (record) => [
+      [record.owner.host, 'linux@0'],
+      [record.owner.host, 'linux@1'],
+    ],
+    outcome: 'recovers the Wiki and removes the journal and the claims',
+    ended: () => ({
+      code: 0,
+      out: 'published-or-restored',
+      journal: 'gone',
+      claims: 0,
+    }),
+  },
+  {
+    when: 'with a second pair that names a place neither the journal nor the claim records',
+    claimSpace: 'linux@1',
+    named: (record) => [
+      [record.owner.host, 'linux@0'],
+      [record.owner.host, 'linux@2'],
+    ],
+    outcome:
+      'is refused with the places the journal and the claim record named, before any owner is judged',
+    ended: (record) => ({
+      code: 1,
+      out: `Error: --gone-host and --gone-space name ${JSON.stringify(record.owner.host)} (linux@2), but the Wiki publication journal names ${JSON.stringify(record.owner.host)} (linux@0) and its stopped recoveries name ${JSON.stringify(record.owner.host)} (linux@1). Nothing was moved. Name the host name and the space that the refusal of --recover names, or run --recover without them.`,
+      journal: 'kept',
+      claims: 1,
+    }),
+  },
+  {
+    when: 'whose claim ran in the journal owner’s place too, with --gone-host and --gone-space naming that place',
+    claimSpace: 'linux@0',
+    named: (record) => [[record.owner.host, 'linux@0']],
+    outcome:
+      'takes the claim for gone too, recovers the Wiki and removes the journal and the claim',
+    ended: () => ({
+      code: 0,
+      out: 'published-or-restored',
+      journal: 'gone',
+      claims: 0,
+    }),
+  },
+]) {
+  // Value: protects=the learner whose publish was killed in a place that cannot come back (a rebuilt dev container) and whose recovery of it was killed in a second one, which leaves its claim; fails_when=the options take one place alone and only the journal owner's, so the claim's refusal tells the learner to name its place, naming it is refused as not the journal's, a second pair is a usage error, and the Wiki is locked for good; or a pair is taken for a place no owner of the chain records, or the claims are judged without the places named, or the claim of a place not named is taken for gone; why_new=Cycle 0047 row 114 (P2SM-14 = ADV2-5 = CXA2-3 = CXS2-1), with the claim cells of row 115 (P2SM-11, P2SM-12, P2SM-13, P2TEST-4); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given the space linux@0, which no pid namespace has, and a claim written beside it as a killed recovery leaves it, of process 4242 in the space the row names; no_claim=a real rebuilt container, and a recovery really killed after its claim
+  test(`a --recover of a journal and a stopped recovery claim of two places that cannot come back, ${when}, ${outcome}`, async () => {
+    // Arrange
+    const { wiki, killed, record } = await publishKilledAfterItsJournal(
+      (record) => {
+        record.owner = { ...record.owner, space: 'linux@0' }
+      },
+    )
+    const journal = `${wiki.output}.publish-journal.json`
+    await writeFile(
+      `${journal}.recovery-${createHash('sha256')
+        .update(await readFile(journal))
+        .digest('hex')}`,
+      JSON.stringify({
+        pid: 4242,
+        owner: { ...record.owner, space: claimSpace },
+        id: '11111111-1111-4111-8111-111111111111',
+      }),
+    )
+    const pairs = named(record).flatMap(([host, space]) => [
+      '--gone-host',
+      host,
+      '--gone-space',
+      space,
+    ])
+
+    // Act
+    const result = spawnSync(
+      process.execPath,
+      [
+        PUBLISHER_COMMAND,
+        '--recover',
+        '--project',
+        wiki.root,
+        '--output',
+        wiki.output,
+        ...pairs,
+      ],
+      { encoding: 'utf8', timeout: 10_000 },
+    )
+
+    // Assert
+    try {
+      assert.deepEqual(
+        {
+          killed,
+          code: result.status,
+          out:
+            result.status === 0
+              ? JSON.parse(result.stdout).status
+              : result.stderr.trim(),
+          journal: await access(journal).then(
+            () => 'kept',
+            () => 'gone',
+          ),
+          claims: (await readdir(dirname(journal))).filter((name) =>
+            name.startsWith(`${basename(journal)}.recovery-`),
+          ).length,
+        },
+        { killed: '', ...ended(record) },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=the learner who gives a second --gone-host without its --gone-space; fails_when=a --gone-host without its --gone-space is paired with nothing, or with the space of another pair, and the recovery goes on with a place the learner did not confirm; why_new=Cycle 0047 row 114 (P2SM-14 = ADV2-5 = CXA2-3 = CXS2-1): the options repeat, one pair for each place; seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given the space linux@0; no_claim=the order of the options within a pair, which the CLI pairs by their count
+test('a --recover with two --gone-host options and one --gone-space is refused with the usage, and keeps the journal', async () => {
+  // Arrange
+  const { wiki, killed, record } = await publishKilledAfterItsJournal(
+    (record) => {
+      record.owner = { ...record.owner, space: 'linux@0' }
+    },
+  )
+
+  // Act
+  const result = spawnSync(
+    process.execPath,
+    [
+      PUBLISHER_COMMAND,
+      '--recover',
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--gone-host',
+      record.owner.host,
+      '--gone-space',
+      'linux@0',
+      '--gone-host',
+      record.owner.host,
+    ],
+    { encoding: 'utf8', timeout: 10_000 },
+  )
+
+  // Assert
+  try {
+    assert.deepEqual(
+      {
+        killed,
+        code: result.status,
+        usage: result.stderr.startsWith('Usage: node publish-wiki.mjs'),
+        journal: await access(`${wiki.output}.publish-journal.json`).then(
+          () => 'kept',
+          () => 'gone',
+        ),
+      },
+      { killed: '', code: 2, usage: true, journal: 'kept' },
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
