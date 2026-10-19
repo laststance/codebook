@@ -17382,3 +17382,129 @@ test('a publish whose candidate another publish published and the agent prepared
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+/**
+ * A module loaded before the publisher (`--import`) that has the first removals of the Wiki's publish lock fail with EBUSY, as on Windows while a scanner or an indexer holds the file, and lets every later removal and every other one through.
+ * @param {number} failures - How many removals of the lock fail; `Infinity` for every one.
+ * @returns {string} The module as a `data:` URL.
+ * @example
+ * spawnSync(process.execPath, ['--import', lockRemovalFailing(1), PUBLISHER_COMMAND, …])
+ */
+const lockRemovalFailing = (failures) =>
+  `data:text/javascript,${encodeURIComponent(
+    `import fileSystem from 'node:fs/promises'; import { syncBuiltinESMExports } from 'node:module'; const unlink = fileSystem.unlink; let failures = ${failures}; fileSystem.unlink = async (path, ...rest) => { if (String(path).endsWith('.publish-lock.json') && failures > 0) { failures--; throw Object.assign(new Error('EBUSY: resource busy or locked, unlink'), { code: 'EBUSY' }) } return unlink(path, ...rest) }; syncBuiltinESMExports();`,
+  )}`
+
+/**
+ * Publishes a prepared candidate with the publisher's command line, in a process whose first removals of the publish lock fail ({@link lockRemovalFailing}), and answers how it ended.
+ * @param {Awaited<ReturnType<typeof publishedWikiWithACandidate>>} wiki - The Wiki and its candidate.
+ * @param {number} failures - How many removals of the lock fail.
+ * @returns {{ code: number | null, answer: string | { publishedFiles: number, publishLockKept: string } }} The exit code, and the published files with the lock the answer names as kept (`none` for none), or the error the command printed.
+ * @example
+ * publishWhereTheLockIsHeld(wiki, 1) // => { code: 0, answer: { publishedFiles: 1, publishLockKept: 'none' } }
+ */
+function publishWhereTheLockIsHeld(wiki, failures) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      lockRemovalFailing(failures),
+      PUBLISHER_COMMAND,
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      wiki.next,
+    ],
+    { encoding: 'utf8', timeout: 10_000 },
+  )
+  // A refused publish prints its error and nothing else.
+  if (result.stdout === '')
+    return { code: result.status, answer: result.stderr.trim() }
+  const { publishedFiles, publishLockKept = 'none' } = JSON.parse(result.stdout)
+  return { code: result.status, answer: { publishedFiles, publishLockKept } }
+}
+
+// Value: protects=a publish on Windows whose publish lock a scanner or an indexer holds for a moment when the publish removes it; fails_when=the removal of the lock is tried once, so a publish that swapped the Wiki answers failure, without the prior version's path, and leaves a lock that refuses the next publish; why_new=Cycle 0047 row 244 (P2RT-1); seam=a publisher process whose first removal of the lock fails with EBUSY (a module loaded first, `--import`); no_claim=a real Windows scanner
+test('a publish whose first removal of its publish lock fails with EBUSY tries again, answers its result and leaves nothing beside the Wiki folder', async () => {
+  // Arrange
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    // Act
+    const publish = publishWhereTheLockIsHeld(wiki, 1)
+
+    // Assert
+    assert.deepEqual(
+      { publish, besideTheWiki: await publisherFilesBeside(wiki.output) },
+      {
+        publish: {
+          code: 0,
+          answer: { publishedFiles: 1, publishLockKept: 'none' },
+        },
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a publish on Windows whose publish lock stays held by another program past every try of its removal, and the learner's next publish; fails_when=a lock that could not be removed fails a publish that swapped the Wiki, so the agent gets no result and no prior version's path, or the note it gets names no lock, or --recover cannot end the lock once the publish exited; why_new=Cycle 0047 row 244 (P2RT-1: once the step succeeded, a lock that could not be removed is a note); seam=a publisher process whose every removal of the lock fails with EBUSY (a module loaded first, `--import`); no_claim=a real Windows scanner
+test('a publish whose publish lock cannot be removed for good answers its result with the lock it kept, and --recover then ends that lock', async () => {
+  // Arrange
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    // Act: the publish, then the recovery the note asks for.
+    const publish = publishWhereTheLockIsHeld(wiki, Infinity)
+    const keptByThePublish = await publisherFilesBeside(wiki.output)
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        publish,
+        keptByThePublish,
+        recovery,
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        publish: {
+          code: 0,
+          answer: {
+            publishedFiles: 1,
+            publishLockKept: `${wiki.output}.publish-lock.json`,
+          },
+        },
+        keptByThePublish: ['wiki.publish-lock.json'],
+        recovery: 'publish-lock-removed',
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the editor agent whose publish answers that its publish lock could not be removed; fails_when=the skill does not tell the agent that the publish succeeded and that one --recover ends the kept lock, so it reports a failure, deletes the lock by hand, or leaves it to refuse the next publish; why_new=Cycle 0047 row 244 (P2RT-1); seam=none; no_claim=what an agent does with the sentence
+test('the bundled skill tells the agent that a publish answering publishLockKept succeeded and that one --recover ends that lock', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      'If a publish or a `--render-only` run answers `publishLockKept`, it succeeded, but its publish lock could not be removed (on Windows a scanner or an indexer may hold the file): run `--recover --project <root> --output <output>` once, which ends that lock.',
+    ),
+    true,
+  )
+})

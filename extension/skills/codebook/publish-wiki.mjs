@@ -14,20 +14,30 @@ const reserved = path => [MANIFEST, RECEIPT].includes(path.split('/')[0].toLower
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const safePath = path => typeof path === 'string' && path !== '' && !isAbsolute(path) && !/[\\\x00-\x1f]/.test(path) && path.split('/').every(part => part && part !== '.' && part !== '..');
 const isMissing = error => error.code === 'ENOENT';
-/** The system errors of a move that passes once another process lets go of the folder or file: Windows answers them while an indexer, a virus scanner or a watcher holds it for a moment. Read by {@link renameRetried}. */
+/** The system errors of a move or a removal that passes once another process lets go of the folder or file: Windows answers them while an indexer, a virus scanner or a watcher holds it for a moment. Read by {@link retriedWhilePassing}. */
 const PASSING_RENAME_ERRORS = ['EPERM', 'EBUSY'];
-/** How many times {@link renameRetried} tries a move that fails with a passing error, and by how much its wait before the next try grows each time, in milliseconds: at most 2.25 seconds of waiting in all. */
+/** How many times {@link retriedWhilePassing} tries a move or a removal that fails with a passing error, and by how much its wait before the next try grows each time, in milliseconds: at most 2.25 seconds of waiting in all. */
 const RENAME_TRIES = 10, RENAME_RETRY_STEP_MS = 50;
 
-/** Moves a folder or file as `rename` does, and tries again, a bounded number of times with a growing wait ({@link RENAME_TRIES}), while the move fails with an error that passes once another process lets go of it ({@link PASSING_RENAME_ERRORS}); any other error, and the last passing one, is passed on at once. Called by {@link publishWiki} for the moves of the swap, by {@link undoRefusedPublish} for the move of the prior Wiki back, by {@link replaceOwnFileThrough} for the move of a file into its name, and by {@link restorePriorWiki} and {@link restoreManifest} for the moves of a recovery. @throws What the last try of `rename` rejects with. @example await renameRetried('/repo/.codebook/wiki', '/repo/.codebook/wiki.previous-1') // resolves after a passing EBUSY */
-async function renameRetried(from, to) {
+/** Runs a move or a removal of a folder or file, and runs it again, a bounded number of times with a growing wait ({@link RENAME_TRIES}), while it fails with an error that passes once another process lets go of the entry ({@link PASSING_RENAME_ERRORS}); any other error, and the last passing one, is passed on at once. Called by {@link renameRetried} and {@link unlinkRetried}. @param call - The move or the removal. @returns What the call resolves with. @throws What its last try rejects with. @example await retriedWhilePassing(() => unlink('/repo/.codebook/wiki.publish-lock.json')) // resolves after a passing EBUSY */
+async function retriedWhilePassing(call) {
   for (let tries = 1; ; tries++) {
-    try { return await rename(from, to); }
+    try { return await call(); }
     catch (error) {
       if (!PASSING_RENAME_ERRORS.includes(error.code) || tries >= RENAME_TRIES) throw error;
       await delay(tries * RENAME_RETRY_STEP_MS);
     }
   }
+}
+
+/** Moves a folder or file as `rename` does, tried again while the move fails with an error that passes ({@link retriedWhilePassing}). Called by {@link publishWiki} for the moves of the swap, by {@link undoRefusedPublish} for the move of the prior Wiki back, by {@link replaceOwnFileThrough} for the move of a file into its name, and by {@link restorePriorWiki} and {@link restoreManifest} for the moves of a recovery. @throws What the last try of `rename` rejects with. @example await renameRetried('/repo/.codebook/wiki', '/repo/.codebook/wiki.previous-1') // resolves after a passing EBUSY */
+async function renameRetried(from, to) {
+  return retriedWhilePassing(() => rename(from, to));
+}
+
+/** Removes a file as `unlink` does, tried again while the removal fails with an error that passes ({@link retriedWhilePassing}). Called by {@link takePublishLock} for the release of the publish lock. @throws What the last try of `unlink` rejects with. @example await unlinkRetried('/repo/.codebook/wiki.publish-lock.json') // resolves after a passing EBUSY */
+async function unlinkRetried(path) {
+  return retriedWhilePassing(() => unlink(path));
 }
 
 /** Whether bytes start with a signature, at an offset: a format's first bytes. Called by the tests of {@link RASTER_ASSET_FORMATS}. @example startsWith(Buffer.from('GIF89a'), 'GIF89a') // => true */
@@ -549,11 +559,11 @@ function parseRecordOf(bytes, refusal, refusalOfSyntax = () => refusal) {
   return record;
 }
 
-/** Removes only the journal, claim, publish lock or side file bytes owned by the completing operation: the file at the path must hold those bytes, or it is kept and the step refused. @example await removeOwnedRecord(path, bytes) */
-async function removeOwnedRecord(path, bytes) {
+/** Removes only the journal, claim, publish lock or side file bytes owned by the completing operation: the file at the path must hold those bytes, or it is kept and the step refused. @param remove - The removal, `unlink` unless named: the release of the publish lock tries it again while it fails with an error that passes ({@link unlinkRetried}). @example await removeOwnedRecord(path, bytes) */
+async function removeOwnedRecord(path, bytes, remove = unlink) {
   const current = await regularBytes(path, true);
   if (!current || !current.equals(Buffer.from(bytes))) throw new Error('Publication ownership changed; the recovery record was preserved: ' + path);
-  await unlink(path);
+  await remove(path);
 }
 
 /** Reads a candidate's manifest and refuses a candidate that holds a file its manifest does not list, named so the step that removes it is clear, or an asset that is no raster image, before anything is rendered or written. Called by {@link publishWiki}. @returns The manifest's bytes, the manifest and the paths it owns. @throws The refusal of the stray file or of the asset. @example await readCandidateManifest('/repo/.codebook/next', '/repo') // => { bytes, manifest, owned } */
@@ -788,7 +798,7 @@ const publishLockRefusalOf = lock => 'Another publish of this Wiki holds its pub
 /** The refusal of a publish or a preview whose publish lock is no longer its own when it checks it ({@link takePublishLock}): a recovery ended it, or another run's lock stands at its name. It names the lock by its path alone, and the step undoes what it wrote before its swap, as for every refusal there. Called by {@link takePublishLock}. @example lostPublishLockRefusalOf('/repo/.codebook/wiki.publish-lock.json') // => 'The Wiki publish lock /repo/.codebook/wiki.publish-lock.json is no longer this publish’s: … so the Wiki was not changed. …' */
 const lostPublishLockRefusalOf = lock => 'The Wiki publish lock ' + lock + ' is no longer this publish’s: another step ended or replaced it while this publish ran (a --recover takes a lock that stood empty past the grace for a stopped publish’s), so the Wiki was not changed. Publish again once no other publish or recovery of this Wiki runs.';
 
-/** Takes the publish lock of a Wiki, `<output>.publish-lock.json`: a small record of this run's process id, its owner as `system` tells it ({@link ownerHere}) and a random id, written whole and only while no entry stands at its name ({@link writeWholeRecord}), so of two publishes or previews of one Wiki at once, the second is refused before it writes anything ({@link publishLockRefusalOf}). The lock lies beside the Wiki folder, as the journal does, so it is written only while the output's path holds, and a lock written once the path was swapped is removed with the refusal. On a file system without hard links the lock is created at its name and written after ({@link writeWholeRecord}), and a run held between the two past {@link UNWRITTEN_RECORD_GRACE_MS} may find it ended by a recovery, which takes an empty lock for a stopped publish's, while its write went into the removed file: the run goes on only while the lock's name holds the file it wrote, with this run's bytes ({@link isStillWritten}), checked once it is taken and again before the swap (`requireHeld`), else it stops without changing the Wiki ({@link lostPublishLockRefusalOf}). Called by {@link underPublishLock}. @returns The lock's id, which the publish's journal takes ({@link publishJournalOf}), `requireHeld`, which refuses once the lock is no longer this run's, and `release`, which removes the lock while it holds this run's bytes ({@link removeOwnedRecord}). @throws The refusal of a lock that stands, of a changed path, of a lock that is no longer this run's, and what the write rejects with. @example const lock = await takePublishLock(paths, requirePathHeld, SYSTEM_HERE); await lock.requireHeld(); await lock.release() */
+/** Takes the publish lock of a Wiki, `<output>.publish-lock.json`: a small record of this run's process id, its owner as `system` tells it ({@link ownerHere}) and a random id, written whole and only while no entry stands at its name ({@link writeWholeRecord}), so of two publishes or previews of one Wiki at once, the second is refused before it writes anything ({@link publishLockRefusalOf}). The lock lies beside the Wiki folder, as the journal does, so it is written only while the output's path holds, and a lock written once the path was swapped is removed with the refusal. On a file system without hard links the lock is created at its name and written after ({@link writeWholeRecord}), and a run held between the two past {@link UNWRITTEN_RECORD_GRACE_MS} may find it ended by a recovery, which takes an empty lock for a stopped publish's, while its write went into the removed file: the run goes on only while the lock's name holds the file it wrote, with this run's bytes ({@link isStillWritten}), checked once it is taken and again before the swap (`requireHeld`), else it stops without changing the Wiki ({@link lostPublishLockRefusalOf}). Called by {@link underPublishLock}. @returns The lock's id, which the publish's journal takes ({@link publishJournalOf}), `requireHeld`, which refuses once the lock is no longer this run's, and `release`, which removes the lock while it holds this run's bytes ({@link removeOwnedRecord}), tried again while a scanner or an indexer on Windows holds it ({@link unlinkRetried}). @throws The refusal of a lock that stands, of a changed path, of a lock that is no longer this run's, and what the write rejects with. @example const lock = await takePublishLock(paths, requirePathHeld, SYSTEM_HERE); await lock.requireHeld(); await lock.release() */
 async function takePublishLock({ lock }, requirePathHeld, system) {
   const id = randomUUID(), bytes = JSON.stringify({ pid: process.pid, owner: await ownerHere(system), id });
   await requirePathHeld();
@@ -798,10 +808,10 @@ async function takePublishLock({ lock }, requirePathHeld, system) {
   const requireHeld = async () => { if (!(await isStillWritten(file))) throw new Error(lostPublishLockRefusalOf(lock)); };
   // A lock a recovery ended between its create and its write is no longer this run's: the run stops before it writes anything.
   await requireHeld();
-  return { id, requireHeld, release: () => removeOwnedRecord(lock, bytes) };
+  return { id, requireHeld, release: () => removeOwnedRecord(lock, bytes, unlinkRetried) };
 }
 
-/** Runs the writes of a publish or a preview under the Wiki's publish lock ({@link takePublishLock}), from before its first page until after its journal is removed: a journal that another step wrote before the lock was taken refuses the run ({@link requireNoJournal}), and a side file that a stopped publish left beside the journal's name is removed while it is the publisher's own ({@link removeStrayPreparedFiles}), as are the files stopped runs left beside the records ({@link removeOrphansBeside}); the lock is removed once the step ends, also when it is refused, whose own refusal is the one answered; a run stopped meanwhile leaves the lock for --recover ({@link endStoppedLock}). Called by {@link publishWiki}. @param step - The writes, given the lock: its id and `requireHeld` ({@link takePublishLock}). @returns What the step answers. @throws The refusal of the lock and of a journal, and what the step throws. @example await underPublishLock(paths, requirePathHeld, SYSTEM_HERE, async lock => ({ renderedPages: 1 })) */
+/** Runs the writes of a publish or a preview under the Wiki's publish lock ({@link takePublishLock}), from before its first page until after its journal is removed: a journal that another step wrote before the lock was taken refuses the run ({@link requireNoJournal}), and a side file that a stopped publish left beside the journal's name is removed while it is the publisher's own ({@link removeStrayPreparedFiles}), as are the files stopped runs left beside the records ({@link removeOrphansBeside}); the lock is removed once the step ends, also when it is refused, whose own refusal is the one answered; a run stopped meanwhile leaves the lock for --recover ({@link endStoppedLock}). A lock that cannot be removed once the step succeeded, after every try ({@link unlinkRetried}), does not fail the step, whose Wiki or pages stand: the answer names it as `publishLockKept`, which --recover ends once this process exits. Called by {@link publishWiki}. @param step - The writes, given the lock: its id and `requireHeld` ({@link takePublishLock}). @returns What the step answers, with `publishLockKept`, the lock's path, where the lock could not be removed. @throws The refusal of the lock and of a journal, and what the step throws. @example await underPublishLock(paths, requirePathHeld, SYSTEM_HERE, async lock => ({ renderedPages: 1 })) */
 async function underPublishLock(paths, requirePathHeld, system, step) {
   const lock = await takePublishLock(paths, requirePathHeld, system);
   let outcome;
@@ -816,8 +826,9 @@ async function underPublishLock(paths, requirePathHeld, system, step) {
     await lock.release().catch(() => undefined);
     throw error;
   }
-  await lock.release();
-  return outcome;
+  // The step succeeded: a lock this run cannot remove now is named in its answer, for --recover to end.
+  const isReleased = await lock.release().then(() => true, () => false);
+  return isReleased ? outcome : { ...outcome, publishLockKept: paths.lock };
 }
 
 /** The paths of the copies of the learner's files that a stopped publish made in its candidate: each file of the candidate that the candidate's manifest does not list, at a path whose copy the journal names as begun ({@link copiesBegunOf}), or at any path for a journal of an earlier version, which names no copies, that stands at the place of a learner's file in the Wiki (a file the Wiki's manifest does not list) and that holds the start of that file's bytes or all of them ({@link isStartOf}): a kill while the publish wrote a copy leaves the part written so far, an empty file at the least, and the whole file stays in the Wiki. A file with other bytes, and a file at a path whose copy did not begin, which the learner put there, stay, for the next publish to name. Each copy is answered with the record of the file as it was checked, its device and file id and the digest of its bytes, so its removal holds only while it is that file with those bytes ({@link restoreStoppedCandidate}). Called by {@link restoreStoppedCandidate}. @param wiki - The Wiki that stands in the Wiki folder now, as {@link inspectOutput} read it. @param begun - The paths whose copy the journal names as begun; undefined for a journal of an earlier version, which names none, so every learner's file's place counts, by the bytes alone. @returns The copies, each its path relative to the candidate (`name`) and the record of the file checked (`file`, as {@link writeOwnFile} answers one); none for a candidate without a manifest. @throws What reading the candidate's manifest, listing the candidate or reading a file rejects with, which {@link restoreStoppedCandidate} judges ({@link noneUnlessUnread}). @example await learnerCopiesIn('/repo/.codebook/next', wiki, '/repo/.codebook/wiki', '/repo', new Set(['manual.txt'])) // => [{ name: 'manual.txt', file: { path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131077n } }] */
