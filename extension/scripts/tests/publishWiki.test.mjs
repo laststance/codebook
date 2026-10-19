@@ -12578,3 +12578,85 @@ for (const place of [
     }
   })
 }
+
+// Value: protects=a Wiki whose publish was killed between its two moves and whose kept prior Wiki's manifest was edited afterwards (by hand, or by a sync client) before any --recover: the first --recover moves the prior Wiki back and the second restores the manifest and keeps the edit; fails_when=the recovery inspects the kept prior Wiki without allowing its manifest's drift, so every --recover is refused with "The published Wiki manifest changed after generation" and the Wiki stays locked for good; why_new=Cycle 0047 row 179 (S2SM-I1); seam=a publisher process killed just before it moves the candidate into the Wiki's place, after it moved the Wiki to its backup name (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a page of the kept prior Wiki edited after the kill, which the recovery still refuses
+test('a Wiki whose publish was killed between its two moves and whose kept prior Wiki’s manifest was edited afterwards is recovered: the prior Wiki moves back, then the manifest is restored and the edit kept beside the Wiki', async () => {
+  // Arrange: a published Wiki and a prepared candidate; the publish of the candidate is killed after the Wiki went to its backup name, then the backup's manifest is edited.
+  const wiki = await publishedWikiWithACandidate()
+  const manifestPath = join(wiki.output, 'codebook-wiki.json')
+  try {
+    const generatedManifest = await readFile(manifestPath)
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'renaming', folder: dirname(wiki.next), name: '^next$' },
+      ],
+    })
+    const { backup } = JSON.parse(
+      await readFile(`${wiki.output}.publish-journal.json`, 'utf8'),
+    )
+    await writeFile(
+      join(backup, 'codebook-wiki.json'),
+      '{"edited":"by a sync client"}',
+    )
+
+    // Act: the recovery, given the candidate the agent prepared, then the recovery run again.
+    const firstRecovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const secondRecovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      async ({ status, modifiedManifestBackup }) => ({
+        status,
+        keptEdit: await readFile(modifiedManifestBackup, 'utf8'),
+      }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        firstRecovery,
+        secondRecovery,
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8').catch(
+          () => 'no Wiki',
+        ),
+        manifestIsGenerated: await readFile(manifestPath).then(
+          (bytes) => bytes.equals(generatedManifest),
+          () => 'no manifest',
+        ),
+        backup: existsSync(backup) ? 'kept' : 'moved back',
+        journal: existsSync(`${wiki.output}.publish-journal.json`)
+          ? 'a journal'
+          : 'no journal',
+      },
+      {
+        killed: '',
+        firstRecovery: 'previous-restored',
+        secondRecovery: {
+          status: 'manifest-restored',
+          keptEdit: '{"edited":"by a sync client"}',
+        },
+        wikiPage: wiki.wikiPage,
+        manifestIsGenerated: true,
+        backup: 'moved back',
+        journal: 'no journal',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})

@@ -1290,11 +1290,12 @@ async function keepCurrentWiki(record, current, paths, requirePathHeld) {
   return { status: 'published-or-restored', output: paths.output, previousOutput: record.backup };
 }
 
-/** Moves the prior Wiki a stopped publish kept beside the Wiki folder back into its place: it is read and moved there, so it is held to the rule of the output ({@link requireRegularFolder}) and must be the generation the journal names; then what the stopped publish left in its candidate goes ({@link restoreCandidateOfJournal}). Called by {@link recoverPublishJournal}. @returns `previous-restored`. @throws The refusal of a kept Wiki that is no folder of its own or of another generation, and of a changed path. @example await restorePriorWiki(record, paths, requirePathHeld) // => { status: 'previous-restored', output: '/repo/.codebook/wiki' } */
+/** Moves the prior Wiki a stopped publish kept beside the Wiki folder back into its place: it is read and moved there, so it is held to the rule of the output ({@link requireRegularFolder}) and must be the generation the journal names by its record's retained manifest, whatever its manifest holds now (an edit made after the publish's last check is restored by the next recovery, as one of the standing Wiki is); then what the stopped publish left in its candidate goes ({@link restoreCandidateOfJournal}). Called by {@link recoverPublishJournal}. @returns `previous-restored`. @throws The refusal of a kept Wiki that is no folder of its own or of another generation, and of a changed path. @example await restorePriorWiki(record, paths, requirePathHeld) // => { status: 'previous-restored', output: '/repo/.codebook/wiki' } */
 async function restorePriorWiki(record, paths, requirePathHeld) {
   const { root, output } = paths;
   await requireRegularFolder(record.backup, root, paths.isOutputInProject, backupRefusalOf);
-  const prior = await inspectOutput(record.backup, root, { allowLegacy: true });
+  // The kept prior Wiki's manifest may have been edited since the publish's last check, as the standing Wiki's may: its record's retained manifest decides, and the next recovery restores the edit.
+  const prior = await inspectOutput(record.backup, root, { allowLegacy: true, allowManifestDrift: true });
   if (!prior || record.priorManifestSha256 && digest(prior.bytes) !== record.priorManifestSha256) throw new Error('The prior Wiki does not match the publication journal.');
   await requirePathHeld();
   await renameRetried(record.backup, output);
