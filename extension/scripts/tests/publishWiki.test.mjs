@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import {
   access,
   link,
@@ -28,7 +29,11 @@ import {
 } from '../../skills/codebook/publish-wiki.mjs'
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
-import { failWriteOf } from './utils/failingFileSystem.mjs'
+import {
+  failRenameOf,
+  failWriteOf,
+  observeRemovals,
+} from './utils/failingFileSystem.mjs'
 import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
   swapBeforeMaking,
@@ -2329,7 +2334,7 @@ const markedCopies = new Map()
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
- * - `?failing`: the write through a handle of the file a test names with {@link failWriteOf} stops partway with a system error (`failingFileSystem.mjs`).
+ * - `?failing`: the write through a handle of the file a test names with {@link failWriteOf} stops partway with a system error, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
  * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing'} mark - The mark of its stand-in.
  * @returns {Promise<Record<string, Function>>} The copy's exports.
@@ -3755,6 +3760,146 @@ test('a publish whose candidate manifest and record are replaced by links to fil
       },
     )
   } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's Wiki folder during a publish whose swap failed: the prior Wiki is back in place before the publish removes what it wrote into the candidate, so the time without a Wiki folder does not grow with the Wiki; fails_when=the refusal removes the written pages and puts the candidate's manifest and record back while the prior Wiki still lies at its backup name; why_new=Cycle 0047 row 28 (P3RT6); seam=a copy of the shipped publisher whose `node:fs/promises` fails the move of the candidate into the Wiki's place with EXDEV and tells the test of each removal (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=how long the moves themselves take
+test('a publish whose swap fails puts the prior Wiki back before it removes what it wrote into the candidate', async () => {
+  // Arrange: the move of the candidate into the Wiki's place fails; each removal in the candidate is noted with whether the Wiki folder stands then.
+  const { publishWiki: publishWhoseSwapFails } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const removalsWithoutTheWiki = []
+  const stopFailing = failRenameOf((path) => path === wiki.next, ['EXDEV'])
+  const stopObserving = observeRemovals((path) => {
+    if (dirname(path) === wiki.next && !existsSync(wiki.output))
+      removalsWithoutTheWiki.push(basename(path))
+  })
+  try {
+    // Act
+    const refusal = await publishWhoseSwapFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.code,
+    )
+
+    // Assert: the rendered page is gone from the candidate, whose manifest and record are back, and nothing was removed while the Wiki folder was missing.
+    assert.deepEqual(
+      {
+        refusal,
+        removalsWithoutTheWiki,
+        candidateFiles: (await readdir(wiki.next)).sort(),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        refusal: 'EXDEV',
+        removalsWithoutTheWiki: [],
+        candidateFiles: ['codebook-publication.json', 'codebook-wiki.json'],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    stopObserving()
+    stopFailing()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a publish on Windows while an indexer, a virus scanner or a watcher holds the Wiki folder or the candidate for a moment; fails_when=the publisher's moves try once, so a passing EBUSY or EPERM refuses the publish; why_new=Cycle 0047 row 28 (P3RT6); seam=a copy of the shipped publisher whose `node:fs/promises` fails the move of the Wiki folder to its backup with EBUSY, then EPERM, and the move of the candidate into its place with EPERM once (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a folder held longer than the publisher's bounded tries, which still refuses the publish
+test('a publish whose Wiki folder and candidate are held by another process for a moment when they are moved publishes the candidate', async () => {
+  // Arrange
+  const { publishWiki: publishWhileTheFoldersAreHeld } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const stopFailingTheWiki = failRenameOf(
+    (path) => path === wiki.output,
+    ['EBUSY', 'EPERM'],
+  )
+  const stopFailingTheCandidate = failRenameOf(
+    (path) => path === wiki.next,
+    ['EPERM'],
+  )
+  try {
+    // Act
+    const publish = await publishWhileTheFoldersAreHeld({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.code,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        publish,
+        publishesTheCandidate: (
+          await readFile(join(wiki.output, 'index.html'), 'utf8')
+        ).includes('<h2 id="intro">Next</h2>'),
+      },
+      { publish: { publishedFiles: 1 }, publishesTheCandidate: true },
+    )
+  } finally {
+    stopFailingTheCandidate()
+    stopFailingTheWiki()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's Wiki after a publish whose swap failed while another process held the kept prior Wiki for a moment; fails_when=the move of the prior Wiki back into place tries once, so a passing EBUSY leaves the Wiki folder missing, the prior Wiki at its backup name and a journal that asks for --recover; why_new=Cycle 0047 row 28 (P3RT6); seam=a copy of the shipped publisher whose `node:fs/promises` fails the move of the candidate into the Wiki's place with EXDEV and the move of the prior Wiki back with EBUSY once (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a kept prior Wiki held longer than the publisher's bounded tries, which still asks for --recover
+test('a publish whose swap fails while the kept prior Wiki is held by another process for a moment puts the prior Wiki back and leaves nothing beside it', async () => {
+  // Arrange
+  const { publishWiki: publishWhoseSwapFails } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const stopFailingTheSwap = failRenameOf(
+    (path) => path === wiki.next,
+    ['EXDEV'],
+  )
+  const stopFailingTheMoveBack = failRenameOf(
+    (path) => path.startsWith(`${wiki.output}.previous-`),
+    ['EBUSY'],
+  )
+  try {
+    // Act
+    const refusal = await publishWhoseSwapFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.code ?? error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        besideTheWiki: (await readdir(dirname(wiki.output))).sort(),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8').catch(
+          () => 'no Wiki folder',
+        ),
+      },
+      {
+        refusal: 'EXDEV',
+        besideTheWiki: ['next', 'wiki'],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    stopFailingTheMoveBack()
+    stopFailingTheSwap()
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })

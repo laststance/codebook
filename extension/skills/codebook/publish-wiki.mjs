@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { renderWikiPages } from './render-wiki.mjs';
 
@@ -11,6 +12,21 @@ const reserved = path => [MANIFEST, RECEIPT].includes(path.split('/')[0].toLower
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const safePath = path => typeof path === 'string' && path !== '' && !isAbsolute(path) && !/[\\\x00-\x1f]/.test(path) && path.split('/').every(part => part && part !== '.' && part !== '..');
 const isMissing = error => error.code === 'ENOENT';
+/** The system errors of a move that passes once another process lets go of the folder or file: Windows answers them while an indexer, a virus scanner or a watcher holds it for a moment. Read by {@link renameRetried}. */
+const PASSING_RENAME_ERRORS = ['EPERM', 'EBUSY'];
+/** How many times {@link renameRetried} tries a move that fails with a passing error, and by how much its wait before the next try grows each time, in milliseconds: at most 2.25 seconds of waiting in all. */
+const RENAME_TRIES = 10, RENAME_RETRY_STEP_MS = 50;
+
+/** Moves a folder or file as `rename` does, and tries again, a bounded number of times with a growing wait ({@link RENAME_TRIES}), while the move fails with an error that passes once another process lets go of it ({@link PASSING_RENAME_ERRORS}); any other error, and the last passing one, is passed on at once. Called by {@link publishWiki} for the moves of the swap and the move of the prior Wiki back, and by {@link recoverWikiPublication} and {@link restoreManifest} for theirs. @throws What the last try of `rename` rejects with. @example await renameRetried('/repo/.codebook/wiki', '/repo/.codebook/wiki.previous-1') // resolves after a passing EBUSY */
+async function renameRetried(from, to) {
+  for (let tries = 1; ; tries++) {
+    try { return await rename(from, to); }
+    catch (error) {
+      if (!PASSING_RENAME_ERRORS.includes(error.code) || tries >= RENAME_TRIES) throw error;
+      await delay(tries * RENAME_RETRY_STEP_MS);
+    }
+  }
+}
 
 /** Whether bytes start with a signature, at an offset: a format's first bytes. Called by the tests of {@link RASTER_ASSET_FORMATS}. @example startsWith(Buffer.from('GIF89a'), 'GIF89a') // => true */
 const startsWith = (bytes, signature, at = 0) => bytes.subarray(at, at + signature.length).equals(Buffer.from(signature, 'latin1'));
@@ -468,22 +484,21 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     if (currentManual.length !== manual.length) throw new Error('Manual Wiki files changed during publication; output was preserved.');
     for (const path of currentManual) if (manualHashes[path] !== digest(await regularBytes(join(output, path)))) throw new Error('A manual Wiki file changed during publication: ' + path);
     await makeFolderHeld(stage, requirePathHeld, isFolderWhereItWas);
-    if (backup) { await rename(output, backup); movedOld = true; }
-    await rename(stage, output);
+    if (backup) { await renameRetried(output, backup); movedOld = true; }
+    await renameRetried(stage, output);
     swapped = true;
     await removeOwnedRecord(journal, journalBytes);
     return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length };
   } catch (error) {
     if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
+    // The prior Wiki goes back first, so the time without a Wiki folder does not grow with what the publish wrote into the candidate; a move back that fails keeps the journal for --recover.
+    const moveBackFailure = movedOld ? await renameRetried(backup, output).then(() => undefined, cause => new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause })) : undefined;
     // The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it.
     await removeWritten(written, made);
     // Put back only while the path and the candidate hold; a failure leaves the finalized manifest and record, which publish again unchanged, and the publish's own refusal is the one reported.
     if (finalized.length > 0 && await requirePathHeld().then(() => isFolderWhereItWas(stage), () => false))
       for (const entry of finalized) await restoreFinalized(entry).catch(() => undefined);
-    if (movedOld) {
-      try { await rename(backup, output); }
-      catch (cause) { throw new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause }); }
-    }
+    if (moveBackFailure !== undefined) throw moveBackFailure;
     await removeOwnedRecord(journal, journalBytes);
     throw error;
   }
@@ -548,7 +563,7 @@ async function restoreManifest(record, paths, writeHeld, requireHeld) {
   if (!state || !state.receipt && !state.legacyRecovery || digest(state.bytes) !== record.manifestSha256 || (state.actual ? digest(state.actual) : null) !== record.modifiedManifestSha256)
     throw new Error('The Wiki changed before metadata recovery; all files were preserved.');
   await requireHeld();
-  await rename(record.temporaryManifest, join(output, MANIFEST));
+  await renameRetried(record.temporaryManifest, join(output, MANIFEST));
 }
 
 /** Restores an edited manifest ({@link restoreManifest}) only while the output's path and the Wiki folder hold: each write is held before and after it and the rename before it, by the path ({@link holdOfPath}) and the Wiki folder itself ({@link folderLookOf}), and a refused hold removes what this recovery wrote that is still its own ({@link removeWritten}). Called by {@link recoverWikiPublication}. @example await restoreManifestHeld(record, paths, requirePathHeld) */
@@ -623,7 +638,7 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
         const prior = await inspectOutput(record.backup, root, { allowLegacy: true });
         if (!prior || record.priorManifestSha256 && digest(prior.bytes) !== record.priorManifestSha256) throw new Error('The prior Wiki does not match the publication journal.');
         await requirePathHeld();
-        await rename(record.backup, output);
+        await renameRetried(record.backup, output);
         result = { status: 'previous-restored', output };
       } else result = { status: 'no-prior-wiki', stage: record.stage };
     }

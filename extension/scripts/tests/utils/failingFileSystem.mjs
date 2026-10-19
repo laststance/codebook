@@ -58,3 +58,74 @@ export async function open(path, ...rest) {
   pendingWriteFailure = undefined
   return handleWhoseWriteFails(handle, failure.code)
 }
+
+/** The renames a test asked to fail: the source each waits for and the system errors still to come, one per call. */
+const pendingRenameFailures = []
+
+/** The optional observer of {@link observeRemovals}. */
+let removalObserver
+
+/**
+ * Asks the next renames of a folder or file that `isAwaited` names to fail, one call per code in `codes`, in turn: as Windows answers `EBUSY` or `EPERM` while an indexer, a virus scanner or a watcher holds the folder for a moment, or a move that cannot succeed at all (`EXDEV`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
+ * @param {(path: string) => boolean} isAwaited - Whether the source of a rename is the one whose renames fail.
+ * @param {string[]} codes - The system errors of the next calls, one each; later calls succeed.
+ * @returns {() => void} Drops the errors still to come, so none is left for another test.
+ * @example
+ * const stop = failRenameOf((path) => path === '/repo/.codebook/wiki', ['EBUSY', 'EPERM']); stop()
+ */
+export function failRenameOf(isAwaited, codes) {
+  const failure = { isAwaited, codes: [...codes] }
+  pendingRenameFailures.push(failure)
+  return () => {
+    failure.codes.length = 0
+  }
+}
+
+/**
+ * Asks every `unlink` to tell `observer` its path first, as long as the observer is not stopped; so a test sees when the publisher removes a file relative to its moves.
+ * @param {(path: string) => void} observer - Receives the path of each removal before it runs.
+ * @returns {() => void} Stops this observer without clearing a newer one.
+ * @example
+ * const stop = observeRemovals((path) => removals.push(path)); stop()
+ */
+export function observeRemovals(observer) {
+  removalObserver = observer
+  return () => {
+    if (removalObserver === observer) removalObserver = undefined
+  }
+}
+
+/**
+ * Renames as `rename` does, except while {@link failRenameOf} holds a system error for the source: then the call fails with it and nothing is moved.
+ * @param {string} from - What is moved.
+ * @param {string} to - Where it goes.
+ * @returns {Promise<void>} What `rename` answers.
+ * @example
+ * await rename('/repo/.codebook/wiki', '/repo/.codebook/wiki.previous-1') // rejects with code EBUSY after failRenameOf named the Wiki folder with ['EBUSY']
+ */
+export async function rename(from, to) {
+  const failure = pendingRenameFailures.find(
+    (candidate) =>
+      candidate.codes.length > 0 && candidate.isAwaited(String(from)),
+  )
+  // The awaited source fails once per code still to come; every other rename moves.
+  if (failure !== undefined) {
+    const code = failure.codes.shift()
+    throw Object.assign(new Error(`${code}: rename '${from}' -> '${to}'`), {
+      code,
+    })
+  }
+  return fileSystem.rename(from, to)
+}
+
+/**
+ * Removes a file as `unlink` does, after telling the observer of {@link observeRemovals} its path.
+ * @param {string} path - The file to remove.
+ * @returns {Promise<void>} What `unlink` answers.
+ * @example
+ * await unlink('/repo/.codebook/next/index.html')
+ */
+export async function unlink(path) {
+  removalObserver?.(String(path))
+  return fileSystem.unlink(path)
+}
