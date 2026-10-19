@@ -289,6 +289,25 @@ test('the packaged README states, among the limits of a lock and an update marke
   assert.equal(isUnderTheLimits, true)
 })
 
+// Value: protects=a learner whose Wiki publish ran in a place that cannot come back (a rebuilt dev container, a computer that is gone), learning why --recover refuses its journal and the guarded way out; fails_when=the README's limits leave out that a --recover refuses a journal of another host name or space, that a Mac renamed under one boot is this computer, or the options --gone-host and --gone-space with the check that no publisher runs there; why_new=Cycle 0047 row 62 (ADV-3 = CORE-2 = RT-1); seam=none; no_claim=that the way out was used on a real container
+test('the packaged README states, among the limits of a lock and an update marker, that a Wiki publish in a place that cannot come back is recovered with --gone-host and --gone-space once no publisher runs there', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const limit =
+    "- **A Wiki publish in a place that cannot come back.** While the skill's publisher publishes a Wiki, it keeps a journal beside the Wiki folder that names its process id, its host name, its space of process ids (on Linux, its pid namespace) and its boot. A `--recover` refuses the journal of another host name or another space, because it cannot look at that process, and tells you to run it there. A Mac that took another host name from the network under the same boot is still this computer, because the journal names its boot session. A place that cannot come back keeps the Wiki locked: a rebuilt dev container, which gets a new pid namespace under the same boot, or a computer that is gone. Make sure that no publisher runs there, then run `--recover` with `--gone-host <host> --gone-space <space>`, set to the host name and the space that the refusal names: the recovery then takes that publisher for gone. The publisher refuses the two options for any owner other than the journal's, and it never uses them without you."
+
+  // Act: the limit, and where it stands: under the heading of the limits, before the next section.
+  const limitAt = readme.indexOf(limit)
+  const isUnderTheLimits =
+    limitAt >
+      readme.indexOf('### What a lock or an update marker cannot tell\n') &&
+    limitAt < readme.indexOf('## Validation\n')
+
+  // Assert
+  assert.notEqual(limitAt, -1)
+  assert.equal(isUnderTheLimits, true)
+})
+
 // Cycle 0045 (S1a-F2): red while the README said that a focused editor that is no text editor refuses a presentation selection; since cause 7 such a tab is admitted, stays where it is and gets its focus back.
 test('the packaged README says that a focused tab that is no text editor is admitted and gets its focus back, and names the two focused tabs that still refuse a selection', async () => {
   // Arrange

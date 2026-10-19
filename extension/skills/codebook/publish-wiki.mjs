@@ -639,9 +639,9 @@ async function restorePreparedFiles(record, stage, requireHeld) {
   }
 }
 
-/** How far apart two boot times, each the wall clock minus the uptime, may lie and still name one boot of a machine that names its boot by no id (Windows, macOS): a correction of the clock moves them. Read by {@link ownerStateOf}. */
+/** How far apart two boot times, each the wall clock minus the uptime, may lie and still name one boot of a machine that names its boot by no id (Windows, and a Mac whose boot session could not be read): a correction of the clock moves them. Read by {@link ownerStateOf}. */
 const BOOT_TIME_TOLERANCE_MS = 60_000;
-/** How long a query of a process's start (`ps` on macOS, PowerShell on Windows) may run before it is ended, and how many bytes it may print. Read by {@link queryText}. */
+/** How long a query of a process's start (`ps` on macOS, PowerShell on Windows) or of the boot session (`sysctl` on macOS) may run before it is ended, and how many bytes it may print. Read by {@link queryText}. */
 const START_QUERY_TIMEOUT_MS = 3_000, START_QUERY_MAX_BYTES = 1024;
 /** The field of `/proc/<pid>/stat`, counted from the first after the command name, that holds the process's start in clock ticks since the boot (field 22). Read by {@link processStartOf}. */
 const LINUX_STAT_START_INDEX = 19;
@@ -683,10 +683,20 @@ async function processStartOf(pid, system) {
   return Object.hasOwn(START_QUERIES, system.platform) ? START_QUERIES[system.platform](pid, system) : undefined;
 }
 
-/** The boot of this machine that this process runs under: the kernel's boot id on Linux, else the boot time, the wall clock minus the uptime, which a correction of the clock moves ({@link BOOT_TIME_TOLERANCE_MS}); macOS and Windows, by the platform of `system`, have no kernel boot id to read. Called by {@link ownerHere}. @example await bootHere(SYSTEM_HERE) // => { id: '0c1d7a52-6f0e-4d3b-9a57-3f6f0a1b2c3d' } on Linux, { atMs: 1790000000000 } elsewhere */
+/** The program that names macOS's boot session, by its full path, so no program of the current directory or the search path answers instead. Read by {@link bootHere}. */
+const MAC_SYSCTL_PATH = '/usr/sbin/sysctl';
+/** The boot session's id as `sysctl -n kern.bootsessionuuid` prints it: a UUID. Read by {@link bootHere}. */
+const BOOT_SESSION_UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+
+/** The boot of this machine that this process runs under, by the platform of `system`: the kernel's boot id on Linux; on macOS the boot session's id (`kern.bootsessionuuid`, by the runner of `system`, bounded as a start query is), so a Mac that took another host name from the network under one boot is still this machine ({@link placeStateOf}), with the boot time beside it for a record that names no id; elsewhere, and on a Mac whose session cannot be read, the boot time alone, the wall clock minus the uptime, which a correction of the clock moves ({@link BOOT_TIME_TOLERANCE_MS}). Called by {@link ownerHere}. @example await bootHere(SYSTEM_HERE) // => { id: '0c1d7a52-6f0e-4d3b-9a57-3f6f0a1b2c3d' } on Linux, { id: '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14', atMs: 1790000000000 } on macOS, { atMs: 1790000000000 } on Windows */
 async function bootHere(system) {
   const atMs = Date.now() - Math.round(uptime() * 1000);
-  if (system.platform === 'darwin' || system.platform === 'win32') return { atMs };
+  if (system.platform === 'darwin') {
+    const session = await system.run(MAC_SYSCTL_PATH, ['-n', 'kern.bootsessionuuid']);
+    return session !== undefined && BOOT_SESSION_UUID.test(session) ? { id: session, atMs } : { atMs };
+  }
+  // Windows names its boot by no id.
+  if (system.platform === 'win32') return { atMs };
   const id = await readFile('/proc/sys/kernel/random/boot_id', 'utf8').then(text => text.trim(), () => '');
   return id ? { id } : { atMs };
 }
@@ -745,14 +755,31 @@ async function processStateOf(pid, owner, system) {
   return liveStart !== undefined && liveStart !== owner.start ? 'gone' : 'running';
 }
 
-/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it. Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}). @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
-async function requireExited(recorded, { system }) {
+/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwner` the learner named with `--gone-host` and `--gone-space`, if any: an owner judged `elsewhere` at that host name and space counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids, which names the way out for a place that cannot come back. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
+async function requireExited(recorded, { system, goneOwner }) {
   const { pid, owner } = recorded ?? {};
   if (!Number.isSafeInteger(pid) || pid < 1 || owner !== undefined && !isOwnerForm(owner)) throw new Error('The Wiki recovery owner is invalid.');
   const state = await ownerStateOf({ pid, owner }, await ownerHere(system), system);
-  if (state === 'gone') return;
-  if (state === 'elsewhere') throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + JSON.stringify(owner.host) + ' (' + owner.space + '), where this recovery cannot look at it. Run --recover there after it exits.');
+  // An owner in a place the learner confirmed gone counts as gone; the option never ends an owner that may still run here.
+  if (state === 'gone' || state === 'elsewhere' && isOwnerAt(owner, goneOwner)) return;
+  if (state === 'elsewhere') throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ', where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.');
   throw new Error('The prior Wiki publisher process ' + pid + ' may still be running; inspect it before recovery.');
+}
+
+/** The host name and the space of process ids of an owner, as a refusal names them. Called by {@link requireExited} and {@link goneOwnerRefusalOf}. @example placeOf({ host: 'devbox', space: 'linux@4026531836' }) // => '"devbox" (linux@4026531836)' */
+const placeOf = owner => JSON.stringify(owner.host) + ' (' + owner.space + ')';
+
+/** Whether a recorded owner ran at the host name and in the space of process ids the learner confirmed gone (`--gone-host`, `--gone-space`). Called by {@link requireExited} and {@link requireGoneOwnerOf}. @example isOwnerAt({ host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } }, { host: 'devbox', space: 'linux@1' }) // => true */
+const isOwnerAt = (owner, goneOwner) => goneOwner !== undefined && owner !== undefined && owner.host === goneOwner.host && owner.space === goneOwner.space;
+
+/** The refusal of `--gone-host` and `--gone-space` that name no owner a journal records: another host name or space than the journal's owner, or no journal with an owner at all. Called by {@link requireGoneOwnerOf} and {@link recoverWikiPublication}. @param owner - The journal's owner; undefined for a journal of an earlier version, which names none, and where no journal stands. @example goneOwnerRefusalOf({ host: 'devbox', space: 'linux@1' }, undefined) // => '--gone-host and --gone-space name "devbox" (linux@1), but no Wiki publication journal with an owner stands. …' */
+const goneOwnerRefusalOf = (goneOwner, owner) => '--gone-host and --gone-space name ' + placeOf(goneOwner) + ', but ' + (owner === undefined
+  ? 'no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.'
+  : 'the Wiki publication journal names ' + placeOf(owner) + '. Nothing was moved. Name the host name and the space that the refusal of --recover names, or run --recover without them.');
+
+/** Refuses the place the learner confirmed gone (`--gone-host`, `--gone-space`) unless it is the host name and the space of the owner the journal records, before the owner is judged, so the option never ends a publish it does not name; without the option nothing is refused here. Called by {@link resumeJournal}. @throws The refusal of {@link goneOwnerRefusalOf}. @example requireGoneOwnerOf({ pid: 4242, owner: { host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } } }, { host: 'devbox', space: 'linux@2' }) // throws */
+function requireGoneOwnerOf(record, goneOwner) {
+  if (goneOwner !== undefined && !isOwnerAt(record.owner, goneOwner)) throw new Error(goneOwnerRefusalOf(goneOwner, record.owner));
 }
 
 /** Claims stopped recovery attempts through append-only exclusive records, without unlinking another contender's lock; each claim names its owner as the `system` of `ownerJudgement` tells it ({@link ownerHere}), and an earlier claim is judged by it ({@link requireExited}). @example await claimRecovery(journal, journalBytes, { system: SYSTEM_HERE }) */
@@ -852,15 +879,17 @@ async function restoreManifestHeld(record, paths, requirePathHeld, isResumed) {
   catch (error) { if (error.isHoldRefusal) await removeWritten(written, []); throw error; }
 }
 
-/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @param options.system - The system whose processes and boot the owner of a journal or a claim is judged by ({@link SYSTEM_HERE}, which the CLI passes). @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
-export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system = SYSTEM_HERE }) {
+/** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @param options.goneOwner - The host name and the space of process ids of a journal's owner that the learner confirmed gone (`--gone-host`, `--gone-space`): a place that cannot come back, such as a rebuilt container or a machine that is gone, where no publisher runs; accepted only when they are those of the journal's owner ({@link requireGoneOwnerOf}), never taken without the learner. @param options.system - The system whose processes and boot the owner of a journal or a claim is judged by ({@link SYSTEM_HERE}, which the CLI passes). @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
+export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, goneOwner, system = SYSTEM_HERE }) {
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { journal } = paths;
   // Every write and move below is held to the look the paths were resolved with.
   const requirePathHeld = await holdOfPath(paths, []);
   const found = await regularBytes(journal, true);
   // A journal found here is one a stopped publish or recovery left; this recovery writes its own below.
   const isResumed = found !== undefined;
-  const opened = isResumed ? await resumeJournal(found, paths, requirePathHeld, { system }) : await startManifestRecovery(paths, requirePathHeld, system);
+  // A place confirmed gone names the owner of a journal; without one it names none.
+  if (goneOwner !== undefined && !isResumed) throw new Error(goneOwnerRefusalOf(goneOwner, undefined));
+  const opened = isResumed ? await resumeJournal(found, paths, requirePathHeld, { system, goneOwner }) : await startManifestRecovery(paths, requirePathHeld, system);
   if (opened.result !== undefined) return opened.result;
   const { record, bytes, claims } = opened;
   let completed = false, result;
@@ -879,11 +908,12 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
   return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system });
 }
 
-/** Takes up the journal a stopped publish or recovery left: it must name this project and output and a known operation, its owner must have exited ({@link requireExited}, by `ownerJudgement`), and the path must hold before the claim ({@link claimRecovery}). Called by {@link recoverWikiPublication}. @returns The journal's record and bytes and the claims taken. @throws The refusal of a journal of another output, of an owner that may still run and of a changed path. @example await resumeJournal(bytes, paths, requirePathHeld, { system: SYSTEM_HERE }) // => { record: { operation: 'publish', … }, bytes, claims: [{ path, bytes }] } */
+/** Takes up the journal a stopped publish or recovery left: it must name this project and output and a known operation, a place the learner confirmed gone must be its owner's ({@link requireGoneOwnerOf}), its owner must have exited ({@link requireExited}, by `ownerJudgement`), and the path must hold before the claim ({@link claimRecovery}). Called by {@link recoverWikiPublication}. @returns The journal's record and bytes and the claims taken. @throws The refusal of a journal of another output, of a place confirmed gone that is not its owner's, of an owner that may still run and of a changed path. @example await resumeJournal(bytes, paths, requirePathHeld, { system: SYSTEM_HERE }) // => { record: { operation: 'publish', … }, bytes, claims: [{ path, bytes }] } */
 async function resumeJournal(bytes, { root, output, journal }, requirePathHeld, ownerJudgement) {
   const record = JSON.parse(bytes);
   if (record?.projectRoot !== root || record.output !== output || !['publish', 'restore-manifest', undefined].includes(record.operation))
     throw new Error('The Wiki publication journal does not identify this output; inspect it without moving files.');
+  requireGoneOwnerOf(record, ownerJudgement.goneOwner);
   await requireExited(record, ownerJudgement);
   await requirePathHeld();
   return { record, bytes, claims: await claimRecovery(journal, bytes, ownerJudgement) };
@@ -986,7 +1016,8 @@ async function restorePriorWiki(record, paths, requirePathHeld) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   const mode = ['--prepare', '--recover'].includes(args[0]) ? args.shift() : 'publish';
-  const allowed = new Set(['--project', '--output', '--stage']);
+  // A recovery alone takes the place the learner confirmed gone.
+  const allowed = new Set(['--project', '--output', '--stage', ...(mode === '--recover' ? ['--gone-host', '--gone-space'] : [])]);
   const flags = new Set(mode === '--prepare' ? ['--adopt-existing'] : mode === 'publish' ? ['--render-only'] : []);
   const options = {}, seen = new Set();
   let valid = true;
@@ -998,13 +1029,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     else if (allowed.has(key) && args[index + 1] && !args[index + 1].startsWith('--')) options[key] = args[++index];
     else { valid = false; break; }
   }
-  if (!valid || !options['--project'] || !options['--output'] || mode === 'publish' && !options['--stage']) {
-    console.error('Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE]');
+  // The host name and the space of a place confirmed gone are given together or not at all.
+  if (!valid || !options['--project'] || !options['--output'] || mode === 'publish' && !options['--stage'] || (options['--gone-host'] === undefined) !== (options['--gone-space'] === undefined)) {
+    console.error('Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]');
     process.exitCode = 2;
   } else {
     const operation = mode === '--prepare' ? prepareWikiStage : mode === '--recover' ? recoverWikiPublication : publishWiki;
     // The system the publisher runs on is the one its owner judgement asks ({@link SYSTEM_HERE}).
-    operation({ projectRoot: options['--project'], outputDirectory: options['--output'], stageDirectory: options['--stage'], adoptExisting: options['--adopt-existing'] === true, renderOnly: options['--render-only'] === true, system: SYSTEM_HERE })
+    const goneOwner = options['--gone-host'] === undefined ? undefined : { host: options['--gone-host'], space: options['--gone-space'] };
+    operation({ projectRoot: options['--project'], outputDirectory: options['--output'], stageDirectory: options['--stage'], adoptExisting: options['--adopt-existing'] === true, renderOnly: options['--render-only'] === true, goneOwner, system: SYSTEM_HERE })
       .then(result => console.log(JSON.stringify(result)))
       .catch(error => { console.error(String(error)); process.exitCode = 1; });
   }
