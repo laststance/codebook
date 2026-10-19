@@ -301,7 +301,7 @@ async function makeFolderHeld(folder, requirePathHeld, isFolderWhereItWas) {
 /** Whether the entry at a written file's path, looked at without following it, is a regular file with the device and file id the record names ({@link writeOwnFile}). Called by {@link removeWritten} and {@link writeOwnFile}. @example await isSameFileAt({ path: '/repo/.codebook/next/index.html', dev: 2049n, ino: 131074n }) // => false once a link stands at the path */
 const isSameFileAt = file => lstat(file.path, { bigint: true }).then(status => status.isFile() && isSameFile(status, file), () => false);
 
-/** Writes a new file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). The open is exclusive ('wx'): it refuses any entry at the name, a link or a second name of another file included, so the write never lands in a file the step did not make. Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing; the file the open made holds part of the bytes at most then, and is removed by its device and file id before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). Called by {@link writeFilesHeld}, {@link replaceOwnFile} and {@link restoreManifestHeld}, and by {@link publishWiki} for each copy of a learner's file. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open or the write rejects with; `EEXIST` while an entry stands at the name. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText) // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
+/** Writes a new file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). The open is exclusive ('wx'): it refuses any entry at the name, a link or a second name of another file included, so the write never lands in a file the step did not make. Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing; the file the open made holds part of the bytes at most then, and is removed by its device and file id before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). Called by {@link writeFilesHeld}, {@link replaceOwnFile}, {@link replaceOwnFileThrough} and {@link restoreManifestHeld}, and by {@link publishWiki} for each copy of a learner's file. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open or the write rejects with; `EEXIST` while an entry stands at the name. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText) // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
 async function writeOwnFile(path, bytes) {
   const handle = await open(path, 'wx');
   let file, isWritten = false;
@@ -318,10 +318,21 @@ async function writeOwnFile(path, bytes) {
   }
 }
 
-/** Writes a file of the candidate in place of the entry that stands at its name, without following that entry: the entry is removed first, which removes a link itself or one name of a file with several, never what it leads to, then the file is written new ({@link writeOwnFile}), whose exclusive open refuses an entry put there in between. A link put at the name of a rendered page, of the manifest or of the record after the publisher listed the candidate therefore leads no write out of the candidate. Called by {@link publishWiki} for the rendered pages and for the candidate's manifest and record. @returns The new file's record ({@link writeOwnFile}). @throws What the removal rejects with, other than a missing entry (a folder at the name), and what {@link writeOwnFile} throws. @example await replaceOwnFile('/repo/.codebook/next/index.html', html) // => { path: '/repo/.codebook/next/index.html', hash: '…', dev: 2049n, ino: 131075n } */
+/** Writes a file of the candidate in place of the entry that stands at its name, without following that entry: the entry is removed first, which removes a link itself or one name of a file with several, never what it leads to, then the file is written new ({@link writeOwnFile}), whose exclusive open refuses an entry put there in between. A link put at the name of a rendered page after the publisher listed the candidate therefore leads no write out of the candidate; a stop between the removal and the write leaves the page missing or partial, which the next render writes again. Called by {@link publishWiki} for the rendered pages. @returns The new file's record ({@link writeOwnFile}). @throws What the removal rejects with, other than a missing entry (a folder at the name), and what {@link writeOwnFile} throws. @example await replaceOwnFile('/repo/.codebook/next/index.html', html) // => { path: '/repo/.codebook/next/index.html', hash: '…', dev: 2049n, ino: 131075n } */
 async function replaceOwnFile(path, bytes) {
   await unlink(path).catch(error => { if (!isMissing(error)) throw error; });
   return writeOwnFile(path, bytes);
+}
+
+/** The file beside a candidate's manifest or record through which a publish puts the finalized one, or the prepared one again, in place ({@link replaceOwnFileThrough}); it carries the id of the publish's journal, so the recovery of a stopped publish knows it ({@link removeStoppedPublishLeftovers}). @example finalizingPathOf('/repo/.codebook/next', '6f1c…', 'codebook-wiki.json') // => '/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json' */
+const finalizingPathOf = (stage, id, name) => join(stage, '.codebook-publish-' + id + '-' + name);
+
+/** Writes a candidate's manifest or record in place of the entry at its name through a new file beside it ({@link writeOwnFile}), which a move then puts at the name ({@link renameRetried}): the move replaces the entry itself, a link or one name of a file with several, never what it leads to, so a link put at the name after the publisher read it leads no write out of the candidate; and a stop of the publish leaves the name with the bytes it had or with the new ones, never without them. A failed move removes the file beside it while it is the one written; a stop before the move leaves it for the recovery ({@link removeStoppedPublishLeftovers}). Called by {@link publishWiki} and {@link restoreFinalized}. @returns The record of the file now at the name ({@link writeOwnFile}). @throws What {@link writeOwnFile} or the last move rejects with. @example await replaceOwnFileThrough('/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json', '/repo/.codebook/next/codebook-wiki.json', manifestText) // => { path: '/repo/.codebook/next/codebook-wiki.json', hash: '…', dev: 2049n, ino: 131076n } */
+async function replaceOwnFileThrough(temporary, path, bytes) {
+  const file = await writeOwnFile(temporary, bytes);
+  try { await renameRetried(temporary, path); }
+  catch (error) { if (await isSameFileAt(file)) await unlink(temporary).catch(() => undefined); throw error; }
+  return { ...file, path };
 }
 
 /** Whether a file a step wrote is still its own: its path names the file the step wrote, by its device and file id ({@link isSameFileAt}), and that file still holds the step's bytes, by their SHA-256 digest. Called by {@link removeWritten} and {@link restoreFinalized}. @example await isStillWritten(await writeOwnFile('/repo/.codebook/next/index.html', html)) // => true until the file is edited, removed or a link stands on its path */
@@ -331,10 +342,9 @@ async function isStillWritten(file) {
   return current !== undefined && digest(current) === file.hash;
 }
 
-/** Puts back the bytes a candidate's manifest or record had before a refused publish finalized it: the publish's own file at the path ({@link isStillWritten}) takes the prepared bytes again ({@link replaceOwnFile}), and a name the publish emptied before its write failed gets them anew; an entry another writer put there stays. Called by {@link publishWiki} for every refusal before its swap, while the path and the candidate hold. @param finalized - The path, the bytes it had as prepared, and the record of the file the publish wrote there, absent while that write did not end. @example await restoreFinalized({ path: '/repo/.codebook/next/codebook-wiki.json', prepared: manifestBytes, file }) */
-async function restoreFinalized({ path, prepared, file }) {
-  if (await lookAt(path) === undefined) await writeOwnFile(path, prepared);
-  else if (file !== undefined && await isStillWritten(file)) await replaceOwnFile(path, prepared);
+/** Puts back the bytes a candidate's manifest or record had before a refused publish finalized it: the publish's own file at the path ({@link isStillWritten}) takes the prepared bytes again, through the file beside it ({@link replaceOwnFileThrough}), as does a name another writer emptied; an entry another writer put there stays. Called by {@link publishWiki} for every refusal before its swap, while the path and the candidate hold. @param finalized - The path, the file beside it, the bytes it had as prepared, and the record of the file the publish put there, absent while that did not end. @example await restoreFinalized({ path: '/repo/.codebook/next/codebook-wiki.json', temporary: '/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json', prepared: manifestBytes, file }) */
+async function restoreFinalized({ path, temporary, prepared, file }) {
+  if (await lookAt(path) === undefined || file !== undefined && await isStillWritten(file)) await replaceOwnFileThrough(temporary, path, prepared);
 }
 
 /** Removes the files a refused step wrote that are still its own, last written first, then the folders it made, each empty ({@link removeMadeFolders}). A file is the step's own while its path names the file the step wrote, by its device and file id ({@link writeOwnFile}), and that file still holds the step's bytes, by their SHA-256 digest; a file whose bytes were edited since, that is gone, or that a link on its path now leads to in its place, such as a published file of the same name and bytes, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld} and {@link restoreManifestHeld} when a hold refuses, by {@link prepareWikiStage} for a refusal after the candidate's files are written, and by {@link publishWiki} for every refusal before its swap. @example await removeWritten([await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText)], ['/repo/.codebook/next']) */
@@ -454,10 +464,10 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   await writeFile(journal, journalBytes, { flag: 'wx' });
   // The candidate's manifest and record as prepared, for each one the publish began to finalize: every refusal before the swap puts them back ({@link restoreFinalized}), so a refused publish leaves no finalized candidate that refuses the learner's next edit.
   const finalized = [];
-  const finalize = async (path, text, prepared) => {
-    const entry = { path, prepared };
+  const finalize = async (name, text, prepared) => {
+    const entry = { path: join(stage, name), temporary: finalizingPathOf(stage, record.id, name), prepared };
     finalized.push(entry);
-    entry.file = await replaceOwnFile(path, text);
+    entry.file = await replaceOwnFileThrough(entry.temporary, entry.path, text);
   };
   let movedOld = false, swapped = false;
   try {
@@ -474,9 +484,9 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       await writeHeld(join(stage, path), content, writeOwnFile);
     }
     await makeFolderHeld(stage, requirePathHeld, isFolderWhereItWas);
-    // The manifest and the record take the place of the entries at their names, which a link put there after they were read does not lead out of the candidate.
-    await finalize(join(stage, MANIFEST), manifestText, bytes);
-    await finalize(join(stage, RECEIPT), JSON.stringify({ ...receipt, kind: 'published', manifestSha256: record.manifestSha256, manifestText }), receiptBytes);
+    // The manifest and the record take the place of the entries at their names, which a link put there after they were read does not lead out of the candidate, and which a stop never leaves empty.
+    await finalize(MANIFEST, manifestText, bytes);
+    await finalize(RECEIPT, JSON.stringify({ ...receipt, kind: 'published', manifestSha256: record.manifestSha256, manifestText }), receiptBytes);
     // Recheck after acquiring the journal and copying files; a stale generation cannot win a later swap.
     const current = await inspectPrior();
     assertBaseline(receipt.baseline, current);
@@ -502,6 +512,33 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     await removeOwnedRecord(journal, journalBytes);
     throw error;
   }
+}
+
+/** The paths of the copies of the learner's files that a stopped publish made in its candidate: each file of the candidate that the candidate's manifest does not list, that stands at the place of a learner's file in the Wiki (a file the Wiki's manifest does not list) and that holds the same bytes, by their SHA-256 digest. Called by {@link removeStoppedPublishLeftovers}. @param wiki - The Wiki that stands in the Wiki folder now, as {@link inspectOutput} read it. @returns The paths, relative to the candidate. @throws What reading the candidate's manifest, listing the candidate or reading a file rejects with: a candidate that cannot be judged is left as it is. @example await learnerCopiesIn('/repo/.codebook/next', wiki, '/repo/.codebook/wiki', '/repo') // => ['manual.txt'] */
+async function learnerCopiesIn(stage, wiki, output, root) {
+  const { owned } = parseManifest(await regularBytes(join(stage, MANIFEST)), root);
+  const learnerFiles = new Set(wiki.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !wiki.owned.has(path))), copies = [];
+  for (const path of await listFiles(stage))
+    if (!owned.has(path) && learnerFiles.has(path) && digest(await regularBytes(join(stage, path))) === digest(await regularBytes(join(output, path)))) copies.push(path);
+  return copies;
+}
+
+/** Removes from the candidate of a stopped publish what that publish left there and no next publish accepts as a file of the candidate: the files through which it put the finalized manifest and record in place ({@link finalizingPathOf}), known by the journal's id, and the copies it made of the learner's files ({@link learnerCopiesIn}), which the Wiki still holds. A candidate that is gone, because it became the Wiki, or that is no folder of its own is left; so is any copy in a candidate whose manifest cannot be read or that holds a link, and the next publish names what it refuses. Each removal is held to the output's path ({@link holdOfPath}) and to the candidate's folder it lies in ({@link folderLookOf}). Called by {@link recoverWikiPublication} for a publish journal, once the prior Wiki, or none, stands in the Wiki folder. @param wiki - The Wiki in the Wiki folder, as {@link inspectOutput} read it; null for none. @example await removeStoppedPublishLeftovers(record, wiki, paths, requirePathHeld) */
+async function removeStoppedPublishLeftovers(record, wiki, paths, requirePathHeld) {
+  const { root, output } = paths, stage = record.stage, entry = await lookAt(stage);
+  // A candidate that became the Wiki is gone; one that is no folder of its own is not entered, and the next publish refuses it with its sentence.
+  if (entry === undefined || !(await isOwnFolder(stage, entry, root, paths.isOutputInProject))) return;
+  const isFolderWhereItWas = await folderLookOf(stage);
+  const removeHeld = async path => {
+    await requirePathHeld();
+    if (!(await isFolderWhereItWas(dirname(path)))) throw holdRefusalOf(stageRefusalOf(dirname(path)));
+    await unlink(path);
+  };
+  // A journal of an earlier version names no id, and its publish wrote no file beside the manifest or the record.
+  if (typeof record.id === 'string' && /^[a-f0-9-]{36}$/.test(record.id))
+    for (const name of [MANIFEST, RECEIPT]) if ((await lookAt(finalizingPathOf(stage, record.id, name)))?.isFile()) await removeHeld(finalizingPathOf(stage, record.id, name));
+  const copies = wiki ? await learnerCopiesIn(stage, wiki, output, root).catch(() => []) : [];
+  for (const path of copies) await removeHeld(join(stage, path));
 }
 
 /** Refuses recovery while a recorded publisher or recovery process may still own the operation. @example requireExited(1234) */
@@ -646,6 +683,8 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
           throw new Error('The current Wiki does not match the interrupted publication.');
         if (record.operation === 'publish' && digest(current.bytes) === record.manifestSha256 && !current.receipt)
           throw new Error('The newly published Wiki is missing its publication record.');
+        // The prior Wiki still stands, so the candidate was not moved: what the stopped publish left in it goes.
+        if (record.operation !== 'publish' || digest(current.bytes) !== record.manifestSha256) await removeStoppedPublishLeftovers(record, current, paths, requirePathHeld);
         result = { status: 'published-or-restored', output, previousOutput: record.backup };
       } else if (record.backup) {
         // The kept prior Wiki is read and moved into the Wiki folder's place, so it is held to the rule of the output.
@@ -654,8 +693,12 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
         if (!prior || record.priorManifestSha256 && digest(prior.bytes) !== record.priorManifestSha256) throw new Error('The prior Wiki does not match the publication journal.');
         await requirePathHeld();
         await renameRetried(record.backup, output);
+        await removeStoppedPublishLeftovers(record, prior, paths, requirePathHeld);
         result = { status: 'previous-restored', output };
-      } else result = { status: 'no-prior-wiki', stage: record.stage };
+      } else {
+        await removeStoppedPublishLeftovers(record, null, paths, requirePathHeld);
+        result = { status: 'no-prior-wiki', stage: record.stage };
+      }
     }
     await removeOwnedRecord(journal, bytes);
     completed = true;

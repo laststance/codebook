@@ -2330,7 +2330,7 @@ const markedCopies = new Map()
 /**
  * Loads a copy of a shipped skill module whose `node:fs/promises` is the stand-in of its mark: the one loader hook (`scripts/tests/utils/markedCopyHooks.mjs`), registered once, maps each mark to its stand-in.
  * - `?wrong-look`: `lstat` calls a link a directory, as the file system layer of Node.js does on Windows for a junction whose target is a volume (`wrongLookFileSystem.mjs`).
- * - `?swapped-folder`: a test's swap runs just before the `mkdir` of a folder ({@link swapBeforeMaking}), the `writeFile` of a file or its `open` to write ({@link swapBeforeWriting}) or the `readFile` of a file ({@link swapBeforeReading}) that the test names (`swappedFolderFileSystem.mjs`).
+ * - `?swapped-folder`: a test's swap runs just before the `mkdir` of a folder ({@link swapBeforeMaking}), the `writeFile` of a file or its `open` to write ({@link swapBeforeWriting}), the `readFile` of a file ({@link swapBeforeReading}) or the `rename` of a file (`swapBeforeRenaming`) that the test names (`swappedFolderFileSystem.mjs`).
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
@@ -3092,7 +3092,8 @@ test('a publish whose .codebook is swapped for a link just before it writes its 
   const movedOut = join(wiki.directory, 'codebook-moved-out')
   try {
     swapBeforeWriting(
-      (path) => path === join(wiki.next, 'codebook-wiki.json'),
+      (path) =>
+        dirname(path) === wiki.next && path.endsWith('codebook-wiki.json'),
       () => swapCodebookOut(wiki.root, movedOut),
     )
 
@@ -3468,7 +3469,9 @@ test('a publish refused after it finalized the candidate puts the candidate’s 
     const preparedManifest = await readFile(manifestPath),
       preparedRecord = await readFile(recordPath)
     swapBeforeWriting(
-      (path) => path === recordPath,
+      (path) =>
+        dirname(path) === wiki.next &&
+        path.endsWith('codebook-publication.json'),
       () => writeFile(join(wiki.output, 'later.txt'), 'Notes added meanwhile'),
     )
 
@@ -6787,10 +6790,10 @@ const KILLED_PUBLISHER_PROBE = fileURLToPath(
 
 /**
  * Runs a step of the shipped publisher in a process of its own that is killed where `spec` says, as a closed terminal or a crashed editor stops a publish or a recovery there.
- * @param {{ operation: 'publishWiki' | 'prepareWikiStage' | 'recoverWikiPublication', options: object, killBeforeWriting: string, killBeforeReadingAfterIt?: string }} spec - The step, what it is called with, and the start of the path of the file before whose write (or before whose read after that write) the process is killed.
+ * @param {{ operation: 'publishWiki' | 'prepareWikiStage' | 'recoverWikiPublication', options: object, killAt: { call: 'writing' | 'reading' | 'renaming', folder: string, name: string }[] }} spec - The step, what it is called with, and the chain of calls before whose last the process is killed: each the call of a file directly in `folder` whose name matches the regular expression `name`, waited for once the one before it was reached.
  * @returns {string} What the probe printed: empty once the process was killed there.
  * @example
- * runKilledPublisher({ operation: 'publishWiki', options: { projectRoot, outputDirectory, stageDirectory }, killBeforeWriting: join(stageDirectory, 'codebook-wiki.json') }) // => ''
+ * runKilledPublisher({ operation: 'publishWiki', options: { projectRoot, outputDirectory, stageDirectory }, killAt: [{ call: 'writing', folder: stageDirectory, name: 'codebook-wiki\\.json$' }] }) // => ''
  */
 function runKilledPublisher(spec) {
   return spawnSync(
@@ -6828,7 +6831,9 @@ test('a Wiki whose publish was killed and whose published manifest was edited af
         outputDirectory: output,
         stageDirectory: next,
       },
-      killBeforeWriting: join(next, 'codebook-wiki.json'),
+      killAt: [
+        { call: 'writing', folder: next, name: 'codebook-wiki\\.json$' },
+      ],
     })
     await writeFile(manifestPath, '{"edited":"by the learner"}')
 
@@ -6904,8 +6909,14 @@ test('a Wiki whose manifest recovery was killed and whose manifest was edited ag
     const killed = runKilledPublisher({
       operation: 'recoverWikiPublication',
       options: { projectRoot: root, outputDirectory: output },
-      killBeforeWriting: join(output, '.codebook-restore-'),
-      killBeforeReadingAfterIt: join(output, 'codebook-publication.json'),
+      killAt: [
+        { call: 'writing', folder: output, name: '^\\.codebook-restore-' },
+        {
+          call: 'reading',
+          folder: output,
+          name: '^codebook-publication\\.json$',
+        },
+      ],
     })
     await writeFile(manifestPath, '{"edited":"second"}')
 
@@ -6952,3 +6963,94 @@ test('a Wiki whose manifest recovery was killed and whose manifest was edited ag
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+for (const stop of [
+  {
+    when: 'before it finalized the candidate’s manifest',
+    killAt: (wiki) => [
+      { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+    ],
+  },
+  {
+    when: 'before it moved the finalized manifest into place',
+    killAt: (wiki) => [
+      {
+        call: 'renaming',
+        folder: wiki.next,
+        name: '^\\.codebook-publish-.*-codebook-wiki\\.json$',
+      },
+    ],
+  },
+  {
+    when: 'after it finalized the candidate',
+    killAt: (wiki) => [
+      { call: 'writing', folder: wiki.next, name: '^manual\\.txt$' },
+      {
+        call: 'reading',
+        folder: wiki.output,
+        name: '^codebook-publication\\.json$',
+      },
+    ],
+  },
+]) {
+  // Value: protects=the next publish of a candidate after a publish that was killed once it had copied the learner's files into the candidate, and the --recover that followed; fails_when=the recovery of the publish journal moves or keeps the Wiki and never looks at the candidate, so the copies (and the file through which the publish was putting the finalized manifest in place) stay in it and the next publish is refused for them as files outside its manifest, or the publish removed the candidate's manifest before it wrote the finalized one, so a kill leaves the candidate without it; why_new=Cycle 0047 row 26 (P3RT4); seam=a publisher process killed at the named point (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a learner's file the learner also put into the candidate under another name, which stays a file outside the manifest
+  test(`a publish killed ${stop.when}, after it copied the learner’s files into the candidate, is recovered, and the candidate then publishes with the learner’s files kept`, async () => {
+    // Arrange: the published Wiki holds two files of the learner's; the publish of the candidate is killed after it copied them.
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      await writeFile(
+        join(wiki.output, 'manual.txt'),
+        'The learner’s own notes',
+      )
+      await mkdir(join(wiki.output, 'notes'))
+      await writeFile(join(wiki.output, 'notes/later.txt'), 'More notes')
+      const killed = runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: stop.killAt(wiki),
+      })
+
+      // Act: the recovery, then the candidate published again.
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ preservedManualFiles }) => ({ preservedManualFiles }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          recovery,
+          nextPublish,
+          learnerFiles: [
+            await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+            await readFile(join(wiki.output, 'notes/later.txt'), 'utf8'),
+          ],
+        },
+        {
+          killed: '',
+          recovery: 'published-or-restored',
+          nextPublish: { preservedManualFiles: 2 },
+          learnerFiles: ['The learner’s own notes', 'More notes'],
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}

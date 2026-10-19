@@ -7,6 +7,7 @@ const pendingSwaps = {
   mkdir: undefined,
   writeFile: undefined,
   readFile: undefined,
+  rename: undefined,
 }
 
 /** The optional read observer of {@link observeFileReads}; it holds no file bytes itself. */
@@ -63,8 +64,20 @@ export function swapBeforeReading(isAwaited, swap) {
 }
 
 /**
- * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile}, {@link open} and {@link readFile}.
- * @param {'mkdir' | 'writeFile' | 'readFile'} kind - The call about to run.
+ * Asks the next `rename` whose source `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`: as a stop of the publisher between the write of a file and its move into place. Called by the publisher's tests through the probe that kills a publisher process (`killedPublisherProbe.mjs`).
+ * @param {(path: string) => boolean} isAwaited - Whether the source of a rename is the one before which the swap runs.
+ * @param {() => Promise<void>} swap - The swap.
+ * @returns {void}
+ * @example
+ * swapBeforeRenaming((path) => path.includes('.codebook-publish-'), async () => process.kill(process.pid, 'SIGKILL'))
+ */
+export function swapBeforeRenaming(isAwaited, swap) {
+  pendingSwaps.rename = { isAwaited, swap }
+}
+
+/**
+ * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile}, {@link open}, {@link readFile} and {@link rename}.
+ * @param {'mkdir' | 'writeFile' | 'readFile' | 'rename'} kind - The call about to run.
  * @param {string | URL} path - The call's path.
  * @returns {Promise<void>} Once the swap ran, or at once when none waits for this path.
  * @example
@@ -133,4 +146,17 @@ export async function readFile(path, ...options) {
   const bytes = await fileSystem.readFile(path, ...options)
   readObserver?.(String(path), bytes)
   return bytes
+}
+
+/**
+ * Moves a folder or file as `rename` does, after the swap of {@link swapBeforeRenaming} when its source is the one the swap waits for.
+ * @param {string} from - What is moved.
+ * @param {string} to - Where it goes.
+ * @returns {Promise<void>} What `rename` answers.
+ * @example
+ * await rename('/repo/.codebook/next/.codebook-publish-1-codebook-wiki.json', '/repo/.codebook/next/codebook-wiki.json')
+ */
+export async function rename(from, to) {
+  await swapIfAwaited('rename', from)
+  return fileSystem.rename(from, to)
 }
