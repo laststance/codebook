@@ -569,28 +569,38 @@ const START_QUERY_TIMEOUT_MS = 3_000, START_QUERY_MAX_BYTES = 1024;
 /** The field of `/proc/<pid>/stat`, counted from the first after the command name, that holds the process's start in clock ticks since the boot (field 22). Read by {@link processStartOf}. */
 const LINUX_STAT_START_INDEX = 19;
 
-/** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}). Called by {@link processStartOf}. @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
+/** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}). Called by {@link macStartOf} and {@link windowsStartOf}. @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
 const queryText = (program, args, env) => new Promise(resolve => execFile(program, args, { env, timeout: START_QUERY_TIMEOUT_MS, maxBuffer: START_QUERY_MAX_BYTES, killSignal: 'SIGKILL', windowsHide: true },
   (error, stdout) => resolve(error ? undefined : String(stdout).trim() || undefined)));
 
-/** When a process began, as its system tells it, so that a process id another process took since is told from the process a journal or a claim records: on Linux the clock ticks since the boot in `/proc/<pid>/stat`, on macOS what `ps` prints in the C locale and in UTC, on Windows the creation time PowerShell prints in UTC. Called by {@link ownerHere} for this process and by {@link ownerStateOf} for the process that has a recorded id now. @returns The start with its system's form before a colon (`linux:`, `ps:`, `win:`); undefined when it cannot be read. @example await processStartOf(process.pid) // => 'linux:16362446' */
-async function processStartOf(pid) {
-  if (process.platform === 'linux') {
-    const stat = await readFile('/proc/' + pid + '/stat', 'utf8').catch(() => '');
-    // The fields are counted after the last ")": the command name may hold any text.
-    const ticks = stat.slice(stat.lastIndexOf(')') + 1).trim().split(' ')[LINUX_STAT_START_INDEX];
-    return stat.includes(')') && /^\d+$/.test(ticks ?? '') ? 'linux:' + ticks : undefined;
-  }
-  if (process.platform === 'darwin') {
-    const text = await queryText('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC' });
-    return text !== undefined && /^[\x20-\x7e]{1,64}$/.test(text) ? 'ps:' + text : undefined;
-  }
-  if (process.platform !== 'win32') return undefined;
-  // PowerShell is started by its full path under the system root, never found on the search path.
+/** The start of a Linux process: the clock ticks since the boot in `/proc/<pid>/stat`. The query of {@link START_QUERIES} on Linux. @returns `linux:<ticks>`; undefined when the file cannot be read or holds no start. @example await linuxStartOf(process.pid) // => 'linux:16362446' */
+async function linuxStartOf(pid) {
+  const stat = await readFile('/proc/' + pid + '/stat', 'utf8').catch(() => '');
+  // The fields are counted after the last ")": the command name may hold any text.
+  const ticks = stat.slice(stat.lastIndexOf(')') + 1).trim().split(' ')[LINUX_STAT_START_INDEX];
+  return stat.includes(')') && /^\d+$/.test(ticks ?? '') ? 'linux:' + ticks : undefined;
+}
+
+/** The start of a macOS process: what `ps` prints in the C locale and in UTC, so two callers with different ones read the same text. The query of {@link START_QUERIES} on macOS. @returns `ps:<text>`; undefined for any other answer. @example await macStartOf(4242) // => 'ps:Mon Oct  5 09:12:33 2026' */
+async function macStartOf(pid) {
+  const text = await queryText('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC' });
+  return text !== undefined && /^[\x20-\x7e]{1,64}$/.test(text) ? 'ps:' + text : undefined;
+}
+
+/** The start of a Windows process: the creation time PowerShell prints in UTC, PowerShell started by its full path under the system root, never found on the search path. The query of {@link START_QUERIES} on Windows. @returns `win:<time>`; undefined without a system root and for any other answer. @example await windowsStartOf(4242) // => 'win:2026-10-05T09:12:33.1234567Z' */
+async function windowsStartOf(pid) {
   const systemRoot = [process.env.SystemRoot, process.env.windir].find(path => /^[A-Za-z]:[\\/]/.test(path ?? ''));
   const text = systemRoot === undefined ? undefined : await queryText(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id ' + pid + " -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')"]);
   return text !== undefined && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(text) ? 'win:' + text : undefined;
+}
+
+/** The query of a process's start on each system whose starts the publisher reads. Read by {@link processStartOf}. */
+const START_QUERIES = { linux: linuxStartOf, darwin: macStartOf, win32: windowsStartOf };
+
+/** When a process began, as its system tells it ({@link START_QUERIES}), so that a process id another process took since is told from the process a journal or a claim records. Called by {@link ownerHere} for this process and by {@link processStateOf} for the process that has a recorded id now. @returns The start with its system's form before a colon (`linux:`, `ps:`, `win:`); undefined when it cannot be read, and on any other system. @example await processStartOf(process.pid) // => 'linux:16362446' */
+async function processStartOf(pid) {
+  return Object.hasOwn(START_QUERIES, process.platform) ? START_QUERIES[process.platform](pid) : undefined;
 }
 
 /** The boot of this machine that this process runs under: the kernel's boot id on Linux, else the boot time, the wall clock minus the uptime, which a correction of the clock moves ({@link BOOT_TIME_TOLERANCE_MS}). Called by {@link ownerHere}. @example await bootHere() // => { id: '0c1d7a52-6f0e-4d3b-9a57-3f6f0a1b2c3d' } on Linux, { atMs: 1790000000000 } elsewhere */
@@ -614,11 +624,14 @@ function ownerHere() {
   return ownerHereReading;
 }
 
+/** Whether a recorded boot is in the form {@link bootHere} gives: a boot id, or a boot time. Called by {@link isOwnerForm}. @example isBootForm({ atMs: 1790000000000 }) // => true */
+const isBootForm = boot => typeof boot?.id === 'string' || Number.isFinite(boot?.atMs);
+
 /** Whether a recorded owner is in the form {@link ownerHere} writes. Called by {@link requireExited}. @example isOwnerForm({ host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } }) // => true */
 const isOwnerForm = owner => owner !== null && typeof owner === 'object' && typeof owner.host === 'string' && typeof owner.space === 'string' &&
-  (typeof owner.boot?.id === 'string' || Number.isFinite(owner.boot?.atMs)) && (owner.start === undefined || typeof owner.start === 'string');
+  isBootForm(owner.boot) && (owner.start === undefined || typeof owner.start === 'string');
 
-/** Whether no process has an id here, probed with signal 0: `ESRCH` alone says so; a process of another user that runs answers `EPERM`, which says it exists. Called by {@link ownerStateOf}. @example isProcessIdFree(process.pid) // => false */
+/** Whether no process has an id here, probed with signal 0: `ESRCH` alone says so; a process of another user that runs answers `EPERM`, which says it exists. Called by {@link ownerStateOf} and {@link processStateOf}. @example isProcessIdFree(process.pid) // => false */
 function isProcessIdFree(pid) {
   try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; }
 }
@@ -626,13 +639,25 @@ function isProcessIdFree(pid) {
 /** Judges the owner a journal or a recovery claim records: `gone` when it cannot be at work any more, `running` while it may run here, `elsewhere` when it ran on another machine or in another space of process ids, which no probe here reaches. A record of an earlier version names its process id alone and is judged by that id here, as then. A record with its owner: one of another host name is of another machine, unless both name one boot id; an earlier boot ended every process of it, by its boot id, or, where neither names one and the record has no start, by a boot time that lies apart by more than {@link BOOT_TIME_TOLERANCE_MS}; a process id no process has is gone; a process id another process has now, which began at another time than the recorded start, is gone too. Called by {@link requireExited}. @example await ownerStateOf({ pid: 4242, owner: { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } } }, { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-2' } }) // => 'gone' */
 async function ownerStateOf({ pid, owner }, here) {
   if (owner === undefined) return isProcessIdFree(pid) ? 'gone' : 'running';
+  return placeStateOf(owner, here) ?? processStateOf(pid, owner);
+}
+
+/** Judges a recorded owner by where it ran, before its process id is probed: `elsewhere` for another machine (another host name, unless both name one boot id) or another space of process ids, `gone` for an earlier boot of this machine ({@link isOfEarlierBootTime} where neither names a boot id). Called by {@link ownerStateOf}. @returns The state; undefined when the owner ran under this boot, in this space, and its process id decides ({@link processStateOf}). @example placeStateOf({ host: 'other', space: 'linux@1', boot: { id: 'boot-1' } }, { host: 'workstation', space: 'linux@1', boot: { id: 'boot-2' } }) // => 'elsewhere' */
+function placeStateOf(owner, here) {
   const hasBootIds = owner.boot.id !== undefined && here.boot.id !== undefined;
   // A machine is known by its host name, or, under another one, by its exact boot.
   if (owner.host !== here.host && !(hasBootIds && owner.boot.id === here.boot.id)) return 'elsewhere';
   if (hasBootIds && owner.boot.id !== here.boot.id) return 'gone';
   if (owner.space !== here.space) return 'elsewhere';
-  // A boot time decides only for a record without a start: a correction of the clock moves it, and a start decides better.
-  if (owner.start === undefined && !hasBootIds && Number.isFinite(owner.boot.atMs) && Number.isFinite(here.boot.atMs) && Math.abs(owner.boot.atMs - here.boot.atMs) > BOOT_TIME_TOLERANCE_MS) return 'gone';
+  return isOfEarlierBootTime(owner, here, hasBootIds) ? 'gone' : undefined;
+}
+
+/** Whether a recorded owner without a start ran under an earlier boot by the boot times alone, which lie apart by more than {@link BOOT_TIME_TOLERANCE_MS}: a boot time decides only for a record without a start, since a correction of the clock moves it and a start decides better, and only where neither side names a boot id. Called by {@link placeStateOf}. @example isOfEarlierBootTime({ boot: { atMs: 0 } }, { boot: { atMs: 3600000 } }, false) // => true */
+const isOfEarlierBootTime = (owner, here, hasBootIds) => owner.start === undefined && !hasBootIds && Number.isFinite(owner.boot.atMs) && Number.isFinite(here.boot.atMs) &&
+  Math.abs(owner.boot.atMs - here.boot.atMs) > BOOT_TIME_TOLERANCE_MS;
+
+/** Judges a recorded owner of this boot and space by its process id: `gone` when no process has the id, or when the process that has it now began at another time than the recorded start; `running` otherwise, also when the start cannot be read. Called by {@link ownerStateOf}. @example await processStateOf(process.pid, { start: 'linux:1' }) // => 'gone' */
+async function processStateOf(pid, owner) {
   if (isProcessIdFree(pid)) return 'gone';
   const liveStart = owner.start === undefined ? undefined : await processStartOf(pid);
   return liveStart !== undefined && liveStart !== owner.start ? 'gone' : 'running';
