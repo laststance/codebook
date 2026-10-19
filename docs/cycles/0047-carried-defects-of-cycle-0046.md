@@ -16,9 +16,9 @@ Can every defect Cycle 0046 left be closed, with nothing carried again, in one p
 
 ## Hypothesis and scope
 
-- Hypothesis: each of the 53 tasks is closed by a fix with a test that fails without it, or by recorded evidence that it is not a defect or no longer applies, and the cycle's own reviews leave nothing open.
+- Hypothesis: each task (53 at filing, and every defect found while the cycle runs) is closed by a fix with a test that fails without it, or by recorded evidence that it is not a defect or no longer applies, and the cycle's own reviews leave nothing open.
 - Smallest observable outcome: every row of [the task table](0047-carried-defects.md) closed, the pull request merged after its reviews, required CI and the exact-head gate, and Issue #90 closed with a comment that states nothing is carried.
-- In scope: the 53 tasks and every defect found while this cycle runs (added as rows and fixed here).
+- In scope: the 53 tasks and every defect found while this cycle runs (added as rows and fixed here; 102 rows on 2026-10-19).
 - Out of scope for this cycle (still retained in PRODUCT_GOAL.md): any increment, among them native use in an editor for Windows (a feature cycle of its own) and the natural `/codebook` request's first-run proof (the next feature cycle's frozen request).
 - Conditions that falsify the approach: a task that neither a fix nor evidence can close; a fix that regresses a delivered behavior its tests or the native round hold.
 
@@ -40,7 +40,7 @@ Can every defect Cycle 0046 left be closed, with nothing carried again, in one p
 ## Source-gap audit and selected increment
 
 - Baseline: `main` at `ef38585a` (0.2.30.0, PR #88), goal version 10, the PNG above. The audit covers every row of the acceptance map against the tasks: the gap table of PROJECT_STATE holds each row's implementation and proof; this cycle changes mechanism-level defects of the rows named above and adds no behavior.
-- Primary gaps: task 2 (a page a cloned repository crafted keeps a live editor link in a browser that reads a `select` by the older rules) and task 3 (pages waiting for a worker are held in the editor's memory without a bound). No task is selected or ranked: the cycle closes only when all 53 are closed.
+- Primary gaps: task 2 (a page a cloned repository crafted keeps a live editor link in a browser that reads a `select` by the older rules) and task 3 (pages waiting for a worker are held in the editor's memory without a bound). No task is selected or ranked: the cycle closes only when every row is closed.
 - Carry-forward rationale: rows without a task keep their last evidence; a row a fix touches is checked again by its tests and, where it is user-visible, by the native round.
 
 ## Carried defects
@@ -68,7 +68,7 @@ The entry reads of this conversation (PRODUCT_GOAL version 10, the three feature
 
 ### The fixers (2026-10-19)
 
-Eleven fixers worked in worktrees of their own from `e05f46b6` (J and K from the integrated branch), at most five at once; their commits are integrated by cherry-pick in this order, each set without conflict: D (rows 9, 10, 11, 21, 47, 48), C (the publisher: 20, 25 to 29, 42, 43), F (the marker, the lock and the process start: 13, 31 to 34), A (the reader's workers, file reads and refusal page: 3, 4, 5, 12, 15 to 19, 22, 23), B (the served page's filter and the reader's script: 2, 7, 14, 46, 47; row 8 closed by evidence), E (the chat withdrawal and the watch: 6, 24, 30), H (Cursor's catalog: 38, 39), J (the help text and the README: 49 to 52, the README parts of rows 6, 32 and 33), G (stores, processes and runs: 35, 36, 37, 40, 41), I (the Study workspace: 44; row 45 closed by evidence), K (rows 54 to 57, which fixers G and K found while they fixed rows 36 and 55). Row 53 is the parent's (`66a5ac66`). Every row's test was shown red on its base and green after; the task table names each commit and test.
+Eleven fixers worked in worktrees of their own from `e05f46b6` (J and K from the integrated branch), at most five at once; their commits are integrated by cherry-pick in this order, each set without conflict: D (rows 9, 10, 11, 21, 47, 48), C (the publisher: 20, 25 to 29, 42, 43), F (the marker, the lock and the process start: 13, 31 to 34), A (the reader's workers, file reads and refusal page: 3, 4, 5, 12, 15 to 19, 22, 23), B (the served page's filter and the reader's script: 2, 7, 14, 46, 47; row 8 closed by evidence), E (the chat withdrawal and the watch: 6, 24, 30), H (Cursor's catalog: 38, 39), J (the help text and the README: 49 to 52, the README parts of rows 6, 32 and 33), G (stores, processes and runs: 35, 36, 37, 40, 41), I (the Study workspace: 44; row 45 closed by evidence), K (rows 54 to 57, which fixers G and K found while they fixed rows 36 and 55). Row 53 is the parent's (`66a5ac66`). Every row that changes behavior has a test shown red on its base and green after; rows 14, 23, 46 and 47 change no behavior (dead code, a name, comments) and close by their commits, and rows 8 and 45 close by evidence; the task table names each commit and test.
 
 Decisions taken while they worked (owner away, recommended option each time):
 
@@ -80,9 +80,15 @@ Decisions taken while they worked (owner away, recommended option each time):
 
 The integrated product suite on `2bcbc816` (before rows 44, 45 and 54 to 57): 5307 tests, 5306 pass, 1 existing skip, 0 fail.
 
+### The delivery's first review pass (2026-10-19)
+
+`/ship` started on `da509c73` in the bug-fix arrangement. The full gate had passed on that head (product 5311 tests, 5310 pass and 1 skip; package 482, 480 pass and the 2 change-history checks that wait for this release's entry). The pre-gate failed on the classes earlier deliveries triaged as false positives (number-like literals and test host names, test literals that hold the old value of a changed constant by coincidence, and no lane configuration on `main`, so its default runner timed out); it is named in the pull request. The plan audit found every row done or changed but row 1 and row 2's browser check: row 1 closed in `317eb44e` once fallow 3.34.1 had passed pnpm's window, and row 2's crafted pages were read in Chromium 151, Firefox 156 and WebKit 26.6 (row 2's cell). The coverage audit reached 97% of the traced paths with a test of two or three stars and added six tests (`b6f7375d`); one gap, the filter's second round, is row 71.
+
+The first review pass read that candidate with the core checklist (115 of 115 eligible gate hunks read, none a finding), six specialists (testing, maintainability, security, performance, simplification, state machines), the Red Team, the local CodeRabbit CLI (one free review, 84 files), the open-code-review delegate (47 of 47 reviewable files), the Claude adversarial review and the Codex structured review; the Codex adversarial challenge timed out twice (missing coverage, run again on the final candidate). Their findings, merged where two named one defect, are rows 58 to 102. Decisions (owner away, recommended option each time; the arrangement fixes every finding): the advisories and the findings marked for investigation are fixed too; row 62 reads the macOS boot session id and adds a `--recover` option that names the recorded owner and needs the learner's confirmation; row 78 makes the renderer refuse a page over the reader's limit; row 85 keeps the unreadable marker's refusal and changes what the learner is told; row 90 names a refusal's end rounded up to the minute. The low-confidence advice to fold two one-caller helpers into their caller (`waitWithin`, `chatCommandReturnsInTime`) stays in the review's appendix. Seven fixers work on rows 58 to 99 in worktrees of their own from `b6f7375d`; rows 100 to 102 are the parent's.
+
 ## Result and decision
 
-Result pending. Counts: 57 rows, 56 closed, 0 implementing; row 1 waits for fallow 3.34.1's release window (2026-10-19T06:17Z).
+Result pending. Counts: 102 rows, 57 closed, 45 implementing (rows 58 to 102, the findings of the delivery's first review pass).
 
 ## Handoff
 
