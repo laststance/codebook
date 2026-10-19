@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
+import { readCurrentState } from './utils/currentState.mjs'
+
 // Regression: Cycle 0046 task475 — the table introduction and final resume counts retained472/443 after rows473/474 closed.
 // Found by /qa on 2026-10-11.
 // Report: docs/cycles/0046-carried-defects-of-cycle-0045.md#retained-native28-motion-entry-2026-10-11
@@ -79,10 +81,8 @@ test('the current replay action never asks to repair an already closed cycle def
     new URL('../../../docs/cycles/0046-carried-defects.md', import.meta.url),
     'utf8',
   )
-  const state = await readFile(
-    new URL('../../../PROJECT_STATE.md', import.meta.url),
-    'utf8',
-  )
+  // The current state is a section of the active cycle record (no state file since 2026-10-19).
+  const { state } = await readCurrentState()
 
   // Act: the final cell owns current closure, and the gap row's final cell owns its next action.
   const taskRows = table.split('\n').filter((line) => /^\| \d+ \|/.test(line))

@@ -4,7 +4,7 @@
 
 [Goal version 10](https://github.com/laststance/codebook/blob/main/PRODUCT_GOAL.md) defines standard-chat live explanation with the native debugger, synchronized application/source/native-debugger learning replay and time travel with summary/sequence diagram, and skill-driven reproduction of DeepWiki itself, including reader/diagrams/citations/Q&A and local-editor source links, independent of runtime/debug MCP. Wiki output defaults to the project with a configurable location; chat/button updates and source deep links are required. Three selectable UI themes and Codebook's custom runtime-value display are retired requirements. Replay and Wiki retain their own screens.
 
-**Implementation transition:** This development candidate uses externally opened repositories only. Runtime, source inspection, recording and storage remain under active development; the accepted replay/DeepWiki design is not yet complete. See [current state](https://github.com/laststance/codebook/blob/main/PROJECT_STATE.md) for verified scope.
+**Implementation transition:** This development candidate uses externally opened repositories only. Runtime, source inspection, recording and storage remain under active development; the accepted replay/DeepWiki design is not yet complete. See [the cycle records](https://github.com/laststance/codebook/tree/main/docs/cycles) for verified scope: the active cycle's record holds the current state.
 
 Before final acceptance, open `/Users/ryotamurakami/repository/nextjs-dashboard` for actual-editor development. The bounded [configured repository action](#run-one-configured-repository-action) does not establish general runtime support.
 

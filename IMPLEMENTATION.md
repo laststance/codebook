@@ -8,7 +8,7 @@ Compaction recovery: [.codex/hooks.json](.codex/hooks.json) registers only `Sess
 
 ## 1. Audit gaps before selecting work
 
-Use [PROJECT_STATE.md](PROJECT_STATE.md)'s gap table as the current ledger. At a new cycle, changed goal/design, or source change without an impact assessment, reconcile **every row** of [the acceptance map](#product-acceptance-map). On other resumes, verify the baseline identity and changed paths, then inspect every affected row; justify carry-forward for the rest. A docs-only commit may retain an unchanged product-source baseline explicitly.
+Use the gap table of the active cycle record's current state ([AGENTS.md](AGENTS.md#mandatory-entry) says which record) as the current ledger. At a new cycle, changed goal/design, or source change without an impact assessment, reconcile **every row** of [the acceptance map](#product-acceptance-map). On other resumes, verify the baseline identity and changed paths, then inspect every affected row; justify carry-forward for the rest. A docs-only commit may retain an unchanged product-source baseline explicitly.
 
 For each row, inspect its actual source entry/symbol and available evidence. Record:
 
@@ -16,7 +16,7 @@ For each row, inspect its actual source entry/symbol and available evidence. Rec
 - **Proof:** result, host, operating system, source/candidate identity, validation level and evidence link. Absent/stale proof remains unverified. A source mismatch and missing runtime evidence are different gaps.
 - **Next action:** the source change or bounded experiment needed, with the observation that will verify it. UNKNOWN becomes an investigation; it cannot be treated as implemented or absent.
 
-**Gate:** every row is accounted for, no active goal is omitted, and the cycle records the baseline and affected IDs. A read receipt, goal-link inventory or old PASS cannot satisfy this audit. PROJECT_STATE holds the latest assessment; closed cycles retain supporting history.
+**Gate:** every row is accounted for, no active goal is omitted, and the cycle records the baseline and affected IDs. A read receipt, goal-link inventory or old PASS cannot satisfy this audit. The current state holds the latest assessment; closed cycles retain supporting history.
 
 ## 2. Select the increment from those gaps
 
@@ -46,7 +46,7 @@ Acquire native macOS editor video through [the OBS Window Capture procedure](doc
 
 Reconcile every changed/dependent AC row against new source and evidence, including regressions. Preserve unaffected evidence only with a source/behavior impact rationale. Compare before/after gaps; retain missing implementation, missing proof and UNKNOWN. No status advances because a checkbox, skill, image or PR is complete.
 
-Update the cycle and PROJECT_STATE with results and **one executable next action**. PROJECT_STATE is overwritten, not appended to: it keeps the active cycle and the two before it ([rule](DEVELOPMENT.md#standing-owner-direction)). Check that the route still reaches every active goal and the next candidate addresses the largest remaining blocker. Follow DEVELOPMENT.md for reviews, authorized delivery and issue mirrors; unavailable tracking leaves a pending sync, not missing local instructions.
+Update the cycle record and its current state with results and **one executable next action**. The current state is overwritten, not appended to: it keeps the active cycle and the two before it ([rule](DEVELOPMENT.md#standing-owner-direction)). Check that the route still reaches every active goal and the next candidate addresses the largest remaining blocker. Follow DEVELOPMENT.md for reviews, authorized delivery and issue mirrors; unavailable tracking leaves a pending sync, not missing local instructions.
 
 **Closure gate:** a fresh agent can recover the accepted product, concrete code gaps, actual proof, authorized phase and next step locally. All affected rows, required checks and UI comparisons are recorded. Markdown supplies an auditable procedure; it cannot mechanically prove comprehension.
 
@@ -54,7 +54,7 @@ Final completion requires the full [protocol](docs/acceptance/FINAL_REVIEW.md), 
 
 ## Product acceptance map
 
-This inventory covers G01–G07 and G10–G12 under [goal version 10](PRODUCT_GOAL.md); G08/G09 are retired. Linked contracts control details. The map defines outcomes; [PROJECT_STATE.md](PROJECT_STATE.md#current-product-gaps) records implementation/proof/next actions. Keep all 13 rows when updating either document.
+This inventory covers G01–G07 and G10–G12 under [goal version 10](PRODUCT_GOAL.md); G08/G09 are retired. Linked contracts control details. The map defines outcomes; the gap table of the active cycle record's current state records implementation/proof/next actions. Keep all 13 rows when updating either document.
 
 ### Observable completion checks
 

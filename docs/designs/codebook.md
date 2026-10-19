@@ -112,4 +112,4 @@ Use supported editor APIs and commands; unrestricted workbench DOM mutation is n
 
 The [final protocol](../acceptance/FINAL_REVIEW.md) applies to all active capabilities and nine required real projects in both hosts. Mechanism/unit checks remain useful but neither fixtures nor old mode checks prove the behavior versions 9 and 10 require. Runtime, replay and independent Wiki/source-link evidence must identify their own source/package/host versions.
 
-Current phase and next action: [PROJECT_STATE.md](../../PROJECT_STATE.md). Follow [IMPLEMENTATION.md](../../IMPLEMENTATION.md) to audit source gaps, select bounded work and preserve distinct implementation/native/acceptance evidence.
+Current phase and next action: the current state of the active cycle record ([AGENTS.md](../../AGENTS.md#mandatory-entry) says which record). Follow [IMPLEMENTATION.md](../../IMPLEMENTATION.md) to audit source gaps, select bounded work and preserve distinct implementation/native/acceptance evidence.

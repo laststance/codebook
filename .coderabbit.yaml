@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-# Review policy follows AGENTS.md and the active cycle linked by PROJECT_STATE.md.
+# Review policy follows AGENTS.md and the active cycle record, which holds the current state.
 language: ja-JP
 tone_instructions: >-
   Be concise and evidence-based. Explain the trigger, user impact, and smallest
@@ -51,7 +51,7 @@ reviews:
     - path: '**/*'
       instructions: |
         Read AGENTS.md and the authority documents supplied as code guidelines.
-        Follow the active cycle linked by PROJECT_STATE.md; PRODUCT_GOAL.md is
+        Follow the active cycle record (it holds the current state); PRODUCT_GOAL.md is
         the full destination, not a demand to finish every capability in each PR.
         Hosted reviews cannot access developer-home rule files, local tools, or
         private artifacts. Use available repository and inline rules; report any
@@ -137,11 +137,10 @@ knowledge_base:
     filePatterns:
       - 'AGENTS.md'
       - 'PRODUCT_GOAL.md'
-      - 'PROJECT_STATE.md'
       - 'DEVELOPMENT.md'
       - 'DESIGN.md'
-      # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: 'docs/cycles/0046-carried-defects-of-cycle-0045.md'
+      # Keep this mapping synchronized when another cycle record takes the current state.
+      - files: 'docs/cycles/0047-carried-defects-of-cycle-0046.md'
         applyTo: '**/*'
       - files: 'docs/designs/codebook.md'
         applyTo: 'extension/src/**'

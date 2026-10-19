@@ -4,6 +4,8 @@ import { test } from 'node:test'
 
 import ts from 'typescript'
 
+import { readCurrentState } from './utils/currentState.mjs'
+
 const repositoryRoot = new URL('../../../', import.meta.url)
 
 /** The folders whose files are the product's own text: what a learner or an agent can be shown comes from one of them. Test files, browser checks (`*-qa.mjs`) and fixtures are left out ({@link productText}). */
@@ -211,16 +213,6 @@ function partsOf(quotation) {
   )
 }
 
-/**
- * Names the cycle the project state gives as active, so a test can tell the entry of a cycle that is still being delivered from one that is history.
- * @param {string} projectState - The text of `PROJECT_STATE.md`.
- * @returns {string | undefined} The cycle's four digits; `undefined` when the state table links no active cycle.
- * @example
- * activeCycleOf('| Active cycle | [Cycle 0046](docs/cycles/0046-x.md) |') // => '0046'
- */
-const activeCycleOf = (projectState) =>
-  /^\| Active cycle \| \[Cycle (\d{4})\]/m.exec(projectState)?.[1]
-
 // Value: protects=a reader who opens the change history to see what the delivered version changed; fails_when=the version in VERSION is raised without an entry of that version at the top of the change history, or the entry's heading loses its date or its mark as a development candidate; why_new=Cycle 0046 row 120: the version and its entry are written in two files and nothing compared them; seam=none
 test('the newest entry of the change history is the entry of the version in VERSION, with its date and its mark as a development candidate', async () => {
   // Arrange
@@ -243,7 +235,8 @@ test('while its cycle is the active one, every sentence the newest entry of the 
   // Arrange
   const { text } = newestEntryOf(await readDocument('CHANGELOG.md'))
   const cycleOfEntry = /^Cycle (\d{4}) /m.exec(text)?.[1]
-  const activeCycle = activeCycleOf(await readDocument('PROJECT_STATE.md'))
+  // The active cycle is the one whose record holds the current state.
+  const activeCycle = (await readCurrentState()).cycle
   // The entry of a closed cycle is history: a later cycle may reword a sentence it quotes, and the entry stays as it was delivered.
   if (cycleOfEntry !== activeCycle) {
     context.skip(
@@ -275,7 +268,8 @@ test('while its cycle is the active one, the newest entry of the change history 
   // Arrange
   const { text } = newestEntryOf(await readDocument('CHANGELOG.md'))
   const cycleOfEntry = /^Cycle (\d{4}) /m.exec(text)?.[1]
-  const activeCycle = activeCycleOf(await readDocument('PROJECT_STATE.md'))
+  // The active cycle is the one whose record holds the current state.
+  const activeCycle = (await readCurrentState()).cycle
   if (cycleOfEntry !== activeCycle) {
     context.skip(
       `The newest entry is the entry of Cycle ${cycleOfEntry}, and the active cycle is ${activeCycle}: its numbers are history.`,
