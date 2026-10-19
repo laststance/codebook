@@ -12123,3 +12123,85 @@ for (const step of [
     }
   })
 }
+
+for (const failure of [
+  {
+    names: 'its write stops partway, as at a full disk',
+    arrange: (isUpdate) => {
+      failWriteOf(isUpdate, 'ENOSPC')
+      return () => failWriteOf(() => false, 'ENOSPC')
+    },
+    code: 'ENOSPC',
+  },
+  {
+    names: 'its move into place fails, as across volumes',
+    arrange: (isUpdate) => failRenameOf(isUpdate, ['EXDEV']),
+    code: 'EXDEV',
+  },
+]) {
+  // Value: protects=the next publish of a candidate after a publish whose update of its list of copies, before the copy of the learner's file, failed; fails_when=the file in the candidate through which the update goes is kept after the failed write or move, or the journal is kept, so the next publish is refused for that file as one outside its manifest, or for the journal; why_new=Cycle 0047 row 156 (P3TEST-5: the failed update of row 118's record of the copies was untested); seam=a copy of the shipped publisher whose `node:fs/promises` fails that write or that move (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a kill during the update, which the killed-publish test of the move covers
+  test(`a publish whose update of its list of copies, before the copy of the learner’s file, fails (${failure.names}) is refused, leaves no file of that update in the candidate and no journal, and the candidate then publishes with the learner’s file kept`, async () => {
+    // Arrange: the published Wiki holds a file of the learner's; the update of the list that names its copy fails as the row says.
+    const { publishWiki: publishWhoseUpdateFails } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    const stopFailing = failure.arrange(
+      (path) =>
+        dirname(path) === wiki.next &&
+        /^\.codebook-publish-.*-publish-copies\.json$/.test(basename(path)),
+    )
+    try {
+      await writeFile(
+        join(wiki.output, 'manual.txt'),
+        'The learner kept these notes',
+      )
+
+      // Act: the failed publish, then the candidate published again.
+      const refusal = await publishWhoseUpdateFails({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => 'published',
+        (error) => error.code,
+      )
+      const leftInTheCandidate = (await readdir(wiki.next)).filter((name) =>
+        name.startsWith('.codebook-publish-'),
+      )
+      const leftBesideTheWiki = (await readdir(dirname(wiki.output))).filter(
+        (name) => name.startsWith('wiki.publish-journal'),
+      )
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ preservedManualFiles }) => ({ preservedManualFiles }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          leftInTheCandidate,
+          leftBesideTheWiki,
+          nextPublish,
+          learnerFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+        },
+        {
+          refusal: failure.code,
+          leftInTheCandidate: [],
+          leftBesideTheWiki: [],
+          nextPublish: { preservedManualFiles: 1 },
+          learnerFile: 'The learner kept these notes',
+        },
+      )
+    } finally {
+      stopFailing()
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
