@@ -1207,6 +1207,81 @@ test('a Node test run whose release failed once is released by the next stop, wh
   }
 })
 
+// Value: protects=the owned test's pause after a release that failed: the run is being released, and nothing resumes, steps or re-arms the test the service is about to stop; fails_when=advance() runs after a failed release, which retires the captured breakpoint, arms the next one and continues the test while its release waits to be run again (row 40's guard dropped); why_new=Cycle 0047 row 95 (TEST-2): the guard of row 40 had no test that a refused continuation stays refused; seam=the owned test process's close, which fails the first time
+test('after a failed release of a Node test run, Codebook refuses to advance it to its next declared stop and arms, retires and continues nothing', async () => {
+  // Arrange: a run with a next declared stop, whose first release of the owned test process fails.
+  const harness = await nodeRunHarness({ declaredStops: 2, closeFailures: 1 })
+  try {
+    await harness.run.prepare()
+    const failedRelease = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+    const callsBefore = harness.calls.length
+
+    // Act
+    const advance = await harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        failedRelease,
+        advance,
+        callsAfterTheRelease: harness.calls.slice(callsBefore),
+      },
+      {
+        failedRelease: 'Error: process group still running (close 1)',
+        advance:
+          'Error: Node test has no next declared source stop to capture.',
+        callsAfterTheRelease: [],
+      },
+    )
+  } finally {
+    await harness.run.stop().catch(() => undefined)
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the owned test's final pause after a release that failed: the run is being released, and Codebook does not continue the test to its end and check its result while its release waits to be run again; fails_when=complete() runs after a failed release and fails with the abort of the release ("This operation was aborted") instead of its refusal, or continues the paused test (row 40's guard dropped); why_new=Cycle 0047 row 95 (TEST-2): the guard of row 40 had no test that a refused finish stays refused; seam=the owned test process's close, which fails the first time
+test('after a failed release of a Node test run, Codebook refuses to finish it and continues nothing', async () => {
+  // Arrange: a run at its last declared stop, whose first release of the owned test process fails.
+  const harness = await nodeRunHarness({ declaredStops: 1, closeFailures: 1 })
+  try {
+    await harness.run.prepare()
+    const failedRelease = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+    const callsBefore = harness.calls.length
+
+    // Act
+    const finish = await harness.run.complete().then(
+      () => 'finished',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        failedRelease,
+        finish,
+        callsAfterTheRelease: harness.calls.slice(callsBefore),
+      },
+      {
+        failedRelease: 'Error: process group still running (close 1)',
+        finish: 'Error: Node test has no final owned source pause to continue.',
+        callsAfterTheRelease: [],
+      },
+    )
+  } finally {
+    await harness.run.stop().catch(() => undefined)
+    await harness.cleanup()
+  }
+})
+
 test('a learner breakpoint earlier in the declared source holds the run until the learner continues, without failing or being resumed by Codebook', async () => {
   // Arrange: the learner's own breakpoint on line 5 of the cited source pauses the test before Codebook's stop on line 1.
   const harness = await nodeRunHarness({
