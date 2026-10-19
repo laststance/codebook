@@ -1283,7 +1283,7 @@ export class RecordingWriter {
       })
   }
 
-  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. The record of the writer stays at the seal, also when a checkpoint saved the study while the run went on: the run's save that follows the seal removes it ({@link LearningLibrary.saveStudy}). @example await writer.finish(runtime.evidence.elapsedMs()) */
+  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. The record of the writer stays at the seal, also when a checkpoint saved the study while the run went on: the save of a checkpoint its run took once it had stopped, after the seal, removes it ({@link LearningLibrary.saveStudy}). @example await writer.finish(runtime.evidence.elapsedMs()) */
   finish(endMs: number): Promise<RecordingSeal> {
     if (this.finishing) return this.finishing
     if (!this.frameCount)
@@ -1323,7 +1323,7 @@ export class RecordingWriter {
           seal,
           MAX_RECORDING_HEADER_BYTES,
         )
-        // A sealed recording keeps the record of its writer until its run saves the study after the seal: until then the run holds it, and another window neither lists it as what is left of a removed study nor removes the study, also one a checkpoint saved before the seal, whose final state is not saved yet (recordingWriterOf). That save removes the record (removeWriterRecordsOfSealedRecordings).
+        // A sealed recording keeps the record of its writer until its run saves a checkpoint of the study taken once it had stopped, after the seal: until then the run holds it, and another window neither lists it as what is left of a removed study nor removes the study, also one that a checkpoint taken before the seal saved, whose final state is not saved yet (recordingWriterOf). That save removes the record (removeWriterRecordsOfSealedRecordings).
         this.finalized = true
         this.sealed()
         return seal

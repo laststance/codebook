@@ -251,7 +251,7 @@ function isSameWriterSet(
 
 /**
  * Says whether two looks at one recording ({@link lookAtRecording}) found the same: the seal, the header's writer (its process id) and creation time, and the writer record's presence; for {@link LearningLibrary.verdictUnderLock}, which refuses a removal when another window's start may have changed the recording between them.
- * A seal that came between the two looks keeps them the same: the writer that sealed it is the one judged before, and its run still holds the recording until it has saved its study ({@link isSealedRecordingReleased}).
+ * A seal that came between the two looks keeps them the same: the writer that sealed it is the one judged before, and its run still holds the recording until it has saved its study from a checkpoint taken after the seal ({@link isSealedRecordingReleased}).
  * @param before - The look before the storage lock.
  * @param now - The look under it.
  * @returns `true` when all four agree, or when only a seal came since.
@@ -579,7 +579,7 @@ export class LearningLibrary {
   }
 
   /**
-   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a sealed recording that its run has released ({@link isSealedRecordingReleased}) has no writer; one sealed since the judgement that its run still holds for the save of its study after the seal keeps the verdict of the writer that sealed it; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
+   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a sealed recording that its run has released ({@link isSealedRecordingReleased}) has no writer; one sealed since the judgement that its run still holds for the save of a checkpoint of its study taken after the seal keeps the verdict of the writer that sealed it; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
    * @returns `sealed` for a sealed recording its run has released; the verdict found before the lock while the look is the same, or only a seal came since.
@@ -591,7 +591,7 @@ export class LearningLibrary {
     verdicts: RemovalWriterVerdicts,
   ): Promise<RemovalWriterVerdict | 'sealed'> {
     const now = await lookAtRecording(recording)
-    // A sealed recording that a run of another window still holds for the save of its study after the seal keeps that writer's verdict.
+    // A sealed recording that a run of another window still holds for the save of a checkpoint of its study taken after the seal keeps that writer's verdict.
     if (now.isSealed && isSealedRecordingReleased(now)) return 'sealed'
     const before = verdicts.get(recording)
     // A start under way between the two looks gives a recording another window may have just begun to write.
@@ -1088,7 +1088,7 @@ export class LearningLibrary {
     )
   }
 
-  /** Replaces one committed projection atomically, retaining bounded partial observations on later failure; once the archive is written, the record of the writer of the study's sealed recording goes ({@link removeWriterRecordsOfSealedRecordings}): that recording waited for this save. @example await library.saveStudy(study) */
+  /** Replaces one committed projection atomically, retaining bounded partial observations on later failure; once the archive is written, and only when its checkpoint was taken after its run had stopped, the record of the writer of the study's sealed recording goes ({@link removeWriterRecordsOfSealedRecordings}): that recording waited for this save. @example await library.saveStudy(study) */
   saveStudy(input: RetainedStudy): Promise<void> {
     const study = decodeRetainedStudy(input, this.workspaceKey)
     return this.locked(async () => {
@@ -1118,11 +1118,10 @@ export class LearningLibrary {
         MAX_STUDY_ARCHIVE_BYTES,
       )
       await this.writeMetadata(study)
-      // The study's sealed recording no longer waits for this save; a record that cannot be removed only keeps the recording from other windows while its writer runs.
-      await removeWriterRecordsOfSealedRecordings(
-        this.directory,
-        study.id,
-      ).catch(() => undefined)
+      // The study's sealed recording no longer waits once an archive taken after the seal is saved; a record that cannot be removed only keeps the recording from other windows while its writer runs.
+      await removeWriterRecordsOfSealedRecordings(this.directory, study).catch(
+        () => undefined,
+      )
     })
   }
 
