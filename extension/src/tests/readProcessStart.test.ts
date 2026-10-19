@@ -7,6 +7,7 @@ import {
   readProcessStart,
   type ProcessStartInputs,
 } from '../utils/readProcessStart'
+import { runBoundedQuery } from '../utils/runBoundedQuery'
 
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
@@ -597,5 +598,94 @@ test(
     // Assert
     assert.match(namespaceNumber, /^\d+$/)
     assert.equal(start.slice(0, start.indexOf(':')), `linux@${namespaceNumber}`)
+  },
+)
+
+/** The process id Windows gives its System process, which runs from the boot to the shutdown and is a process of another user than the tests'. */
+const WINDOWS_SYSTEM_PROCESS_ID = 4
+
+/**
+ * Runs the product's own PowerShell start query in the real PowerShell, with its read of the process's start made to fail as it fails where this user may not read the process ("Access is denied"), so that the query falls back to the process table as it does there; it records what PowerShell printed.
+ * @returns The runner to inject, how many queries had their read of the start denied, and what each query printed.
+ * @example
+ * const query = queryWithStartReadDenied()
+ * await realProcessStart(4, { run: query.run }) // => 'win:2026-10-19T02:21:17.7593480Z'; query.printed => ['cim:2026-10-19T02:21:17.7593480Z']
+ */
+function queryWithStartReadDenied(): {
+  run: NonNullable<ProcessStartInputs['run']>
+  deniedReads: number
+  printed: string[]
+} {
+  const query = {
+    deniedReads: 0,
+    printed: [] as string[],
+    run: (async (file, queryArguments, options) => {
+      const command = queryArguments.at(-1) ?? ''
+      const commandWithDeniedRead = command.replace(
+        '$process.StartTime',
+        () => "$(throw 'Access is denied')",
+      )
+      if (commandWithDeniedRead !== command) query.deniedReads += 1
+      const answer = await runBoundedQuery(
+        file,
+        [...queryArguments.slice(0, -1), commandWithDeniedRead],
+        options,
+      )
+      query.printed.push(answer.stdout.trim())
+      return answer
+    }) satisfies NonNullable<ProcessStartInputs['run']>,
+  }
+  return query
+}
+
+// Value: protects=the storage locks and claims of Windows windows, whose owners' process ids can go to processes of other users, as the System process is one; fails_when=the real PowerShell answers the start of such a process in another shape than the round-trip UTC time to the 100 ns that the product checks, or another text at each read, so the process is never told by its start (Cycle 0047 row 93, TEST-4: the start query of row 33 was only run with stubs); why_new=Cycle 0047 row 93 (TEST-4); seam=none (the real PowerShell and the System process). Windows only: no other system has PowerShell's query; the Windows job runs this file.
+test(
+  'the real PowerShell names the Windows System process by a start in round-trip UTC form to the 100 ns, the same at a second read',
+  {
+    skip:
+      process.platform !== 'win32' &&
+      'the PowerShell query runs on Windows only',
+  },
+  async () => {
+    // Arrange: the System process, which runs for as long as Windows does.
+    const pid = WINDOWS_SYSTEM_PROCESS_ID
+    // Act
+    const start = await realProcessStart(pid),
+      startAgain = await realProcessStart(pid)
+    // Assert
+    assert.match(start, /^win:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/)
+    assert.equal(startAgain, start)
+  },
+)
+
+// Value: protects=a storage lock or a claim of a killed Windows window whose process id went to a process this user may not query (another user's, or one run as administrator); fails_when=the fall-back of the real PowerShell to the process table (Win32_Process through CIM, row 33) prints no creation time, prints it in another shape, or its time is not taken for the start, so the start stays unknown and the dead window's lock refuses every write for as long as that process runs; or the creation time to the microsecond does not confirm the start PowerShell reads to the 100 ns, so a live owner counts as gone; why_new=Cycle 0047 row 93 (TEST-4): the fall-back was only run with stubs; seam=the product's query run in the real PowerShell with its read of the start denied, as it is denied to a user who may not read the process (a runner of the Windows job is an administrator, who may read the System process's start); no_claim=a standard user's own denial, which the same query meets on a developer's computer. Windows only: no other system has PowerShell's query; the Windows job runs this file.
+test(
+  'where PowerShell may not read the start of the Windows System process, the real query names it by its creation time in the process table, the same at a second read, and that time confirms the start read where PowerShell may',
+  {
+    skip:
+      process.platform !== 'win32' &&
+      'the PowerShell query runs on Windows only',
+  },
+  async () => {
+    // Arrange: the start of the System process as this user reads it, and the product's query with its read of the start denied.
+    const pid = WINDOWS_SYSTEM_PROCESS_ID
+    const startReadByPowerShell = await realProcessStart(pid)
+    const query = queryWithStartReadDenied()
+    // Act
+    const creation = await realProcessStart(pid, { run: query.run }),
+      creationAgain = await realProcessStart(pid, { run: query.run }),
+      confirmed = await realProcessStart(pid, {
+        run: query.run,
+        expectedStart: startReadByPowerShell,
+      })
+    // Assert
+    assert.equal(query.deniedReads, 3)
+    assert.deepEqual(
+      query.printed.map((printed) => printed.slice(0, 'cim:'.length)),
+      ['cim:', 'cim:', 'cim:'],
+    )
+    assert.match(creation, /^win:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}0Z$/)
+    assert.equal(creationAgain, creation)
+    assert.equal(confirmed, startReadByPowerShell)
   },
 )
