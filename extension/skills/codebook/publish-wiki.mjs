@@ -909,11 +909,14 @@ async function recoverManifestJournal(record, paths, requirePathHeld, isResumed)
     error => { if (error.isSupersededRestore) return undefined; throw error; });
 }
 
-/** Whether a publish journal's stage is a distinct sibling of the output. Called by {@link requirePublishJournal}. @example isSiblingStage('/repo/.codebook/next', '/repo/.codebook/wiki') // => true */
-const isSiblingStage = (stage, output) => typeof stage === 'string' && dirname(stage) === dirname(output) && stage !== output;
+/** Whether a path a publish journal names is an entry of its own directly beside the output, in the normal form the publisher writes it in: a journal a cloned repository carries can name the output's parent followed by `..` or `.`, whose parent folder is the output's too, and the recovery would take the folder it leads to (the project root, the output's parent) for the candidate and remove its files. The resolved path must be the path itself, so no `..`, `.`, doubled or trailing separator stands in it, and its name must be neither empty nor the output's. Called by {@link isSiblingStage} and {@link isSiblingBackup}. @example isSiblingPath('/repo/.codebook/..', '/repo/.codebook/wiki') // => false */
+const isSiblingPath = (path, output) => typeof path === 'string' && resolve(path) === path && basename(path) !== '' && dirname(path) === dirname(output) && path !== output;
 
-/** Whether a publish journal names no backup, or a backup beside the output under the backup's name. Called by {@link requirePublishJournal}. @example isSiblingBackup('/repo/.codebook/wiki.previous-1', '/repo/.codebook/wiki') // => true */
-const isSiblingBackup = (backup, output) => backup === undefined || typeof backup === 'string' && dirname(backup) === dirname(output) && backup.startsWith(output + '.previous-');
+/** Whether a publish journal's stage is a distinct sibling of the output in its normal form ({@link isSiblingPath}). Called by {@link requirePublishJournal}. @example isSiblingStage('/repo/.codebook/next', '/repo/.codebook/wiki') // => true */
+const isSiblingStage = (stage, output) => isSiblingPath(stage, output);
+
+/** Whether a publish journal names no backup, or a backup beside the output in its normal form ({@link isSiblingPath}) under the backup's name. Called by {@link requirePublishJournal}. @example isSiblingBackup('/repo/.codebook/wiki.previous-1', '/repo/.codebook/wiki') // => true */
+const isSiblingBackup = (backup, output) => backup === undefined || isSiblingPath(backup, output) && backup.startsWith(output + '.previous-');
 
 /** Whether a publish journal names the generations it moves: the new manifest's digest, whether the prior Wiki was adopted as legacy and, with a backup, the prior manifest's digest. Called by {@link requirePublishJournal}. @example namesGenerations({ manifestSha256: '…', priorLegacy: false }) // => true for a journal without a backup */
 const namesGenerations = record => HASH.test(record.manifestSha256) && typeof record.priorLegacy === 'boolean' && (record.backup === undefined || HASH.test(record.priorManifestSha256));

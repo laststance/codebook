@@ -6783,6 +6783,91 @@ test('recovering an interrupted first publication reports the retained stage wit
   }
 })
 
+for (const climb of [
+  {
+    step: '..',
+    leadsTo: 'the project root',
+    projectFolderOf: (root) => root,
+  },
+  {
+    step: '.',
+    leadsTo: 'the folder that holds the Wiki folder',
+    projectFolderOf: (root) => join(root, '.codebook'),
+  },
+]) {
+  // Value: protects=the project's own files when a cloned repository carries a publish journal whose stage is the Wiki folder's parent followed by "/.." or "/."; fails_when=the recovery holds the journal's stage to its parent folder's name alone, so it takes the folder the step leads to for the candidate and removes every file there whose bytes equal a learner's file of the Wiki at the same path; why_new=Cycle 0047 row 58 (SEC-1 = ADV-1, security); seam=none; no_claim=a stage that names another folder beside the Wiki folder by its own name, which the recovery takes for a candidate
+  test(`a recovery whose journal names as its stage the Wiki folder’s parent followed by "${climb.step}" (${climb.leadsTo}) is refused, and the project file there that holds a learner’s file’s bytes and the journal stay as they were`, async () => {
+    // Arrange: a published Wiki with a learner's file; where the step leads, a project file with the same name and bytes and a manifest that names this project; a journal of an earlier version (no operation), whose process is gone and whose stage climbs out by the step.
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-stage-climbs-')),
+    )
+    const root = join(directory, 'project'),
+      output = join(root, '.codebook/wiki'),
+      first = join(root, '.codebook/first'),
+      journal = `${output}.publish-journal.json`
+    try {
+      await mkdir(root)
+      await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+      await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: first,
+      })
+      await writeFile(join(output, 'manual.txt'), 'The learner’s own notes')
+      const projectFolder = climb.projectFolderOf(root)
+      await writeFile(
+        join(projectFolder, 'manual.txt'),
+        'The learner’s own notes',
+      )
+      await writeFile(
+        join(projectFolder, 'codebook-wiki.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          repositoryRoot: root,
+          pages: [],
+          assets: [],
+        }),
+      )
+      const record = JSON.stringify({
+        projectRoot: root,
+        output,
+        stage: `${dirname(output)}/${climb.step}`,
+        pid: 99999999,
+      })
+      await writeFile(journal, record)
+
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: root,
+        outputDirectory: output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          recovery,
+          projectFile: await readFile(
+            join(projectFolder, 'manual.txt'),
+            'utf8',
+          ).catch(() => 'deleted'),
+          journal: await readFile(journal, 'utf8').catch(() => 'removed'),
+        },
+        {
+          recovery:
+            'The Wiki publication journal does not identify a sibling stage/backup.',
+          projectFile: 'The learner’s own notes',
+          journal: record,
+        },
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+}
+
 /** The probe that runs one step of the shipped publisher in a process of its own and kills that process at a point a test names (`scripts/tests/utils/killedPublisherProbe.mjs`). */
 const KILLED_PUBLISHER_PROBE = fileURLToPath(
   new URL('./utils/killedPublisherProbe.mjs', import.meta.url),
