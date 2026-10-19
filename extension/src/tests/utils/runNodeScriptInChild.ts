@@ -13,9 +13,9 @@ type ChildScriptEnd<Output> = {
 /**
  * Runs a compiled script of the tests in a child process of this Node binary, without a shell, hands it its input as JSON on its standard input, and reads the JSON it writes on its standard output.
  * Why: a page worker that reaches its heap limit can abort its whole process on a Node build without pointer compression (`FATAL ERROR: Reached heap limit`, `SIGABRT`) instead of ending its thread; run in a child, such an abort ends the test in its assertion instead of ending the test runner. The child's standard error goes to the test's, so an abort's report is seen.
- * Called by the tests' helpers that run page workers in a child process ({@link pagesServedInChildProcess}, {@link readerAnswersInChildProcess}).
+ * Called by the tests' helpers that run page workers in a child process ({@link pagesServedInChildProcess}, {@link readerAnswersInChildProcess}), and by its own test.
  * @param scriptPath - The compiled script; it reads its input from its standard input and writes one JSON value on its standard output.
- * @param input - What the script is handed, as JSON.
+ * @param input - What the script is handed, as JSON; a child that ends before it has read all of it (a write that fails with EPIPE) still ends as a result.
  * @param waitMs - How long the child may run before it is killed with `SIGKILL`.
  * @param isOutput - Tells whether the JSON the child wrote has the shape the caller reads.
  * @returns How the child ended ({@link ChildScriptEnd}).
@@ -52,6 +52,8 @@ export function runNodeScriptInChild<Output>(
         output: isOutput(output) ? output : undefined,
       })
     })
+    // A child that ends before it has read its whole input (its script fails to load, it aborts, it is killed) closes the pipe, and the write fails with EPIPE; the child's end is answered at 'close' all the same, so the error only must not escape as uncaught.
+    child.stdin.on('error', () => undefined)
     child.stdin.end(JSON.stringify(input))
   })
 }
