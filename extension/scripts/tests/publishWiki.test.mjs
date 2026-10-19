@@ -7224,6 +7224,184 @@ for (const stop of [
   })
 }
 
+// Value: protects=the next publish of a candidate prepared from the published Wiki and published without an edit, after that publish was killed between its journal and its swap and --recover ran; fails_when=the recovery tells a swap that happened from one that did not by the manifest's digest alone, which a candidate byte-identical to the Wiki shares with it, so it leaves the candidate's finalized record and the copy of the learner's file in the candidate, and the next publish is refused for the copy as a file outside its manifest; why_new=Cycle 0047 row 60 (OCR1-1 = ADV-5); seam=a publisher process killed just before it moves the Wiki folder to its backup name (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=an unchanged republish killed after its swap (its own test below)
+test('an unchanged republish killed just before its swap is recovered with the candidate’s record as prepared and no copy of the learner’s file in it, and the candidate then publishes with that file kept', async () => {
+  // Arrange: a published Wiki with a learner's file and a candidate prepared from it without an edit; the publish of the candidate is killed after it copied the learner's file and finalized the candidate, just before it moves the Wiki folder.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-unchanged-before-swap-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'manual.txt'), 'The learner’s own notes')
+    await prepareWikiStage({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    })
+    const preparedRecord = await readFile(
+      join(next, 'codebook-publication.json'),
+    )
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: next,
+      },
+      killAt: [{ call: 'renaming', folder: dirname(output), name: '^wiki$' }],
+    })
+    const journal = JSON.parse(
+      await readFile(`${output}.publish-journal.json`, 'utf8'),
+    )
+
+    // Act: the recovery, then the candidate published again.
+    const recovery = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const candidateAfterRecovery = {
+      recordIsAsPrepared: (
+        await readFile(join(next, 'codebook-publication.json'))
+      ).equals(preparedRecord),
+      copyOfTheLearnersFile: await readFile(
+        join(next, 'manual.txt'),
+        'utf8',
+      ).catch(() => 'no copy'),
+    }
+    const nextPublish = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert: the journal names one manifest for the new Wiki and the prior one, as the candidate is byte-identical to the Wiki.
+    assert.deepEqual(
+      {
+        killed,
+        journalNamesTheWikisManifest:
+          journal.manifestSha256 === journal.priorManifestSha256,
+        recovery,
+        candidateAfterRecovery,
+        nextPublish,
+        learnerFile: await readFile(join(output, 'manual.txt'), 'utf8'),
+      },
+      {
+        killed: '',
+        journalNamesTheWikisManifest: true,
+        recovery: 'published-or-restored',
+        candidateAfterRecovery: {
+          recordIsAsPrepared: true,
+          copyOfTheLearnersFile: 'no copy',
+        },
+        nextPublish: { preservedManualFiles: 1 },
+        learnerFile: 'The learner’s own notes',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the Wiki an unchanged republish put in place before it was killed, and the learner's file in it, when --recover runs; fails_when=the recovery, which now looks at the candidate after every stopped publish, takes the path of a candidate that became the Wiki for a candidate still there and is refused, or moves or empties the Wiki; why_new=Cycle 0047 row 60 (OCR1-1 = ADV-5, the recovery after a real swap); seam=a publisher process killed after its swap, just before it reads its journal to remove it (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=the prior Wiki kept beside the Wiki folder, which the publisher leaves there after any publish
+test('an unchanged republish killed after its swap is recovered with the published Wiki kept in place and the learner’s file in it', async () => {
+  // Arrange: a published Wiki with a learner's file and a candidate prepared from it without an edit; the publish of the candidate is killed after it moved the candidate into the Wiki's place, just before it removes its journal.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-unchanged-after-swap-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'manual.txt'), 'The learner’s own notes')
+    await prepareWikiStage({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    })
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: next,
+      },
+      killAt: [
+        {
+          call: 'reading',
+          folder: dirname(output),
+          name: '^wiki\\.publish-journal\\.json$',
+        },
+      ],
+    })
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        candidate: existsSync(next) ? 'still there' : 'gone',
+        wikiFiles: (await readdir(output)).sort(),
+        wikiRecord: JSON.parse(
+          await readFile(join(output, 'codebook-publication.json'), 'utf8'),
+        ).kind,
+        learnerFile: await readFile(join(output, 'manual.txt'), 'utf8'),
+        journal: existsSync(`${output}.publish-journal.json`)
+          ? 'a journal'
+          : 'no journal',
+      },
+      {
+        killed: '',
+        recovery: 'published-or-restored',
+        candidate: 'gone',
+        wikiFiles: [
+          'codebook-publication.json',
+          'codebook-wiki.json',
+          'index.html',
+          'manual.txt',
+        ],
+        wikiRecord: 'published',
+        learnerFile: 'The learner’s own notes',
+        journal: 'no journal',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 /**
  * Publishes a Wiki, prepares a candidate and has the publish of the candidate killed just after it wrote its journal, then rewrites that journal with `rewrite`, as a journal reads that a publisher left behind before its process id went to another process, before a restart, or on another machine.
  * @param {(record: Record<string, unknown>) => void} rewrite - Changes the parsed journal in place.
