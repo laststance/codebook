@@ -244,3 +244,44 @@ test('nothing refuses a start once another window’s stopped watch is past its 
     await rm(wiki.parent, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the learner's Update press once this window's own stopped chat can no longer publish; fails_when=the stopped watch's chat is still waited for at its end plus the bound or later, so the press the refusal's time names is refused again, or it stops refusing before that time, so a second chat starts beside one that may still publish; why_new=Cycle 0047 row 87 (SM-1); seam=the clock and the listing of the candidates, handed over; no_claim=the end of the wait by a publish, which the tests of hasWikiPublishEndedWait hold
+test('this window’s own stopped chat refuses the start up to the watch’s end plus the bound and no longer from that moment on', async () => {
+  // Arrange: the watch stopped at 12:00 before its chat staged anything; the chat may still work, so the wait ends at 12:15.
+  const wiki = await makeUnpublishedWiki()
+  const lookAt = (
+    nowMs: number,
+  ): Parameters<typeof findUnacknowledgedWikiLeftover>[1] => ({
+    nowMs,
+    watchTimeoutMs: WATCH_TIMEOUT_MS,
+    otherWindow: undefined,
+    lastRun: {
+      outputDirectory: wiki.outputDirectory,
+      startedAtMs: at(11, 58),
+      endedAtMs: at(12, 0),
+      mayAgentStillWork: true,
+      candidateNames: [],
+    },
+    acknowledged: [],
+    listCandidates: () => Promise.resolve([]),
+  })
+  try {
+    // Act: a press one millisecond before the end of the wait, and one at that end.
+    const justBeforeTheEnd = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 15) - 1),
+    )
+    const atTheEnd = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 15)),
+    )
+
+    // Assert
+    assert.deepEqual(justBeforeTheEnd?.named, [
+      { kind: 'last-run', endedAtMs: at(12, 0) },
+    ])
+    assert.equal(atTheEnd, undefined)
+  } finally {
+    await rm(wiki.parent, { recursive: true, force: true })
+  }
+})
