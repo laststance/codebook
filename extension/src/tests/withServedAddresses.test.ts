@@ -342,6 +342,7 @@ test('the reader filters a page of more than 1 MB of select pairs after deep nes
   const crafted = times.selectPairsAfterDeepNesting
   assert.ok(
     typeof crafted === 'number' &&
+      // gstack-timing-ok: the bound is a ratio to the ordinary page timed in the same worker, not a time; this page measured 1.60 to 1.78 times it (1.70 to 1.74 under c8) and the slowest crafted page of the timing tests 2.13 times (Cycle 0047 row 73), against the bound 4
       crafted <= CRAFTED_PAGE_BOUND_RATIO * ordinary,
     `the page took ${crafted} ms and the ordinary page ${ordinary} ms`,
   )

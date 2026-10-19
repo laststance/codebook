@@ -471,7 +471,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Reads one entry of the stack of open elements as an element and its tag id; called by the two walks of the stack that look at an element's namespace, {@link HtmlPageReader.isEndAtForeignSpecialElement} and {@link HtmlPageReader.isInScopeEndingAtSelect}.
+   * Reads one entry of the stack of open elements as an element and its tag id; called by the two walks of the stack that look at an element's namespace, {@link HtmlPageReader.isEndAtForeignSpecialElement} and {@link HtmlPageReader.isInScopeEndingAtSelect}, and by {@link HtmlPageReader.tookAsBodyEnd}, which reads the body, second on the stack, after a `</body>`.
    * @param index - A position on the stack, from 0 to its top.
    * @returns The element and its tag id, or `undefined` for an entry that is no element.
    * @example reader.openElementAt(reader.openElements.stackTop) // => { element: currentNode, tagID: TAG_ID.P }
