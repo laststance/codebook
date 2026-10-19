@@ -42,10 +42,10 @@ function answeringListing(answer: { stdout: string } | Error): {
 
 // Value: protects=the one listing a profile sweep and a profile probe use is bounded on macOS and Linux and reads every process with its whole command line; fails_when=the listing loses its time bound, its output limit or its kill signal (a `ps` that hangs then holds the sweep, which the browser's close awaits, and a long listing ends as an error), or a line is read without its arguments (Cycle 0046 row 87); why_new=the command and its bounds had no test; seam=the injected platform and runner. macOS itself is not observed on this machine: this pins the command line and the parsing.
 test('macOS and Linux list the processes with one bounded ps and read each line as a process id and its whole command line', async () => {
-  // Arrange: an answer as `ps -axww -o pid=,command=` prints it, with padded ids, a command line with spaces and an empty last line.
+  // Arrange: an answer as `ps -axww -o pid=,uid=,command=` prints it for user 501, with padded ids, a command line with spaces and an empty last line.
   const answer = {
     stdout:
-      '    1 /sbin/launchd\n 4242 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/private/tmp/codebook-browser-a1b2c3 --headless=new\n\n',
+      '    1   501 /sbin/launchd\n 4242   501 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/private/tmp/codebook-browser-a1b2c3 --headless=new\n\n',
   }
   const onMac = answeringListing(answer),
     onLinux = answeringListing(answer)
@@ -53,17 +53,19 @@ test('macOS and Linux list the processes with one bounded ps and read each line 
   const listedOnMac = await listProcesses({
     platform: 'darwin',
     run: onMac.run,
+    userId: 501,
     isProgramFile: async (path) => path === '/bin/ps',
   })
   const listedOnLinux = await listProcesses({
     platform: 'linux',
     run: onLinux.run,
+    userId: 501,
     isProgramFile: async (path) => path === '/bin/ps',
   })
   // Assert
   const call = {
     file: '/bin/ps',
-    listingArguments: ['-axww', '-o', 'pid=,command='],
+    listingArguments: ['-axww', '-o', 'pid=,uid=,command='],
     options: {
       timeout: 10_000,
       maxBuffer: 67_108_864,
@@ -83,6 +85,71 @@ test('macOS and Linux list the processes with one bounded ps and read each line 
   assert.deepEqual(onLinux.calls, [call])
   assert.deepEqual(listedOnMac, processes)
   assert.deepEqual(listedOnLinux, processes)
+})
+
+// Value: protects=a managed run on a machine shared with other users: its attach and its close match its profile only against this user's processes; fails_when=the listing keeps every user's processes, so another user's process that names the run's codebook-browser profile (with a debugging port, or one that never exits) fails the attach ("Owned Chrome is not using the declared debugging pipe") or holds the close until its bound; why_new=Cycle 0047 row 37 (P3RT15); seam=the injected platform, runner and user id; no_claim=a real process of another user, which this machine cannot start
+test('macOS and Linux list only the processes of this user, so another user’s process that names a run’s profile is not listed', async () => {
+  // Arrange: this user is 501; user 502 runs a process that names the same profile with a debugging port.
+  const answer = {
+    stdout:
+      ' 4242   501 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/private/tmp/codebook-browser-a1b2c3 --remote-debugging-pipe\n 5150   502 /usr/bin/sleep 600 --user-data-dir=/private/tmp/codebook-browser-a1b2c3 --remote-debugging-port=9222\n',
+  }
+  const onMac = answeringListing(answer),
+    onLinux = answeringListing(answer)
+  const inputsOf = (
+    platform: NodeJS.Platform,
+    run: NonNullable<ProcessListingInputs['run']>,
+  ): ProcessListingInputs => ({
+    platform,
+    run,
+    userId: 501,
+    isProgramFile: async (path) => path === '/bin/ps',
+  })
+
+  // Act
+  const listed = {
+    onMac: await listProcesses(inputsOf('darwin', onMac.run)),
+    onLinux: await listProcesses(inputsOf('linux', onLinux.run)),
+  }
+
+  // Assert
+  const ofThisUser = [
+    {
+      pid: 4242,
+      command:
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/private/tmp/codebook-browser-a1b2c3 --remote-debugging-pipe',
+    },
+  ]
+  assert.deepEqual(listed, { onMac: ofThisUser, onLinux: ofThisUser })
+})
+
+// Value: protects=a managed run on a Windows machine shared with other users, in an editor run as administrator (the only one Windows shows other users' command lines to): its attach and its close match its profile only against the processes of the editor's own logon session; fails_when=the query lists every Win32_Process, so another user's process in another session that names the run's profile fails the attach or holds the close; why_new=Cycle 0047 row 37 (P3RT15); seam=the injected platform, environment and runner; no_claim=a session of another user, which this machine does not have (the query itself ran in full and in Constrained Language mode on this machine's Windows PowerShell 5.1)
+test('the Windows listing asks only for the processes of the logon session PowerShell runs in, which is the editor’s', async () => {
+  // Arrange
+  const listing = answeringListing({ stdout: '' })
+  await listProcesses({
+    platform: 'win32',
+    run: listing.run,
+    environment: { SystemRoot: 'C:\\Windows' },
+  })
+
+  // Act
+  const [sessionOfPowerShell, processesOfThatSession] = (
+    listing.calls[0]?.listingArguments.at(-1) ?? ''
+  )
+    .split('; ')
+    .slice(0, 2)
+
+  // Assert
+  assert.deepEqual(
+    { sessionOfPowerShell, processesOfThatSession },
+    {
+      sessionOfPowerShell:
+        "$session = (Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = {0}' -f $PID) -Property SessionId -ErrorAction Stop).SessionId",
+      processesOfThatSession:
+        "Get-CimInstance -ClassName Win32_Process -Filter ('SessionId = {0}' -f $session) -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }",
+    },
+  )
 })
 
 // Value: protects=the one program the listing starts on macOS and Linux: `ps` by an absolute path, /bin/ps and else /usr/bin/ps, never a `ps` found in the search path or the current folder, and with neither the listing is refused before any program is started, so a sweep removes nothing (AD30, /ship adversarial review Step 11, with SX2's rule that no lookup uses the current folder); fails_when=the listing starts the bare `ps`, which the search path names (a folder the user or a tool put first can hold another program of that name), or takes no second place where /bin has no ps; why_new=`ps` was started by its bare name; seam=the injected platform, runner and program check
@@ -153,7 +220,7 @@ test('Windows lists the processes with one bounded PowerShell query, started fro
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }; '{0} {1}' -f $_.ProcessId, $commandLine }",
+        "$session = (Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = {0}' -f $PID) -Property SessionId -ErrorAction Stop).SessionId; Get-CimInstance -ClassName Win32_Process -Filter ('SessionId = {0}' -f $session) -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }; '{0} {1}' -f $_.ProcessId, $commandLine }",
       ],
       options: {
         timeout: 10_000,
@@ -334,13 +401,13 @@ test(
   'a process listing four times as long as the default output limit of Node.js is read whole',
   { skip: process.platform === 'win32' && 'the stand-in for ps needs /bin/sh' },
   async (context) => {
-    // Arrange: 4,096 lines of a process id and a command line of 1,040 characters.
+    // Arrange: 4,096 lines of a process id, the user id 501 and a command line of 1,040 characters.
     const ps = await standInForPs(
       context,
-      'for (let pid = 1; pid <= 4096; pid += 1) process.stdout.write(`${String(pid).padStart(7)} /usr/bin/program-${pid} ${"x".repeat(1024)}\\n`)',
+      'for (let pid = 1; pid <= 4096; pid += 1) process.stdout.write(`${String(pid).padStart(7)}   501 /usr/bin/program-${pid} ${"x".repeat(1024)}\\n`)',
     )
     // Act
-    const listed = await listProcesses({ psPrograms: [ps] })
+    const listed = await listProcesses({ psPrograms: [ps], userId: 501 })
     // Assert
     assert.equal(listed.length, 4_096)
     assert.deepEqual(listed[0], {

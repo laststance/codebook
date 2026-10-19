@@ -31,6 +31,8 @@ export type ProcessListingInputs = {
   psPrograms?: readonly string[]
   /** Says whether a path is a program file this user may run; {@link isProgramFile} unless a test names its own. */
   isProgramFile?: (path: string) => Promise<boolean>
+  /** The effective user id whose processes the listing keeps on macOS and Linux; this process's own (`process.geteuid()`) unless a test names its own. */
+  userId?: number
 }
 
 /** The listing of one system: the command that prints every process on a line of its own, and the reader of such a line. */
@@ -41,24 +43,39 @@ type ProcessListingForm = {
   processOfLine: (line: string) => ListedProcess | undefined
 }
 
-/** `ps` on macOS and Linux: every process of every user (`-ax`), the command line at its whole width (`-ww`), as `<pid> <command line>`. Its program is named by {@link listingFormOf}, by an absolute path. */
-const UNIX_LISTING: Omit<ProcessListingForm, 'file'> = {
-  listingArguments: ['-axww', '-o', 'pid=,command='],
-  processOfLine: (line) => {
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line)
-    if (!match?.[1] || !match[2]) return undefined
-    return { pid: Number(match[1]), command: match[2] }
-  },
+/**
+ * Gives the form of `ps` on macOS and Linux: every process of every user (`-ax`), with its effective user id and the command line at its whole width (`-ww`), as `<pid> <uid> <command line>`, of which the lines of one user are read; called by {@link listingFormOf}, which names its program by an absolute path.
+ * Why one user's: a run matches its browser's profile against the listing ({@link profileProcesses}), and on a machine shared with other users a process of another user that names the run's profile folder (its path is in every user's listing) would be taken for the run's browser: with a debugging port it fails the attach, and one that never exits holds the close until its bound. The browser a run starts is this user's process.
+ * @param userId - The effective user id whose processes are read; `undefined` reads every user's, for a system that names no user id.
+ * @returns The listing's arguments and its line reader.
+ * @example
+ * unixListing(501).processOfLine(' 4242   501 /usr/bin/chrome --user-data-dir=/tmp/x') // => { pid: 4242, command: '/usr/bin/chrome --user-data-dir=/tmp/x' }
+ * unixListing(501).processOfLine(' 5150   502 /usr/bin/sleep 600')                     // => undefined
+ */
+function unixListing(
+  userId: number | undefined,
+): Omit<ProcessListingForm, 'file'> {
+  return {
+    listingArguments: ['-axww', '-o', 'pid=,uid=,command='],
+    processOfLine: (line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line)
+      if (!match?.[1] || !match[2] || !match[3]) return undefined
+      // A process of another user is not listed.
+      if (userId !== undefined && Number(match[2]) !== userId) return undefined
+      return { pid: Number(match[1]), command: match[3] }
+    },
+  }
 }
 
 /**
- * What PowerShell runs on Windows: every `Win32_Process` with its id and its command line, one a line as `<pid> <command line, percent-encoded>`.
+ * What PowerShell runs on Windows: every `Win32_Process` of the logon session PowerShell itself runs in, which is the editor's, with its id and its command line, one a line as `<pid> <command line, percent-encoded>`.
+ * Only the editor's own session is listed: on a machine shared with other users each user's processes run in their own session, and a process of another user that names a run's profile folder would be taken for the run's browser ({@link unixListing} says why for macOS and Linux). Windows shows the command line of another user's process to an administrator only, so this matters for an editor run as administrator; the browser a run starts runs in the editor's session. The session is read from PowerShell's own process (`$PID`) and given to the filter by the format operator, in single quotes, so no double quote has to pass the command line.
  * The command line is percent-encoded by `[uri]::EscapeDataString` (its UTF-8 bytes, RFC 3986), so that the answer is ASCII whatever code page the console has, and a command line with a line break stays one line.
- * The query uses only what PowerShell's Constrained Language mode allows, which AppLocker or App Control for Business put every PowerShell of a managed machine in: cmdlets, `ForEach-Object`, `try`/`catch`, the format operator, and the methods of the allowed types `[uri]` and `[string]` (about_Language_Modes); `[Convert]` and `[Text.Encoding]`, which the query used before, are no allowed types there, and every listing would fail.
+ * The query uses only what PowerShell's Constrained Language mode allows, which AppLocker or App Control for Business put every PowerShell of a managed machine in: cmdlets, `ForEach-Object`, `try`/`catch`, the format operator, a property of a returned object, the automatic variable `$PID`, and the methods of the allowed types `[uri]` and `[string]` (about_Language_Modes); `[Convert]` and `[Text.Encoding]`, which the query used before, are no allowed types there, and every listing would fail.
  * A process whose command line Windows does not show to this user (a system process, a process of another user), or whose command line cannot be encoded (longer than .NET Framework encodes in one call), is printed with an empty one. A failed query ends PowerShell with an error (`-ErrorAction Stop`), never with a partial list.
  */
 const WINDOWS_LISTING_COMMAND =
-  "Get-CimInstance -ClassName Win32_Process -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }; '{0} {1}' -f $_.ProcessId, $commandLine }"
+  "$session = (Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = {0}' -f $PID) -Property SessionId -ErrorAction Stop).SessionId; Get-CimInstance -ClassName Win32_Process -Filter ('SessionId = {0}' -f $session) -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }; '{0} {1}' -f $_.ProcessId, $commandLine }"
 
 /** The characters a percent-encoded command line consists of: what `[uri]::EscapeDataString` leaves as it is (RFC 3986's unreserved characters, and the few more RFC 2396 left on an older .NET Framework) and `%` with two hexadecimal digits. */
 const PERCENT_ENCODED_TEXT = /^[A-Za-z0-9\-._~!*'()%]+$/
@@ -114,7 +131,7 @@ async function listingFormOf(
   // ps is started from its absolute paths only, by the same lookup as the process group checks of the inspectors.
   if (platform !== 'win32')
     return {
-      ...UNIX_LISTING,
+      ...unixListing(inputs.userId ?? process.geteuid?.()),
       file: await psProgramPath('The process listing', inputs),
     }
   const file = windowsPowerShellPath(inputs.environment)
@@ -172,7 +189,7 @@ function listingFailure(
  * @returns Every process the listing printed with a command line, in its order.
  * @throws What the runner rejects with, worded by {@link listingFailure} for a listing that was ended at a bound.
  * @example
- * await printedListing({ ...UNIX_LISTING, file: '/bin/ps' }, runBoundedQuery, bounds) // => [{ pid: 1, command: '/sbin/launchd' }, …]
+ * await printedListing({ ...unixListing(501), file: '/bin/ps' }, runBoundedQuery, bounds) // => [{ pid: 1, command: '/sbin/launchd' }, …]
  */
 async function printedListing(
   listing: ProcessListingForm,
@@ -190,10 +207,10 @@ async function printedListing(
 }
 
 /**
- * Lists every process of this machine with its whole command line, by one `ps -axww` on macOS and Linux and one PowerShell query on Windows, each started by an absolute path (`ps` from `/bin` or `/usr/bin`, PowerShell under the system root, {@link windowsPowerShellPath}); called by {@link profileProcesses} for one profile and once per sweep by {@link removeAbandonedProfiles}, which matches every candidate folder against the same listing.
+ * Lists the processes of this user with their whole command lines, by one `ps -axww` on macOS and Linux, read for this user's effective user id ({@link unixListing}), and one PowerShell query on Windows for the editor's own logon session ({@link WINDOWS_LISTING_COMMAND}), each started by an absolute path (`ps` from `/bin` or `/usr/bin`, PowerShell under the system root, {@link windowsPowerShellPath}); called by {@link profileProcesses} for one profile and once per sweep by {@link removeAbandonedProfiles}, which matches every candidate folder against the same listing.
  * The listing is bounded: it is ended with a signal it cannot ignore after {@link PROCESS_LISTING_TIMEOUT_MS}, and when it prints more than {@link PROCESS_LISTING_MAX_BYTES}. Its input is closed ({@link runBoundedQuery}).
- * @param inputs - The platform, the runner, the time bound, the environment that names the Windows system root, and the paths and file check of `ps`, of {@link ProcessListingInputs}; the real ones when left out.
- * @returns Every process the listing printed with a command line, in its order; a line that names no process id or no command line is left out.
+ * @param inputs - The platform, the runner, the time bound, the environment that names the Windows system root, the paths and file check of `ps` and the user id, of {@link ProcessListingInputs}; the real ones when left out.
+ * @returns Every process of this user (on Windows: of the editor's session) the listing printed with a command line, in its order; a line that names no process id or no command line, or a process of another user, is left out.
  * @throws What running the listing throws; for a listing that ran too long or printed too much, an error that says so ({@link listingFailure}); the refusal of {@link listingFormOf}, before any program is started, on Windows when neither SystemRoot nor windir names the Windows folder, and on macOS and Linux when no `ps` lies at `/bin/ps` or `/usr/bin/ps`. A caller that removes by the listing removes nothing then.
  * @example
  * await listProcesses() // => [{ pid: 1, command: '/sbin/launchd' }, { pid: 4242, command: '/Applications/Google Chrome --user-data-dir=/tmp/codebook-browser-a1b2c3' }, …]
