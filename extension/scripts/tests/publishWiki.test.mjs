@@ -6971,9 +6971,9 @@ for (const climb of [
     projectFolderOf: (root) => join(root, '.codebook'),
   },
 ]) {
-  // Value: protects=the project's own files when a cloned repository carries a publish journal whose stage is the Wiki folder's parent followed by "/.." or "/."; fails_when=the recovery holds the journal's stage to its parent folder's name alone, so it takes the folder the step leads to for the candidate and removes every file there whose bytes equal a learner's file of the Wiki at the same path; why_new=Cycle 0047 row 58 (SEC-1 = ADV-1, security); seam=none; no_claim=a stage that names another folder beside the Wiki folder by its own name, which the recovery takes for a candidate
+  // Value: protects=the project's own files when a cloned repository carries a publish journal whose stage is the Wiki folder's parent followed by "/.." or "/."; fails_when=the recovery holds the journal's stage to its parent folder's name alone, so it takes the folder the step leads to for the candidate and removes every file there at the place of a learner's file of the Wiki that the journal names as a copy, whose bytes are the start of that file's; why_new=Cycle 0047 row 58 (SEC-1 = ADV-1, security); seam=none; no_claim=a stage that names another folder beside the Wiki folder by its own name, which the recovery takes for a candidate
   test(`a recovery whose journal names as its stage the Wiki folder’s parent followed by "${climb.step}" (${climb.leadsTo}) is refused, and the project file there that holds a learner’s file’s bytes and the journal stay as they were`, async () => {
-    // Arrange: a published Wiki with a learner's file; where the step leads, a project file with the same name and bytes and a manifest that names this project; a journal of an earlier version (no operation), whose process is gone and whose stage climbs out by the step.
+    // Arrange: a published Wiki with a learner's file; where the step leads, a project file with the same name and bytes and a manifest that names this project; a journal of this version, whose process is gone, whose stage climbs out by the step and which names the learner's file as a copy that began.
     const directory = await realpath(
       await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-stage-climbs-')),
     )
@@ -7009,6 +7009,13 @@ for (const climb of [
         output,
         stage: `${dirname(output)}/${climb.step}`,
         pid: 99999999,
+        id: '00000000-0000-4000-8000-000000000000',
+        operation: 'publish',
+        manifestSha256: createHash('sha256')
+          .update(await readFile(join(output, 'codebook-wiki.json')))
+          .digest('hex'),
+        priorLegacy: false,
+        learnerCopies: ['manual.txt'],
       })
       await writeFile(journal, record)
 
