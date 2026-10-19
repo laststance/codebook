@@ -815,8 +815,10 @@ export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
 export const WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS = 10_000
 /** How often a window asks once more for such a change of its marker before it leaves the marker to its own expiry; with {@link WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS} two minutes, longer than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}, after which the claim a killed window of another machine left no longer counts. */
 export const WIKI_UPDATE_MARKER_CHANGE_RETRIES = 12
-/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, where its owner cannot be judged by this process ({@link canJudgeOwnerHere}: a claim of another machine, of 0.2.29.0, or of a window whose process start could not be read); a running window holds the claim for milliseconds. */
+/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, where its owner cannot be judged by this process ({@link canJudgeOwnerHere}: a claim of another machine, of 0.2.29.0, or of a window whose process start could not be read); a running window holds the claim for milliseconds. The age counts by this window's clock and by the clock that stamped the claim (a file server's, the Windows host's under WSL2), so a local clock that runs ahead does not age a claim placed a moment ago. */
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
+/** The coarsest step in which a file system that may hold a project folder stamps a file's modification time (FAT stores 2 s); a new file whose stamp lies less than this behind the wall clock is rounded, and only one further behind shows a clock of the file system that lags ({@link claimWikiUpdateMarker}). */
+export const WIKI_UPDATE_MARKER_STAMP_STEP_MS = 2_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
 /** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the first sign that the chat works on it (its reply or its wait for a confirmation, a step of the update the editor reports, a folder the publisher prepares) before the request is taken back and the run ends as failed. */

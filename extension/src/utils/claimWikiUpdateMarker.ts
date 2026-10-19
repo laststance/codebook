@@ -10,6 +10,7 @@ import {
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
   WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS,
   WIKI_UPDATE_MARKER_FILE_MODE,
+  WIKI_UPDATE_MARKER_STAMP_STEP_MS,
   WIKI_UPDATE_RUN_MARKER_SUFFIX,
 } from '../constants'
 
@@ -65,6 +66,11 @@ export type WikiUpdateMarkerClaimInputs = {
 
 /** The inputs of one step of a claim with every default filled in ({@link judgementFrom}). */
 type MarkerClaimJudgement = Required<WikiUpdateMarkerClaimInputs>
+
+/** What one sweep of the entries beside the marker judges their age by: the inputs of the claim and the present by the clock of the file system that holds them, this window's present less how far that clock runs behind, which is measured once for the sweep when an entry needs it ({@link readFileSystemClockLag}). */
+type MarkerSweepJudgement = MarkerClaimJudgement & {
+  fileSystemNow: () => Promise<number | undefined>
+}
 
 /**
  * Fills in what a claim was not handed; called by {@link claimWikiUpdateMarker} when the claim begins and again by its `release` and `reserve`, which run minutes later.
@@ -231,26 +237,61 @@ async function readOwnerOfEntry(
 }
 
 /**
+ * Measures how far the clock that stamps the files beside the marker runs behind this machine's wall clock, by the modification time of an empty file created there now and removed at once; called by {@link removeExpiredMarkerClaims} for its sweep, at most once, when {@link isExpiredMarkerClaim} meets an entry that this window's clock calls expired.
+ * Why: a file server, or the Windows host under a WSL2 window, stamps a file by its own clock, which this machine's clock can run minutes ahead of (WSL2 after a sleep), and every entry beside the marker then looks older than it is. A stamp less than {@link WIKI_UPDATE_MARKER_STAMP_STEP_MS} behind is the file system's own rounding, not a clock that lags. The file is named like a prepared marker (`<marker>.pending-<uuid>`) and has no owner, so one that a window killed in this instant left is removed by a later sweep by its age ({@link removeExpiredPreparations}).
+ * @param markerPath - `<output>.update-run.json`.
+ * @returns How many milliseconds the new file's stamp lies before the wall clock right before its creation, or 0 when it lies less than {@link WIKI_UPDATE_MARKER_STAMP_STEP_MS} before or after it; `undefined` when no file can be created or looked at there.
+ * @example
+ * await readFileSystemClockLag('/repo/.codebook/wiki.update-run.json') // => 120_000 on a file server whose clock runs 2 minutes behind
+ */
+async function readFileSystemClockLag(
+  markerPath: string,
+): Promise<number | undefined> {
+  const probePath = `${markerPath}${PREPARED_LOCK_SUFFIX}${randomUUID()}`
+  const createdAtMs = Date.now()
+  try {
+    await writeFile(probePath, '', {
+      mode: WIKI_UPDATE_MARKER_FILE_MODE,
+      flag: 'wx',
+    })
+  } catch {
+    return undefined
+  }
+  const probe = await lstat(probePath).catch(() => undefined)
+  await removeWithoutFollowing(probePath).catch(() => undefined)
+  if (!probe) return undefined
+  const lagMs = createdAtMs - probe.mtimeMs
+  return lagMs < WIKI_UPDATE_MARKER_STAMP_STEP_MS ? 0 : lagMs
+}
+
+/**
  * Says whether a claim on the marker, or a file prepared beside it, is nobody's by its age; called by {@link removeIfExpired} for each entry the sweeps find.
  * Why: a claim is held for the time of one read and one removal, and a prepared file exists for the time of one write, so an old one was left by a killed window. Age decides only where the owner cannot be judged by this process ({@link canJudgeOwnerHere}): an entry of another machine, of another system or pid namespace of this computer, of a Linux window whose pid namespace could not be read, of 0.2.29.0, of a window whose process start could not be read, or one whose record cannot be read. An entry whose owner can be judged here is left to that judgement ({@link removeStaleStorageClaims}), so a live window that was suspended while it held the claim keeps it.
  * These paths lie in the learner's project folder, where a cloned repository can put anything: the entry is looked at without following a link, a link is judged by its age alone, and an owner's record is read only as a regular file of bounded size ({@link readRecordedOwner}), so a link to an endless device or to a pipe costs neither time nor memory.
+ * The age is the present minus the time the file system stamped on the entry, and the entry must be older than the expiry both by this window's clock and by the clock that stamped it ({@link readFileSystemClockLag}): a file server, or the Windows host under a WSL2 window, stamps by its own clock, and this window's clock may run minutes ahead of it, so a claim placed a moment ago would look expired by the local clock alone.
  * @param path - What age is taken from and what would be removed: a claim's owner file, a claim folder that was prepared and never put into place, or a marker file that was prepared and never linked or moved into place.
  * @param ownerPath - The file that records the owner of that entry.
- * @param judgement - The identity of this process and the clock.
- * @returns `true` for an entry that cannot be judged here and is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}, also a link whatever it leads to; `false` for a younger one, for one whose owner can be judged here, and for a path that cannot be inspected.
+ * @param judgement - The identity of this process, the clock and the file system's present of the sweep.
+ * @returns `true` for an entry that cannot be judged here and is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} by this window's clock and by the file system's, or by this window's clock alone where the file system's present cannot be read, also a link whatever it leads to; `false` for a younger one, for one whose owner can be judged here, and for a path that cannot be inspected.
  * @example
  * await isExpiredMarkerClaim(claimPath, claimPath, judgement) // => true for a claim a killed window of another machine left two minutes ago
  */
 async function isExpiredMarkerClaim(
   path: string,
   ownerPath: string,
-  { identity, now }: MarkerClaimJudgement,
+  { identity, now, fileSystemNow }: MarkerSweepJudgement,
 ): Promise<boolean> {
   const entry = await lstat(path).catch(() => undefined)
   if (!entry) return false
   const owner = await readOwnerOfEntry(path, ownerPath)
   if (owner && canJudgeOwnerHere(owner, identity)) return false
-  return now() - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
+  if (now() - entry.mtimeMs <= WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS) return false
+  // This window's clock may run ahead of the clock that stamped the entry: the entry must be as old by that clock.
+  const fileSystemNowMs = await fileSystemNow()
+  return (
+    fileSystemNowMs === undefined ||
+    fileSystemNowMs - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
+  )
 }
 
 /**
@@ -258,7 +299,7 @@ async function isExpiredMarkerClaim(
  * The removal is Codebook's own walk ({@link removeWithoutFollowing}): a link is unlinked as a name, a prepared claim folder is emptied entry by entry, and nothing below a link is listed, whatever the system answers.
  * @param path - The claim's owner file, the prepared claim folder or the prepared marker file.
  * @param ownerPath - The file that records the owner of that entry.
- * @param judgement - The identity of this process and the clock.
+ * @param judgement - The identity of this process, the clock and the file system's present of the sweep.
  * @returns Nothing; an entry that cannot be removed stays for the next caller.
  * @example
  * await removeIfExpired('/repo/.codebook/wiki.update-run.json.takeover-4f2c', '/repo/.codebook/wiki.update-run.json.takeover-4f2c/4f2c', judgement)
@@ -266,7 +307,7 @@ async function isExpiredMarkerClaim(
 async function removeIfExpired(
   path: string,
   ownerPath: string,
-  judgement: MarkerClaimJudgement,
+  judgement: MarkerSweepJudgement,
 ): Promise<void> {
   if (await isExpiredMarkerClaim(path, ownerPath, judgement))
     await removeWithoutFollowing(path).catch(() => undefined)
@@ -276,14 +317,14 @@ async function removeIfExpired(
  * Removes what killed windows prepared beside the marker and never put into place, once it is nobody's by its age: a claim folder `<marker>.takeover-<name>`, whose owner file is named like the claim, and a marker or reservation file `<marker>.pending-<name>`, which records its owner itself; called by {@link removeExpiredMarkerClaims}.
  * Why: the sweep of {@link removeStaleStorageClaims} removes such an entry only when its owner is gone from this machine, so one of another machine, or of another system of this computer, would stay in the learner's project folder for good. A window whose prepared marker is removed while it is suspended creates its marker in place instead ({@link placeStorageLock}).
  * @param markerPath - `<output>.update-run.json`.
- * @param judgement - The identity of this process and the clock.
+ * @param judgement - The identity of this process, the clock and the file system's present of the sweep.
  * @returns Nothing; an entry that cannot be removed stays for the next caller.
  * @example
  * await removeExpiredPreparations('/repo/.codebook/wiki.update-run.json', judgement)
  */
 async function removeExpiredPreparations(
   markerPath: string,
-  judgement: MarkerClaimJudgement,
+  judgement: MarkerSweepJudgement,
 ): Promise<void> {
   const parentDirectory = dirname(markerPath),
     preparedClaimPrefix = `${basename(markerPath)}.takeover-`,
@@ -304,7 +345,7 @@ async function removeExpiredPreparations(
 /**
  * Removes the claims on the marker, and what was prepared beside it, that are nobody's by their age, each by its own unique name; called by {@link tryMarkerClaim} before it asks for the claim.
  *
- * Why: {@link claimStorageLockTakeover} removes a claim whose owner is gone, which it can say only of an owner of this machine. A window of another machine, or of 0.2.29.0, that was killed while it held the claim would keep it for good, and every later start on a stale marker would fail. Such a claim is nobody's once it is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} ({@link isExpiredMarkerClaim}).
+ * Why: {@link claimStorageLockTakeover} removes a claim whose owner is gone, which it can say only of an owner of this machine. A window of another machine, or of 0.2.29.0, that was killed while it held the claim would keep it for good, and every later start on a stale marker would fail. Such a claim is nobody's once it is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}, by this window's clock and by the clock that stamped it ({@link isExpiredMarkerClaim}).
  * The claim folder's path lies in the learner's project folder, where a cloned repository can put a link: only a real directory there is listed, and anything else at that path is removed by its own name ({@link listPlacedClaims}), so the sweep never reaches the files a link leads to.
  *
  * @param markerPath - `<output>.update-run.json`; the claim is one owner file in the folder `<marker>.takeover`.
@@ -317,13 +358,22 @@ async function removeExpiredMarkerClaims(
   markerPath: string,
   judgement: MarkerClaimJudgement,
 ): Promise<void> {
+  let lagRead: Promise<number | undefined> | undefined
+  // The file system's clock is measured at most once a sweep, and only for an entry this window's clock calls expired.
+  const sweep: MarkerSweepJudgement = {
+    ...judgement,
+    fileSystemNow: async () => {
+      const lagMs = await (lagRead ??= readFileSystemClockLag(markerPath))
+      return lagMs === undefined ? undefined : judgement.now() - lagMs
+    },
+  }
   const claimDirectory = `${markerPath}.takeover`
   // A placed claim is one owner file inside the claim folder; a link or a file at the folder's path is removed there and never listed.
   for (const claimName of await listPlacedClaims(claimDirectory)) {
     const claimPath = join(claimDirectory, claimName)
-    await removeIfExpired(claimPath, claimPath, judgement)
+    await removeIfExpired(claimPath, claimPath, sweep)
   }
-  await removeExpiredPreparations(markerPath, judgement)
+  await removeExpiredPreparations(markerPath, sweep)
 }
 
 /**
