@@ -16684,3 +16684,129 @@ for (const step of [
     }
   })
 }
+
+// The tests of Cycle 0047's second /ship, fixing cycle 2, rows 215 to 221, 244 and 245: the owner judgement, the recovery's reads, the copy's recheck, the publish lock and the candidate's look.
+
+/** What the stand-in systems of row 215 print for their computer's id: macOS's ioreg the Mac's hardware UUID, Windows's reg.exe the machine GUID; each answers its exact query alone. */
+const COMPUTER_ID_QUERIES = {
+  darwin: {
+    program: '/usr/sbin/ioreg',
+    args: ['-rd1', '-c', 'IOPlatformExpertDevice'],
+    answer:
+      '+-o MacBookPro18,3  <class IOPlatformExpertDevice, id 0x100000213, registered, matched, active, busy 0 (0 ms), retain 34>\n    {\n      "IOPlatformUUID" = "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D"\n    }',
+  },
+  win32: {
+    program: 'C:\\Windows\\System32\\reg.exe',
+    args: [
+      'query',
+      'HKLM\\SOFTWARE\\Microsoft\\Cryptography',
+      '/v',
+      'MachineGuid',
+      '/reg:64',
+    ],
+    answer:
+      'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\r\n    MachineGuid    REG_SZ    3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+  },
+}
+
+for (const { platform, system, environment, start } of [
+  {
+    platform: 'win32',
+    system: 'Windows',
+    environment: { SystemRoot: 'C:\\Windows' },
+    start: 'win:2026-10-05T09:12:33.1234567Z',
+  },
+  {
+    platform: 'darwin',
+    system: 'a Mac whose sysctl answers nothing',
+    environment: {},
+    start: 'ps:Mon Oct  5 09:12:33 2026',
+  },
+]) {
+  for (const { pair, named, outcome, ended } of [
+    {
+      pair: 'without --gone-host and --gone-space',
+      named: () => [],
+      outcome:
+        'is refused as another computer’s with --gone-host and --gone-space as the way out, and the journal is kept',
+      ended: (record) => ({
+        recovery: `The prior Wiki publisher process 99999999 ran on ${JSON.stringify(record.owner.host)} (${platform}) on another computer with the same host name: the digest of the computer’s id it records is not this computer’s. If that computer may be publishing this Wiki, run --recover there after it exits. If it cannot come back, or it was this computer before its id changed (a reinstall gives a new one), run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.`,
+        journal: 'kept',
+      }),
+    },
+    {
+      pair: 'with --gone-host and --gone-space naming the journal’s place',
+      named: (record) => [{ host: record.owner.host, space: platform }],
+      outcome: 'recovers the Wiki and removes the journal',
+      ended: () => ({ recovery: 'published-or-restored', journal: 'gone' }),
+    },
+  ]) {
+    // Value: protects=a Wiki whose publish runs on another Windows PC or Mac with this host name that opens the same project folder (a synced or shared folder), where a boot has no id and the record names a start, so no boot tells the two computers apart; fails_when=the recovery compares the digest of the computer's id only once another boot is proved, so it probes the recorded process id on this computer, finds it free and moves the Wiki and removes the journal of a publish that may still run there, or the pair for that place does not end it; why_new=Cycle 0047 row 215 (P2CORE-1 = P2MAINT-1 = P2TEST-1 = P2OCR3-1 = P2CXA-A2 = P2CLA-1); seam=the publisher's `system` option, here Windows or macOS whose queries print this computer's id alone (reg.exe's machine GUID, ioreg's hardware UUID; sysctl, ps and PowerShell answer nothing), and a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given this host name, the system's space, this boot's time, a start, another computer's id and a process id no process has here; no_claim=a real second computer, a real reg.exe or ioreg
+    test(`a recovery on ${system} of a killed publish whose journal names this host name and space, a start, another computer’s id and a process id no process has here, ${pair}, ${outcome}`, async () => {
+      // Arrange: the journal names a process id free here, this host as the killed publisher recorded it, the system's space, this boot's time, a start and another computer's id.
+      const { wiki, killed, record } = await publishKilledAfterItsJournal(
+        (record) => {
+          record.pid = 99999999
+          record.owner = {
+            host: record.owner.host,
+            space: platform,
+            boot: { atMs: Date.now() - Math.round(uptime() * 1000) },
+            start,
+            machine:
+              '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0',
+          }
+        },
+      )
+      const idQuery = COMPUTER_ID_QUERIES[platform]
+      // A stand-in runner: it prints this computer's id for the exact query, and nothing for any other query.
+      const run = async (program, args) =>
+        program === idQuery.program &&
+        JSON.stringify(args) === JSON.stringify(idQuery.args)
+          ? idQuery.answer
+          : undefined
+      try {
+        // Act
+        const recovery = await recoverWikiPublication({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          goneOwners: named(record),
+          system: { platform, environment, run },
+        }).then(
+          ({ status }) => status,
+          (error) => error.message,
+        )
+
+        // Assert
+        assert.deepEqual(
+          {
+            killed,
+            recovery,
+            journal: existsSync(`${wiki.output}.publish-journal.json`)
+              ? 'kept'
+              : 'gone',
+          },
+          { killed: '', ...ended(record) },
+        )
+      } finally {
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    })
+  }
+}
+
+// Value: protects=the editor agent whose --recover is refused for a publish of another computer with the same host name, which the digest of the computer's id tells apart (a Windows PC or a Mac on a shared project folder); fails_when=the skill does not tell the agent to run --recover on that computer, or to use --gone-host and --gone-space only once the learner confirms that no publisher runs there, so it leaves the Wiki locked for good or ends a publish that may still run there; why_new=Cycle 0047 row 215 (P2CORE-1); seam=none; no_claim=what an agent does with the sentence
+test('the bundled skill tells the agent to recover on the other computer, or with --gone-host and --gone-space once the learner confirms, when recovery refuses a publish of another computer with the same host name', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      "If recovery refuses because the stopped publisher ran on another computer with the same host name, by the digest of the computer's id it records, run `--recover` on that computer after its publisher exits; if that computer cannot come back, or it was this computer before its id changed (a reinstall), use the pair that refusal names, the same way and only after the learner confirms that no publisher runs there.",
+    ),
+    true,
+  )
+})
