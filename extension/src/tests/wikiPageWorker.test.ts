@@ -20,32 +20,40 @@ const PAGE_OPTIONS = {
 const SLOW_PAGE = `<!doctype html><body>${'<x>'.repeat(10_000)}${'</p>'.repeat(100_000)}</body>`
 
 /**
- * Loads the page-worker module with a `Worker` class that records each worker thread it starts and when that thread ends, so a test can tell how many workers prepared its pages; the threads themselves are the real ones, running the compiled worker file.
+ * Loads the page-worker module with a `Worker` class that records each worker thread it starts, how many threads it started before were still alive then, and when each thread ends, so a test can tell how many workers prepared its pages and how many lived at once; the threads themselves are the real ones, running the compiled worker file.
  * Called by the tests of the workers' reuse, limit and stop.
  * @param constantOverrides - Constants the loaded module reads instead of the shipped ones.
- * @returns The loaded module's {@link servedWikiPageOffThread}, the workers it started in their order, the start of the worker started n-th (from 0): a promise that settles with `'online'` when its thread runs, or at once with `'never started'`, and that worker's end: a promise that settles with `'ended'` when its thread has ended, or at once with `'never started'`.
+ * @param whenStopIsAsked - Called with the worker each time the module asks a worker to stop (`terminate`), before the stop begins; by default nothing is done.
+ * @returns The loaded module's {@link servedWikiPageOffThread}, the workers it started in their order, for each of them how many threads started before it had not ended at its start, the start of the worker started n-th (from 0): a promise that settles with `'online'` when its thread runs, or at once with `'never started'`, and that worker's end: a promise that settles with `'ended'` when its thread has ended, or at once with `'never started'`.
  * @example
  * const pool = await loadPageWorkerRecordingThreads({})
  * await pool.servedWikiPageOffThread('<body></body>', PAGE_OPTIONS, limits)
  * pool.startedWorkers.length // => 1
+ * pool.threadsAliveAtEachStart // => [0]
  */
 async function loadPageWorkerRecordingThreads(
   constantOverrides: Partial<Record<keyof typeof constants, unknown>>,
+  whenStopIsAsked: (worker: workerThreads.Worker) => void = () => undefined,
 ): Promise<{
   servedWikiPageOffThread: typeof servedWikiPageOffThread
   startedWorkers: workerThreads.Worker[]
+  threadsAliveAtEachStart: number[]
   onlineOfWorker: (index: number) => Promise<'online' | 'never started'>
   endOfWorker: (index: number) => Promise<'ended' | 'never started'>
 }> {
   const startedWorkers: workerThreads.Worker[] = []
+  const aliveWorkers = new Set<workerThreads.Worker>()
+  const threadsAliveAtEachStart: number[] = []
   const workerOnlines: Promise<'online'>[] = []
   const workerEnds: Promise<'ended'>[] = []
-  /** The real Worker, noting each thread it starts, the moment it runs and its end. */
+  /** The real Worker, noting each thread it starts, the threads alive then, the moment it runs, its end, and each stop asked of it. */
   class RecordedWorker extends workerThreads.Worker {
     constructor(
       ...parameters: ConstructorParameters<typeof workerThreads.Worker>
     ) {
       super(...parameters)
+      threadsAliveAtEachStart.push(aliveWorkers.size)
+      aliveWorkers.add(this)
       startedWorkers.push(this)
       workerOnlines.push(
         new Promise((resolveOnline) =>
@@ -54,9 +62,17 @@ async function loadPageWorkerRecordingThreads(
       )
       workerEnds.push(
         new Promise((resolveEnd) =>
-          this.once('exit', () => resolveEnd('ended')),
+          this.once('exit', () => {
+            aliveWorkers.delete(this)
+            resolveEnd('ended')
+          }),
         ),
       )
+    }
+
+    override terminate(): Promise<number> {
+      whenStopIsAsked(this)
+      return super.terminate()
     }
   }
   const loaded = await loadModule<typeof wikiPageWorkerModule>(
@@ -69,6 +85,7 @@ async function loadPageWorkerRecordingThreads(
   return {
     servedWikiPageOffThread: loaded.servedWikiPageOffThread,
     startedWorkers,
+    threadsAliveAtEachStart,
     onlineOfWorker: (index) =>
       workerOnlines[index] ?? Promise.resolve('never started'),
     endOfWorker: (index) =>
@@ -242,6 +259,105 @@ test('a worker stopped at the deadline prepares no later page: it ends, and the 
       },
       startedWorkers: 2,
       stoppedWorkerEnd: 'ended',
+    },
+  )
+})
+
+// Value: protects=the editor's extension host, in whose process every page worker runs, against pages past the deadline one after another (a crafted page reloaded, or several of them): a worker stopped at the deadline holds its heap (up to WIKI_PAGE_WORKER_HEAP_LIMIT_MB) until its thread has ended, and the place it gave back when its stop was asked let the waiting page's worker start beside it, so more threads than WIKI_PAGE_WORKER_CONCURRENCY_LIMIT lived at once, past the bound row 4 sets on their heaps together; fails_when=a stopped worker's place among the busy ones is given back when its stop is asked instead of when its thread has ended; why_new=Cycle 0047 row 79 (ADV-9); seam=the page-worker module loaded with one worker at a time and a Worker class that records the threads it starts and how many of the earlier ones were alive at each start (the threads are real); no_claim=the memory of the editor's process while a thread stops (a stop of a busy thread took about 2 ms on the development host); the shipped limit of two workers (each place is held the same way)
+test('a page that waits behind a page stopped at the deadline gets its worker only once the stopped worker’s thread has ended', async () => {
+  // Arrange: one worker at a time.
+  const pool = await loadPageWorkerRecordingThreads({
+    WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+  })
+  const signal = new AbortController().signal
+
+  // Act: the slow page under a deadline of 500 ms, and a small page asked for while the slow page is prepared.
+  const slow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+    deadlineMs: 500,
+    signal,
+  })
+  const waiting = pool.servedWikiPageOffThread(
+    '<body><p>Waiting page</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  const answers = await within(Promise.all([slow, waiting]), 5_000)
+
+  // Assert: the waiting page's worker started when no earlier thread was alive; the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({
+      answers,
+      threadsAliveAtEachStart: pool.threadsAliveAtEachStart,
+    }),
+    {
+      answers: [
+        { state: 'deadline' },
+        {
+          state: 'served',
+          html: '<body><p>Waiting page</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+      ],
+      threadsAliveAtEachStart: [0, 0],
+    },
+  )
+})
+
+// Value: protects=the editor's extension host against a page worker started beside an idle one that is being stopped: an idle worker whose idle time is up keeps its isolate and its heap (up to WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES) until its thread has ended, and a page asked for in that moment started its worker beside it, so more threads than WIKI_PAGE_WORKER_CONCURRENCY_LIMIT lived at once; fails_when=the stop of an idle worker whose time is up takes no place among the busy ones until its thread has ended; why_new=Cycle 0047 row 79 (ADV-9); seam=the page-worker module loaded with one worker at a time, an idle time of 300 ms, and a Worker class that records how many earlier threads were alive at each start and asks for the next page in the moment the module asks the idle worker to stop (the threads are real); no_claim=the memory an idle worker holds (the bound on it has its own test)
+test('a page asked for while an idle worker whose time is up is being stopped gets its worker only once that worker’s thread has ended', async () => {
+  // Arrange: one worker at a time and an idle time of 300 ms; the first stop the module asks for asks for the next page in that moment.
+  const pagesAskedDuringAStop: ReturnType<typeof servedWikiPageOffThread>[] = []
+  const signal = new AbortController().signal
+  const pool = await loadPageWorkerRecordingThreads(
+    {
+      WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+      WIKI_PAGE_WORKER_IDLE_MS: 300,
+    },
+    () => {
+      // Only the first stop asks for a page, so the next page's worker, idle in its turn, asks for none.
+      if (pagesAskedDuringAStop.length > 0) return
+      pagesAskedDuringAStop.push(
+        pool.servedWikiPageOffThread(
+          '<body><p>Page asked during the stop</p></body>',
+          PAGE_OPTIONS,
+          { deadlineMs: 10_000, signal },
+        ),
+      )
+    },
+  )
+
+  // Act: a page whose worker then waits idle until its time is up and it is stopped.
+  const first = await pool.servedWikiPageOffThread(
+    '<body><p>First page</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  const idleWorkerEnd = await within(pool.endOfWorker(0), 2_000)
+  const askedDuringTheStop = await within(
+    Promise.all(pagesAskedDuringAStop),
+    5_000,
+  )
+
+  // Assert: the second worker started when no earlier thread was alive; the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({
+      first,
+      idleWorkerEnd,
+      askedDuringTheStop,
+      threadsAliveAtEachStart: pool.threadsAliveAtEachStart,
+    }),
+    {
+      first: {
+        state: 'served',
+        html: '<body><p>First page</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      idleWorkerEnd: 'ended',
+      askedDuringTheStop: [
+        {
+          state: 'served',
+          html: '<body><p>Page asked during the stop</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+      ],
+      threadsAliveAtEachStart: [0, 0],
     },
   )
 })
