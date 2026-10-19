@@ -540,8 +540,8 @@ type LeftoverProofKeyboard = Extract<
 type LeftoverProofKeyboardOwner = {
   editor: vscode.TextEditor
   proofColumns: ReadonlySet<number>
-  /** The first proof's column and the URI of the text tab in front of its group then (the earlier session's restored captured source); `undefined` when that group showed no text tab in front. */
-  leftoverFront?: { column: number; uri: string }
+  /** The first proof's group as it stood at the proof's start: its column, how many groups the editor named then, and the tab in front of it named by its input (a text tab there is the earlier session's restored captured source; `none` for a group without a tab); `undefined` without a first proof. */
+  leftoverFront?: { column: number; groupCount: number; tab: string }
 }
 
 /** The key of one keyboard notice in {@link keyboardNoticesTold}. */
@@ -14288,7 +14288,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names a tab by its input as {@link frontTabOfFirstGroup} names the first group's front tab, so tabs are compared across Cursor's new tab objects; asked by {@link frontTabOfFirstGroup} and {@link showsLearnersOtherTabInFirstGroup}.
+   * Names a tab by its input as {@link frontTabOfFirstGroup} names the first group's front tab, so tabs are compared across Cursor's new tab objects; asked by {@link frontTabOfFirstGroup} and {@link showsLearnersOtherTabInFirstGroup}, and for the first leftover proof's group by {@link keyboardOwnerBeforeLeftoverProof} and {@link showsAnotherLeftoverFront}.
    * @param tab - The tab.
    * @returns `text:` with a text tab's resource ({@link textTabIdentity}), `webview:` with a webview's view type, `tab:` with the label of any other tab.
    * @example this.tabIdentity(readmeTab) // => 'text:file:///workspace/README.md'
@@ -14303,7 +14303,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names a text tab by its resource as {@link frontTabOfFirstGroup} does, so the active text editor's document can be compared with the first group's front tab.
+   * Names a text tab by its resource as {@link frontTabOfFirstGroup} does, so the active text editor's document can be compared with the first group's front tab, and with the front tab of the first leftover proof's group ({@link movedKeyboardSinceLeftoverProof}).
    * @param uri - The text tab's or text editor's resource.
    * @returns `text:` followed by the resource.
    * @example this.textTabIdentity(editor.document.uri) // => 'text:file:///workspace/login-form.tsx'
@@ -15304,10 +15304,10 @@ export class StudyWorkspace {
 
   /**
    * Reads, before the first proof of {@link retireProvenLeftoverGroups} moves the keyboard, the learner's text editor that has it and the columns of the groups the editor may name while the keyboard is still where that proof leaves it: the first proof's group and the group named now. {@link returnKeyboardAfterUnprovenLeftover} gives that editor its keyboard back only while {@link movedKeyboardSinceLeftoverProof} sees no move of the learner's since (Cycle 0047 row 44).
-   * The text tab in front of the first proof's group is read too: the captured source the leftover shows there comes to the keyboard with the proof's focus command, and its text editor is no move of the learner's (Cycle 0047 row 99).
+   * The tab in front of the first proof's group is read too, with the number of groups: the captured source the leftover shows there comes to the keyboard with the proof's focus command, and its text editor is no move of the learner's (Cycle 0047 row 99), while another tab the learner brings to that front is one, also where no active text editor reports it (Cycle 0047 row 128).
    * @param firstProof - The first leftover the proofs focus; `undefined` for none.
    * @returns The owner; `undefined` when no text editor has the keyboard (a chat of another editor part, whose give-back is its callers', {@link retainForeignTabFocus}).
-   * @example const keyboardOwner = this.keyboardOwnerBeforeLeftoverProof(leftovers[0]) // => { editor: notesEditor, proofColumns: Set { 2, 1 }, leftoverFront: { column: 1, uri: 'codebook-source://…/Captured-login-form.tsx' } } while the learner's notes in the second group have the keyboard
+   * @example const keyboardOwner = this.keyboardOwnerBeforeLeftoverProof(leftovers[0]) // => { editor: notesEditor, proofColumns: Set { 2, 1 }, leftoverFront: { column: 1, groupCount: 2, tab: 'text:codebook-source://…/Captured-login-form.tsx' } } while the learner's notes in the second group have the keyboard
    */
   private keyboardOwnerBeforeLeftoverProof(
     firstProof: RecordedLeftoverGroup | undefined,
@@ -15319,17 +15319,17 @@ export class StudyWorkspace {
     ])
     if (!firstProof) return { editor, proofColumns }
     proofColumns.add(firstProof.column)
-    const frontUri = this.textTabUri(
-      vscode.window.tabGroups.all.find(
-        (group) => group.viewColumn === firstProof.column,
-      )?.activeTab,
-    )
+    const front = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === firstProof.column,
+    )?.activeTab
     return {
       editor,
       proofColumns,
-      ...(frontUri !== undefined && {
-        leftoverFront: { column: firstProof.column, uri: frontUri },
-      }),
+      leftoverFront: {
+        column: firstProof.column,
+        groupCount: vscode.window.tabGroups.all.length,
+        tab: front ? this.tabIdentity(front) : 'none',
+      },
     }
   }
 
@@ -15405,8 +15405,8 @@ export class StudyWorkspace {
 
   /**
    * Says whether the learner moved the keyboard after a leftover proof took it from the learner's text editor, as the learner can while the editor's answer to the leftover's close is pending; asked by {@link returnKeyboardAfterUnprovenLeftover} before it gives the keyboard back (Cycle 0047 row 44).
-   * Two reports show such a move: another text editor is the active one (a click into a file of another group, which the editor reports also where Cursor goes on naming its chat part's group, Cycle 0046 row 712, or a captured source the learner selected, also in a group the proof may name, Cycle 0047 row 99), or the editor names a group that the first proof did not focus and that it did not name before that proof (a click on a page of another group that is no text editor, or into another empty group). The captured source the first proof's group showed in front is no such move: it came to the keyboard with the proof's focus command. The editor reports no move to the terminal or a view, so such a move is not seen.
-   * @param keyboardOwner - The text editor that had the keyboard before the proof, with the columns the editor may name while the keyboard is where the proof left it ({@link keyboardOwnerBeforeLeftoverProof}).
+   * Three reports show such a move: the first proof's group shows another tab in front than at the proof's start ({@link showsAnotherLeftoverFront}: a page that is no text editor, or a tab whose text editor the editor does not report, or reports late, as the active one, Cycle 0047 row 128), another text editor is the active one (a click into a file of another group, which the editor reports also where Cursor goes on naming its chat part's group, Cycle 0046 row 712, or a captured source the learner selected, also in a group the proof may name, Cycle 0047 row 99), or the editor names a group that the first proof did not focus and that it did not name before that proof (a click on a page of another group that is no text editor, or into another empty group). The captured source the first proof's group showed in front is no such move: it came to the keyboard with the proof's focus command. The editor reports no move to the terminal or a view, so such a move is not seen.
+   * @param keyboardOwner - The text editor that had the keyboard before the proof, with the columns the editor may name while the keyboard is where the proof left it and the first proof's group as it stood then ({@link keyboardOwnerBeforeLeftoverProof}).
    * @returns `true` once such a move is seen; `false` while the keyboard is where the proof left it, and after the learner went back to that same text editor.
    * @example this.movedKeyboardSinceLeftoverProof(keyboardOwner) // => true after the learner clicked into auth.ts while the editor's answer to the leftover's close was pending
    */
@@ -15415,6 +15415,9 @@ export class StudyWorkspace {
     proofColumns,
     leftoverFront,
   }: LeftoverProofKeyboardOwner): boolean {
+    // Another tab the learner brought to the front of the first proof's group is a move that no active text editor may report.
+    if (leftoverFront && this.showsAnotherLeftoverFront(leftoverFront))
+      return true
     const active = vscode.window.activeTextEditor
     // The captured source the focused leftover shows in front came with the proof's focus command; any other captured source the learner selected.
     const showsLeftoversFront =
@@ -15422,7 +15425,7 @@ export class StudyWorkspace {
       leftoverFront !== undefined &&
       !this.isLearnersEditor(active) &&
       active.viewColumn === leftoverFront.column &&
-      active.document.uri.toString() === leftoverFront.uri
+      this.textTabIdentity(active.document.uri) === leftoverFront.tab
     // Another text editor has the keyboard: one of the learner's files, or a captured source the learner selected.
     if (
       active &&
@@ -15433,6 +15436,33 @@ export class StudyWorkspace {
       return true
     // A group the proof did not focus and the editor did not name before it is where the learner went.
     return !proofColumns.has(vscode.window.tabGroups.activeTabGroup.viewColumn)
+  }
+
+  /**
+   * Says whether the learner brought another tab to the front of the first leftover proof's group since that proof's start; asked by {@link movedKeyboardSinceLeftoverProof} first, since the active text editor reports no such move for a page that is no text editor (a dead Codebook pane, another extension's page), and may still report the text editor in front before for a captured source the learner selected (Cycle 0047 row 128, CR2-1).
+   * Tabs are compared by their input ({@link tabIdentity}): Cursor gives every tab a new object when a group changes. Only a tab that came by the learner's choice counts: one in front of a group that showed none, or one in front of the tab that stood there and still stands behind it. A tab that came to the front because that tab left the group was not chosen, and once a group came or went, the group at that column may be another one, which says nothing.
+   * @param leftoverFront - The first proof's group as it stood at the proof's start ({@link keyboardOwnerBeforeLeftoverProof}).
+   * @returns `true` for such a tab in front; `false` while the same tab, or no tab, is in front as at the start, after that tab left the group, and once the editor names another number of groups.
+   * @example this.showsAnotherLeftoverFront({ column: 1, groupCount: 2, tab: 'text:codebook-source://…/Captured-login-form.tsx' }) // => true once the learner selected the dead Application pane behind it
+   */
+  private showsAnotherLeftoverFront({
+    column,
+    groupCount,
+    tab,
+  }: NonNullable<LeftoverProofKeyboardOwner['leftoverFront']>): boolean {
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
+    )
+    // Only while no group came or went is the group at that column the proof's.
+    if (!group || vscode.window.tabGroups.all.length !== groupCount)
+      return false
+    const front = group.activeTab ? this.tabIdentity(group.activeTab) : 'none'
+    if (front === tab) return false
+    // A tab in front of a group that showed none, or in front of the one that still stands behind it, is the learner's choice.
+    return (
+      tab === 'none' ||
+      group.tabs.some((candidate) => this.tabIdentity(candidate) === tab)
+    )
   }
 
   /**

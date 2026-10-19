@@ -6741,6 +6741,19 @@ export async function workspaceHarness(
       visibleSourceEditors.push(editor)
       activeTextEditorChanged(focusedSourceEditor())
     },
+    /**
+     * Keeps the active text editor the editor reports now through the learner's later clicks on tabs, as an editor whose report lags behind a tab the learner selects: the tab model names the selected tab in front of the group that has the keyboard while the active text editor is still the one of before (CR2-1 of Cycle 0047 row 128).
+     * @returns A callback that ends only this retained report; it emits no active-editor event.
+     * @example const release = harness.retainActiveTextEditorReport(); harness.focusOpaqueTab(otherSource); release()
+     */
+    retainActiveTextEditorReport(): () => void {
+      const retained = { value: focusedSourceEditor() }
+      partialFocusEditor = retained
+      return (): void => {
+        // A newer retained report must survive the end of this one.
+        if (partialFocusEditor === retained) partialFocusEditor = undefined
+      }
+    },
     /** Gives focus to a tab of the editor that is already open, as a learner's click on its tab does: a non-text page, or a captured source's tab, whose text editor, when it has one, is then the active text editor. @example harness.focusOpaqueTab(harness.addOpaqueTab('Extension page', 2)) */
     focusOpaqueTab(tab: Tab): void {
       const group = groups.find((group) => group.tabs.includes(tab))
