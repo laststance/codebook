@@ -251,7 +251,7 @@ test('reads a Windows start as UTC ISO text with a fixed command line, from the 
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "$process = Get-Process -Id 4194305 -ErrorAction Stop; try { $start = $process.StartTime } catch { $start = $null }; if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { 'cim:' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=4194305' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o') }",
+        "$process = Get-Process -Id 4194305 -ErrorAction Stop; try { $start = $process.StartTime } catch { $start = $null }; if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { 'wmi:' + (Get-WmiObject -Class Win32_Process -Filter 'ProcessId=4194305' -ErrorAction Stop).CreationDate }",
       ],
       options: {
         timeout: 3_000,
@@ -314,8 +314,7 @@ test('a Windows process whose start PowerShell may not read is told by its creat
     readProcessStart(ID_OF_NO_PROCESS, {
       platform: 'win32',
       environment: { SystemRoot: 'C:\\Windows' },
-      run: answeringQuery({ stdout: 'cim:2026-10-05T09:12:33.1234560Z\r\n' })
-        .run,
+      run: answeringQuery({ stdout: 'wmi:20261005181233.123456+540\r\n' }).run,
       ...(expectedStart !== undefined && { expectedStart }),
     })
 
@@ -340,8 +339,8 @@ test('a Windows process whose start PowerShell may not read is told by its creat
   })
 })
 
-// Value: protects=the start of a process whose creation time the process table names to the microsecond is never confirmed by a recorded start that a text of another shape names; fails_when=the fall-back's answer is taken as it is, without the round-trip form, or a recorded start of another system or without a time confirms it; why_new=Cycle 0047 row 33 (P3RT11); seam=the injected platform, environment and query runner
-test('a creation time from the Windows process table that is no UTC time in round-trip form is no start, and a recorded start of another form is never confirmed by it', async () => {
+// Value: protects=the start of a process whose creation time the process table names to the microsecond is never confirmed by a recorded start that a text of another shape names; fails_when=the fall-back's answer is taken as it is, without WMI's DMTF form with its offset from UTC (Cycle 0047 row 117: also the round-trip form PowerShell's own conversion printed, and a date out of range), or a recorded start of another system or without a time confirms it; why_new=Cycle 0047 row 33 (P3RT11); seam=the injected platform, environment and query runner
+test('a creation time from the Windows process table that is not in WMI’s form with its UTC offset is no start, and a recorded start of another form is never confirmed by it', async () => {
   // Arrange
   const startOf = (
     stdout: string,
@@ -356,16 +355,24 @@ test('a creation time from the Windows process table that is no UTC time in roun
 
   // Act
   const starts = {
-    localTime: await startOf('cim:05.10.2026 11:12:33\r\n'),
+    localTime: await startOf('wmi:05.10.2026 11:12:33\r\n'),
     errorText: await startOf(
-      'cim:Sie können keine Methode für einen Ausdruck mit dem Wert NULL aufrufen.\r\n',
+      'wmi:Sie können keine Methode für einen Ausdruck mit dem Wert NULL aufrufen.\r\n',
+    ),
+    roundTripUtcTime: await startOf('wmi:2026-10-05T09:12:33.1234560Z\r\n'),
+    withoutItsOffset: await startOf('wmi:20261005181233.123456\r\n'),
+    withUnknownFields: await startOf('wmi:20261005181233.******+540\r\n'),
+    aThirtiethOfFebruary: await startOf('wmi:20260230181233.123456+540\r\n'),
+    nothingAfterTheMark: await startOf('wmi:\r\n'),
+    markOfTheEarlierQuery: await startOf(
+      'cim:2026-10-05T09:12:33.1234560Z\r\n',
     ),
     recordedOnLinux: await startOf(
-      'cim:2026-10-05T09:12:33.1234560Z\r\n',
+      'wmi:20261005181233.123456+540\r\n',
       'linux@4026531836:16362446',
     ),
     recordedWithoutATime: await startOf(
-      'cim:2026-10-05T09:12:33.1234560Z\r\n',
+      'wmi:20261005181233.123456+540\r\n',
       'win:sometime',
     ),
   }
@@ -374,8 +381,54 @@ test('a creation time from the Windows process table that is no UTC time in roun
   assert.deepEqual(starts, {
     localTime: undefined,
     errorText: undefined,
+    roundTripUtcTime: undefined,
+    withoutItsOffset: undefined,
+    withUnknownFields: undefined,
+    aThirtiethOfFebruary: undefined,
+    nothingAfterTheMark: undefined,
+    markOfTheEarlierQuery: undefined,
     recordedOnLinux: 'win:2026-10-05T09:12:33.1234560Z',
     recordedWithoutATime: 'win:2026-10-05T09:12:33.1234560Z',
+  })
+})
+
+// Value: protects=a live Windows window run as administrator, or a publisher of another user, whose storage lock or claim is judged by the creation time in the process table while its clock was set back an hour (the repeated hour at the end of daylight saving time); fails_when=the creation time is read as a local time and converted to UTC by the time zone's rules, which give the repeated hour one offset only, so a process created in one of its two halves is named an hour off, its recorded start is not confirmed, and the live owner counts as gone (its lock is taken over while it writes); or the offset WMI names is not taken out of its local digits exactly; why_new=Cycle 0047 row 117 (ADV2-10); seam=the injected platform, environment and query runner, which answers as Windows PowerShell 5.1 prints Win32_Process CreationDate through Get-WmiObject: its local digits and its offset from UTC in minutes; no_claim=the real process table in a time zone with daylight saving time, which no runner of this project has
+test('a creation time from the Windows process table in the repeated hour at the end of daylight saving time is named by its own UTC offset, so the two halves of that hour are two starts', async () => {
+  // Arrange: in London, 01:30 local time on 25 October 2026 comes twice: at +60 minutes (00:30 UTC) and an hour later at +0 (01:30 UTC).
+  const startOf = (
+    stdout: string,
+    expectedStart?: string,
+  ): Promise<string | undefined> =>
+    readProcessStart(ID_OF_NO_PROCESS, {
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: answeringQuery({ stdout }).run,
+      ...(expectedStart !== undefined && { expectedStart }),
+    })
+
+  // Act
+  const starts = {
+    firstHalfOfTheHour: await startOf('wmi:20261025013000.123456+060\r\n'),
+    secondHalfOfTheHour: await startOf('wmi:20261025013000.123456+000\r\n'),
+    firstHalfConfirmingItsRecordedStart: await startOf(
+      'wmi:20261025013000.123456+060\r\n',
+      'win:2026-10-25T00:30:00.1234567Z',
+    ),
+    secondHalfAgainstTheFirstHalfsRecordedStart: await startOf(
+      'wmi:20261025013000.123456+000\r\n',
+      'win:2026-10-25T00:30:00.1234567Z',
+    ),
+    westOfUtc: await startOf('wmi:20261101013000.123456-240\r\n'),
+  }
+
+  // Assert
+  assert.deepEqual(starts, {
+    firstHalfOfTheHour: 'win:2026-10-25T00:30:00.1234560Z',
+    secondHalfOfTheHour: 'win:2026-10-25T01:30:00.1234560Z',
+    firstHalfConfirmingItsRecordedStart: 'win:2026-10-25T00:30:00.1234567Z',
+    secondHalfAgainstTheFirstHalfsRecordedStart:
+      'win:2026-10-25T01:30:00.1234560Z',
+    westOfUtc: 'win:2026-11-01T05:30:00.1234560Z',
   })
 })
 
@@ -609,7 +662,7 @@ const WINDOWS_SYSTEM_PROCESS_ID = 4
  * @returns The runner to inject, how many queries had their read of the start denied, and what each query printed.
  * @example
  * const query = queryWithStartReadDenied()
- * await realProcessStart(4, { run: query.run }) // => 'win:2026-10-19T02:21:17.7593480Z'; query.printed => ['cim:2026-10-19T02:21:17.7593480Z']
+ * await realProcessStart(4, { run: query.run }) // => 'win:2026-10-19T02:21:17.7593480Z'; query.printed => ['wmi:20261019112117.759348+540']
  */
 function queryWithStartReadDenied(): {
   run: NonNullable<ProcessStartInputs['run']>
@@ -658,7 +711,7 @@ test(
   },
 )
 
-// Value: protects=a storage lock or a claim of a killed Windows window whose process id went to a process this user may not query (another user's, or one run as administrator); fails_when=the fall-back of the real PowerShell to the process table (Win32_Process through CIM, row 33) prints no creation time, prints it in another shape, or its time is not taken for the start, so the start stays unknown and the dead window's lock refuses every write for as long as that process runs; or the creation time to the microsecond does not confirm the start PowerShell reads to the 100 ns, so a live owner counts as gone; why_new=Cycle 0047 row 93 (TEST-4): the fall-back was only run with stubs; seam=the product's query run in the real PowerShell with its read of the start denied, as it is denied to a user who may not read the process (a runner of the Windows job is an administrator, who may read the System process's start); no_claim=a standard user's own denial, which the same query meets on a developer's computer. Windows only: no other system has PowerShell's query; the Windows job runs this file.
+// Value: protects=a storage lock or a claim of a killed Windows window whose process id went to a process this user may not query (another user's, or one run as administrator); fails_when=the fall-back of the real PowerShell to the process table (Win32_Process through WMI's Get-WmiObject of the Windows PowerShell 5.1 the product starts, row 33, row 117) prints no creation time, prints it in another shape than WMI's DMTF text with its UTC offset, or its time is not taken for the start, so the start stays unknown and the dead window's lock refuses every write for as long as that process runs; or the creation time to the microsecond does not confirm the start PowerShell reads to the 100 ns, so a live owner counts as gone; why_new=Cycle 0047 row 93 (TEST-4): the fall-back was only run with stubs; seam=the product's query run in the real PowerShell with its read of the start denied, as it is denied to a user who may not read the process (a runner of the Windows job is an administrator, who may read the System process's start); no_claim=a standard user's own denial, which the same query meets on a developer's computer. Windows only: no other system has PowerShell's query; the Windows job runs this file.
 test(
   'where PowerShell may not read the start of the Windows System process, the real query names it by its creation time in the process table, the same at a second read, and that time confirms the start read where PowerShell may',
   {
@@ -680,10 +733,9 @@ test(
       })
     // Assert
     assert.equal(query.deniedReads, 3)
-    assert.deepEqual(
-      query.printed.map((printed) => printed.slice(0, 'cim:'.length)),
-      ['cim:', 'cim:', 'cim:'],
-    )
+    assert.equal(query.printed.length, 3)
+    for (const printed of query.printed)
+      assert.match(printed, /^wmi:\d{14}\.\d{6}[+-]\d{3}$/)
     assert.match(creation, /^win:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}0Z$/)
     assert.equal(creationAgain, creation)
     assert.equal(confirmed, startReadByPowerShell)
