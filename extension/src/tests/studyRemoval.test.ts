@@ -24,6 +24,7 @@ import { RecordingStore } from '../recordingStore'
 import { readProcessStart } from '../utils/readProcessStart'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { recordingWriterOf } from '../utils/recordingWriterOf'
+import { studyRemovalMessages } from '../utils/studyRemovalMessages'
 import type * as lockModule from '../utils/withStorageLock'
 import { withStorageLock } from '../utils/withStorageLock'
 
@@ -1685,6 +1686,82 @@ test('once another window saved the study of its finished recording, the study i
   )
 })
 
+// Value: protects=a learner whose Delete meets the finished recording of a run on another computer (a shared storage folder) that has not saved its study yet, reading a refusal and a dialog that are true for it; fails_when=the refusal and the dialog say only that the recording "may still be running" and that Codebook cannot tell whether a window "still records it", although the recording is sealed and its run only still has to save it, so the learner takes Move to Trash Anyway for safe because no window records any more; why_new=Cycle 0047 row 57: since row 36 a sealed recording stays its run's until the study is saved, so a writer this computer cannot confirm also holds a finished recording; seam=the recording's header and the record of its writer, which name an editor of another machine, the removal's messages, and the injected mover; no_claim=a real second computer, the editor's dialog (studyWorkspaceRemoval tests)
+test('the finished recording of a run on another computer that has not saved its study keeps the study, and the refusal and its dialog say a window there may still have to save it', async (context) => {
+  // Arrange: a recording without a saved study, sealed; its header and the record of its writer name an editor of another machine, whose run has not saved the study.
+  const storage = await removalStorage(context, 4)
+  const instanceId = randomUUID(),
+    runId = randomUUID()
+  const studyId = `${instanceId}_${runId}`
+  const recording = await storage.recordings.start(
+    {
+      workspaceKey: storage.workspaceKey,
+      studyId,
+      instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: 'repository-browser',
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  await nameWriterOfRecording(storage, studyId, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'old-laptop.local',
+  })
+  await rewriteWriterRecord(storage.directory, studyId, {
+    machineId: 'machine-b',
+  })
+  await recording.finish(1)
+  const directory = join(storage.directory, 'recordings.v2', studyId)
+  const { createdAt }: { createdAt: string } = JSON.parse(
+    await readFile(join(directory, 'header.json'), 'utf8'),
+  )
+  const startedAt = new Date(createdAt).toLocaleString()
+  const messages = studyRemovalMessages('Trash')
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    studyId,
+    storage.moveToTrash,
+  )
+  const dialog = {
+    title: messages.unconfirmedWriterTitle([
+      { host: 'old-laptop.local', startedAt, place: 'another-computer' },
+    ]),
+    detail: messages.unconfirmedWriterDetail([
+      { host: 'old-laptop.local', startedAt, place: 'another-computer' },
+    ]),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { removal, dialog, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause: `Its recording was started on old-laptop.local at ${startedAt}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it.`,
+        unconfirmedWriter: {
+          directory,
+          host: 'old-laptop.local',
+          startedAt: createdAt,
+          place: 'another-computer',
+        },
+      },
+      dialog: {
+        title:
+          "This study's recording may still be in use on another computer. Move the study to the Trash anyway?",
+        detail: `Its recording was started on old-laptop.local at ${startedAt}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it. If a window still records it or still has to save it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+      },
+      moved: [],
+    },
+  )
+})
+
 /**
  * Leaves a recording of a saved study in one recording format's folder as a window of 0.2.29.0 leaves it, a header without a record of its writer, naming the writer's process and host and the time the recording was created.
  * @param storage - The removal storage of the test.
@@ -1740,7 +1817,7 @@ test('a study whose recordings name two other hosts is refused with both hosts a
     {
       removal: {
         outcome: 'nothing-moved',
-        cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them.`,
+        cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them or still has to save them.`,
         unconfirmedWriter: {
           directory: join(storage.directory, 'recordings.v3', study.id),
           host: 'host-one',
@@ -1937,7 +2014,7 @@ test('a recording whose header names an editor of another machine is listed but 
       listed: [{ id: ofAnotherMachine, format: 'archive-missing' }],
       removal: {
         outcome: 'nothing-moved',
-        cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it.`,
+        cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it.`,
         unconfirmedWriter: {
           directory: join(storage.directory, 'recordings.v2', ofAnotherMachine),
           host: 'another-machine',

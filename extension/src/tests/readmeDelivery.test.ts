@@ -1221,7 +1221,7 @@ test('the packaged README distinguishes a source-changed start that ran nothing 
   assert.deepEqual(delivered, [true, true])
 })
 
-// Value: protects=a learner whose Delete meets a recording that may still be written, reading in the README the dialog they will see, what each answer does, and the refusal for a recording another window of this computer still writes; fails_when=the README quotes another title, detail or button than the dialog, says nothing of the case of this computer or of several recordings, drops the refusal, or loses the line of a move whose state is unknown (PD8, AD10), or quotes the refusal of 0.2.30.0 ("is still recording this study. Stop its run"), which misleads for a window that finished its recording and has not saved the study yet, or leaves that case out (Cycle 0047 row 55); why_new=Cycle 0046 design review PD8: the section quoted neither the dialog nor the refusal; Cycle 0047 row 55: since row 36 the refusal also meets a finished recording whose study is not saved, and its words changed to hold in both cases; seam=the messages of the removal, from which the expected sentences are built
+// Value: protects=a learner whose Delete meets a recording that may still be written, reading in the README the dialog they will see, what each answer does, and the refusal for a recording another window of this computer still writes; fails_when=the README quotes another title, detail or button than the dialog, says nothing of the case of this computer or of several recordings, drops the refusal, or loses the line of a move whose state is unknown (PD8, AD10), or quotes the refusal of 0.2.30.0 ("is still recording this study. Stop its run"), which misleads for a window that finished its recording and has not saved the study yet, or leaves that case out (Cycle 0047 row 55), or quotes the dialog of 0.2.30.0 ("may still be running", "still records it"), which misleads for a finished recording whose run on another computer, or in a window this computer cannot confirm, has not saved the study yet, or its lead leaves that case out (Cycle 0047 row 57); why_new=Cycle 0046 design review PD8: the section quoted neither the dialog nor the refusal; Cycle 0047 rows 55 and 57: since row 36 the refusal and the dialog also meet a finished recording whose study is not saved, and their words changed to hold in both cases; seam=the messages of the removal, from which the expected sentences are built
 test('the packaged README quotes, under Delete a saved study, the dialog about a recording that may still be written, both of its places, the refusal for a recording another window still writes or has finished and not saved yet, and the line of a move whose state is unknown', async () => {
   // Arrange
   const readme = await readPackagedReadme()
@@ -1232,6 +1232,7 @@ test('the packaged README quotes, under Delete a saved study, the dialog about a
 
   // Act
   const delivered = heldSentences(section, [
+    '- When a recording of the study may still be in use on another computer (an editor window there still records it, or has finished it and not saved the study yet), Codebook asks once more after **Move to Trash**:',
     `\`${messages.unconfirmedWriterTitle([{ host: '<host>', startedAt: '<start>', place: 'another-computer' }])}\``,
     `\`${messages.unconfirmedWriterDetail([{ host: '<host>', startedAt: '<start>', place: 'another-computer' }])}\``,
     `**${messages.unconfirmedWriterButton}**`,
@@ -1252,6 +1253,7 @@ test('the packaged README quotes, under Delete a saved study, the dialog about a
 
   // Assert
   assert.deepEqual(delivered, [
+    true,
     true,
     true,
     true,
