@@ -66,9 +66,23 @@ Cycle 0046 was delivered at 11:51 JST: PR #88 merged as `ef38585a` after 24 of 2
 
 The entry reads of this conversation (PRODUCT_GOAL version 10, the three feature contracts, IMPLEMENTATION.md, PROJECT_STATE.md, DESIGN.md, DEVELOPMENT.md) remain current: since them only the records changed. The repository is public (GitHub reports visibility PUBLIC, changed on 2026-10-16), which row 53 records. Both QA profiles hold C66; the editors are closed while the fixers build and test (memory), and VS Code's `auth.ts` draft (`b9b3adda…`) lives in its hot-exit backup.
 
+### The fixers (2026-10-19)
+
+Eleven fixers worked in worktrees of their own from `e05f46b6` (J and K from the integrated branch), at most five at once; their commits are integrated by cherry-pick in this order, each set without conflict: D (rows 9, 10, 11, 21, 47, 48), C (the publisher: 20, 25 to 29, 42, 43), F (the marker, the lock and the process start: 13, 31 to 34), A (the reader's workers, file reads and refusal page: 3, 4, 5, 12, 15 to 19, 22, 23), B (the served page's filter and the reader's script: 2, 7, 14, 46, 47; row 8 closed by evidence), E (the chat withdrawal and the watch: 6, 24, 30), H (Cursor's catalog: 38, 39), J (the help text and the README: 49 to 52, the README parts of rows 6, 32 and 33), G (stores, processes and runs: 35, 36, 37, 40, 41), I (the Study workspace: 44; row 45 closed by evidence), K (rows 54 to 57, which fixers G and K found while they fixed rows 36 and 55). Row 53 is the parent's (`66a5ac66`). Every row's test was shown red on its base and green after; the task table names each commit and test.
+
+Decisions taken while they worked (owner away, recommended option each time):
+
+- Row 6: Codebook no longer runs the chat's Cancel or Remove All Queued at the 30 second bound. Both act on the chat focused last, and no extension API names it (VS Code 1.120 and 1.140 run them on `widgetService.lastFocusedWidget`), so a verified withdrawal is impossible and the request is left with the sentence that it may still be in the chat. This walks back the take-back of Cycle 0046 rows 82 and 147, which C54 saw natively.
+- Row 33: the Linux half (`hidepid=2`) is closed by evidence and a README limit; a rule that judged another user's process gone broke the deliberate test of Cycle 0046 (another user's process is a writer this computer cannot confirm).
+- Row 31: the throw out of the release's `finally` stays, as it reports an unreleased lock to the learner; the take-back on the next write ends the failed writes.
+- Row 2: the filter reads a page by Chrome's rules, by the older select rules and with scripting off, and a page with a select costs about twice an ordinary page (with a select and a noscript about four times); generated pages hold neither.
+- Row 4: the page file limit is 2 MiB and a page worker's heap 256 MB; the native round measures the real editor hosts.
+
+The integrated product suite on `2bcbc816` (before rows 44, 45 and 54 to 57): 5307 tests, 5306 pass, 1 existing skip, 0 fail.
+
 ## Result and decision
 
-Result pending. Counts: 53 rows, 0 closed, 0 implementing at entry.
+Result pending. Counts: 57 rows, 56 closed, 0 implementing; row 1 waits for fallow 3.34.1's release window (2026-10-19T06:17Z).
 
 ## Handoff
 
