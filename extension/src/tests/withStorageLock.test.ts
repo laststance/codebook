@@ -27,6 +27,7 @@ import type * as lockModule from '../utils/withStorageLock'
 import { withStorageLock } from '../utils/withStorageLock'
 
 import { answerKernelBootId } from './utils/answerKernelBootId'
+import { idleChild } from './utils/idleChild'
 import {
   ANOTHER_ID_OF_NO_PROCESS,
   ID_OF_NO_PROCESS,
@@ -1171,6 +1172,59 @@ test('a write whose lock the system refuses to remove is made and reports the re
       nextOutcome: 'written',
       writesMade: 2,
       entriesAfterTheNextWrite: [],
+    },
+  )
+})
+
+// Value: protects=another window's writes after this window's leftover lock was replaced by that window's own lock (the learner removed the leftover by hand, as the refusal says, and the other window then took the storage); fails_when=this window's next write takes back whatever stands at the path it noted, so it removes the other window's lock and both write; why_new=Cycle 0047 row 92 (TEST-3): the take-back of row 31 had no test where the noted path names another writer by the next hold; seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=a lock that still names this window (the test before this one)
+test('a window whose leftover lock another live window has replaced by its own refuses its next write and leaves that window’s lock byte for byte', async (context) => {
+  // Arrange: this window's first release may not remove its lock, so the lock is left and noted; then the learner removes it by hand and another live window of this machine places its own lock.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+  let writesMade = 0
+  const firstOutcome = await window
+    .withStorageLock(directory, async () => {
+      writesMade += 1
+      window.isRemovalRefused = true
+      return 'written'
+    })
+    .catch((error: unknown) => String(error))
+  window.isRemovalRefused = false
+  const otherWindow = await idleChild(context)
+  const lockOfTheOtherWindow = JSON.stringify({
+    pid: otherWindow.pid,
+    hostname: hostname(),
+    processStart: await realProcessStart(otherWindow.pid!),
+  })
+  await unlink(lockPath)
+  await writeFile(lockPath, lockOfTheOtherWindow)
+
+  // Act
+  const nextOutcome = await window
+    .withStorageLock(directory, async () => {
+      writesMade += 1
+      return 'written'
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstOutcome,
+      nextOutcome,
+      writesMade,
+      lockAfterTheNextWrite: await readFile(lockPath, 'utf8').catch(
+        () => 'no lock file',
+      ),
+      entriesAfterTheNextWrite: await readdir(directory),
+    },
+    {
+      firstOutcome: 'Error: EPERM: operation not permitted, unlink',
+      nextOutcome: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+      writesMade: 1,
+      lockAfterTheNextWrite: lockOfTheOtherWindow,
+      entriesAfterTheNextWrite: ['writer.lock'],
     },
   )
 })
