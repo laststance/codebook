@@ -12244,3 +12244,117 @@ test('a --recover with --gone-host and --gone-space beside a journal without a b
     await rm(root, { recursive: true, force: true })
   }
 })
+
+for (const claimAge of [
+  {
+    names: 'has stood unchanged for a minute',
+    agoMs: 60_000,
+    outcome: 'is ended, and the Wiki is recovered',
+    answer: (stage) => ({ status: 'no-prior-wiki', stage }),
+    claimLeft: 'no claim',
+  },
+  {
+    names: 'was just changed',
+    agoMs: 0,
+    outcome: 'is refused as one that may still be written, and kept',
+    answer: () =>
+      'The Wiki recovery claim is empty, and the recovery that created it may be writing it now. Nothing was moved. Run --recover again once that process exits.',
+    claimLeft: 'a claim',
+  },
+]) {
+  // Value: protects=the learner's Wiki after a recovery of an earlier version was stopped between the exclusive create of its claim and the write of it, which leaves the claim without a byte, and a recovery that may be writing its claim now; fails_when=the recovery reads the empty claim as an invalid one and refuses it for good, so the Wiki stays locked while the skill forbids deleting a record, or it ends a claim without a byte whatever its age, so it ends the claim of a recovery that runs; why_new=Cycle 0047 row 167 (found while fixing row 136: the claim was left with the empty journal's lock); seam=none (the test writes the empty claim and dates it back); no_claim=a claim this version leaves without a byte, which it writes whole on a file system that links
+  test(`a --recover beside a stopped recovery claim without a byte that ${claimAge.names} ${claimAge.outcome}`, async () => {
+    // Arrange: a journal of a first publication, whose process is gone and whose candidate is gone; its first claim stands without a byte, last changed as the row says.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-claim-unwritten-')),
+    )
+    const output = join(root, '.codebook/wiki'),
+      stage = `${output}.stage-00000000-0000-4000-8000-000000000001`,
+      journal = `${output}.publish-journal.json`
+    try {
+      await mkdir(dirname(output), { recursive: true })
+      const record = JSON.stringify({
+        projectRoot: root,
+        output,
+        stage,
+        pid: 99999999,
+        id: '00000000-0000-4000-8000-000000000000',
+        operation: 'publish',
+        manifestSha256: '1'.repeat(64),
+        priorLegacy: false,
+      })
+      await writeFile(journal, record)
+      const claimPath = `${journal}.recovery-${createHash('sha256').update(record).digest('hex')}`
+      await writeFile(claimPath, '')
+      const changedAt = new Date(Date.now() - claimAge.agoMs)
+      await utimes(claimPath, changedAt, changedAt)
+
+      // Act
+      const answer = await recoverWikiPublication({
+        projectRoot: root,
+        outputDirectory: output,
+      }).catch((error) => error.message)
+
+      // Assert
+      assert.deepEqual(
+        {
+          answer,
+          claim: existsSync(claimPath) ? 'a claim' : 'no claim',
+          claimsBesideTheWiki: (await readdir(dirname(output))).filter((name) =>
+            name.includes('.recovery-'),
+          ).length,
+        },
+        {
+          answer: claimAge.answer(stage),
+          claim: claimAge.claimLeft,
+          claimsBesideTheWiki: claimAge.claimLeft === 'a claim' ? 1 : 0,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=the learner whose publish ran in a place that cannot come back and whose recovery of an earlier version then stopped with its claim without a byte; fails_when=the walk of the claims that checks the places named with --gone-host and --gone-space reads the empty claim as an invalid one, so the Wiki stays locked although the learner confirmed the place gone; why_new=Cycle 0047 row 167 (the claim without a byte, on the path of --gone-host and --gone-space); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given the space linux@0, which no pid namespace has; no_claim=a real rebuilt container
+test('a --recover with --gone-host and --gone-space set to the place of the journal’s owner, beside a stopped recovery claim without a byte that has stood unchanged for a minute, recovers the Wiki and ends the claim', async () => {
+  // Arrange: a publish killed after its journal, whose owner is given a space of process ids that cannot come back; its first claim stands without a byte, last changed a minute ago.
+  const { wiki, killed, record } = await publishKilledAfterItsJournal(
+    (journalRecord) => {
+      journalRecord.owner = { ...journalRecord.owner, space: 'linux@0' }
+    },
+  )
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const claimPath = `${journal}.recovery-${createHash('sha256')
+      .update(await readFile(journal))
+      .digest('hex')}`
+    await writeFile(claimPath, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(claimPath, aMinuteAgo, aMinuteAgo)
+
+    // Act
+    const answer = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      goneOwners: [{ host: record.owner.host, space: 'linux@0' }],
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        answer,
+        besideTheWiki: (await readdir(dirname(wiki.output))).filter((name) =>
+          name.startsWith('wiki.publish-journal'),
+        ),
+      },
+      { killed: '', answer: 'published-or-restored', besideTheWiki: [] },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})

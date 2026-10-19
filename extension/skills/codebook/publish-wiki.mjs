@@ -970,23 +970,26 @@ async function requireGoneOwnersOf(record, journal, bytes, goneOwners = []) {
 /** The refusal of a recovery claim that is no record the publisher writes: no JSON object, or one without a valid id. Read by {@link stoppedClaimAt}. */
 const INVALID_CLAIM_REFUSAL = 'The Wiki recovery claim is invalid; it was preserved.';
 
-/** Reads a stopped recovery claim, the exclusive record of an earlier recovery of a journal ({@link claimRecovery}), which must name the id its successor's claim is named by. Called by {@link claimRecovery} and {@link claimOwnersOf}. @param optional - Whether a missing claim is answered with undefined instead of refused. @returns The claim's bytes and its record; undefined for a missing claim when `optional`. @throws The refusal of a claim that is no JSON object or has no valid id ({@link INVALID_CLAIM_REFUSAL}), and of one that is no regular file; it is preserved. @example await stoppedClaimAt(journal + '.recovery-' + digest(bytes), true) // => { bytes: <Buffer …>, record: { pid: 4242, owner: { host: 'devbox', … }, id: '11111111-1111-4111-8111-111111111111' } } */
+/** Reads a stopped recovery claim, the exclusive record of an earlier recovery of a journal ({@link claimRecovery}), which must name the id its successor's claim is named by. Called by {@link claimRecovery} and {@link claimOwnersOf}. @param optional - Whether a missing claim is answered with undefined instead of refused. @returns The claim's bytes and its record; no record for a claim without a byte, which an earlier version leaves when it stops between the exclusive create of its claim and the write of it; undefined for a missing claim when `optional`. @throws The refusal of a claim that is no JSON object or has no valid id ({@link INVALID_CLAIM_REFUSAL}), and of one that is no regular file; it is preserved. @example await stoppedClaimAt(journal + '.recovery-' + digest(bytes), true) // => { bytes: <Buffer …>, record: { pid: 4242, owner: { host: 'devbox', … }, id: '11111111-1111-4111-8111-111111111111' } } */
 async function stoppedClaimAt(path, optional) {
   const bytes = await regularBytes(path, optional);
   if (bytes === undefined) return undefined;
+  // A claim without a byte names no owner and no id, so no claim can follow it ({@link endUnwrittenClaim}).
+  if (bytes.length === 0) return { bytes, record: undefined };
   const record = parseRecordOf(bytes, INVALID_CLAIM_REFUSAL);
   if (typeof record.id !== 'string' || !/^[a-f0-9-]{36}$/.test(record.id)) throw new Error(INVALID_CLAIM_REFUSAL);
   return { bytes, record };
 }
 
-/** The owners the stopped recovery claims of a journal's chain record, in the chain's order, each held to the form {@link ownerHere} writes ({@link requireOwnerForm}) before a refusal may name it; a claim of an earlier version names none. It only reads, so the places the learner confirmed gone are checked before any owner is judged or a claim is written. Called by {@link requireGoneOwnersOf}. @returns The owners the claims name. @throws The refusals of {@link stoppedClaimAt} and of an invalid owner, and that of claims that form a cycle. @example await claimOwnersOf(journal, bytes) // => [{ host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' }, start: 'linux:42' }] */
+/** The owners the stopped recovery claims of a journal's chain record, in the chain's order, each held to the form {@link ownerHere} writes ({@link requireOwnerForm}) before a refusal may name it; a claim of an earlier version names none, and one without a byte ends the chain. It only reads, so the places the learner confirmed gone are checked before any owner is judged or a claim is written. Called by {@link requireGoneOwnersOf}. @returns The owners the claims name. @throws The refusals of {@link stoppedClaimAt} and of an invalid owner, and that of claims that form a cycle. @example await claimOwnersOf(journal, bytes) // => [{ host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' }, start: 'linux:42' }] */
 async function claimOwnersOf(journal, bytes) {
   const owners = [], visited = new Set();
   // The chain runs from the journal's digest through each claim's id, as {@link claimRecovery} walks it, and ends at the first id no claim is named by.
   for (let parent = digest(bytes); !visited.has(parent);) {
     visited.add(parent);
     const claim = await stoppedClaimAt(journal + '.recovery-' + parent, true);
-    if (claim === undefined) return owners;
+    // A claim without a byte names no owner, and no claim can be named by an id it never wrote: the chain ends there.
+    if (claim === undefined || claim.record === undefined) return owners;
     requireOwnerForm(claim.record);
     if (claim.record.owner !== undefined) owners.push(claim.record.owner);
     parent = claim.record.id;
@@ -994,22 +997,33 @@ async function claimOwnersOf(journal, bytes) {
   throw new Error('The Wiki recovery claims form a cycle; all records were preserved.');
 }
 
-/** Claims stopped recovery attempts through append-only exclusive records, without unlinking another contender's lock; each claim names its owner as the `system` of `ownerJudgement` tells it ({@link ownerHere}), and an earlier claim ({@link stoppedClaimAt}) is judged by it and by the places the learner confirmed gone ({@link requireExited}). @example await claimRecovery(journal, journalBytes, { system: SYSTEM_HERE }) */
+/** Claims stopped recovery attempts through append-only exclusive records, without unlinking another contender's lock; each claim names its owner as the `system` of `ownerJudgement` tells it ({@link ownerHere}), and an earlier claim ({@link stoppedClaimAt}) is judged by it and by the places the learner confirmed gone ({@link requireExited}); an earlier claim without a byte is ended ({@link endUnwrittenClaim}) and its place claimed. @example await claimRecovery(journal, journalBytes, { system: SYSTEM_HERE }) */
 async function claimRecovery(journal, bytes, ownerJudgement) {
   // Journal hash -> exclusive owner -> stopped owner ID -> exclusive successor; a live owner stops traversal.
-  const claims = [], visited = new Set();
+  const claims = [];
   let parent = digest(bytes);
-  while (!visited.has(parent)) {
-    visited.add(parent);
+  for (const visited = new Set([parent]); ;) {
     const path = journal + '.recovery-' + parent, claimBytes = JSON.stringify({ pid: process.pid, owner: await ownerHere(ownerJudgement.system), id: randomUUID() });
     try { await writeWholeRecord(path, claimBytes); claims.push({ path, bytes: claimBytes }); return claims; }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
     const previous = await stoppedClaimAt(path, false);
+    // A claim without a byte has no successor: once it is ended, this recovery claims its place.
+    if (previous.record === undefined) { await endUnwrittenClaim(path); continue; }
     await requireExited(previous.record, ownerJudgement);
     claims.push({ path, bytes: previous.bytes });
     parent = previous.record.id;
+    if (visited.has(parent)) throw new Error('The Wiki recovery claims form a cycle; all records were preserved.');
+    visited.add(parent);
   }
-  throw new Error('The Wiki recovery claims form a cycle; all records were preserved.');
+}
+
+/** The refusal of a recovery claim without a byte changed within {@link UNWRITTEN_RECORD_GRACE_MS}, whose recovery may be writing it now. Read by {@link endUnwrittenClaim}. */
+const UNWRITTEN_CLAIM_REFUSAL = 'The Wiki recovery claim is empty, and the recovery that created it may be writing it now. Nothing was moved. Run --recover again once that process exits.';
+
+/** Ends a recovery claim without a byte, which an earlier version leaves when it stops between the exclusive create of its claim and the write of it: that version wrote the claim in one call and began its recovery only once the call returned, so such a recovery moved and wrote nothing, and no claim can follow it, as a successor is named by the id it never wrote. It is removed once it has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS} ({@link hasStoodUnwritten}), and its place is claimed again by the recovery that ends it; without that, the recovery stays refused for it while the skill forbids deleting a record. Called by {@link claimRecovery}. @throws The refusal of a claim changed within the grace ({@link UNWRITTEN_CLAIM_REFUSAL}), and that of a claim that got bytes meanwhile ({@link removeOwnedRecord}); the claim is kept then. @example await endUnwrittenClaim('/repo/.codebook/wiki.publish-journal.json.recovery-3f2a…') */
+async function endUnwrittenClaim(path) {
+  if (!(await hasStoodUnwritten(path))) throw new Error(UNWRITTEN_CLAIM_REFUSAL);
+  await removeOwnedRecord(path, Buffer.alloc(0));
 }
 
 /** Uses a prepared adoption snapshot only when old output has no published receipt; recovery never bypasses a present record. @example await recoveryState('/repo', '/wiki', '/wiki.stage') */
@@ -1125,16 +1139,19 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
   return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system });
 }
 
-/** How long a journal without a byte must have stood unchanged before a recovery takes it for one whose writer stopped between the exclusive create and the write ({@link endUnwrittenJournal}): a step that runs is between the two for an instant only. The grace the extension gives a storage lock left empty. Read by {@link endUnwrittenJournal}. */
-const UNWRITTEN_JOURNAL_GRACE_MS = 10_000;
+/** How long a journal or a recovery claim without a byte must have stood unchanged before a recovery takes it for one whose writer stopped between the exclusive create and the write ({@link hasStoodUnwritten}): a step that runs is between the two for an instant only. The grace the extension gives a storage lock left empty. Read by {@link hasStoodUnwritten}. */
+const UNWRITTEN_RECORD_GRACE_MS = 10_000;
 
-/** The refusal of a journal without a byte changed within {@link UNWRITTEN_JOURNAL_GRACE_MS}, whose step may be writing it now. Read by {@link endUnwrittenJournal}. */
+/** Whether a journal or a recovery claim without a byte has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS}, by its last change: a younger one may belong to a step that is writing it now. Called by {@link endUnwrittenJournal} and {@link endUnwrittenClaim}. @example await hasStoodUnwritten('/repo/.codebook/wiki.publish-journal.json') // => true a minute after an earlier version was stopped between creating and writing it */
+const hasStoodUnwritten = async path => Date.now() - (await lstat(path)).mtimeMs > UNWRITTEN_RECORD_GRACE_MS;
+
+/** The refusal of a journal without a byte changed within {@link UNWRITTEN_RECORD_GRACE_MS}, whose step may be writing it now. Read by {@link endUnwrittenJournal}. */
 const UNWRITTEN_JOURNAL_REFUSAL = 'The Wiki publication journal is empty, and the step that created it may be writing it now. Nothing was moved. Run --recover again once that process exits.';
 
-/** Ends a journal without a byte: one an earlier version leaves when it stops between the exclusive create of its journal and the write of it, which it does before a publish copies, finalizes or moves anything and before a recovery writes anything, and one this version leaves so on a file system that cannot link ({@link writeWholeRecord}). It names no owner and no step, and nothing it guards was changed yet, so it is removed once it has stood unchanged for {@link UNWRITTEN_JOURNAL_GRACE_MS}, past which no step that runs is still between the two; without that, every preparation and publish would stay refused for it while the skill forbids deleting a journal. Places confirmed gone are refused, as such a journal names no owner. Called by {@link recoverWikiPublication}. @returns `unwritten-journal-removed`. @throws The refusal of places confirmed gone, that of a journal changed within the grace ({@link UNWRITTEN_JOURNAL_REFUSAL}), and that of a changed path. @example await endUnwrittenJournal(paths, requirePathHeld, []) // => { status: 'unwritten-journal-removed', output: '/repo/.codebook/wiki' } */
+/** Ends a journal without a byte: one an earlier version leaves when it stops between the exclusive create of its journal and the write of it, which it does before a publish copies, finalizes or moves anything and before a recovery writes anything, and one this version leaves so on a file system that cannot link ({@link writeWholeRecord}). It names no owner and no step, and nothing it guards was changed yet, so it is removed once it has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS} ({@link hasStoodUnwritten}), past which no step that runs is still between the two; without that, every preparation and publish would stay refused for it while the skill forbids deleting a journal. Places confirmed gone are refused, as such a journal names no owner. Called by {@link recoverWikiPublication}. @returns `unwritten-journal-removed`. @throws The refusal of places confirmed gone, that of a journal changed within the grace ({@link UNWRITTEN_JOURNAL_REFUSAL}), and that of a changed path. @example await endUnwrittenJournal(paths, requirePathHeld, []) // => { status: 'unwritten-journal-removed', output: '/repo/.codebook/wiki' } */
 async function endUnwrittenJournal({ output, journal }, requirePathHeld, goneOwners) {
   if (goneOwners.length > 0) throw new Error(goneOwnerRefusalOf(goneOwners[0], undefined, []));
-  if (Date.now() - (await lstat(journal)).mtimeMs <= UNWRITTEN_JOURNAL_GRACE_MS) throw new Error(UNWRITTEN_JOURNAL_REFUSAL);
+  if (!(await hasStoodUnwritten(journal))) throw new Error(UNWRITTEN_JOURNAL_REFUSAL);
   await requirePathHeld();
   await removeOwnedRecord(journal, Buffer.alloc(0));
   return { status: 'unwritten-journal-removed', output };
