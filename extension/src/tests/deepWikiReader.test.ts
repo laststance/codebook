@@ -954,7 +954,7 @@ test('a page built to make the HTML parser slow is answered within about the dea
     status: 503,
     type: 'text/html; charset=utf-8',
     policy: SERVED_PAGE_POLICY,
-    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook stopped preparing this page after 2 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook stopped preparing this page after 2 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
   })
   assert.ok(elapsedMs < 4_000, `the refusal took ${elapsedMs} ms`)
   assert.ok(ticks >= 80, `the timer ticked ${ticks} times`)
@@ -1016,7 +1016,7 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
     status: 503,
     type: 'text/html; charset=utf-8',
     policy: SERVED_PAGE_POLICY,
-    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook could not prepare this page for reading. Reload the page; if it is still not shown, generate the Wiki again.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook could not prepare this page for reading. Reload the page; if it is still not shown, press Update LLM Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
   })
 })
 
@@ -1108,7 +1108,7 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
         status: 503,
         type: 'text/html; charset=utf-8',
         policy: SERVED_PAGE_POLICY,
-        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
       },
       small: { status: 200, body: '<p>Prepared page</p>' },
       filesTheReaderRead: ['small.html'],
@@ -1176,7 +1176,7 @@ test('a page file that grows past the limit after the reader looked at its size 
     {
       answer: {
         status: 503,
-        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
       },
       preparedPageCount: 0,
     },
