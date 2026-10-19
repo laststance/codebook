@@ -29,6 +29,7 @@ import {
 } from '../../skills/codebook/publish-wiki.mjs'
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
+import { nameFolderAlso } from './utils/aliasedFolderFileSystem.mjs'
 import {
   failRenameOf,
   failWriteOf,
@@ -2335,8 +2336,9 @@ const markedCopies = new Map()
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
  * - `?failing`: the write through a handle of the file a test names with {@link failWriteOf} stops partway with a system error, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
+ * - `?aliased-folder`: the folder a test names with {@link nameFolderAlso} answers to another name beside it too, as one folder does to names of another case on macOS and Windows (`aliasedFolderFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
- * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing'} mark - The mark of its stand-in.
+ * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing' | '?aliased-folder'} mark - The mark of its stand-in.
  * @returns {Promise<Record<string, Function>>} The copy's exports.
  * @example
  * const { prepareWikiStage } = await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
@@ -6951,6 +6953,68 @@ for (const climb of [
     }
   })
 }
+
+// Value: protects=the learner's own files in the Wiki folder when a cloned repository carries a publish journal whose stage is the Wiki folder's name in capitals, which names the Wiki folder itself where the file system ignores the case of names (macOS, Windows; or a short name or a trailing dot on Windows); fails_when=the recovery holds the journal's stage to its name alone, so it takes the Wiki folder for the candidate, and each learner's file there is the same bytes as itself, so it is removed; why_new=Cycle 0047 row 58 (SEC-1 = ADV-1, security: the stage that names the Wiki folder under another name); seam=a copy of the shipped publisher whose `node:fs/promises` lets the Wiki folder answer to its name in capitals too (scripts/tests/utils/markedCopyHooks.mjs, `?aliased-folder`); no_claim=which other names a real file system gives one folder
+test('a recovery whose journal names as its stage the Wiki folder under another name of the same folder is refused, and the learner’s file in the Wiki and the journal stay as they were', async () => {
+  // Arrange: a published Wiki with a learner's file, which also answers to its name in capitals; a journal of an earlier version (no operation), whose process is gone and whose stage is that name.
+  const { recoverWikiPublication: recoverWhereTheWikiHasTwoNames } =
+    await loadMarkedCopy('publish-wiki.mjs', '?aliased-folder')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-stage-aliases-wiki-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    otherName = join(root, '.codebook/WIKI'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'manual.txt'), 'The learner’s own notes')
+    const record = JSON.stringify({
+      projectRoot: root,
+      output,
+      stage: otherName,
+      pid: 99999999,
+    })
+    await writeFile(journal, record)
+    nameFolderAlso(otherName, output)
+
+    // Act
+    const recovery = await recoverWhereTheWikiHasTwoNames({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recovery,
+        learnerFile: await readFile(join(output, 'manual.txt'), 'utf8').catch(
+          () => 'deleted',
+        ),
+        journal: await readFile(journal, 'utf8').catch(() => 'removed'),
+      },
+      {
+        recovery:
+          'The Wiki publication journal does not identify a sibling stage/backup.',
+        learnerFile: 'The learner’s own notes',
+        journal: record,
+      },
+    )
+  } finally {
+    nameFolderAlso(undefined)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 /** The probe that runs one step of the shipped publisher in a process of its own and kills that process at a point a test names (`scripts/tests/utils/killedPublisherProbe.mjs`). */
 const KILLED_PUBLISHER_PROBE = fileURLToPath(

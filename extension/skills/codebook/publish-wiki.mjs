@@ -930,16 +930,24 @@ const isSiblingBackup = (backup, output) => backup === undefined || isSiblingPat
 /** Whether a publish journal names the generations it moves: the new manifest's digest, whether the prior Wiki was adopted as legacy and, with a backup, the prior manifest's digest. Called by {@link requirePublishJournal}. @example namesGenerations({ manifestSha256: '…', priorLegacy: false }) // => true for a journal without a backup */
 const namesGenerations = record => HASH.test(record.manifestSha256) && typeof record.priorLegacy === 'boolean' && (record.backup === undefined || HASH.test(record.priorManifestSha256));
 
-/** Refuses a publish journal that names no sibling stage or backup, or, for this version's publish, not the generations it moves. Called by {@link recoverPublishJournal}. @throws The refusal of the journal; it is preserved. @example requirePublishJournal(record, '/repo/.codebook/wiki') */
-function requirePublishJournal(record, output) {
-  if (!isSiblingStage(record.stage, output) || !isSiblingBackup(record.backup, output)) throw new Error('The Wiki publication journal does not identify a sibling stage/backup.');
+/** Whether a publish journal's stage is, on this file system, the Wiki folder or the kept prior Wiki under another name, by device and file id: a file system that ignores the case of names (macOS, Windows), or that takes a short name or a name with a trailing dot for the same entry (Windows), gives one folder several names beside the output, and the recovery would take the Wiki for the candidate and remove the learner's files from it, each the same bytes as itself. A file id of 0, which some file systems answer for every entry, tells nothing. Called by {@link requirePublishJournal}. @example await isOtherNameOfAGeneration('/repo/.codebook/WIKI', '/repo/.codebook/wiki', undefined) // => true where names of another case name one folder */
+async function isOtherNameOfAGeneration(stage, output, backup) {
+  const statusOf = path => path === undefined ? undefined : lstat(path, { bigint: true }).catch(() => undefined);
+  const [stageStatus, ...generations] = await Promise.all([stage, output, backup].map(statusOf));
+  return stageStatus !== undefined && stageStatus.ino !== 0n && generations.some(status => status !== undefined && isSameFile(stageStatus, status));
+}
+
+/** Refuses a publish journal that names no sibling stage or backup, a stage that is the Wiki folder or the kept prior Wiki under another name ({@link isOtherNameOfAGeneration}), or, for this version's publish, not the generations it moves. Called by {@link recoverPublishJournal} before anything the journal names is read or moved. @throws The refusal of the journal; it is preserved. @example await requirePublishJournal(record, '/repo/.codebook/wiki') */
+async function requirePublishJournal(record, output) {
+  if (!isSiblingStage(record.stage, output) || !isSiblingBackup(record.backup, output) || await isOtherNameOfAGeneration(record.stage, output, record.backup))
+    throw new Error('The Wiki publication journal does not identify a sibling stage/backup.');
   if (record.operation === 'publish' && !namesGenerations(record)) throw new Error('The Wiki publication journal is missing generation identity; it was preserved.');
 }
 
 /** Recovers a stopped publish by its journal: the Wiki that stands is kept ({@link keepCurrentWiki}), else the kept prior Wiki is moved back ({@link restorePriorWiki}), else there was none and the candidate is reported. The record's retained manifest decides which generation stands; an edit of the published manifest since is left to the next recovery. Called by {@link recoverWikiPublication}. @returns `published-or-restored`, `previous-restored` or `no-prior-wiki`. @throws The refusal of an invalid journal, and what the steps refuse. @example await recoverPublishJournal(record, paths, requirePathHeld) // => { status: 'no-prior-wiki', stage: '/repo/.codebook/next' } */
 async function recoverPublishJournal(record, paths, requirePathHeld) {
   const { root, output } = paths;
-  requirePublishJournal(record, output);
+  await requirePublishJournal(record, output);
   const current = await inspectOutput(output, root, { allowLegacy: record.operation === undefined || record.priorLegacy === true, allowManifestDrift: true });
   if (current) return keepCurrentWiki(record, current, paths, requirePathHeld);
   if (record.backup) return restorePriorWiki(record, paths, requirePathHeld);
