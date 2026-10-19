@@ -64,7 +64,7 @@ The 53 tasks are in [the task table](0047-carried-defects.md), copied in whole f
 
 Cycle 0046 was delivered at 11:51 JST: PR #88 merged as `ef38585a` after 24 of 24 checks on its head `c17affd2`; CI on `main` passed 23 of 23; Issue #87 closed at the merge, with the comment that names the 53 carried defects. Issue #90 was filed through `/spec` (dedupe: no similar open issue; redaction scan clean under the public policy; Codex's quality gate unavailable, as no plan-review model is set for the custom Codex endpoint, recorded as missing coverage; file-only, as this session drives the cycle). Branch `codex/cycle-0047-carried-defects-of-cycle-0046` from `ef38585a`.
 
-The entry reads of this conversation (PRODUCT_GOAL version 10, the three feature contracts, IMPLEMENTATION.md, PROJECT_STATE.md, DESIGN.md, DEVELOPMENT.md) remain current: since them only the records changed. The repository is public (GitHub reports visibility PUBLIC, changed on 2026-10-16), which row 53 records. Both QA editors run C66 on the dashboard; VS Code's `auth.ts` draft (`b9b3adda…`) lives in its hot-exit backup.
+The entry reads of this conversation (PRODUCT_GOAL version 10, the three feature contracts, IMPLEMENTATION.md, PROJECT_STATE.md, DESIGN.md, DEVELOPMENT.md) remain current: since them only the records changed. The repository is public (GitHub reports visibility PUBLIC, changed on 2026-10-16), which row 53 records. Both QA profiles hold C66; the editors are closed while the fixers build and test (memory), and VS Code's `auth.ts` draft (`b9b3adda…`) lives in its hot-exit backup.
 
 ## Result and decision
 

@@ -139,7 +139,7 @@ A local investigation may end inconclusively without verifying a capability. A s
 
 ## GitHub tracking and reconciliation
 
-Private repository: [laststance/codebook](https://github.com/laststance/codebook). Persistent [Goal Issue #1](https://github.com/laststance/codebook/issues/1); active cycle in PROJECT_STATE. Use `goal`/`cycle` labels, one selected cycle document/issue linked both ways, and PR/evidence links when available. Select future issues from evidence, not a speculative roadmap.
+Public repository: [laststance/codebook](https://github.com/laststance/codebook), public since 2026-10-16 (the owner's setting; visibility is never changed without the owner). Everything pushed, the Issues and pull requests included, is world-readable: private recordings, profiles and sensitive runtime data stay outside the repository, as AGENTS.md requires, and a cycle record that names a security defect before its fix is published with the push. Persistent [Goal Issue #1](https://github.com/laststance/codebook/issues/1); active cycle in PROJECT_STATE. Use `goal`/`cycle` labels, one selected cycle document/issue linked both ways, and PR/evidence links when available. Select future issues from evidence, not a speculative roadmap.
 
 Repository records own the complete task and proof. Issue bodies may duplicate requirements, but must match committed version/image/remaining work. On resume, reconcile actual records with issue status before any completion claim; a closed issue alone proves nothing.
 
