@@ -195,7 +195,7 @@ function windowsTicksOf(utcText: string): bigint | undefined {
 
 /**
  * Converts a creation time of the Windows process table, as WMI names it, to the round-trip UTC form of every other Windows start; called by {@link windowsStartOf} for the answer of the query's fall-back ({@link windowsStartCommand}).
- * Why: WMI names the time in local digits with the offset from UTC it used for them, so the time is taken back to UTC by that very offset. A conversion by the time zone's rules would give the repeated hour at the end of daylight saving time one offset only, and a process created in the other half of that hour would be named an hour off.
+ * Why: WMI names the time in local digits with the offset from UTC it used for them, so the time is taken back to UTC by that very offset. Win32_Process's provider (`cimwin32.dll`) sets the time through the WMI provider framework (`CInstance::SetDateTime` of `framedynos.dll`), which asks `WBEMTime::GetLocalOffsetForDate` once for the UTC creation time, adds that offset to it for the digits and prints the same offset, so the digits less the offset are the UTC time also where that offset is wrong for the date. A conversion by the time zone's rules would give the repeated hour at the end of daylight saving time one offset only, and a process created in the other half of that hour would be named an hour off.
  * @param creation - The creation time as WMI's DMTF text, `yyyymmddHHMMSS.mmmmmm` followed by the sign and the minutes of its offset from UTC.
  * @returns The time in UTC to the 100 ns, its last digit `0` (the table names microseconds); `undefined` for a text of another shape and for a date or a time out of range.
  * @example
