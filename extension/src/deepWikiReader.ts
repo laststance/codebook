@@ -354,6 +354,46 @@ export async function startDeepWikiReader(
       if (freshnessInspection === inspection) freshnessInspection = undefined
     }
   }
+  /** The manifest read in flight for the requests that are no page, which every such request that comes meanwhile joins ({@link readManifestShared}). */
+  let sharedManifestRead: ReturnType<typeof readDeepWikiManifest> | undefined
+  /**
+   * Reads the manifest for a request that is no page ({@link readManifest}): a request that comes while such a read is in flight joins it instead of reading and parsing the manifest once more, so the style sheets, images and fonts a page asks for at once cost one read between them, on the extension host's thread, however many they are.
+   * Called by the reader for a file of the Wiki that is no page and for a question; a page reads the manifest itself, under its place among the pages in hand ({@link takeWikiPagePlace}). A request that joins gets the manifest of a read that began before it came, as a read that ended just before it came would have given it.
+   * @returns The manifest, as {@link readDeepWikiManifest} answers it.
+   * @throws What the read throws, to every request that joined it.
+   * @example const { files } = await readManifestShared()
+   */
+  const readManifestShared = (): ReturnType<typeof readDeepWikiManifest> => {
+    sharedManifestRead ??= readManifest().finally(() => {
+      sharedManifestRead = undefined
+    })
+    return sharedManifestRead
+  }
+  /**
+   * Answers the page asked for with the refusal page of its reason, status 503, under the page policy.
+   * @param response - The page's answer.
+   * @param relativePath - The page's path in the Wiki; the overview's refusal page has no link to itself.
+   * @param reason - Why the page is not served.
+   * @example refusePage(response, 'guide.html', 'busy')
+   */
+  const refusePage = (
+    response: ServerResponse,
+    relativePath: string,
+    reason: WikiPageRefusalReason,
+  ): void => {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8')
+    response.setHeader('Content-Security-Policy', SERVED_PAGE_POLICY)
+    response.statusCode = 503
+    endWithinSendLimit(
+      response,
+      wikiPageRefusalHtml(
+        reason,
+        WIKI_PAGE_SERVE_DEADLINE_MS,
+        prefix,
+        relativePath,
+      ),
+    )
+  }
   /** Routes only owned pages and questions; every request must carry this reader's random path token. @example await handleRequest(request, response) */
   async function handleRequest(
     request: IncomingMessage,
@@ -402,126 +442,263 @@ export async function startDeepWikiReader(
       sendJson(response, 200, await inspectFreshnessShared())
       return
     }
-    /** Answers the page asked for with the refusal page of its reason, status 503, under the page policy. */
-    const refusePage = (reason: WikiPageRefusalReason): void => {
-      response.setHeader('Content-Type', 'text/html; charset=utf-8')
-      response.setHeader('Content-Security-Policy', SERVED_PAGE_POLICY)
-      response.statusCode = 503
-      endWithinSendLimit(
-        response,
-        wikiPageRefusalHtml(
-          reason,
-          WIKI_PAGE_SERVE_DEADLINE_MS,
-          prefix,
-          relativePath,
-        ),
-      )
-    }
-    const destination = request.headers['sec-fetch-dest']
-    // A page is prepared only for a browser that opens it, below; a client that names no destination is no browser and is served.
-    const isPageDestination =
-      destination === undefined ||
-      (typeof destination === 'string' &&
-        WIKI_PAGE_NAVIGATION_DESTINATIONS.includes(destination))
-    // A page takes its place among the pages in hand before any file is read for it, the manifest and the publication identity included.
-    if (
-      request.method === 'GET' &&
-      relativePath.endsWith('.html') &&
-      isPageDestination
-    ) {
-      const givePlaceBack = takeWikiPagePlace()
-      // Every place for pages in hand is taken: no file is read, as the page could only be refused after it.
-      if (!givePlaceBack) {
-        refusePage('busy')
-        return
-      }
-      // The place is held until the page's answer has left the host or its connection has closed, both of which the answer's `close` says: a browser that does not read its page keeps the page's bytes in the host until then, or until the send limit ends the answer. The answer has not closed yet, as nothing was awaited since the request came.
-      response.once('close', givePlaceBack)
-    }
-    // An agent may publish a new owned directory while this reader stays open.
-    const { files, sources } = await readManifest()
     if (relativePath === WIKI_QUESTION_ROUTE) {
-      const askedFrom = request.headers.origin
-      // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
-      const isOwnPage =
-        askedFrom !== undefined &&
-        (askedFrom === origin || askedFrom === forwardedOrigin)
-      if (
-        request.method !== 'POST' ||
-        !isOwnPage ||
-        request.headers['content-type']?.split(';')[0] !== 'application/json'
-      ) {
-        sendJson(response, 403, {
-          error: 'This Wiki question must come from its reader.',
-        })
-        return
-      }
-      let rawBody = ''
-      for await (const part of request) {
-        rawBody += part.toString('utf8')
-        if (Buffer.byteLength(rawBody) > WIKI_HTTP_BODY_LIMIT_BYTES) {
-          sendJson(response, 413, { error: 'The Wiki question is too long.' })
-          return
-        }
-      }
-      const payload: unknown = JSON.parse(rawBody)
-      if (
-        typeof payload !== 'object' ||
-        payload === null ||
-        !('question' in payload) ||
-        typeof payload.question !== 'string' ||
-        !payload.question.trim() ||
-        payload.question.length > WIKI_QUESTION_LIMIT_CHARS
-      ) {
-        sendJson(response, 400, { error: 'Enter a shorter Wiki question.' })
-        return
-      }
-      const controller = new AbortController()
-      response.on('close', () => {
-        if (!response.writableFinished) controller.abort()
-      })
-      try {
-        sendJson(
-          response,
-          200,
-          await answerQuestion(payload.question, sources, controller.signal),
-        )
-      } catch (error) {
-        if (!response.writableEnded)
-          sendJson(response, 503, { error: String(error) })
-      }
+      await answerQuestionRequest(request, response)
       return
     }
     if (request.method !== 'GET') {
       sendGetOnly(response)
       return
     }
-    // A page is prepared only for a browser that opens it: one asked for as an image, a style sheet or another part of a page would start a page worker for nothing, many at a time from one page.
-    if (relativePath.endsWith('.html') && !isPageDestination) {
-      sendJson(response, 403, {
-        error: 'A Wiki page is served only to be opened as a page.',
-      })
-      return
-    }
+    // The reader's own script needs no manifest.
     if (relativePath === 'codebook-qa.js') {
       response.setHeader('Content-Type', 'text/javascript; charset=utf-8')
       endWithinSendLimit(response, qaClient)
       return
     }
-    if (!files.has(relativePath)) {
-      // A page the last update removed or renamed sends the learner to the overview instead of a JSON error, and the overview is told which page was asked for, so it can say so.
-      if (relativePath.endsWith('.html')) {
-        response.writeHead(302, {
-          Location: `${prefix}${WIKI_ENTRY_FILE}?missing=${encodeURIComponent(relativePath)}`,
-        })
-        endWithinSendLimit(response)
+    if (relativePath.endsWith('.html')) {
+      await answerPageRequest(request, response, relativePath)
+      return
+    }
+    // An agent may publish a new owned directory while this reader stays open.
+    const { files } = await readManifestShared()
+    await answerWikiFile(response, relativePath, files)
+  }
+  /**
+   * Answers a question of the reader's own page with the editor model's answer, from the included sources of the manifest; a request that is no such question is refused before the manifest is read.
+   * Called by {@link handleRequest} for the question route.
+   * @param request - The question's request.
+   * @param response - Its answer.
+   * @example await answerQuestionRequest(request, response)
+   */
+  async function answerQuestionRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const askedFrom = request.headers.origin
+    // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
+    const isOwnPage =
+      askedFrom !== undefined &&
+      (askedFrom === origin || askedFrom === forwardedOrigin)
+    if (
+      request.method !== 'POST' ||
+      !isOwnPage ||
+      request.headers['content-type']?.split(';')[0] !== 'application/json'
+    ) {
+      sendJson(response, 403, {
+        error: 'This Wiki question must come from its reader.',
+      })
+      return
+    }
+    let rawBody = ''
+    for await (const part of request) {
+      rawBody += part.toString('utf8')
+      if (Buffer.byteLength(rawBody) > WIKI_HTTP_BODY_LIMIT_BYTES) {
+        sendJson(response, 413, { error: 'The Wiki question is too long.' })
         return
       }
+    }
+    const payload: unknown = JSON.parse(rawBody)
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      !('question' in payload) ||
+      typeof payload.question !== 'string' ||
+      !payload.question.trim() ||
+      payload.question.length > WIKI_QUESTION_LIMIT_CHARS
+    ) {
+      sendJson(response, 400, { error: 'Enter a shorter Wiki question.' })
+      return
+    }
+    // An agent may publish a new owned directory while this reader stays open: the question is answered from the sources the manifest names now.
+    const { sources } = await readManifestShared()
+    const controller = new AbortController()
+    response.on('close', () => {
+      if (!response.writableFinished) controller.abort()
+    })
+    try {
+      sendJson(
+        response,
+        200,
+        await answerQuestion(payload.question, sources, controller.signal),
+      )
+    } catch (error) {
+      if (!response.writableEnded)
+        sendJson(response, 503, { error: String(error) })
+    }
+  }
+  /**
+   * Answers a request for a page of the Wiki: a page opened as a page is read, prepared off the host's thread and served under its place among the pages in hand ({@link takeWikiPagePlace}); a page asked for as a part of a page is refused, before any file is read for it.
+   * Called by {@link handleRequest} for every GET of a path that ends with `.html`.
+   * @param request - The page's request; its `Sec-Fetch-Dest` says how the browser opens it.
+   * @param response - Its answer.
+   * @param relativePath - The page's path in the Wiki.
+   * @example await answerPageRequest(request, response, 'index.html')
+   */
+  async function answerPageRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    relativePath: string,
+  ): Promise<void> {
+    const destination = request.headers['sec-fetch-dest']
+    // A page is prepared only for a browser that opens it: one asked for as an image, a style sheet or another part of a page would start a page worker for nothing, many at a time from one page; a client that names no destination is no browser and is served.
+    if (
+      destination !== undefined &&
+      !(
+        typeof destination === 'string' &&
+        WIKI_PAGE_NAVIGATION_DESTINATIONS.includes(destination)
+      )
+    ) {
+      sendJson(response, 403, {
+        error: 'A Wiki page is served only to be opened as a page.',
+      })
+      return
+    }
+    // A page takes its place among the pages in hand before any file is read for it, the manifest and the publication identity included.
+    const givePlaceBack = takeWikiPagePlace()
+    // Every place for pages in hand is taken: no file is read, as the page could only be refused after it.
+    if (!givePlaceBack) {
+      refusePage(response, relativePath, 'busy')
+      return
+    }
+    // The place is held until the page's answer has left the host or its connection has closed, both of which the answer's `close` says: a browser that does not read its page keeps the page's bytes in the host until then, or until the send limit ends the answer. The answer has not closed yet, as nothing was awaited since the request came.
+    response.once('close', givePlaceBack)
+    // An agent may publish a new owned directory while this reader stays open.
+    const { files } = await readManifest()
+    // A page the last update removed or renamed sends the learner to the overview instead of a JSON error, and the overview is told which page was asked for, so it can say so.
+    if (!files.has(relativePath)) {
+      response.writeHead(302, {
+        Location: `${prefix}${WIKI_ENTRY_FILE}?missing=${encodeURIComponent(relativePath)}`,
+      })
+      endWithinSendLimit(response)
+      return
+    }
+    const servedFile = await lookAtServedFile(response, relativePath)
+    if (!servedFile) return
+    // Read before the page itself: a publish between the two reads then leaves the page with the older identity, and it offers a reload instead of hiding one.
+    const publication = await readWikiPublicationIdentity(outputDirectory)
+    await prepareAndSendPage(response, relativePath, servedFile, publication)
+  }
+  /**
+   * Reads a page file of the Wiki within the page file limit, prepares it on a page worker under its deadline and sends the page as served, or the refusal page of why it is not; the file is closed before the page is prepared.
+   * Called by {@link answerPageRequest} once the page's place is taken and its file was looked at.
+   * @param response - The page's answer.
+   * @param relativePath - The page's path in the Wiki.
+   * @param servedFile - The page file's real path and its size at the look.
+   * @param publication - The publication identity read for the page, which the reader's script compares with the one on disk.
+   * @example await prepareAndSendPage(response, 'index.html', { filePath: '/repo/.codebook/wiki/index.html', sizeBytes: 2021 }, publication)
+   */
+  async function prepareAndSendPage(
+    response: ServerResponse,
+    relativePath: string,
+    { filePath, sizeBytes }: { filePath: string; sizeBytes: number },
+    publication: Awaited<ReturnType<typeof readWikiPublicationIdentity>>,
+  ): Promise<void> {
+    // The page's place is taken, and given back once its answer has left the host or its connection has closed.
+    response.setHeader('Content-Type', 'text/html; charset=utf-8')
+    response.setHeader('Content-Security-Policy', SERVED_PAGE_POLICY)
+    if (sizeBytes > WIKI_PAGE_FILE_LIMIT_BYTES) {
+      refusePage(response, relativePath, 'too-large')
+      return
+    }
+    const pageFile = await openServedWikiFile(filePath)
+    // Another entry took the path between the look and the open.
+    if (!pageFile) {
+      sendNoRegularFile(response)
+      return
+    }
+    let content: Buffer | undefined
+    try {
+      content = await readUpToLimit(
+        pageFile.file,
+        pageFile.sizeBytes,
+        WIKI_PAGE_FILE_LIMIT_BYTES,
+      )
+    } finally {
+      await pageFile.file.close()
+    }
+    if (!content) {
+      refusePage(response, relativePath, 'too-large')
+      return
+    }
+    // The page is prepared on a worker thread under a deadline, so a page built to make the parser slow stops no extension of the window.
+    const preparation = new AbortController()
+    // A request that went while the reader read the files above is closed already, and its page is not prepared; one that goes later stops the preparation when its response closes. Both are looked at in one step, so no close falls between them.
+    if (response.destroyed) preparation.abort()
+    else
+      response.on('close', () => {
+        if (!response.writableFinished) preparation.abort()
+      })
+    const served = await servedWikiPageOffThread(
+      content.toString('utf8'),
+      {
+        editorScheme,
+        clientAddress: `${prefix}codebook-qa.js`,
+        publication,
+      },
+      {
+        deadlineMs: WIKI_PAGE_SERVE_DEADLINE_MS,
+        signal: preparation.signal,
+      },
+    )
+    if (served.state === 'served') {
+      endWithinSendLimit(response, served.html)
+      return
+    }
+    // A page the worker did not prepare is never served as the folder holds it.
+    refusePage(response, relativePath, served.state)
+  }
+  /**
+   * Sends a file of the Wiki that is no page (a style sheet, a script as plain text, an image) when the manifest lists it, from its opened file in parts ({@link sendOpenedWikiFile}).
+   * Called by {@link handleRequest} for every GET of such a file, after the manifest was read ({@link readManifestShared}).
+   * @param response - The file's answer.
+   * @param relativePath - The file's path in the Wiki.
+   * @param files - The files the manifest lists.
+   * @example await answerWikiFile(response, 'wiki.css', files)
+   */
+  async function answerWikiFile(
+    response: ServerResponse,
+    relativePath: string,
+    files: Set<string>,
+  ): Promise<void> {
+    if (!files.has(relativePath)) {
       sendJson(response, 404, {
         error: 'This file is not published by the Wiki.',
       })
       return
     }
+    const servedFile = await lookAtServedFile(response, relativePath)
+    if (!servedFile) return
+    // No file of the Wiki folder is served as script: under `nosniff` a browser runs no script of another type, so a `.js` file there is plain text, and the reader's own script stays the one script file of this origin.
+    response.setHeader(
+      'Content-Type',
+      relativePath.endsWith('.css')
+        ? 'text/css; charset=utf-8'
+        : relativePath.endsWith('.js')
+          ? 'text/plain; charset=utf-8'
+          : 'application/octet-stream',
+    )
+    const openedFile = await openServedWikiFile(servedFile.filePath)
+    // Another entry took the path between the look and the open.
+    if (!openedFile) {
+      sendNoRegularFile(response)
+      return
+    }
+    await sendOpenedWikiFile(openedFile, response)
+  }
+  /**
+   * Resolves a file the manifest lists to its real path in the Wiki folder and looks at it there without opening it, and refuses a file outside the folder or one that is no regular file.
+   * Called by {@link answerPageRequest} and {@link answerWikiFile} before they open the file.
+   * @param response - The file's answer, which the refusals go to.
+   * @param relativePath - The file's path in the Wiki.
+   * @returns The real path and the size at the look; `undefined` when the file was refused (status 403).
+   * @throws What the real path or the look throws, such as a missing file.
+   * @example await lookAtServedFile(response, 'wiki.css') // => { filePath: '/repo/.codebook/wiki/wiki.css', sizeBytes: 812 }
+   */
+  async function lookAtServedFile(
+    response: ServerResponse,
+    relativePath: string,
+  ): Promise<{ filePath: string; sizeBytes: number } | undefined> {
     const filePath = await realpath(join(canonicalOutput, relativePath))
     const canonicalRelativePath = relative(canonicalOutput, filePath)
     // Published paths cannot follow a symlink out of the generated Wiki directory.
@@ -533,91 +710,16 @@ export async function startDeepWikiReader(
       sendJson(response, 403, {
         error: 'The Wiki file is outside its output directory.',
       })
-      return
+      return undefined
     }
     // A page file larger than any page costs the editor's process nothing of its size: its size is looked at on the resolved path before it is opened, and the read stops one byte past the limit, also when the file grew since.
     const look = await lstat(filePath)
     // Only a regular file is opened, a page or any other file: the open of a named pipe would hold a thread of the host's file system until a writer comes, a device may never end, and a folder has no bytes.
     if (!look.isFile()) {
       sendNoRegularFile(response)
-      return
+      return undefined
     }
-    // Read before the page itself: a publish between the two reads then leaves the page with the older identity, and it offers a reload instead of hiding one.
-    const publication = relativePath.endsWith('.html')
-      ? await readWikiPublicationIdentity(outputDirectory)
-      : undefined
-    if (relativePath.endsWith('.html')) {
-      // The page's place is taken above, and given back once its answer has left the host or its connection has closed.
-      response.setHeader('Content-Type', 'text/html; charset=utf-8')
-      response.setHeader('Content-Security-Policy', SERVED_PAGE_POLICY)
-      if (look.size > WIKI_PAGE_FILE_LIMIT_BYTES) {
-        refusePage('too-large')
-        return
-      }
-      const pageFile = await openServedWikiFile(filePath)
-      // Another entry took the path between the look and the open.
-      if (!pageFile) {
-        sendNoRegularFile(response)
-        return
-      }
-      let content: Buffer | undefined
-      try {
-        content = await readUpToLimit(
-          pageFile.file,
-          pageFile.sizeBytes,
-          WIKI_PAGE_FILE_LIMIT_BYTES,
-        )
-      } finally {
-        await pageFile.file.close()
-      }
-      if (!content) {
-        refusePage('too-large')
-        return
-      }
-      // The page is prepared on a worker thread under a deadline, so a page built to make the parser slow stops no extension of the window.
-      const preparation = new AbortController()
-      // A request that went while the reader read the files above is closed already, and its page is not prepared; one that goes later stops the preparation when its response closes. Both are looked at in one step, so no close falls between them.
-      if (response.destroyed) preparation.abort()
-      else
-        response.on('close', () => {
-          if (!response.writableFinished) preparation.abort()
-        })
-      const served = await servedWikiPageOffThread(
-        content.toString('utf8'),
-        {
-          editorScheme,
-          clientAddress: `${prefix}codebook-qa.js`,
-          publication,
-        },
-        {
-          deadlineMs: WIKI_PAGE_SERVE_DEADLINE_MS,
-          signal: preparation.signal,
-        },
-      )
-      if (served.state === 'served') {
-        endWithinSendLimit(response, served.html)
-        return
-      }
-      // A page the worker did not prepare is never served as the folder holds it.
-      refusePage(served.state)
-      return
-    }
-    // No file of the Wiki folder is served as script: under `nosniff` a browser runs no script of another type, so a `.js` file there is plain text, and the reader's own script stays the one script file of this origin.
-    response.setHeader(
-      'Content-Type',
-      relativePath.endsWith('.css')
-        ? 'text/css; charset=utf-8'
-        : relativePath.endsWith('.js')
-          ? 'text/plain; charset=utf-8'
-          : 'application/octet-stream',
-    )
-    const servedFile = await openServedWikiFile(filePath)
-    // Another entry took the path between the look and the open.
-    if (!servedFile) {
-      sendNoRegularFile(response)
-      return
-    }
-    await sendOpenedWikiFile(servedFile, response)
+    return { filePath, sizeBytes: look.size }
   }
   try {
     await new Promise<void>((resolve, reject) => {

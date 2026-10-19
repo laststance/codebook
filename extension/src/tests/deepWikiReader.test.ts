@@ -16,6 +16,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import * as fileSystemPromises from 'node:fs/promises'
+import * as http from 'node:http'
 import { connect, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -1764,6 +1765,72 @@ function askWithoutReading(
 }
 
 /**
+ * Builds a `node:http` for a reader loaded with loadModule, whose server notes each request it hands the reader's request handler and each end of that handler.
+ * Called by the tests that wait for the reader to have taken a request in, or to have ended its work for one, which no answer shows: a request whose browser went gets none.
+ * @returns The stand-in module; a promise that settles with `'handed'` once the server has handed the reader as many requests as asked, counted from the start; and one that settles with `'ended'` once as many of the reader's handlers have ended.
+ * @example
+ * const server = httpNotingTheReadersRequests()
+ * await server.requestsHanded(3) // => 'handed'
+ * await server.handlersEnded(3)  // => 'ended'
+ */
+function httpNotingTheReadersRequests(): {
+  http: Record<string, unknown>
+  requestsHanded: (count: number) => Promise<'handed'>
+  handlersEnded: (count: number) => Promise<'ended'>
+} {
+  let handedCount = 0
+  let endedCount = 0
+  const waits: { isDue: () => boolean; settle: () => void }[] = []
+  /** Settles every wait that is due now, and keeps the others. */
+  const settleDueWaits = (): void => {
+    for (const wait of waits.splice(0)) {
+      if (wait.isDue()) wait.settle()
+      else waits.push(wait)
+    }
+  }
+  const createServerNotingRequests = (
+    readersHandler: (
+      request: http.IncomingMessage,
+      response: http.ServerResponse,
+    ) => unknown,
+  ): http.Server =>
+    http.createServer((request, response) => {
+      const handled = readersHandler(request, response)
+      // The reader's handler has run up to its first wait: it has taken the request in.
+      handedCount += 1
+      settleDueWaits()
+      void Promise.resolve(handled)
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .then(() => {
+          endedCount += 1
+          settleDueWaits()
+        })
+    })
+  return {
+    http: { ...http, createServer: createServerNotingRequests },
+    requestsHanded: (count) =>
+      new Promise((resolveHanded) => {
+        waits.push({
+          isDue: () => handedCount >= count,
+          settle: () => resolveHanded('handed'),
+        })
+        settleDueWaits()
+      }),
+    handlersEnded: (count) =>
+      new Promise((resolveEnded) => {
+        waits.push({
+          isDue: () => endedCount >= count,
+          settle: () => resolveEnded('ended'),
+        })
+        settleDueWaits()
+      }),
+  }
+}
+
+/**
  * Loads the reader with one place for pages in hand, whose give-back the test can wait for, and a page worker that prepares the first page as 16 MiB of text and every later page as a short one, so the first page's answer is far larger than the buffers of its connection.
  * Called by the tests of a page whose browser does not receive it.
  * @param constantOverrides - Constants the loaded reader reads instead of the shipped ones.
@@ -2433,6 +2500,119 @@ test('the reader’s own script, a style sheet and an image of the Wiki are serv
     'wiki.css': { status: 200, type: 'text/css; charset=utf-8' },
     'diagram.png': { status: 200, type: 'application/octet-stream' },
   })
+})
+
+// Value: protects=the editor's extension host against a page with many style sheets, images and fonts: each of them, the reader's own script and a page asked for as a part of a page read and parsed the whole manifest (up to 64 MiB) on the host's thread, one read for each request and with no bound; fails_when=a request that is no page reads the manifest while another such read is in flight instead of joining it, or the reader's own script or a page refused as a part of a page reads the manifest at all; why_new=Cycle 0047 row 229 (P2OCR2a1-1); seam=the reader loaded with loadModule, a manifest reader that notes each read after the reader's start and holds it until the test lets it go, and a node:http whose server notes each request it hands the reader; no_claim=the time and the memory a read takes (the reads are counted)
+test('a style sheet, an image and a font asked for at once cost one manifest read between them, and the reader’s own script and a page asked for as an image are answered without one', async (context) => {
+  // Arrange: a Wiki with a style sheet, an image and a font; a manifest reader that notes each read after the reader's start and holds it until the test lets it go; and a server that notes each request it hands the reader.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shared-manifest-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
+  await writeFile(join(outputDirectory, 'diagram.png'), 'PNG bytes')
+  await writeFile(join(outputDirectory, 'text.woff2'), 'font bytes')
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['wiki.css', 'diagram.png', 'text.woff2'],
+      includedSources: [],
+    }),
+  )
+  let isReaderStarted = false
+  let manifestReadsAfterTheStart = 0
+  let letReadsGoOn = (): void => {}
+  const readsMayGoOn = new Promise<void>((resolveGoOn) => {
+    letReadsGoOn = resolveGoOn
+  })
+  const holdingManifestReader: typeof readWikiFileToOpenModule = {
+    readWikiFileToOpen: async (...parameters) => {
+      // The reader's start reads the manifest as always; every later read is noted and held.
+      if (parameters[1] === 'manifest' && isReaderStarted) {
+        manifestReadsAfterTheStart += 1
+        await readsMayGoOn
+      }
+      return readWikiFileToOpen(...parameters)
+    },
+  }
+  const server = httpNotingTheReadersRequests()
+  const { startDeepWikiReader: startReaderHoldingManifestReads } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        'node:http': server.http,
+        './utils/readWikiFileToOpen': holdingManifestReader,
+      },
+      { URL },
+    )
+  const reader = await startReaderHoldingManifestReads(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // A held read is let go also when the test fails, so its requests end.
+  context.after(() => letReadsGoOn())
+  isReaderStarted = true
+
+  // Act: the reader's own script and the overview asked for as an image, each answered before the next is asked; then the three files at once, until the reader has taken all three in; then the held reads go on.
+  const ownScript = await within(
+    fetch(new URL('codebook-qa.js', reader.url), {
+      headers: { 'Sec-Fetch-Dest': 'script' },
+    }).then(async (response) => {
+      await response.arrayBuffer()
+      return response.status
+    }),
+    1_000,
+  )
+  const pageAsAnImage = await within(
+    fetch(reader.url, { headers: { 'Sec-Fetch-Dest': 'image' } }).then(
+      async (response) => {
+        await response.arrayBuffer()
+        return response.status
+      },
+    ),
+    1_000,
+  )
+  const files = (
+    [
+      ['wiki.css', 'style'],
+      ['diagram.png', 'image'],
+      ['text.woff2', 'font'],
+    ] as const
+  ).map(([file, destination]) =>
+    fetch(new URL(file, reader.url), {
+      headers: { 'Sec-Fetch-Dest': destination },
+    }).then(async (response) => {
+      await response.arrayBuffer()
+      return response.status
+    }),
+  )
+  const filesTakenIn = await within(server.requestsHanded(5), 2_000)
+  letReadsGoOn()
+  const fileStatuses = await within(Promise.all(files), 2_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      ownScript,
+      pageAsAnImage,
+      filesTakenIn,
+      fileStatuses,
+      manifestReadsAfterTheStart,
+    },
+    {
+      ownScript: 200,
+      pageAsAnImage: 403,
+      filesTakenIn: 'handed',
+      fileStatuses: [200, 200, 200],
+      manifestReadsAfterTheStart: 1,
+    },
+  )
 })
 
 // Value: protects=the editor's extension host against a large file the manifest lists as an asset (a style sheet, a script, an image), asked for several times at once: each request read it whole into the host's memory, with no size limit; fails_when=the reader reads a file that is no page whole (the module's readFile, or readFile through the file it opened) instead of sending it from its opened file in parts, follows bytes the file gained after its stat, or no longer sends it byte for byte; why_new=Cycle 0047 row 18 (P3SEC1 = S11-F2); Cycle 0047 row 74 (TEST-1) a whole read through the opened file passed the test; seam=the reader loaded with loadModule, a file system module that records which files the reader reads whole, and an opener whose opened image records a whole read through it and grows right after its stat; no_claim=the memory the host saves (each request holds one part of the file at a time)
