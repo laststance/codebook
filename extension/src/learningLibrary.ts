@@ -76,9 +76,12 @@ import { withStorageLock } from './utils/withStorageLock'
 /** Moves one file or directory of a saved study to the system Trash; injected into {@link LearningLibrary.removeStudy} so the library stays free of the editor API. @example const moveToTrash: StudyMover = (path) => workspace.fs.delete(Uri.file(path), { recursive: true, useTrash: true }) */
 export type StudyMover = (path: string) => Promise<void>
 
-/** Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write ({@link recordingWriterOf}): moving it would make that window's next append fail and its next save write the archive again. The removal's outcome line puts it after "Nothing was deleted." */
+/**
+ * Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write, or whose finished recording that run still holds because it has not saved the study yet ({@link recordingWriterOf}, {@link isSealedRecordingReleased}): moving it would make that window's next append fail, and its next save write the archive again, without the recording. The removal's outcome line puts it after "Nothing was deleted."
+ * One sentence holds for both, also for a run that seals its recording between the removal's judgement and its lock: Save learning replay in that window ends the run if it still records, and saves its study in both cases.
+ */
 const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
-  'Another editor window is still recording this study. Stop its run in that window, then delete the study again.'
+  'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.'
 
 /**
  * What a removal changed on disk.
@@ -580,7 +583,7 @@ export class LearningLibrary {
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
    * @returns `sealed` for a sealed recording its run has released; the verdict found before the lock while the look is the same, or only a seal came since.
-   * @throws "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then.
+   * @throws "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then.
    * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed and its study saved
    */
   private async verdictUnderLock(
@@ -637,7 +640,7 @@ export class LearningLibrary {
    * @param unconfirmedWriterRule - Whether a recording whose writer this computer cannot confirm keeps the study (`refuse`) or moves with it (`{ move }`, the learner's choice after the refusal, which names the writers they agreed to).
    * @throws
    * - {@link StudyArchiveUnavailableError} for an id that names no study: no archive, and nothing left of one ({@link isLeftWithoutArchive}), as for an id of which nothing is left or only a recording that may still be written
-   * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window of this machine may still write one of its recordings ({@link writersOfOtherWindows}): that window would fail its next append and save the archive again
+   * - "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window of this machine may still write one of its recordings, or holds its finished one until it has saved the study ({@link writersOfOtherWindows}): that window would fail its next append, or save the study without its recording, and save the archive again
    * - {@link StudyWriterUnconfirmedError} with `refuse` while one of its recordings has a writer this computer cannot confirm (`on-another-host`, `unconfirmed-here`), and with `{ move }` when those writers are not exactly the ones the learner agreed to
    * @example await this.refuseUnlessRemovable(paths, verdicts, 'refuse') // returns for a saved study whose recordings nobody else writes
    */
@@ -1154,7 +1157,7 @@ export class LearningLibrary {
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
    * A study that a newer Codebook saved is not taken apart: nothing of it moves, also when an older archive lies beside the newer one ({@link studyPaths}).
    * What is left of a study whose archive is gone, as {@link list} shows it, is moved in the same order ({@link isLeftWithoutArchive}); the recording of a run that has not saved its study yet is not.
-   * Nothing of a study moves while a run of another editor window may still write one of its recordings ({@link writersOfOtherWindows}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE} for a writer of this machine, and with `unconfirmedWriter` and `otherUnconfirmedWriters`, which name every writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer), unless `unconfirmedWriterRule` is `{ move }` with exactly those writers.
+   * Nothing of a study moves while a run of another editor window may still write one of its recordings, or holds its finished one until it has saved the study ({@link writersOfOtherWindows}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE} for a writer of this machine, and with `unconfirmedWriter` and `otherUnconfirmedWriters`, which name every writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer), unless `unconfirmedWriterRule` is `{ move }` with exactly those writers.
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
    * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.

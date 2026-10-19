@@ -2020,7 +2020,7 @@ test('a saved study whose recording another live editor window is still writing 
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
       isRecordingInPlace: true,
@@ -2119,7 +2119,7 @@ test('a removal judges the writers of the study’s recordings before it takes t
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       whileJudging: [{ isLockHeld: false, writeOfTheOtherWindow: 'written' }],
       moved: [],
@@ -2188,7 +2188,7 @@ test('a header written between the removal’s judgement and its lock keeps the 
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
     },
@@ -2232,7 +2232,7 @@ test('a writer record written between the removal’s judgement and its lock kee
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
     },
@@ -2265,6 +2265,47 @@ test('a recording sealed between the removal’s judgement and its lock moves wi
         join('recordings.v2', study.id),
         `${study.id}.study.meta.v3.json`,
         `${study.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
+// Value: protects=a learner who deletes what is left of a study (its catalog file) while another open window of this machine ends the run that records it: that window seals the recording between this window's judgement and its lock and has not saved the study yet; fails_when=the refusal still says that window "is still recording this study" and asks to "Stop its run", although its run has ended and only its save is missing, so the learner looks for a recording that no longer runs; why_new=Cycle 0047 row 55: since row 36 a sealed recording stays its run's until the study is saved, so the refusal of another window's recording also meets a finished one; seam=the recording's header and writer record, which name a live child process of the test as the other window, the storage lock of the loaded library, right before which the test writes the recording's seal, and the injected mover; no_claim=a real second editor window
+test('a recording another window seals between the removal’s judgement and its lock, before it saved the study, keeps the study, and the refusal asks to save that window’s learning replay instead of saying it still records', async (context) => {
+  // Arrange: a study of which only the catalog file is left beside the recording a live window of this machine writes; that window seals the recording right before the removal's lock and has not saved the study.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await rm(join(storage.directory, `${study.id}.study.v3.json`))
+  const otherWindow = await idleChild(context)
+  const recording = await recordingStillWrittenBy(storage, study, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  const library = await libraryWithStepBeforeTheLock(storage, () =>
+    writeFile(join(recording, 'sealed.json'), '{}'),
+  )
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal: { ...removal },
+      moved: storage.moved,
+      leftInTheLibrary: (await readdir(storage.directory)).sort(),
+    },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
+      },
+      moved: [],
+      leftInTheLibrary: [
+        `${study.id}.study.meta.v3.json`,
+        'recording-owners',
+        'recordings.v2',
       ],
     },
   )
@@ -2304,7 +2345,7 @@ test('a recording started between the removal’s judgement and its lock keeps t
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
     },

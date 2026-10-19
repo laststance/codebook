@@ -8262,7 +8262,7 @@ const DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST = {
   items: [`Move to ${TRASH} Anyway`],
 }
 
-// Value: protects=a learner whose saved study has the recording an editor left when it crashed on this Mac under an earlier host name (macOS takes it from the network), or on another computer, which Codebook cannot probe; fails_when=the removal refuses for good with "Another editor window is still recording this study", although no such window exists, and nothing else can remove the study; why_new=Cycle 0046 OCR review OC1: R9's refusal took a recording of another host for a live writer of this machine; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
+// Value: protects=a learner whose saved study has the recording an editor left when it crashed on this Mac under an earlier host name (macOS takes it from the network), or on another computer, which Codebook cannot probe; fails_when=the removal refuses for good with "Another editor window has not finished recording and saving this study", although no such window exists, and nothing else can remove the study; why_new=Cycle 0046 OCR review OC1: R9's refusal took a recording of another host for a live writer of this machine; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('a saved study whose crashed recording names another host is moved with its recording after the learner chooses Move to Trash Anyway in a dialog that names that host and the recording’s start', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -8811,7 +8811,7 @@ test('a saved study whose recording a live window of this machine is still writi
         studyRemoval: {
           status: 'failed',
           studyId: study.id,
-          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.`,
         },
       },
     )
@@ -8870,7 +8870,7 @@ test('a saved study with a recording a live window of this machine still writes 
         studyRemoval: {
           status: 'failed',
           studyId: study.id,
-          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.`,
         },
       },
     )
