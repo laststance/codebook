@@ -12205,3 +12205,41 @@ for (const failure of [
     }
   })
 }
+
+// Value: protects=the learner's way to tell a journal without a byte from one whose owner ran in a place that cannot come back; fails_when=the recovery ends a journal without a byte whatever --gone-host and --gone-space name, so the options are taken for a place no journal names; why_new=Cycle 0047 row 136 (P3OCR1-2: the recovery of an empty journal); seam=none; no_claim=a journal with an owner, whose places the --gone-host tests cover
+test('a --recover with --gone-host and --gone-space beside a journal without a byte is refused as naming no owner, and keeps the journal', async () => {
+  // Arrange: a journal without a byte, last changed a minute ago.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-unwritten-gone-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await mkdir(dirname(output), { recursive: true })
+    await writeFile(journal, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+
+    // Act
+    const refusal = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+      goneOwners: [{ host: 'devbox', space: 'linux@1' }],
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, journal: existsSync(journal) ? 'a journal' : 'no journal' },
+      {
+        refusal:
+          '--gone-host and --gone-space name "devbox" (linux@1), but no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.',
+        journal: 'a journal',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
