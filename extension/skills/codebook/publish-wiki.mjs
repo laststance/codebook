@@ -737,16 +737,16 @@ async function restorePreparedFiles(files, id, stage, requireHeld) {
 
 /** How far apart two boot times, each the wall clock minus the uptime, may lie and still name one boot of a machine that names its boot by no id (Windows, and a Mac whose boot session could not be read): a correction of the clock moves them. Read by {@link isOfEarlierBootTime}. */
 const BOOT_TIME_TOLERANCE_MS = 60_000;
-/** How long a query of a process's start (`ps` on macOS, PowerShell on Windows) or of the boot session (`sysctl` on macOS) may run before it is ended, and how many bytes it may print. Read by {@link queryText}. */
+/** How long a query of a process's start (`ps` on macOS, PowerShell on Windows), of the boot session (`sysctl` on macOS) or of the computer's id ({@link machineHere}) may run before it is ended, and how many bytes a query may print unless its caller names another bound. Read by {@link queryText}. */
 const START_QUERY_TIMEOUT_MS = 3_000, START_QUERY_MAX_BYTES = 1024;
 /** The field of `/proc/<pid>/stat`, counted from the first after the command name, that holds the process's start in clock ticks since the boot (field 22). Read by {@link linuxStartOf}. */
 const LINUX_STAT_START_INDEX = 19;
 
-/** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}): the runner of {@link SYSTEM_HERE}, which {@link macStartOf}, {@link windowsStartOf} and {@link bootHere} run their queries with. @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
-const queryText = (program, args, env) => new Promise(resolve => execFile(program, args, { env, timeout: START_QUERY_TIMEOUT_MS, maxBuffer: START_QUERY_MAX_BYTES, killSignal: 'SIGKILL', windowsHide: true },
+/** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}): the runner of {@link SYSTEM_HERE}, which {@link macStartOf}, {@link windowsStartOf}, {@link bootHere}, {@link macMachineIdOf} and {@link windowsMachineIdOf} run their queries with. @param env - The environment of the program; undefined for this process's. @param maxBytes - How many bytes it may print ({@link START_QUERY_MAX_BYTES} unless named). @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
+const queryText = (program, args, env, maxBytes = START_QUERY_MAX_BYTES) => new Promise(resolve => execFile(program, args, { env, timeout: START_QUERY_TIMEOUT_MS, maxBuffer: maxBytes, killSignal: 'SIGKILL', windowsHide: true },
   (error, stdout) => resolve(error ? undefined : String(stdout).trim() || undefined)));
 
-/** The system the publisher runs on, as the owner judgement asks it about processes and the boot: its `platform`, which picks the query of a process's start ({@link START_QUERIES}), the boot's form ({@link bootHere}) and the space of process ids ({@link processSpaceHere}); its `environment`, which names the Windows folder PowerShell is started from ({@link windowsStartOf}); and `run`, the runner of the bounded queries ({@link queryText}). The CLI passes it to the step it runs, and a step called without one asks it too; the publisher's tests name another system with a stand-in runner, so the queries of macOS and Windows run on every system. Read by {@link publishWiki} and {@link recoverWikiPublication}. */
+/** The system the publisher runs on, as the owner judgement asks it about processes, the boot and the computer: its `platform`, which picks the query of a process's start ({@link START_QUERIES}), the boot's form ({@link bootHere}), the space of process ids ({@link processSpaceHere}) and the query of the computer's id ({@link MACHINE_ID_QUERIES}); its `environment`, which names the Windows folder PowerShell and `reg.exe` are started from ({@link windowsStartOf}, {@link windowsMachineIdOf}); and `run`, the runner of the bounded queries ({@link queryText}). The CLI passes it to the step it runs, and a step called without one asks it too; the publisher's tests name another system with a stand-in runner, so the queries of macOS and Windows run on every system. Read by {@link publishWiki} and {@link recoverWikiPublication}. */
 const SYSTEM_HERE = Object.freeze({ platform: process.platform, environment: process.env, run: queryText });
 
 /** The start of a Linux process: the clock ticks since the boot in `/proc/<pid>/stat`. The query of {@link START_QUERIES} on Linux. @returns `linux:<ticks>`; undefined when the file cannot be read or holds no start. @example await linuxStartOf(process.pid) // => 'linux:16362446' */
@@ -810,9 +810,12 @@ function startOfProcessTableTime(creation, expectedStart) {
 const windowsStartCommand = pid => ['$process = Get-Process -Id ' + pid + ' -ErrorAction Stop', 'try { $start = $process.StartTime } catch { $start = $null }',
   "if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { '" + PROCESS_TABLE_MARK + "' + (Get-WmiObject -Class Win32_Process -Filter 'ProcessId=" + pid + "' -ErrorAction Stop).CreationDate }"].join('; ');
 
+/** The Windows folder that the environment of `system` names as the system root (`SystemRoot`, else `windir`), from which PowerShell and `reg.exe` are started by their full paths, never found on the search path. Called by {@link windowsStartOf} and {@link windowsMachineIdOf}. @returns The folder; undefined where neither names a folder of a drive. @example windowsSystemRootOf({ environment: { SystemRoot: 'C:\\Windows' } }) // => 'C:\\Windows' */
+const windowsSystemRootOf = system => [system.environment.SystemRoot, system.environment.windir].find(path => /^[A-Za-z]:[\\/]/.test(path ?? ''));
+
 /** The start of a Windows process: the creation time PowerShell prints in UTC ({@link windowsStartCommand}), PowerShell started by its full path under the system root that the environment of `system` names, never found on the search path, and run by the runner of `system` ({@link SYSTEM_HERE}). Where this user may not read the process's start, the process table's creation time answers, converted to UTC by its own offset ({@link utcTimeOfWmiCreation}, {@link startOfProcessTableTime}), so a process id that went to a process of another user does not keep a stopped publish's journal for as long as that process runs. The query of {@link START_QUERIES} on Windows. @param expectedStart - The start a journal or a claim records for this process id, which a creation time of the process table may confirm. @returns `win:<time>`; undefined without a system root and for any other answer. @example await windowsStartOf(4242, SYSTEM_HERE, undefined) // => 'win:2026-10-05T09:12:33.1234567Z' */
 async function windowsStartOf(pid, system, expectedStart) {
-  const systemRoot = [system.environment.SystemRoot, system.environment.windir].find(path => /^[A-Za-z]:[\\/]/.test(path ?? ''));
+  const systemRoot = windowsSystemRootOf(system);
   const text = systemRoot === undefined ? undefined : await system.run(win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-Command', windowsStartCommand(pid)]);
   if (text !== undefined && WINDOWS_UTC_TIME.test(text)) return 'win:' + text;
@@ -859,6 +862,69 @@ async function processSpaceHere(system) {
   return LINUX_SPACE_WITHOUT_NAMESPACE + (/^pid:\[(\d+)\]$/.exec(await readlink('/proc/self/ns/pid').catch(() => ''))?.[1] ?? '');
 }
 
+/** The files a Linux computer keeps its id in, in the order they are read: systemd's, then the copy of D-Bus, which a system without systemd may keep alone. Read by {@link linuxMachineIdOf}. */
+const LINUX_MACHINE_ID_PATHS = ['/etc/machine-id', '/var/lib/dbus/machine-id'];
+/** A Linux computer's id as `machine-id(5)` gives it: 32 hexadecimal digits in lower case, so an empty file and `uninitialized` name none. Read by {@link linuxMachineIdOf}. */
+const LINUX_MACHINE_ID = /^[0-9a-f]{32}$/;
+/** How many bytes of a Linux computer's id file are read: the id and its line end with room to spare, so a longer file names no id. Read by {@link boundedFileTextOf}. */
+const MACHINE_ID_FILE_MAX_BYTES = 64;
+/** The program that names a Mac's hardware UUID, by its full path, so no program of the current directory or the search path answers instead. Read by {@link macMachineIdOf}. */
+const MAC_IOREG_PATH = '/usr/sbin/ioreg';
+/** The line of a Mac's hardware UUID in what `ioreg -rd1 -c IOPlatformExpertDevice` prints, with the UUID as its group. Read by {@link macMachineIdOf}. */
+const MAC_PLATFORM_UUID = /^\s*"IOPlatformUUID" = "([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})"$/im;
+/** The key of the registry that holds a Windows computer's id (`MachineGuid`), as `reg.exe` names it. Read by {@link windowsMachineIdOf}. */
+const WINDOWS_CRYPTOGRAPHY_KEY = 'HKLM\\SOFTWARE\\Microsoft\\Cryptography';
+/** The line of a Windows computer's id in what `reg.exe query` prints for it, with the GUID as its group. Read by {@link windowsMachineIdOf}. */
+const WINDOWS_MACHINE_GUID = /^\s*MachineGuid\s+REG_SZ\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/im;
+/** How many bytes a query of the computer's id may print: `ioreg` prints every property of the Mac's platform device beside its UUID, a few kilobytes. Read by {@link macMachineIdOf} and {@link windowsMachineIdOf}. */
+const MACHINE_ID_QUERY_MAX_BYTES = 65_536;
+/** What a computer's id is digested behind, so the digest an owner records is this publisher's own and not the id's plain SHA-256: `machine-id(5)` asks that the id itself never leaves the computer, and a journal lies in the project folder, which a commit can publish. Read by {@link machineHere}. */
+const MACHINE_DIGEST_CONTEXT = 'codebook-wiki-publisher-owner-machine:';
+
+/** Reads the start of a small file, bounded in time ({@link START_QUERY_TIMEOUT_MS}) and in size ({@link MACHINE_ID_FILE_MAX_BYTES}). Called by {@link linuxMachineIdOf}. @returns The text, trimmed; undefined when it cannot be read in time, is longer than the bound, or holds nothing. @example await boundedFileTextOf('/etc/machine-id') // => 'e58f781eda8c48a988f3936f3ce684c3' */
+async function boundedFileTextOf(path) {
+  const reading = open(path, 'r').then(async handle => {
+    try {
+      // One byte past the bound tells a longer file from one of the bound's size.
+      const { bytesRead, buffer } = await handle.read(Buffer.alloc(MACHINE_ID_FILE_MAX_BYTES + 1), 0, MACHINE_ID_FILE_MAX_BYTES + 1, 0);
+      return bytesRead > MACHINE_ID_FILE_MAX_BYTES ? undefined : buffer.toString('latin1', 0, bytesRead).trim() || undefined;
+    } finally { await handle.close(); }
+  });
+  return Promise.race([reading, delay(START_QUERY_TIMEOUT_MS, undefined, { ref: false })]).catch(() => undefined);
+}
+
+/** A Linux computer's id: the first of {@link LINUX_MACHINE_ID_PATHS} that holds one ({@link LINUX_MACHINE_ID}). The query of {@link MACHINE_ID_QUERIES} on Linux. @returns The id; undefined where neither file holds one (a container without systemd, a system not set up yet). @example await linuxMachineIdOf() // => 'e58f781eda8c48a988f3936f3ce684c3' */
+async function linuxMachineIdOf() {
+  for (const path of LINUX_MACHINE_ID_PATHS) {
+    const text = await boundedFileTextOf(path);
+    if (text !== undefined && LINUX_MACHINE_ID.test(text)) return text;
+  }
+  return undefined;
+}
+
+/** A Mac's hardware UUID (`IOPlatformUUID`), as `ioreg` prints it for the platform device, run by the runner of `system` ({@link SYSTEM_HERE}) and bounded as a start query is, with room for every property `ioreg` prints beside it ({@link MACHINE_ID_QUERY_MAX_BYTES}). The query of {@link MACHINE_ID_QUERIES} on macOS. @returns The UUID; undefined for any other answer. @example await macMachineIdOf(SYSTEM_HERE) // => '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14' */
+async function macMachineIdOf(system) {
+  const text = await system.run(MAC_IOREG_PATH, ['-rd1', '-c', 'IOPlatformExpertDevice'], undefined, MACHINE_ID_QUERY_MAX_BYTES);
+  return text === undefined ? undefined : MAC_PLATFORM_UUID.exec(text)?.[1];
+}
+
+/** A Windows computer's id (`MachineGuid` of {@link WINDOWS_CRYPTOGRAPHY_KEY}, in the registry's 64-bit view), as `reg.exe` prints it, started by its full path under the system root that the environment of `system` names, never found on the search path, and run by the runner of `system` ({@link SYSTEM_HERE}). The query of {@link MACHINE_ID_QUERIES} on Windows. @returns The GUID; undefined without a system root and for any other answer. @example await windowsMachineIdOf(SYSTEM_HERE) // => '3f2504e0-4f89-41d3-9a0c-0305e82c3301' */
+async function windowsMachineIdOf(system) {
+  const systemRoot = windowsSystemRootOf(system);
+  const text = systemRoot === undefined ? undefined : await system.run(win32.join(systemRoot, 'System32', 'reg.exe'),
+    ['query', WINDOWS_CRYPTOGRAPHY_KEY, '/v', 'MachineGuid', '/reg:64'], undefined, MACHINE_ID_QUERY_MAX_BYTES);
+  return text === undefined ? undefined : WINDOWS_MACHINE_GUID.exec(text)?.[1];
+}
+
+/** The query of the computer's id on each system whose id the publisher reads. Read by {@link machineHere}. */
+const MACHINE_ID_QUERIES = { linux: linuxMachineIdOf, darwin: macMachineIdOf, win32: windowsMachineIdOf };
+
+/** The digest of this computer's id that an owner records ({@link ownerHere}), by the platform of `system` ({@link MACHINE_ID_QUERIES}): the SHA-256 of the id in lower case behind {@link MACHINE_DIGEST_CONTEXT}, never the id. A computer's id does not follow its host name, so an owner of another boot with this host name is an earlier boot of this computer only where both name this digest ({@link isSameMachine}): another computer may have the same host name, and the first pid namespace of Linux has one number on every machine. Called by {@link ownerHere}. @returns The digest, 64 hexadecimal digits; undefined where the id cannot be read, and on any other system. @example await machineHere(SYSTEM_HERE) // => '4c0f…' (64 digits) */
+async function machineHere(system) {
+  const id = Object.hasOwn(MACHINE_ID_QUERIES, system.platform) ? await MACHINE_ID_QUERIES[system.platform](system) : undefined;
+  return id === undefined ? undefined : digest(MACHINE_DIGEST_CONTEXT + id.toLowerCase());
+}
+
 /** The form of the host name an owner records ({@link ownerHostOf}): letters, digits, dots, hyphens and underscores, from a letter or a digit on, at most 253 characters, as a machine's name is in DNS. A refusal names it and the learner passes it back on a command line (`--gone-host`), so no other text may stand in it. Read by {@link ownerHostOf} and {@link isOwnerForm}. */
 const OWNER_HOST_FORM = /^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/;
 /** The form of the space of process ids an owner records ({@link processSpaceHere}): `linux@` and the number of a pid namespace, or none where it cannot be read, or the name of another platform. A refusal names it and the learner passes it back (`--gone-space`). Read by {@link isOwnerForm}. */
@@ -873,11 +939,12 @@ const ownerHostOf = name => OWNER_HOST_FORM.test(name) ? name
 /** The read of {@link ownerHere}, once per process and system. */
 const ownerReadings = new WeakMap();
 
-/** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name in the form a recovery accepts ({@link ownerHostOf}), the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}) and the process's start ({@link processStartOf}), each as `system` tells it ({@link SYSTEM_HERE}). Read once per process and system: {@link publishWiki} and {@link recoverWikiPublication} start the read first, without waiting for it, so its queries run beside their other steps; {@link publishJournalOf}, {@link claimRecovery} and {@link manifestJournalOf} wait for it before a journal or a claim is written, and {@link requireExited} before it judges an owner. @returns The owner, without the process id. @example await ownerHere(SYSTEM_HERE) // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446' } */
+/** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name in the form a recovery accepts ({@link ownerHostOf}), the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}), the process's start ({@link processStartOf}) and, where it can be read, the digest of the computer's id ({@link machineHere}), each as `system` tells it ({@link SYSTEM_HERE}). Read once per process and system: {@link publishWiki} and {@link recoverWikiPublication} start the read first, without waiting for it, so its queries run beside their other steps; {@link publishJournalOf}, {@link claimRecovery} and {@link manifestJournalOf} wait for it before a journal or a claim is written, and {@link requireExited} before it judges an owner. @returns The owner, without the process id. @example await ownerHere(SYSTEM_HERE) // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446', machine: '4c0f…' } */
 function ownerHere(system) {
   if (!ownerReadings.has(system)) {
-    // The space, the boot and the start are read side by side: on macOS and Windows each may start a program.
-    const reading = Promise.all([processSpaceHere(system), bootHere(system), processStartOf(process.pid, system, undefined)]).then(([space, boot, start]) => ({ host: ownerHostOf(hostname()), space, boot, start }));
+    // The space, the boot, the start and the computer's id are read side by side: on macOS and Windows each may start a program.
+    const reading = Promise.all([processSpaceHere(system), bootHere(system), processStartOf(process.pid, system, undefined), machineHere(system)])
+      .then(([space, boot, start, machine]) => ({ host: ownerHostOf(hostname()), space, boot, start, machine }));
     // A step refused before it waits for the read must not end the process with an unhandled rejection; a step that waits still gets the failure.
     reading.catch(() => undefined);
     ownerReadings.set(system, reading);
@@ -888,33 +955,43 @@ function ownerHere(system) {
 /** Whether a recorded boot is in the form {@link bootHere} gives: a boot id, or a boot time. Called by {@link isOwnerForm}. @example isBootForm({ atMs: 1790000000000 }) // => true */
 const isBootForm = boot => typeof boot?.id === 'string' || Number.isFinite(boot?.atMs);
 
-/** Whether a recorded owner is in the form {@link ownerHere} writes: a host name of {@link OWNER_HOST_FORM} and a space of {@link OWNER_SPACE_FORM}, which a refusal may name, a boot ({@link isBootForm}) and, if any, a start. Called by {@link requireOwnerForm}. @example isOwnerForm({ host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } }) // => true */
+/** Whether a recorded owner is in the form {@link ownerHere} writes: a host name of {@link OWNER_HOST_FORM} and a space of {@link OWNER_SPACE_FORM}, which a refusal may name, a boot ({@link isBootForm}), if any, a start and, if any, the digest of the computer's id ({@link machineHere}), 64 hexadecimal digits and nothing else. Called by {@link requireOwnerForm}. @example isOwnerForm({ host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } }) // => true */
 const isOwnerForm = owner => owner !== null && typeof owner === 'object' && typeof owner.host === 'string' && OWNER_HOST_FORM.test(owner.host) &&
-  typeof owner.space === 'string' && OWNER_SPACE_FORM.test(owner.space) && isBootForm(owner.boot) && (owner.start === undefined || typeof owner.start === 'string');
+  typeof owner.space === 'string' && OWNER_SPACE_FORM.test(owner.space) && isBootForm(owner.boot) && (owner.start === undefined || typeof owner.start === 'string') &&
+  (owner.machine === undefined || typeof owner.machine === 'string' && HASH.test(owner.machine));
 
 /** Whether no process has an id here, probed with signal 0: `ESRCH` alone says so; a process of another user that runs answers `EPERM`, which says it exists. Called by {@link ownerStateOf} and {@link processStateOf}. @example isProcessIdFree(process.pid) // => false */
 function isProcessIdFree(pid) {
   try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; }
 }
 
-/** Judges the owner a journal or a recovery claim records: `gone` when it cannot be at work any more, `running` while it may run here, `elsewhere` when it ran on another machine, in another space of process ids or in a Linux space that names no pid namespace ({@link namesItsSpace}), which no probe here reaches. A record of an earlier version names its process id alone and is judged by that id here, as then. A record with its owner: one of another host name is of another machine, unless both name one boot id; an earlier boot ended every process of it, by its boot id, or, where neither names one and the record has no start, by a boot time that lies apart by more than {@link BOOT_TIME_TOLERANCE_MS}; a process id no process has is gone; a process id another process has now, which began at another time than the recorded start, is gone too. Called by {@link requireExited}, with the owner `system` tells of this process ({@link ownerHere}). @example await ownerStateOf({ pid: 4242, owner: { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } } }, { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-2' } }, SYSTEM_HERE) // => 'gone' */
+/** Judges the owner a journal or a recovery claim records: `gone` when it cannot be at work any more, `running` while it may run here, `elsewhere` when it ran on another machine, in another space of process ids or in a Linux space that names no pid namespace ({@link namesItsSpace}), which no probe here reaches. A record of an earlier version names its process id alone and is judged by that id here, as then. A record with its owner: one of another host name is of another machine, unless both name one boot id; another boot, by its boot id, or, where neither names one and the record has no start, by a boot time that lies apart by more than {@link BOOT_TIME_TOLERANCE_MS}, is an earlier boot of this machine, which ended every process of it, only where both name one digest of the computer's id ({@link isSameMachine}), and otherwise of another machine with this host name; a process id no process has is gone; a process id another process has now, which began at another time than the recorded start, is gone too. Called by {@link requireExited}, with the owner `system` tells of this process ({@link ownerHere}). @example await ownerStateOf({ pid: 4242, owner: { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' }, machine: '4c0f…' } }, { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-2' }, machine: '4c0f…' }, SYSTEM_HERE) // => 'gone' */
 async function ownerStateOf({ pid, owner }, here, system) {
   if (owner === undefined) return isProcessIdFree(pid) ? 'gone' : 'running';
   return placeStateOf(owner, here) ?? processStateOf(pid, owner, system);
 }
 
-/** Judges a recorded owner by where it ran, before its process id is probed: `elsewhere` for another machine (another host name, unless both name one boot id), another space of process ids or a space that names none ({@link namesItsSpace}), `gone` for an earlier boot of this machine ({@link isOfEarlierBootTime} where neither names a boot id). Called by {@link ownerStateOf}. @returns The state; undefined when the owner ran under this boot, in this space, and its process id decides ({@link processStateOf}). @example placeStateOf({ host: 'other', space: 'linux@1', boot: { id: 'boot-1' } }, { host: 'workstation', space: 'linux@1', boot: { id: 'boot-2' } }) // => 'elsewhere' */
+/** Judges a recorded owner by where it ran, before its process id is probed: `elsewhere` for another machine (another host name, unless both name one boot id), another space of process ids or a space that names none ({@link namesItsSpace}); another boot ({@link isOfEarlierBootTime} where neither names a boot id) is `gone`, an earlier boot of this machine, only where both name one digest of the computer's id ({@link isSameMachine}), and `elsewhere` otherwise: another computer may have this host name, and the first pid namespace of Linux has one number on every machine, so a record of 0.2.30.0, which names no digest, needs the learner's pair once. Called by {@link ownerStateOf}. @returns The state; undefined when the owner ran under this boot, in this space, and its process id decides ({@link processStateOf}). @example placeStateOf({ host: 'workstation', space: 'linux@1', boot: { id: 'boot-1' } }, { host: 'workstation', space: 'linux@1', boot: { id: 'boot-2' }, machine: '4c0f…' }) // => 'elsewhere' */
 function placeStateOf(owner, here) {
   const hasBootIds = owner.boot.id !== undefined && here.boot.id !== undefined;
   // A machine is known by its host name, or, under another one, by its exact boot.
   if (owner.host !== here.host && !(hasBootIds && owner.boot.id === here.boot.id)) return 'elsewhere';
-  if (hasBootIds && owner.boot.id !== here.boot.id) return 'gone';
+  // Another boot id is an earlier boot of this machine only by the digest of its id, whatever space ran under it: a pid namespace gets another number after a restart.
+  if (hasBootIds && owner.boot.id !== here.boot.id) return isSameMachine(owner, here) ? 'gone' : 'elsewhere';
   // A space that names no pid namespace may be any space of this machine, also where this recovery's names none either.
   if (owner.space !== here.space || !namesItsSpace(owner.space)) return 'elsewhere';
-  return isOfEarlierBootTime(owner, here, hasBootIds) ? 'gone' : undefined;
+  // A boot time apart is another boot as well, and an earlier one of this machine by the same digest alone.
+  if (isOfEarlierBootTime(owner, here, hasBootIds)) return isSameMachine(owner, here) ? 'gone' : 'elsewhere';
+  return undefined;
 }
 
-/** Whether a recorded owner without a start ran under an earlier boot by the boot times alone, which lie apart by more than {@link BOOT_TIME_TOLERANCE_MS}: a boot time decides only for a record without a start, since a correction of the clock moves it and a start decides better, and only where neither side names a boot id. Called by {@link placeStateOf}. @example isOfEarlierBootTime({ boot: { atMs: 0 } }, { boot: { atMs: 3600000 } }, false) // => true */
+/** Whether a recorded owner and this recovery name one computer by the digest of its id ({@link machineHere}): both name one, and it is the same. A host name does not tell two computers apart, and a boot id or a boot time that differs is as much another computer's as an earlier boot's. Called by {@link placeStateOf}. @example isSameMachine({ machine: '4c0f…' }, { machine: '4c0f…' }) // => true, and isSameMachine({}, { machine: '4c0f…' }) // => false */
+const isSameMachine = (owner, here) => owner.machine !== undefined && owner.machine === here.machine;
+
+/** Whether a recorded owner ran under another boot than this recovery: by the boot ids where both name one, else by the boot times of a record without a start ({@link isOfEarlierBootTime}). Called by {@link requireExited} for an owner judged `elsewhere`, whose refusal says then that another computer may have this host name. @example isOfAnotherBoot({ boot: { id: 'boot-1' } }, { boot: { id: 'boot-2' } }) // => true */
+const isOfAnotherBoot = (owner, here) => owner.boot.id !== undefined && here.boot.id !== undefined ? owner.boot.id !== here.boot.id : isOfEarlierBootTime(owner, here, false);
+
+/** Whether a recorded owner without a start ran under another boot by the boot times alone, which lie apart by more than {@link BOOT_TIME_TOLERANCE_MS}: a boot time decides only for a record without a start, since a correction of the clock moves it and a start decides better, and only where neither side names a boot id; that boot is an earlier one of this machine only by the digest of the computer's id ({@link placeStateOf}). Called by {@link placeStateOf} and {@link isOfAnotherBoot}. @example isOfEarlierBootTime({ boot: { atMs: 0 } }, { boot: { atMs: 3600000 } }, false) // => true */
 const isOfEarlierBootTime = (owner, here, hasBootIds) => owner.start === undefined && !hasBootIds && Number.isFinite(owner.boot.atMs) && Number.isFinite(here.boot.atMs) &&
   Math.abs(owner.boot.atMs - here.boot.atMs) > BOOT_TIME_TOLERANCE_MS;
 
@@ -925,17 +1002,19 @@ async function processStateOf(pid, owner, system) {
   return liveStart !== undefined && liveStart !== owner.start ? 'gone' : 'running';
 }
 
-/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwners`, the places the learner named with `--gone-host` and `--gone-space`, one pair for each (none when absent): an owner judged `elsewhere` at one of those host names and spaces counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids, which names the way out for a place that cannot come back: the two options set to that place, or, where the learner named places already, one more pair; for a space that names no pid namespace, which no recovery can look at, that pair is the only way out. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
+/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwners`, the places the learner named with `--gone-host` and `--gone-space`, one pair for each (none when absent): an owner judged `elsewhere` at one of those host names and spaces counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids, or of this host name under another boot that the digest of the computer's id does not prove this machine's ({@link isOfAnotherBoot}), which names the way out for a place that cannot come back: the two options set to that place, or, where the learner named places already, one more pair; for a space that names no pid namespace, which no recovery can look at, that pair is the only way out. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
 async function requireExited(recorded, { system, goneOwners = [] }) {
   requireOwnerForm(recorded);
-  const { pid, owner } = recorded;
-  const state = await ownerStateOf({ pid, owner }, await ownerHere(system), system);
+  const { pid, owner } = recorded, here = await ownerHere(system);
+  const state = await ownerStateOf({ pid, owner }, here, system);
   // An owner in a place the learner confirmed gone counts as gone; the options never end an owner that may still run here.
   if (state === 'gone' || state === 'elsewhere' && isOwnerAt(owner, goneOwners)) return;
   // Where the learner named places already, the place of this owner is one more pair beside them: a stopped recovery may have run in a second place that cannot come back.
   const wayOut = goneOwners.length === 0 ? '--gone-host and --gone-space set to that host name and space' : 'one more --gone-host and --gone-space pair set to that host name and space, keeping the pairs already named';
   // No recovery anywhere can look at a process of a space that names no pid namespace, so the learner's confirmation is the only way out.
   if (state === 'elsewhere' && !namesItsSpace(owner.space)) throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ', a space of process ids whose pid namespace it could not read, where no recovery can look at it. Run --recover here with ' + wayOut + ', only after the learner confirms that no publisher runs there.');
+  // An owner of this host name under another boot that the digest of the computer's id does not prove this machine's may be this computer before a restart or another computer of that name.
+  if (state === 'elsewhere' && owner.host === here.host && isOfAnotherBoot(owner, here)) throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ' under another boot, which this recovery cannot prove was this computer before a restart: another computer may have the same host name. If another computer with this host name may be publishing this Wiki, run --recover there after it exits. Otherwise, or if that computer cannot come back, run --recover here with ' + wayOut + ', only after the learner confirms that no publisher runs there.');
   if (state === 'elsewhere') throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ', where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with ' + wayOut + ', only after the learner confirms that no publisher runs there.');
   throw new Error('The prior Wiki publisher process ' + pid + ' may still be running; inspect it before recovery.');
 }

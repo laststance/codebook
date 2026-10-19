@@ -8781,11 +8781,11 @@ for (const { when, recordedStart, tableTime, outcome, recovered } of [
 
 for (const { step, renderOnly, asked } of [
   {
-    step: 'a publish asks the system about its owner (sysctl and ps on macOS) before it reads the candidate’s manifest, so those queries run beside the rendering',
+    step: 'a publish asks the system about its owner (sysctl, ps and ioreg on macOS) before it reads the candidate’s manifest, so those queries run beside the rendering',
     renderOnly: false,
     asked: {
-      beforeTheManifest: ['/usr/sbin/sysctl', '/bin/ps'],
-      inAll: ['/usr/sbin/sysctl', '/bin/ps'],
+      beforeTheManifest: ['/usr/sbin/sysctl', '/bin/ps', '/usr/sbin/ioreg'],
+      inAll: ['/usr/sbin/sysctl', '/bin/ps', '/usr/sbin/ioreg'],
     },
   },
   {
@@ -8794,7 +8794,7 @@ for (const { step, renderOnly, asked } of [
     asked: { beforeTheManifest: [], inAll: [] },
   },
 ]) {
-  // Value: protects=the time a publish takes on Windows and macOS, where the read of the owner a journal names starts PowerShell or ps and sysctl, and the time of a preview, which needs no owner; fails_when=the owner's read starts only when the journal is written, after the pages are rendered and written, so its queries add their whole time to the publish, or a preview starts them for nothing; why_new=Cycle 0047 row 67 (PERF-2, advisory); seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the candidate's manifest (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), and the publisher's `system` option, here macOS with a runner that notes each query (the CLI passes the system it runs on); no_claim=a measured time on a real Windows or macOS
+  // Value: protects=the time a publish takes on Windows and macOS, where the read of the owner a journal names starts PowerShell and reg.exe, or ps, sysctl and ioreg, and the time of a preview, which needs no owner; fails_when=the owner's read starts only when the journal is written, after the pages are rendered and written, so its queries add their whole time to the publish, or a preview starts them for nothing; why_new=Cycle 0047 row 67 (PERF-2, advisory); seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the candidate's manifest (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), and the publisher's `system` option, here macOS with a runner that notes each query (the CLI passes the system it runs on); no_claim=a measured time on a real Windows or macOS
   test(step, async () => {
     // Arrange: a published Wiki with a candidate; the runner notes each query, and the queries asked so far are noted when the publisher reads the candidate's manifest.
     const { publishWiki: publishWhoseReadIsSeen } = await loadMarkedCopy(
@@ -8842,8 +8842,8 @@ for (const { step, renderOnly, asked } of [
   })
 }
 
-// Value: protects=the time a recovery takes on Windows and macOS, where the read of the owner a claim names and of this recovery's own owner starts PowerShell or ps and sysctl; fails_when=the owner's read starts only when the journal's owner is judged, after the paths are resolved and the journal is read, so its queries add their whole time to the recovery; why_new=Cycle 0047 row 67 (PERF-2, advisory); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given an owner of macOS on this host, and a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the journal (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), with the `system` option macOS and a runner that notes each query; no_claim=a measured time on a real Windows or macOS
-test('a recovery asks the system about its owner (sysctl and ps on macOS) before it reads the journal a stopped publish left, and recovers the Wiki', async () => {
+// Value: protects=the time a recovery takes on Windows and macOS, where the read of the owner a claim names and of this recovery's own owner starts PowerShell and reg.exe, or ps, sysctl and ioreg; fails_when=the owner's read starts only when the journal's owner is judged, after the paths are resolved and the journal is read, so its queries add their whole time to the recovery; why_new=Cycle 0047 row 67 (PERF-2, advisory); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given an owner of macOS on this host, and a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the journal (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), with the `system` option macOS and a runner that notes each query; no_claim=a measured time on a real Windows or macOS
+test('a recovery asks the system about its owner (sysctl, ps and ioreg on macOS) before it reads the journal a stopped publish left, and recovers the Wiki', async () => {
   // Arrange: the journal of a killed publish names macOS on this host, as the killed publisher recorded it; the runner notes each query, and the queries asked so far are noted when the recovery reads the journal.
   const { recoverWikiPublication: recoverWhoseReadIsSeen } =
     await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
@@ -8888,7 +8888,7 @@ test('a recovery asks the system about its owner (sysctl and ps on macOS) before
       {
         killed: '',
         recovery: 'published-or-restored',
-        beforeTheJournal: ['/usr/sbin/sysctl', '/bin/ps'],
+        beforeTheJournal: ['/usr/sbin/sysctl', '/bin/ps', '/usr/sbin/ioreg'],
       },
     )
   } finally {
@@ -8896,21 +8896,23 @@ test('a recovery asks the system about its owner (sysctl and ps on macOS) before
   }
 })
 
-// Value: protects=the learner's --recover after a killed publish before a restart of the machine, whose process id a process of the new boot has; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running"; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another boot (another boot id, or a boot time an hour earlier where the system names none), no process start and the test process's own id; no_claim=a boot time moved by a correction of the clock within the tolerance
+// Value: protects=the learner's --recover after a killed publish before a restart of the machine, whose process id a process of the new boot has; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running"; why_new=Cycle 0047 row 42 (P3RT20); row 171 (the owner's D5): the journal keeps the digest of this computer's id the killed publisher recorded, by which alone another boot is an earlier one of this computer; seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another boot (another boot id, or a boot time an hour earlier where the system names none), no process start and the test process's own id; no_claim=a boot time moved by a correction of the clock within the tolerance
 test('a recovery of a killed publish whose journal names an earlier boot of this machine recovers the Wiki whatever process has its id now', async () => {
-  // Arrange
-  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
-    record.pid = process.pid
-    const { boot } = record.owner ?? { boot: {} }
-    record.owner = {
-      ...record.owner,
-      start: undefined,
-      boot:
-        boot.id === undefined
-          ? { atMs: boot.atMs - 3_600_000 }
-          : { id: '00000000-0000-4000-8000-000000000000' },
-    }
-  })
+  // Arrange: the journal keeps this host name, this space and the digest of this computer's id that the killed publisher recorded, and names another boot.
+  const { wiki, killed, record } = await publishKilledAfterItsJournal(
+    (record) => {
+      record.pid = process.pid
+      const { boot } = record.owner ?? { boot: {} }
+      record.owner = {
+        ...record.owner,
+        start: undefined,
+        boot:
+          boot.id === undefined
+            ? { atMs: boot.atMs - 3_600_000 }
+            : { id: '00000000-0000-4000-8000-000000000000' },
+      }
+    },
+  )
   try {
     // Act
     const recovery = await recoverWikiPublication({
@@ -8923,17 +8925,55 @@ test('a recovery of a killed publish whose journal names an earlier boot of this
 
     // Assert
     assert.deepEqual(
-      { killed, recovery },
-      { killed: '', recovery: 'published-or-restored' },
+      {
+        killed,
+        namesTheComputersId: /^[a-f0-9]{64}$/.test(record.owner.machine),
+        recovery,
+      },
+      {
+        killed: '',
+        namesTheComputersId: true,
+        recovery: 'published-or-restored',
+      },
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
 
-for (const { platform, system } of [
-  { platform: 'darwin', system: 'macOS' },
-  { platform: 'win32', system: 'Windows' },
+for (const { platform, system, environment, idQuery, machine } of [
+  {
+    platform: 'darwin',
+    system: 'macOS',
+    environment: {},
+    // What ioreg prints for the Mac's platform device, its hardware UUID among its properties.
+    idQuery: {
+      program: '/usr/sbin/ioreg',
+      args: ['-rd1', '-c', 'IOPlatformExpertDevice'],
+      answer:
+        '+-o MacBookPro18,3  <class IOPlatformExpertDevice, id 0x100000213, registered, matched, active, busy 0 (0 ms), retain 34>\n    {\n      "IOPlatformSerialNumber" = "C02ZZ0ZZZZZZ"\n      "IOPlatformUUID" = "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D"\n      "model" = <"MacBookPro18,3">\n    }',
+    },
+    machine: '9ca377b35bb69c403ea5f67ed7d8ab12f908c060b16e8fcf3b5304a1988fb502',
+  },
+  {
+    platform: 'win32',
+    system: 'Windows',
+    environment: { SystemRoot: 'C:\\Windows' },
+    // What reg.exe prints for the machine GUID of the registry's cryptography key.
+    idQuery: {
+      program: 'C:\\Windows\\System32\\reg.exe',
+      args: [
+        'query',
+        'HKLM\\SOFTWARE\\Microsoft\\Cryptography',
+        '/v',
+        'MachineGuid',
+        '/reg:64',
+      ],
+      answer:
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\r\n    MachineGuid    REG_SZ    3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+    },
+    machine: '848da0debd0a5490a239e8cc638695ad38557a6fb8c0d329e102fdb2cc236f30',
+  },
 ]) {
   for (const { apartMs, outcome, recovered } of [
     {
@@ -8948,23 +8988,30 @@ for (const { platform, system } of [
       recovered: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
     },
   ]) {
-    // Value: protects=the learner's --recover on a system that names its boot by no id after a killed publish whose journal names no process start, judged by the boot time with a tolerance of one minute; fails_when=the boot times are not compared, compared without the tolerance or only in one direction, so a journal of an earlier boot whose process id a process of this boot has keeps the Wiki locked as "may still be running", or a boot time moved by a correction of the clock counts as another boot and a publisher that may still run is recovered around; why_new=Cycle 0047 row 64 (TEST-5): the boot-time rule never ran on CI, where Linux names its boot by an id; seam=the publisher's `system` option, here macOS or Windows whose queries print nothing, so no boot session and no start is read (the CLI passes the system it runs on); no_claim=a clock corrected while the test runs
-    test(`a recovery on ${system} of a killed publish whose journal names no start and a boot time ${apartMs / 1000} seconds before this one ${outcome}`, async () => {
-      // Arrange: the journal names the test process's id, this host as the killed publisher recorded it, the system's space, no start and a boot time apart from this boot's.
+    // Value: protects=the learner's --recover on a system that names its boot by no id after a killed publish whose journal names no process start, judged by the boot time with a tolerance of one minute; fails_when=the boot times are not compared, compared without the tolerance or only in one direction, so a journal of an earlier boot whose process id a process of this boot has keeps the Wiki locked as "may still be running", or a boot time moved by a correction of the clock counts as another boot and a publisher that may still run is recovered around, or the computer's id is read by another program, other arguments or another digest, so an earlier boot of this computer is refused as one of another computer; why_new=Cycle 0047 row 64 (TEST-5): the boot-time rule never ran on CI, where Linux names its boot by an id; row 171 (the owner's D5): an earlier boot is this computer's by the digest of its id; seam=the publisher's `system` option, here macOS or Windows whose queries print the computer's id alone (ioreg's hardware UUID, reg.exe's machine GUID), so no boot session and no start is read, and the journal names the digest of that id (the CLI passes the system it runs on); no_claim=a clock corrected while the test runs, and a real ioreg or reg.exe
+    test(`a recovery on ${system} of a killed publish whose journal names no start, this computer’s id and a boot time ${apartMs / 1000} seconds before this one ${outcome}`, async () => {
+      // Arrange: the journal names the test process's id, this host as the killed publisher recorded it, the system's space, no start, a boot time apart from this boot's and the digest of the id the system's query prints.
       const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
         record.pid = process.pid
         record.owner = {
           host: record.owner.host,
           space: platform,
           boot: { atMs: Date.now() - Math.round(uptime() * 1000) - apartMs },
+          machine,
         }
       })
+      // A stand-in runner: it prints the computer's id for the exact query, and nothing for any other query.
+      const run = async (program, args) =>
+        program === idQuery.program &&
+        JSON.stringify(args) === JSON.stringify(idQuery.args)
+          ? idQuery.answer
+          : undefined
       try {
         // Act
         const recovery = await recoverWikiPublication({
           projectRoot: wiki.root,
           outputDirectory: wiki.output,
-          system: { platform, environment: {}, run: async () => undefined },
+          system: { platform, environment, run },
         }).then(
           ({ status }) => status,
           (error) => error.message,
@@ -12659,4 +12706,336 @@ test('a Wiki whose publish was killed between its two moves and whose kept prior
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
   }
+})
+
+for (const { names, machine } of [
+  {
+    names: 'another computer’s id',
+    machine: '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0',
+  },
+  { names: 'no computer’s id (as 0.2.30.0 wrote it)', machine: undefined },
+]) {
+  // Value: protects=a Wiki whose publish runs on another computer with this host name (two Macs with the default name, two Linux machines whose first pid namespace has one number on every machine) that opens the same project folder: a recovery here does not move its files; fails_when=the recovery takes any other boot of an owner with this host name and space for an earlier boot of this computer, so it moves the Wiki and removes the journal of a publish that may still run there; why_new=Cycle 0047 row 171 (S2SM-W1 = S2CXA-A3; the owner's D5: an earlier boot is this computer's only where both name one digest of its id); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another boot (another boot id, or a boot time an hour earlier where the system names none), no start and the computer's id the row names; no_claim=a real second computer
+  test(`a recovery of a killed publish whose journal names this host name and space under another boot and ${names} is refused with --gone-host and --gone-space as the way out, and the journal is kept`, async () => {
+    // Arrange: the journal keeps this host name and space and names another boot and the row's computer id.
+    const { wiki, killed, record } = await publishKilledAfterItsJournal(
+      (record) => {
+        const { boot } = record.owner
+        record.owner = {
+          ...record.owner,
+          machine,
+          start: undefined,
+          boot:
+            boot.id === undefined
+              ? { atMs: boot.atMs - 3_600_000 }
+              : { id: '00000000-0000-4000-8000-000000000000' },
+        }
+      },
+    )
+    const journal = `${wiki.output}.publish-journal.json`
+    try {
+      const journalBefore = await readFile(journal, 'utf8')
+
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          recovery,
+          journal: await readFile(journal, 'utf8').then(
+            (text) => (text === journalBefore ? 'kept' : 'changed'),
+            () => 'gone',
+          ),
+        },
+        {
+          killed: '',
+          recovery: `The prior Wiki publisher process ${record.pid} ran on ${JSON.stringify(record.owner.host)} (${record.owner.space}) under another boot, which this recovery cannot prove was this computer before a restart: another computer may have the same host name. If another computer with this host name may be publishing this Wiki, run --recover there after it exits. Otherwise, or if that computer cannot come back, run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.`,
+          journal: 'kept',
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+for (const { when, named, outcome, ended } of [
+  {
+    when: 'the journal’s place',
+    named: (record) => [{ host: record.owner.host, space: record.owner.space }],
+    outcome: 'recovers the Wiki and removes the journal',
+    ended: () => ({ recovery: 'published-or-restored', journal: 'gone' }),
+  },
+  {
+    when: 'another space than the journal’s',
+    named: (record) => [{ host: record.owner.host, space: 'linux@1' }],
+    outcome: 'is refused with both places named, and the journal is kept',
+    ended: (record) => ({
+      recovery: `--gone-host and --gone-space name ${JSON.stringify(record.owner.host)} (linux@1), but the Wiki publication journal names ${JSON.stringify(record.owner.host)} (${record.owner.space}). Nothing was moved. Name the host name and the space that the refusal of --recover names, or run --recover without them.`,
+      journal: 'kept',
+    }),
+  },
+]) {
+  // Value: protects=the learner whose Wiki publish ran on this host name under another boot that the recovery cannot prove was this computer's (a journal of 0.2.30.0 before a restart, or another computer with this host name that is gone), and the Wiki of a publish the pair does not name; fails_when=the pair for the journal's place does not take such an owner for gone, so the Wiki stays locked for good, or a pair for another place is taken, so the recovery ends a publish it does not name; why_new=Cycle 0047 row 171 (S2SM-W1 = S2CXA-A3, the owner's D5): the cells of the pair beside an owner of another boot; seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another boot, no start and another computer's id; no_claim=a real second computer
+  test(`a recovery of a killed publish whose journal names this host name and space under another boot and another computer’s id, with --gone-host and --gone-space naming ${when}, ${outcome}`, async () => {
+    // Arrange: the journal keeps this host name and space and names another boot and another computer's id.
+    const { wiki, killed, record } = await publishKilledAfterItsJournal(
+      (record) => {
+        const { boot } = record.owner
+        record.owner = {
+          ...record.owner,
+          machine:
+            '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0',
+          start: undefined,
+          boot:
+            boot.id === undefined
+              ? { atMs: boot.atMs - 3_600_000 }
+              : { id: '00000000-0000-4000-8000-000000000000' },
+        }
+      },
+    )
+    try {
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        goneOwners: named(record),
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          recovery,
+          journal: existsSync(`${wiki.output}.publish-journal.json`)
+            ? 'kept'
+            : 'gone',
+        },
+        { killed: '', ...ended(record) },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=the Wiki against a recovery that acts on a journal whose computer id it cannot read, and the agent that reads the refusal; fails_when=the form of the owner's computer id is not checked, so text of a cloned repository's journal stands where a digest belongs and a recovery compares it as one; why_new=Cycle 0047 row 171 (the owner's D5: the owner records the computer's id as a digest of one fixed form); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given a computer id that is no digest; no_claim=other wrong forms of the owner
+test('a recovery of a publish whose journal names a computer id that is no digest is refused as an invalid owner, and the journal is kept', async () => {
+  // Arrange: the journal keeps its owner and names, as its computer's id, text that is no digest of the publisher's form.
+  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+    record.owner = {
+      ...record.owner,
+      machine: 'e58f781eda8c48a988f3936f3ce684c3',
+    }
+  })
+  try {
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        journal: existsSync(`${wiki.output}.publish-journal.json`)
+          ? 'kept'
+          : 'gone',
+      },
+      {
+        killed: '',
+        recovery: 'The Wiki recovery owner is invalid.',
+        journal: 'kept',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const { platform, system, environment, idQuery } of [
+  {
+    platform: 'darwin',
+    system: 'macOS',
+    environment: {},
+    // What ioreg prints for the Mac's platform device, its hardware UUID among its properties.
+    idQuery: {
+      program: '/usr/sbin/ioreg',
+      args: ['-rd1', '-c', 'IOPlatformExpertDevice'],
+      answer:
+        '+-o MacBookPro18,3  <class IOPlatformExpertDevice, id 0x100000213, registered, matched, active, busy 0 (0 ms), retain 34>\n    {\n      "IOPlatformSerialNumber" = "C02ZZ0ZZZZZZ"\n      "IOPlatformUUID" = "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D"\n      "model" = <"MacBookPro18,3">\n    }',
+    },
+  },
+  {
+    platform: 'win32',
+    system: 'Windows',
+    environment: { SystemRoot: 'C:\\Windows' },
+    // What reg.exe prints for the machine GUID of the registry's cryptography key.
+    idQuery: {
+      program: 'C:\\Windows\\System32\\reg.exe',
+      args: [
+        'query',
+        'HKLM\\SOFTWARE\\Microsoft\\Cryptography',
+        '/v',
+        'MachineGuid',
+        '/reg:64',
+      ],
+      answer:
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\r\n    MachineGuid    REG_SZ    3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+    },
+  },
+]) {
+  for (const { names, machine } of [
+    {
+      names: 'another computer’s id',
+      machine:
+        '0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0',
+    },
+    { names: 'no computer’s id (as 0.2.30.0 wrote it)', machine: undefined },
+  ]) {
+    // Value: protects=a Wiki whose publish runs on another Windows PC or Mac with this host name that opens the same project folder, where a boot has no id and boot times alone tell boots apart; fails_when=the recovery takes a boot time apart for an earlier boot of this computer without the digest of the computer's id, so it moves the Wiki and removes the journal of a publish that may still run there; why_new=Cycle 0047 row 171 (S2SM-W1 = S2CXA-A3, the owner's D5): the boot-time rule had the same collapse as the boot id's; seam=the publisher's `system` option, here macOS or Windows whose queries print this computer's id alone (ioreg's hardware UUID, reg.exe's machine GUID), and a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given this system's space, no start, a boot time 61 seconds before this one and the computer id the row names; no_claim=a real second computer, a real ioreg or reg.exe
+    test(`a recovery on ${system} of a killed publish whose journal names no start, ${names} and a boot time 61 seconds before this one is refused with --gone-host and --gone-space as the way out, and the journal is kept`, async () => {
+      // Arrange: the journal names the test process's id, this host as the killed publisher recorded it, the system's space, no start, a boot time a minute and a second before this boot's and the row's computer id.
+      const { wiki, killed, record } = await publishKilledAfterItsJournal(
+        (record) => {
+          record.pid = process.pid
+          record.owner = {
+            host: record.owner.host,
+            space: platform,
+            boot: { atMs: Date.now() - Math.round(uptime() * 1000) - 61_000 },
+            machine,
+          }
+        },
+      )
+      // A stand-in runner: it prints this computer's id for the exact query, and nothing for any other query.
+      const run = async (program, args) =>
+        program === idQuery.program &&
+        JSON.stringify(args) === JSON.stringify(idQuery.args)
+          ? idQuery.answer
+          : undefined
+      try {
+        // Act
+        const recovery = await recoverWikiPublication({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          system: { platform, environment, run },
+        }).then(
+          ({ status }) => status,
+          (error) => error.message,
+        )
+
+        // Assert
+        assert.deepEqual(
+          {
+            killed,
+            recovery,
+            journal: existsSync(`${wiki.output}.publish-journal.json`)
+              ? 'kept'
+              : 'gone',
+          },
+          {
+            killed: '',
+            recovery: `The prior Wiki publisher process ${process.pid} ran on ${JSON.stringify(record.owner.host)} (${platform}) under another boot, which this recovery cannot prove was this computer before a restart: another computer may have the same host name. If another computer with this host name may be publishing this Wiki, run --recover there after it exits. Otherwise, or if that computer cannot come back, run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.`,
+            journal: 'kept',
+          },
+        )
+      } finally {
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    })
+  }
+}
+
+// Value: protects=the learner's computer id, which `machine-id(5)` asks never to leave the computer, in a journal that lies in the project folder a commit can publish, and the recovery that compares it; fails_when=the publisher records the id itself, or a digest of another form or without its own context, so the id can be read back or matched against another program's digest, or a recovery cannot tell this computer's earlier boot from another computer's; why_new=Cycle 0047 row 171 (the owner's D5: the owner records a digest of the OS computer id of one fixed form); seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the Wiki's record once the journal stands (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), and the publisher's `system` option, here macOS whose ioreg prints a hardware UUID; no_claim=a real ioreg, and the Linux and Windows reads, which the recoveries by those ids pin
+test('a publish on macOS records in its journal the digest of the Mac’s hardware UUID, and never the UUID itself', async () => {
+  // Arrange: a published Wiki with a candidate; macOS's ioreg prints the platform device's hardware UUID, and the journal is read when the publisher reads the Wiki's record once the journal stands.
+  const { publishWiki: publishWhoseJournalIsSeen } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  const macOS = {
+    platform: 'darwin',
+    environment: {},
+    run: async (program, args) =>
+      program === '/usr/sbin/ioreg' &&
+      JSON.stringify(args) ===
+        JSON.stringify(['-rd1', '-c', 'IOPlatformExpertDevice'])
+        ? '+-o MacBookPro18,3  <class IOPlatformExpertDevice, id 0x100000213, registered, matched, active, busy 0 (0 ms), retain 34>\n    {\n      "IOPlatformSerialNumber" = "C02ZZ0ZZZZZZ"\n      "IOPlatformUUID" = "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D"\n      "model" = <"MacBookPro18,3">\n    }'
+        : undefined,
+  }
+  let journalText = 'no journal seen'
+  swapBeforeReading(
+    (path) =>
+      path === join(wiki.output, 'codebook-publication.json') &&
+      existsSync(journal),
+    async () => {
+      journalText = await readFile(journal, 'utf8')
+    },
+  )
+  try {
+    // Act
+    const outcome = await publishWhoseJournalIsSeen({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+      system: macOS,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        outcome,
+        machine: JSON.parse(journalText).owner?.machine,
+        holdsTheUuid: journalText
+          .toLowerCase()
+          .includes('a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'),
+      },
+      {
+        outcome: 'published',
+        machine:
+          '9ca377b35bb69c403ea5f67ed7d8ab12f908c060b16e8fcf3b5304a1988fb502',
+        holdsTheUuid: false,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the editor agent whose --recover is refused for a publish of this host name under another boot that the recovery cannot prove was this computer's (a journal of 0.2.30.0 after a restart, or another computer with the same host name); fails_when=the skill does not tell the agent to ask the learner whether another computer with that host name may publish the Wiki before it uses --gone-host and --gone-space, so it either leaves the Wiki locked for good or ends a publish that may still run on that other computer; why_new=Cycle 0047 row 171 (the owner's D5); seam=none; no_claim=what an agent does with the sentence
+test('the bundled skill tells the agent to ask the learner about another computer with the same host name before it recovers a publish of another boot with --gone-host and --gone-space', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      'If recovery refuses because the stopped publisher ran on this computer\'s host name under another boot that it cannot prove was this computer before a restart (a journal of an earlier version, which names no digest of the computer\'s id, or one of another computer with the same host name), ask the learner whether another computer with that host name may publish this Wiki: if one may, run `--recover` there after that publisher exits; if none does, use the `--gone-host "<host>" --gone-space "<space>"` pair that refusal names, the same way and only after the learner confirms that no publisher runs there.',
+    ),
+    true,
+  )
 })
