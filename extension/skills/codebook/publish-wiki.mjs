@@ -1107,11 +1107,8 @@ async function recoverManifestJournal(record, paths, requirePathHeld, isResumed)
     error => { if (error.isSupersededRestore) return undefined; throw error; });
 }
 
-/** Whether a path a publish journal names is an entry of its own directly beside the output, in the normal form the publisher writes it in: a journal a cloned repository carries can name the output's parent followed by `..` or `.`, whose parent folder is the output's too, and the recovery would take the folder it leads to (the project root, the output's parent) for the candidate and remove its files. The resolved path must be the path itself, so no `..`, `.`, doubled or trailing separator stands in it, and its name must be neither empty nor the output's. Called by {@link isSiblingStage} and {@link isSiblingBackup}. @example isSiblingPath('/repo/.codebook/..', '/repo/.codebook/wiki') // => false */
+/** Whether a path a publish journal names is an entry of its own directly beside the output, in the normal form the publisher writes it in: a journal a cloned repository carries can name the output's parent followed by `..` or `.`, whose parent folder is the output's too, and the recovery would take the folder it leads to (the project root, the output's parent) for the candidate and remove its files. The resolved path must be the path itself, so no `..`, `.`, doubled or trailing separator stands in it, and its name must be neither empty nor the output's. Called by {@link requirePublishJournal} for the stage and by {@link isSiblingBackup}. @example isSiblingPath('/repo/.codebook/..', '/repo/.codebook/wiki') // => false */
 const isSiblingPath = (path, output) => typeof path === 'string' && resolve(path) === path && basename(path) !== '' && dirname(path) === dirname(output) && path !== output;
-
-/** Whether a publish journal's stage is a distinct sibling of the output in its normal form ({@link isSiblingPath}). Called by {@link requirePublishJournal}. @example isSiblingStage('/repo/.codebook/next', '/repo/.codebook/wiki') // => true */
-const isSiblingStage = (stage, output) => isSiblingPath(stage, output);
 
 /** Whether a publish journal names no backup, or a backup beside the output in its normal form ({@link isSiblingPath}) under the name the publisher gives it ({@link isPublishersOwnName}): the backup is named in the recovery's answer and refusals, so a journal a cloned repository carries brings no text of its own into them. Called by {@link requirePublishJournal}. @example isSiblingBackup('/repo/.codebook/wiki.previous-6f1c2a7e-…', '/repo/.codebook/wiki') // => true */
 const isSiblingBackup = (backup, output) => backup === undefined || isSiblingPath(backup, output) && isPublishersOwnName(backup, output, '.previous-');
@@ -1155,7 +1152,7 @@ async function requireStageOfItsOwn(record, output) {
 
 /** Refuses a publish journal that names no sibling stage or backup, a stage that is the Wiki folder or the kept prior Wiki under another name ({@link requireStageOfItsOwn}), or, for this version's publish, not the generations it moves. Called by {@link recoverPublishJournal} before anything the journal names is read or moved. @throws The refusal of the journal; it is preserved. @example await requirePublishJournal(record, '/repo/.codebook/wiki') */
 async function requirePublishJournal(record, output) {
-  if (!isSiblingStage(record.stage, output) || !isSiblingBackup(record.backup, output)) throw new Error(SIBLING_JOURNAL_REFUSAL);
+  if (!isSiblingPath(record.stage, output) || !isSiblingBackup(record.backup, output)) throw new Error(SIBLING_JOURNAL_REFUSAL);
   await requireStageOfItsOwn(record, output);
   if (record.operation === 'publish' && !namesGenerations(record)) throw new Error('The Wiki publication journal is missing generation identity; it was preserved.');
 }
