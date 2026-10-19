@@ -858,7 +858,7 @@ export const WIKI_CHAT_WATCH_CANCEL_COMMAND = 'codebook.cancelWikiChatWatch'
 export const WIKI_CHAT_WATCH_STATUS_ID = 'codebook.wikiChatWatch'
 /** The name of the watch's status bar entry in the status bar's context menu. */
 export const WIKI_CHAT_WATCH_STATUS_NAME = 'Codebook LLM Wiki update'
-/** Milliseconds in one minute, for naming a bound in minutes in the update request. */
+/** Milliseconds in one minute, for naming a bound in minutes in the update request and the end of a start's wait as a whole minute. */
 export const MS_PER_MINUTE = 60_000
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
 export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000

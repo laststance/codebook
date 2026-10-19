@@ -142,3 +142,27 @@ test('a candidate written before this window’s last run began has no known own
   // Assert
   assert.equal(active?.name, 'wiki.stage-1')
 })
+
+// Value: protects=the learner who presses at the moment a candidate's wait ends; fails_when=a candidate written exactly the watch bound ago still counts as work in progress, so its wait ends one millisecond later than a stopped watch's, and a press at the time the refusal names is refused again; why_new=Cycle 0047 row 90 (SM-4, the candidate's bound); seam=none; no_claim=the time the refusal names
+test('a candidate stops blocking the start at the very moment the watch bound has passed since it was written, as a stopped watch’s chat does', () => {
+  // Arrange
+  const candidates = [
+    { name: 'wiki.stage-1', writtenAtMs: 1_000_000, ownedPaths: [] },
+  ]
+
+  // Act
+  const justBeforeTheBound = selectActiveWikiCandidate(candidates, {
+    nowMs: 1_000_000 + FIFTEEN_MINUTES_MS - 1,
+    activeWithinMs: FIFTEEN_MINUTES_MS,
+    lastRun: undefined,
+  })
+  const atTheBound = selectActiveWikiCandidate(candidates, {
+    nowMs: 1_000_000 + FIFTEEN_MINUTES_MS,
+    activeWithinMs: FIFTEEN_MINUTES_MS,
+    lastRun: undefined,
+  })
+
+  // Assert
+  assert.equal(justBeforeTheBound?.name, 'wiki.stage-1')
+  assert.equal(atTheBound, undefined)
+})

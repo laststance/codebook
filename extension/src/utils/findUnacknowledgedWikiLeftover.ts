@@ -1,3 +1,5 @@
+import { MS_PER_MINUTE } from '../constants'
+
 import { formatClockTime } from './formatClockTime'
 import { hasWikiPublishEndedWait } from './hasWikiPublishEndedWait'
 import {
@@ -22,6 +24,22 @@ type LeftoverLook = {
   lastRun: WikiLastRun | undefined
   acknowledged: readonly WikiLeftover[]
   listCandidates: (outputDirectory: string) => Promise<WikiCandidate[]>
+}
+
+/**
+ * Writes the end of a start's wait as the clock time a refusal's "waits for it until" names; called for each refusal's sentence.
+ * Why: a clock time names its minute only, so an end within a minute written as that minute would name a time at which a press is still refused, for up to 59 seconds, with the same time named again. The first whole minute at or after the end is a time at which the wait is over.
+ * @param waitEndsAtMs - The end of the wait (epoch milliseconds): a watch's end or a candidate's writing, plus the bound.
+ * @returns The hour and minute, with the zone ({@link formatClockTime}), of the first whole minute at or after that end; an end on a whole minute is named as itself.
+ * @example
+ * formatWaitEnd(Date.UTC(2026, 9, 3, 12, 23, 30)) // => '12:24 UTC' on a host in UTC
+ * formatWaitEnd(Date.UTC(2026, 9, 3, 12, 23, 0)) // => '12:23 UTC' on a host in UTC
+ */
+function formatWaitEnd(waitEndsAtMs: number): string {
+  return formatClockTime(
+    Math.ceil(waitEndsAtMs / MS_PER_MINUTE) * MS_PER_MINUTE,
+    {},
+  )
 }
 
 /**
@@ -56,7 +74,7 @@ async function reservationRefusal(
         startedAtMs: otherWindow.startedAtMs,
       },
     ],
-    reason: `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(watchEndedAtMs, {})} and Codebook waits for it until ${formatClockTime(watchEndedAtMs + watchTimeoutMs, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+    reason: `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(watchEndedAtMs, {})} and Codebook waits for it until ${formatWaitEnd(watchEndedAtMs + watchTimeoutMs)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
   }
 }
 
@@ -91,7 +109,7 @@ async function awaitedOwnRunOf(
  * @param awaitedOwnRun - This window's own stopped watch while its chat is waited for.
  * @param waitEndsAtMs - The moment the start waits until: the watch's end plus the bound, or a later end the caller worked out.
  * @param seenCandidate - The candidate that watch saw and that is still in the way; `undefined` when none is.
- * @returns The sentence that names this window's chat, the candidate if any, the watch's end and the end of the wait.
+ * @returns The sentence that names this window's chat, the candidate if any, the watch's end and the end of the wait, as its first whole minute ({@link formatWaitEnd}).
  * @example
  * ownChatReason({ outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: true, candidateNames: [] }, 902_000, undefined)
  * // => 'The VS Code chat this window asked at … may still be updating this Wiki; Codebook stopped watching it at … and waits for it until …. If that chat was stopped, choose Update anyway in the editor’s notification.'
@@ -105,7 +123,7 @@ function ownChatReason(
   const staged = seenCandidate
     ? ` (candidate ${seenCandidate.name}, written ${formatClockTime(seenCandidate.writtenAtMs, {})})`
     : ''
-  return `The VS Code chat this window asked at ${formatClockTime(awaitedOwnRun.startedAtMs, {})} may still be updating this Wiki${staged}; Codebook stopped watching it at ${formatClockTime(awaitedOwnRun.endedAtMs, {})} and waits for it until ${formatClockTime(waitEndsAtMs, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`
+  return `The VS Code chat this window asked at ${formatClockTime(awaitedOwnRun.startedAtMs, {})} may still be updating this Wiki${staged}; Codebook stopped watching it at ${formatClockTime(awaitedOwnRun.endedAtMs, {})} and waits for it until ${formatWaitEnd(waitEndsAtMs)}. If that chat was stopped, choose Update anyway in the editor’s notification.`
 }
 
 /**
@@ -114,10 +132,10 @@ function ownChatReason(
  * @param activeCandidate - The candidate that shows someone is still updating this Wiki ({@link selectActiveWikiCandidate}); `undefined` when there is none.
  * @param awaitedOwnRun - This window's own stopped watch while its chat is waited for; `undefined` otherwise.
  * @param watchTimeoutMs - The watch bound, which each sentence's "waits for it until" adds.
- * @returns The candidate's refusal first, then the watch's; one refusal that names both when the watch saw the candidate, and the later end of the two waits: the candidate's (its writing plus the bound) or the watch's (its end plus the bound), so a press at the named time is not refused again for the same chat.
+ * @returns The candidate's refusal first, then the watch's; one refusal that names both when the watch saw the candidate, and the later end of the two waits: the candidate's (its writing plus the bound) or the watch's (its end plus the bound). Each sentence names its end as the first whole minute at or after it ({@link formatWaitEnd}), and each wait is over at its end, so a press at the named time is not refused again for the same chat.
  * @example
  * ownChatRefusals({ name: 'wiki.stage-1', writtenAtMs: 1_500, ownedPaths: [] }, { outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: true, candidateNames: ['wiki.stage-1'] }, 900_000)
- * // => [{ named: [{ kind: 'candidate', name: 'wiki.stage-1' }, { kind: 'last-run', endedAtMs: 2_000 }], reason: 'The VS Code chat this window asked at … may still be updating this Wiki (candidate wiki.stage-1, written …); Codebook stopped watching it at … and waits for it until <the clock time of 902_000>. …' }]
+ * // => [{ named: [{ kind: 'candidate', name: 'wiki.stage-1' }, { kind: 'last-run', endedAtMs: 2_000 }], reason: 'The VS Code chat this window asked at … may still be updating this Wiki (candidate wiki.stage-1, written …); Codebook stopped watching it at … and waits for it until <the clock time of 960_000, the first whole minute at or after 902_000>. …' }]
  */
 function ownChatRefusals(
   activeCandidate: WikiCandidate | undefined,
@@ -167,7 +185,7 @@ function ownChatRefusals(
   return [
     {
       named: [candidateLeftover],
-      reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + watchTimeoutMs, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+      reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatWaitEnd(activeCandidate.writtenAtMs + watchTimeoutMs)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
     },
     ...ownRunRefusal,
   ]

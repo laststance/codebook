@@ -319,3 +319,198 @@ test('a candidate this window’s watch never saw keeps refusing the start after
     await rm(wiki.parent, { recursive: true, force: true })
   }
 })
+
+/** The hour and minute of a moment of 2026-10-03 (UTC) given to the second, as a refusal writes it; a refusal names the minute only. */
+const clockTimeOfSecond = (
+  hour: number,
+  minute: number,
+  second: number,
+): string => formatClockTime(Date.UTC(2026, 9, 3, hour, minute, second), {})
+
+// Value: protects=the learner who presses at the time a refusal for another window's stopped chat names; fails_when=the sentence names the minute in which the wait ends, cut down, so a press at that time is refused again for up to 59 seconds with the same time named; why_new=Cycle 0047 row 90 (SM-4, the reservation's sentence); seam=the clock and another window's marker, handed over; no_claim=the end of the wait by a publish
+test('the refusal for another window’s stopped chat names the first whole minute after its wait ends, and a press at that minute is not refused again', async () => {
+  // Arrange: the other window stopped watching at 11:55:20, so the wait ends at 12:10:20.
+  const wiki = await makeUnpublishedWiki()
+  const lookAt = (
+    nowMs: number,
+  ): Parameters<typeof findUnacknowledgedWikiLeftover>[1] => ({
+    nowMs,
+    watchTimeoutMs: WATCH_TIMEOUT_MS,
+    otherWindow: {
+      pid: 4242,
+      windowId: '3f6c2a1e',
+      host: 'vscode',
+      startedAtMs: at(11, 50),
+      watchEndedAtMs: at(11, 55) + 20_000,
+    },
+    lastRun: undefined,
+    acknowledged: [],
+    listCandidates: () => Promise.resolve([]),
+  })
+  try {
+    // Act
+    const refusal = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 0)),
+    )
+    const atTheNamedMinute = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 11)),
+    )
+
+    // Assert
+    assert.equal(
+      refusal?.reason,
+      `The VS Code chat another editor window asked at ${clockTime(11, 50)} may still be updating this Wiki; that window stopped watching it at ${clockTimeOfSecond(11, 55, 20)} and Codebook waits for it until ${clockTime(12, 11)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+    )
+    assert.equal(atTheNamedMinute, undefined)
+  } finally {
+    await rm(wiki.parent, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who presses at the time a refusal for this window's own stopped chat names; fails_when=the sentence names the minute in which the wait ends, cut down, so a press at that time is refused again for up to 59 seconds with the same time named; why_new=Cycle 0047 row 90 (SM-4, the own run's sentence); seam=the clock and the listing of the candidates, handed over; no_claim=the end of the wait by a publish
+test('the refusal for this window’s own stopped chat names the first whole minute after its wait ends, and a press at that minute is not refused again', async () => {
+  // Arrange: the watch stopped at 12:00:40 before its chat staged anything, so the wait ends at 12:15:40.
+  const wiki = await makeUnpublishedWiki()
+  const lookAt = (
+    nowMs: number,
+  ): Parameters<typeof findUnacknowledgedWikiLeftover>[1] => ({
+    nowMs,
+    watchTimeoutMs: WATCH_TIMEOUT_MS,
+    otherWindow: undefined,
+    lastRun: {
+      outputDirectory: wiki.outputDirectory,
+      startedAtMs: at(11, 58),
+      endedAtMs: at(12, 0) + 40_000,
+      mayAgentStillWork: true,
+      candidateNames: [],
+    },
+    acknowledged: [],
+    listCandidates: () => Promise.resolve([]),
+  })
+  try {
+    // Act
+    const refusal = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 2)),
+    )
+    const atTheNamedMinute = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 16)),
+    )
+
+    // Assert
+    assert.equal(
+      refusal?.reason,
+      `The VS Code chat this window asked at ${clockTime(11, 58)} may still be updating this Wiki; Codebook stopped watching it at ${clockTimeOfSecond(12, 0, 40)} and waits for it until ${clockTime(12, 16)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+    )
+    assert.equal(atTheNamedMinute, undefined)
+  } finally {
+    await rm(wiki.parent, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who presses at the time a refusal for a candidate this window's watch never saw names; fails_when=the sentence names the minute in which the candidate's wait ends, cut down, or the candidate still refuses at the very moment its writing plus the bound is reached, so a press at the named time is refused again with the same time named; why_new=Cycle 0047 row 90 (SM-4, the candidate's sentence and its bound); seam=the clock and the listing of the candidates, handed over; no_claim=which chat wrote the candidate
+test('the refusal for a candidate this window’s watch never saw names the first whole minute after its wait ends, and a press at that minute is not refused again, also when the wait ends on a whole minute', async () => {
+  // Arrange: in one look wiki.stage-1 was written at 12:01:30, so its wait ends at 12:16:30; in another, wiki.stage-2 was written at 12:01:00, so its wait ends on the whole minute 12:16:00.
+  const wiki = await makeUnpublishedWiki()
+  const lookAt = (
+    nowMs: number,
+    candidate: { name: string; writtenAtMs: number },
+  ): Parameters<typeof findUnacknowledgedWikiLeftover>[1] => ({
+    nowMs,
+    watchTimeoutMs: WATCH_TIMEOUT_MS,
+    otherWindow: undefined,
+    lastRun: undefined,
+    acknowledged: [],
+    listCandidates: () => Promise.resolve([{ ...candidate, ownedPaths: [] }]),
+  })
+  const writtenWithinAMinute = {
+    name: 'wiki.stage-1',
+    writtenAtMs: at(12, 1) + 30_000,
+  }
+  const writtenOnAWholeMinute = { name: 'wiki.stage-2', writtenAtMs: at(12, 1) }
+  try {
+    // Act
+    const refusalWithinAMinute = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 2), writtenWithinAMinute),
+    )
+    const atItsNamedMinute = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 17), writtenWithinAMinute),
+    )
+    const refusalOnAWholeMinute = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 2), writtenOnAWholeMinute),
+    )
+    const atThatNamedMinute = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 16), writtenOnAWholeMinute),
+    )
+
+    // Assert
+    assert.equal(
+      refusalWithinAMinute?.reason,
+      `An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-1, written ${clockTimeOfSecond(12, 1, 30)}). Codebook waits for it until ${clockTime(12, 17)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+    )
+    assert.equal(atItsNamedMinute, undefined)
+    assert.equal(
+      refusalOnAWholeMinute?.reason,
+      `An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-2, written ${clockTime(12, 1)}). Codebook waits for it until ${clockTime(12, 16)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+    )
+    assert.equal(atThatNamedMinute, undefined)
+  } finally {
+    await rm(wiki.parent, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who presses at the time a refusal for this window's own stopped chat with the candidate its watch saw names; fails_when=the sentence names the minute in which the later of the two waits ends, cut down, so a press at that time is refused again for up to 59 seconds with the same time named; why_new=Cycle 0047 row 90 (SM-4, the sentence for both); seam=the clock and the listing of the candidates, handed over; no_claim=the sentence of a candidate the watch never saw
+test('the refusal for this window’s stopped chat with the candidate its watch saw names the first whole minute after the later wait ends, and a press at that minute is not refused again', async () => {
+  // Arrange: the watch stopped at 12:05 after it saw wiki.stage-1, which the chat wrote again at 12:08:30, so the later wait ends at 12:23:30.
+  const wiki = await makeUnpublishedWiki()
+  const lookAt = (
+    nowMs: number,
+  ): Parameters<typeof findUnacknowledgedWikiLeftover>[1] => ({
+    nowMs,
+    watchTimeoutMs: WATCH_TIMEOUT_MS,
+    otherWindow: undefined,
+    lastRun: {
+      outputDirectory: wiki.outputDirectory,
+      startedAtMs: at(11, 58),
+      endedAtMs: at(12, 5),
+      mayAgentStillWork: true,
+      candidateNames: ['wiki.stage-1'],
+    },
+    acknowledged: [],
+    listCandidates: () =>
+      Promise.resolve([
+        {
+          name: 'wiki.stage-1',
+          writtenAtMs: at(12, 8) + 30_000,
+          ownedPaths: [],
+        },
+      ]),
+  })
+  try {
+    // Act
+    const refusal = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 9)),
+    )
+    const atTheNamedMinute = await findUnacknowledgedWikiLeftover(
+      wiki.outputDirectory,
+      lookAt(at(12, 24)),
+    )
+
+    // Assert
+    assert.equal(
+      refusal?.reason,
+      `The VS Code chat this window asked at ${clockTime(11, 58)} may still be updating this Wiki (candidate wiki.stage-1, written ${clockTimeOfSecond(12, 8, 30)}); Codebook stopped watching it at ${clockTime(12, 5)} and waits for it until ${clockTime(12, 24)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+    )
+    assert.equal(atTheNamedMinute, undefined)
+  } finally {
+    await rm(wiki.parent, { recursive: true, force: true })
+  }
+})
