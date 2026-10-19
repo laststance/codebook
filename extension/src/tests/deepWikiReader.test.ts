@@ -1767,21 +1767,62 @@ function askWithoutReading(
 }
 
 /**
- * Builds a `node:http` for a reader loaded with loadModule, whose server notes each request it hands the reader's request handler and each end of that handler.
- * Called by the tests that wait for the reader to have taken a request in, or to have ended its work for one, which no answer shows: a request whose browser went gets none.
- * @returns The stand-in module; a promise that settles with `'handed'` once the server has handed the reader as many requests as asked, counted from the start; and one that settles with `'ended'` once as many of the reader's handlers have ended.
+ * Asks the reader for an address and reads its answer slowly but steadily, as a browser behind a slow link does: after each part of the body it receives, it stops reading for a while, so the reader can send the next part only once the connection has room again.
+ * Called by the tests of answers whose browser takes longer than the send limit to receive them while it keeps reading.
+ * @param address - The reader's address to ask for.
+ * @param headers - Request headers, such as `Sec-Fetch-Dest`.
+ * @param pauseMs - How long it stops reading after each part.
+ * @returns The answer's status and its whole body; `'ended early'` as the body when the connection closed before the answer was complete.
+ * @example await askAndReadSlowly(reader.url, {}, 4) // => { status: 200, body: <Buffer …> }
+ */
+function askAndReadSlowly(
+  address: string,
+  headers: Record<string, string>,
+  pauseMs: number,
+): Promise<{ status: number | undefined; body: Buffer | 'ended early' }> {
+  return new Promise((resolveAnswer) => {
+    const request = http.get(address, { headers, agent: false }, (answer) => {
+      const parts: Buffer[] = []
+      answer.on('data', (part: Buffer) => {
+        parts.push(part)
+        // The answer reads nothing more for a while, and its connection then takes nothing more either.
+        answer.pause()
+        setTimeout(() => answer.resume(), pauseMs)
+      })
+      // A connection the reader ends before the answer's end leaves the answer incomplete.
+      answer.on('error', () => undefined)
+      answer.once('close', () =>
+        resolveAnswer({
+          status: answer.statusCode,
+          body: answer.complete ? Buffer.concat(parts) : 'ended early',
+        }),
+      )
+    })
+    request.on('error', () =>
+      resolveAnswer({ status: undefined, body: 'ended early' }),
+    )
+  })
+}
+
+/**
+ * Builds a `node:http` for a reader loaded with loadModule, whose server notes each request it hands the reader's request handler, each end of that handler and each close of an answer.
+ * Called by the tests that wait for the reader to have taken a request in, to have ended its work for one, or to have ended an answer, which the browser does not see when it reads nothing or has gone.
+ * @returns The stand-in module; a promise that settles with `'handed'` once the server has handed the reader as many requests as asked, counted from the start; one that settles with `'ended'` once as many of the reader's handlers have ended; and one that settles with `'closed'` once as many answers have closed.
  * @example
  * const server = httpNotingTheReadersRequests()
  * await server.requestsHanded(3) // => 'handed'
  * await server.handlersEnded(3)  // => 'ended'
+ * await server.answersClosed(3)  // => 'closed'
  */
 function httpNotingTheReadersRequests(): {
   http: Record<string, unknown>
   requestsHanded: (count: number) => Promise<'handed'>
   handlersEnded: (count: number) => Promise<'ended'>
+  answersClosed: (count: number) => Promise<'closed'>
 } {
   let handedCount = 0
   let endedCount = 0
+  let closedCount = 0
   const waits: { isDue: () => boolean; settle: () => void }[] = []
   /** Settles every wait that is due now, and keeps the others. */
   const settleDueWaits = (): void => {
@@ -1797,6 +1838,10 @@ function httpNotingTheReadersRequests(): {
     ) => unknown,
   ): http.Server =>
     http.createServer((request, response) => {
+      response.once('close', () => {
+        closedCount += 1
+        settleDueWaits()
+      })
       const handled = readersHandler(request, response)
       // The reader's handler has run up to its first wait: it has taken the request in.
       handedCount += 1
@@ -1826,6 +1871,14 @@ function httpNotingTheReadersRequests(): {
         waits.push({
           isDue: () => endedCount >= count,
           settle: () => resolveEnded('ended'),
+        })
+        settleDueWaits()
+      }),
+    answersClosed: (count) =>
+      new Promise((resolveClosed) => {
+        waits.push({
+          isDue: () => closedCount >= count,
+          settle: () => resolveClosed('closed'),
         })
         settleDueWaits()
       }),
@@ -2200,9 +2253,9 @@ test('a page whose browser stops reading is ended at the send limit and gives it
   )
 })
 
-// Value: protects=the publisher's swap of the Wiki folder on Windows, where an open file refuses it (renameRetried gives up after about 2.25 s), and the editor's open files, against a browser that stops reading a file of the Wiki: the reader sent such a file from one open handle for as long as its connection lived; fails_when=an answer that sends a file of the Wiki is not ended at WIKI_RESPONSE_SEND_LIMIT_MS while its browser does not read, so the file stays open; why_new=Cycle 0047 row 188 (S2CXA-B1, with S2RT-2); seam=the reader loaded with loadModule, a send limit of 500 ms, an opener whose opened image notes when it is closed, and a connection of the test's that does not read until the test resumes it; no_claim=Windows itself (the open file is observed on any system), and the shipped send limit of 30 s
+// Value: protects=the editor's extension host and its open files against a browser that stops reading a file of the Wiki: the reader sent such a file for as long as its connection lived; fails_when=an answer that sends a file of the Wiki is not ended once its connection has taken nothing for WIKI_RESPONSE_SEND_LIMIT_MS, so the connection stays, or the file is left open at the answer's end; why_new=Cycle 0047 row 188 (S2CXA-B1, with S2RT-2); Cycle 0047 row 230 (P2CLA-8): the reader opens the file for each part only, so its close no longer marks the limit, and the answer's close is waited for instead; seam=the reader loaded with loadModule, a send limit of 500 ms, an opener that counts the image's opens and closes, a node:http whose server notes each close of an answer, and a connection of the test's that does not read until the test resumes it; no_claim=the shipped send limit of 30 s
 test('an image of the Wiki whose browser stops reading is ended at the send limit, and its file is closed', async (context) => {
-  // Arrange: an image of 16 MiB that the manifest names, an opener whose opened image notes its close, a send limit of 500 ms, and a connection that asks for the image and does not read it.
+  // Arrange: an image of 16 MiB that the manifest names, an opener that counts the image's opens and closes, a send limit of 500 ms, and a connection that asks for the image and does not read it.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-stalled-asset-')),
   )
@@ -2222,37 +2275,13 @@ test('an image of the Wiki whose browser stops reading is ended at the send limi
       includedSources: [],
     }),
   )
-  let noteImageClosed: (closed: 'closed') => void = () => undefined
-  const imageClosed = new Promise<'closed'>((resolveClosed) => {
-    noteImageClosed = resolveClosed
-  })
-  const openerNotingTheImageClose: typeof openWithoutFollowingModule = {
-    openWithoutFollowing: async (
-      ...parameters: Parameters<typeof openWithoutFollowing>
-    ) => {
-      const file = await openWithoutFollowing(...parameters)
-      // Only the image is watched: the manifest is opened as always.
-      if (basename(parameters[0]) !== 'diagram.png') return file
-      const closeOfTheImage = file.close.bind(file)
-      return Object.assign(file, {
-        close: async (): Promise<void> => {
-          await closeOfTheImage()
-          noteImageClosed('closed')
-        },
-      })
-    },
-  }
-  const { startDeepWikiReader: startReaderWithASendLimit } = await loadModule<
-    typeof deepWikiReaderModule
-  >(
-    join(__dirname, '..', 'deepWikiReader.js'),
-    {
-      './constants': { ...constants, WIKI_RESPONSE_SEND_LIMIT_MS: 500 },
-      './utils/openWithoutFollowing': openerNotingTheImageClose,
-    },
-    { URL },
+  const server = httpNotingTheReadersRequests()
+  const watched = await loadReaderWatchingOpensOf(
+    'diagram.png',
+    { WIKI_RESPONSE_SEND_LIMIT_MS: 500 },
+    { 'node:http': server.http },
   )
-  const reader = await startReaderWithASendLimit(
+  const reader = await watched.startDeepWikiReader(
     outputDirectory,
     projectRoot,
     async () => ({ handoff: 'not asked' }),
@@ -2263,22 +2292,296 @@ test('an image of the Wiki whose browser stops reading is ended at the send limi
   })
   context.after(() => browser.connection.destroy())
 
-  // Act: the image's file at the send limit; then the browser reads what its connection still holds.
-  const imageFile = await within(imageClosed, 3_000)
+  // Act: the image's answer at the send limit; then the browser reads what its connection still holds.
+  const imageAnswer = await within(server.answersClosed(1), 3_000)
+  const openImageFiles = watched.openFiles()
   browser.connection.resume()
   const browserConnection = await within(browser.closed, 3_000)
 
   // Assert: the browser received less than the 16 MiB of the image before its connection closed.
   assert.deepEqual(
     {
-      imageFile,
+      imageAnswer,
+      openImageFiles,
       browserConnection,
       receivedLessThanTheImage: browser.receivedBytes() < 16_777_216,
     },
     {
-      imageFile: 'closed',
+      imageAnswer: 'closed',
+      openImageFiles: 0,
       browserConnection: 'closed',
       receivedLessThanTheImage: true,
+    },
+  )
+})
+
+// Value: protects=a learner whose browser receives a large image of the Wiki over a slow link, such as a remote window's forwarded port: the send limit counted the whole send, so every image larger than the link carries within the limit was cut on every load; fails_when=the reader ends an answer whose browser keeps reading at the send limit, instead of only one that has taken nothing for that long; why_new=Cycle 0047 row 230 (P2CLA-8); seam=the reader loaded with loadModule and a send limit of 250 ms, and a client that stops reading for 4 ms after each part it receives, so receiving the image takes far longer than the limit; no_claim=the shipped send limit of 30 s and a real remote link
+test('an image of the Wiki that its browser reads slowly but steadily is received whole, though receiving it takes longer than the send limit', async (context) => {
+  // Arrange: an image of 16 MiB that the manifest names, and a send limit of 250 ms.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-asset-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  const imageBytes = Buffer.alloc(16_777_216, 'diagram ')
+  await writeFile(join(outputDirectory, 'diagram.png'), imageBytes)
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const { startDeepWikiReader: startReaderWithASendLimit } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    { './constants': { ...constants, WIKI_RESPONSE_SEND_LIMIT_MS: 250 } },
+    { URL },
+  )
+  const reader = await startReaderWithASendLimit(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  // gstack-timing-ok: the client's pause of 4 ms after each part of at most 64 KiB makes receiving 16 MiB take more than a second, four times the limit, while the reader's next part waits for one pause at a time, far within it.
+  const startedAt = performance.now()
+  const answer = await askAndReadSlowly(
+    new URL('diagram.png', reader.url).href,
+    { 'Sec-Fetch-Dest': 'image' },
+    4,
+  )
+  const receivingTookMs = performance.now() - startedAt
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: answer.status,
+      bodyIsTheImage:
+        answer.body !== 'ended early' && answer.body.equals(imageBytes),
+      tookLongerThanTheLimit: receivingTookMs > 250,
+    },
+    { status: 200, bodyIsTheImage: true, tookLongerThanTheLimit: true },
+  )
+})
+
+// Value: protects=a learner whose browser receives a large page over a slow link: the send limit counted the whole send, so a page larger than the link carries within the limit was cut on every load; fails_when=the reader ends a page whose browser keeps reading at the send limit, or sends a page whole in one write, whose progress the reader cannot see; why_new=Cycle 0047 row 230 (P2CLA-8); seam=the reader loaded with loadModule, a send limit of 250 ms, one place for pages in hand, a stand-in page-worker module that prepares the first page as 16 MiB of text, and a client that stops reading for 4 ms after each part it receives; no_claim=the shipped send limit of 30 s and a real remote link
+test('a page that its browser reads slowly but steadily is received whole, though receiving it takes longer than the send limit', async (context) => {
+  // Arrange: the overview, prepared as 16 MiB of text, and a send limit of 250 ms.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const onePlace = await loadReaderWithOnePlaceAndALargeFirstPage({
+    WIKI_RESPONSE_SEND_LIMIT_MS: 250,
+  })
+  const reader = await onePlace.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  // gstack-timing-ok: the client's pause of 4 ms after each part of at most 64 KiB makes receiving 16 MiB take more than a second, four times the limit, while the reader's next part waits for one pause at a time, far within it.
+  const startedAt = performance.now()
+  const answer = await askAndReadSlowly(reader.url, {}, 4)
+  const receivingTookMs = performance.now() - startedAt
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: answer.status,
+      bodyIsThePage:
+        answer.body !== 'ended early' &&
+        answer.body.equals(Buffer.from('x'.repeat(16_777_216))),
+      tookLongerThanTheLimit: receivingTookMs > 250,
+    },
+    { status: 200, bodyIsThePage: true, tookLongerThanTheLimit: true },
+  )
+})
+
+/**
+ * Loads the reader with an opener that counts the files of one name it opens and closes, so a test can tell whether the reader holds such a file open.
+ * Called by the tests of an image of the Wiki that its browser does not read.
+ * @param fileName - The name of the watched file; every other file is opened as always.
+ * @param constantOverrides - Constants the loaded reader reads instead of the shipped ones.
+ * @param dependencies - Further modules the loaded reader requires instead of the real ones, such as a `node:http` that notes its answers.
+ * @returns The loaded reader's {@link startDeepWikiReader}; how many of the watched files are open now; and a promise that settles with `'opened'` once the watched file has been opened as many times as asked.
+ * @example
+ * const watched = await loadReaderWatchingOpensOf('diagram.png', {})
+ * watched.openFiles() // => 0 while the reader holds no such file open
+ */
+async function loadReaderWatchingOpensOf(
+  fileName: string,
+  constantOverrides: Partial<Record<keyof typeof constants, unknown>>,
+  dependencies: Record<string, unknown> = {},
+): Promise<{
+  startDeepWikiReader: typeof startDeepWikiReader
+  openFiles: () => number
+  opened: (count: number) => Promise<'opened'>
+}> {
+  let openCount = 0
+  let closeCount = 0
+  const openWaits: { count: number; noteOpened: (opened: 'opened') => void }[] =
+    []
+  const openerCountingOpens: typeof openWithoutFollowingModule = {
+    openWithoutFollowing: async (
+      ...parameters: Parameters<typeof openWithoutFollowing>
+    ) => {
+      const file = await openWithoutFollowing(...parameters)
+      // Only the watched file is counted: the manifest and the pages are opened as always.
+      if (basename(parameters[0]) !== fileName) return file
+      openCount += 1
+      for (const wait of openWaits.filter(({ count }) => count <= openCount))
+        wait.noteOpened('opened')
+      const closeOfTheFile = file.close.bind(file)
+      return Object.assign(file, {
+        close: async (): Promise<void> => {
+          await closeOfTheFile()
+          closeCount += 1
+        },
+      })
+    },
+  }
+  const loaded = await loadModule<typeof deepWikiReaderModule>(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      ...dependencies,
+      './constants': { ...constants, ...constantOverrides },
+      './utils/openWithoutFollowing': openerCountingOpens,
+    },
+    { URL },
+  )
+  return {
+    startDeepWikiReader: loaded.startDeepWikiReader,
+    openFiles: () => openCount - closeCount,
+    opened: (count) =>
+      new Promise((resolveOpened) => {
+        if (count <= openCount) resolveOpened('opened')
+        else openWaits.push({ count, noteOpened: resolveOpened })
+      }),
+  }
+}
+
+// Value: protects=the publisher's swap of the Wiki folder on Windows, where an open file refuses the move and renameRetried gives up after about 2.25 s, against a browser that stops reading an image of the Wiki: the reader sent the image from one open file until the send limit of 30 s ended its answer, so a stalled download still failed a publish; fails_when=the reader keeps a file of the Wiki open while its browser takes nothing of it, so the file is still open when the publisher's swap has given up; why_new=Cycle 0047 row 230 (P2CLA-8); seam=the reader loaded with loadModule and an opener that counts the image's opens and closes, and a connection of the test's that does not read; no_claim=Windows itself (the open file is counted on any system)
+test('an image of the Wiki whose browser stops reading has its file closed well before the publisher’s swap gives up, while its answer still waits for the browser', async (context) => {
+  // Arrange: an image of 16 MiB that the manifest names, the shipped send limit, and a connection that asks for the image and does not read it.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-closed-asset-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'diagram.png'),
+    Buffer.alloc(16_777_216, 'diagram '),
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const watched = await loadReaderWatchingOpensOf('diagram.png', {})
+  const reader = await watched.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browser = askWithoutReading(new URL('diagram.png', reader.url).href, {
+    'Sec-Fetch-Dest': 'image',
+  })
+  context.after(() => browser.connection.destroy())
+  const imageOpened = await within(watched.opened(1), 2_000)
+
+  // Act: the image's open files 1.5 s after the browser stopped reading, before the swap's 2.25 s.
+  // gstack-timing-ok: the claim is a time, the publisher's 2.25 s; the connection's buffers fill in milliseconds, after which the reader waits for the browser.
+  await new Promise((resolveWait) => setTimeout(resolveWait, 1_500))
+  const openImageFiles = watched.openFiles()
+  const browserConnection = await within(browser.closed, 0)
+
+  // Assert
+  assert.deepEqual(
+    { imageOpened, openImageFiles, browserConnection },
+    {
+      imageOpened: 'opened',
+      openImageFiles: 0,
+      browserConnection: 'still waiting',
+    },
+  )
+})
+
+// Value: protects=a learner whose browser receives an image of the Wiki while an update publishes a new Wiki: the reader now opens the image again for each part it sends, so a part read after the swap would come from the new folder's file; fails_when=the reader sends a part of another file that took the image's path since its answer began, so the browser gets one image's start and another's rest, instead of an answer that ends there; why_new=Cycle 0047 row 230 (P2CLA-8): the reader opens a file of the Wiki for each part only; seam=the reader loaded with loadModule and an opener that counts the image's opens, and a connection of the test's that does not read until the test resumes it; no_claim=the publisher's own swap (a new file is moved onto the image's path)
+test('an image of the Wiki that another file replaced while its browser waited is ended there, and its browser gets no byte of the other file', async (context) => {
+  // Arrange: an image of 16 MiB that the manifest names, another file beside it, and a connection that asks for the image and does not read it.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-replaced-asset-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  const imagePath = join(outputDirectory, 'diagram.png')
+  await writeFile(imagePath, Buffer.alloc(16_777_216, 'diagram '))
+  await writeFile(
+    join(projectRoot, 'other.png'),
+    Buffer.alloc(16_777_216, 'REPLACED'),
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const watched = await loadReaderWatchingOpensOf('diagram.png', {})
+  const reader = await watched.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const received: Buffer[] = []
+  const browser = askWithoutReading(new URL('diagram.png', reader.url).href, {
+    'Sec-Fetch-Dest': 'image',
+  })
+  browser.connection.on('data', (part: Buffer) => received.push(part))
+  context.after(() => browser.connection.destroy())
+  // The reader has sent parts of the image, and waits for the browser to take more.
+  const partsSent = await within(watched.opened(2), 2_000)
+
+  // Act: another file takes the image's path, then the browser reads on.
+  await rename(join(projectRoot, 'other.png'), imagePath)
+  browser.connection.resume()
+  const browserConnection = await within(browser.closed, 3_000)
+  const receivedBytes = Buffer.concat(received)
+
+  // Assert
+  assert.deepEqual(
+    {
+      partsSent,
+      browserConnection,
+      receivedLessThanTheImage: receivedBytes.length < 16_777_216,
+      receivedOfTheOtherFile: receivedBytes.includes('REPLACED'),
+    },
+    {
+      partsSent: 'opened',
+      browserConnection: 'closed',
+      receivedLessThanTheImage: true,
+      receivedOfTheOtherFile: false,
     },
   )
 })

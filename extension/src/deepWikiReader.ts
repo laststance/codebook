@@ -6,7 +6,6 @@ import {
   type ServerResponse,
 } from 'node:http'
 import { join, relative, sep } from 'node:path'
-import { pipeline } from 'node:stream/promises'
 
 import {
   MS_PER_MINUTE,
@@ -26,6 +25,7 @@ import {
   WIKI_QUESTION_ROUTE,
   WIKI_QUESTION_STATUS_STYLE,
   WIKI_REFUSED_STEP_ADVICE,
+  WIKI_RESPONSE_PART_BYTES,
   WIKI_RESPONSE_SEND_LIMIT_MS,
   WIKI_SHELL_SCRIPT_HASHES,
   WIKI_SOURCE_CHANGE_DEBOUNCE_MS,
@@ -671,7 +671,7 @@ export async function startDeepWikiReader(
     refusePage(response, relativePath, served.state)
   }
   /**
-   * Sends a file of the Wiki that is no page (a style sheet, a script as plain text, an image) when the manifest lists it, from its opened file in parts ({@link sendOpenedWikiFile}).
+   * Sends a file of the Wiki that is no page (a style sheet, a script as plain text, an image) when the manifest lists it, in parts, each read through an open of its own ({@link sendWikiFileInParts}).
    * Called by {@link handleRequest} for every GET of such a file, after the manifest was read ({@link readManifestShared}).
    * @param response - The file's answer.
    * @param relativePath - The file's path in the Wiki.
@@ -706,7 +706,7 @@ export async function startDeepWikiReader(
       sendNoRegularFile(response)
       return
     }
-    await sendOpenedWikiFile(openedFile, response)
+    await sendWikiFileInParts(servedFile.filePath, openedFile, response)
   }
   /**
    * Resolves a file the manifest lists to its real path in the Wiki folder and looks at it there without opening it, and refuses a file outside the folder or one that is no regular file.
@@ -785,56 +785,107 @@ export async function startDeepWikiReader(
   }
 }
 
+/** A file of the Wiki by its device and its inode number, read exactly, so the reader tells it from another file that took its path. */
+type ServedFileIdentity = { dev: bigint; ino: bigint }
+
 /**
  * Opens a file the Wiki reader serves without following a link at its path and without waiting on a named pipe ({@link openWithoutFollowing}), and keeps it open only when it is a regular file.
  * Called by the reader for every file it serves, a page file or any other, after its look at the path found a regular file; the opened file is looked at again, because another entry can take the path between the look and the open.
  * @param path - The file's real path in the Wiki folder.
- * @returns The open regular file and its size at its `stat`; `undefined` when the opened entry is no regular file, after it was closed.
+ * @returns The open regular file, its size at its `stat` and its identity, by which a later open of the path tells whether it opened the same file ({@link readPartOfWikiFile}); `undefined` when the opened entry is no regular file, after it was closed.
  * @throws What the open or the status throws: a missing file, or a link that took the path (`ELOOP`).
  * @example
- * await openServedWikiFile('/repo/.codebook/wiki/index.html') // => { file: <FileHandle>, sizeBytes: 2021 }
+ * await openServedWikiFile('/repo/.codebook/wiki/index.html') // => { file: <FileHandle>, sizeBytes: 2021, identity: { dev: 2049n, ino: 131076n } }
  */
-async function openServedWikiFile(
-  path: string,
-): Promise<{ file: FileHandle; sizeBytes: number } | undefined> {
+async function openServedWikiFile(path: string): Promise<
+  | {
+      file: FileHandle
+      sizeBytes: number
+      identity: ServedFileIdentity
+    }
+  | undefined
+> {
   const file = await openWithoutFollowing(path)
-  const status = await file.stat().catch(async (error: unknown) => {
-    await file.close()
-    throw error
-  })
-  if (status.isFile()) return { file, sizeBytes: status.size }
+  const status = await file
+    .stat({ bigint: true })
+    .catch(async (error: unknown) => {
+      await file.close()
+      throw error
+    })
+  if (status.isFile())
+    return {
+      file,
+      sizeBytes: Number(status.size),
+      identity: { dev: status.dev, ino: status.ino },
+    }
   await file.close()
   return undefined
 }
 
 /**
- * Sends a file of the Wiki folder that is no page (a style sheet, a script as plain text, an image) from its one opened file in parts, never read whole, and only as far as its size at its `stat`: the editor's process holds one part of it at a time, however large the file is and however often it is asked for at once, and a file that grows meanwhile is not followed.
+ * Sends a file of the Wiki folder that is no page (a style sheet, a script as plain text, an image) in parts ({@link sendInParts}), never read whole, and only as far as its size at its `stat`: the editor's process holds one part of it at a time, however large the file is and however often it is asked for at once, and a file that grows meanwhile is not followed.
+ * The file is open only while one part of it is read: the file opened for its look is closed before the first part, and each part opens it again ({@link readPartOfWikiFile}). So a browser that reads slowly or stops reading keeps no file of the Wiki open, which on Windows refuses the publisher's swap of the folder, and the swap gives up after about 2.25 s.
  * Called by the reader for every file it serves that is no page, after {@link openServedWikiFile} opened it.
- * @param servedFile - The open regular file and its size at its `stat`; the file is closed when the send ends, also when it fails.
- * @param response - The answer, whose headers are set; it is sent under the send limit ({@link armSendLimit}).
- * @throws What the read or the send throws, such as a browser that went before the end or an answer the send limit ended; the reader's request handler ends the answer then.
+ * @param path - The file's real path in the Wiki folder.
+ * @param servedFile - The open regular file, its size and its identity at its `stat`; the file is closed here, before any part is sent.
+ * @param response - The answer, whose headers are set; it is sent under the send limit ({@link sendInParts}).
+ * @throws What an open or a read of a part throws, and an error when another file took the path since the answer began (a publish moved a new Wiki folder into place); the reader's request handler ends the answer then.
  * @example
- * await sendOpenedWikiFile(await openServedWikiFile('/repo/.codebook/wiki/wiki.css'), response)
+ * await sendWikiFileInParts('/repo/.codebook/wiki/wiki.css', await openServedWikiFile('/repo/.codebook/wiki/wiki.css'), response)
  */
-async function sendOpenedWikiFile(
-  servedFile: { file: FileHandle; sizeBytes: number },
+async function sendWikiFileInParts(
+  path: string,
+  servedFile: {
+    file: FileHandle
+    sizeBytes: number
+    identity: ServedFileIdentity
+  },
   response: ServerResponse,
 ): Promise<void> {
-  // An empty file has no part to send, and a read stream ends one byte before its end.
-  if (servedFile.sizeBytes === 0) {
-    await servedFile.file.close()
-    endWithinSendLimit(response)
-    return
-  }
-  armSendLimit(response)
-  // The stream closes the file when it ends or fails, also when the send limit ended the answer.
-  await pipeline(
-    servedFile.file.createReadStream({
-      start: 0,
-      end: servedFile.sizeBytes - 1,
-    }),
-    response,
+  await servedFile.file.close()
+  await sendInParts(response, (position) =>
+    readPartOfWikiFile(path, servedFile, position),
   )
+}
+
+/**
+ * Reads one part of a file of the Wiki through an open of its own, which it closes before it answers, so the file is open only while the part is read.
+ * Called by {@link sendWikiFileInParts} for each part it sends.
+ * @param path - The file's real path in the Wiki folder.
+ * @param sentFile - The file's size and its identity when its answer began.
+ * @param position - Where the part starts in the file.
+ * @returns At most {@link WIKI_RESPONSE_PART_BYTES} bytes from the position on; `undefined` at the file's size at its `stat`, and where a file that shrank since then ends.
+ * @throws What the open, the status or the read throws, such as a missing file while a publish swaps the folder; an error when another file took the path since the answer began, whose bytes would not go on with this file's.
+ * @example
+ * await readPartOfWikiFile('/repo/.codebook/wiki/diagram.png', { sizeBytes: 300_000, identity }, 0) // => <Buffer of 65,536 bytes>
+ */
+async function readPartOfWikiFile(
+  path: string,
+  sentFile: { sizeBytes: number; identity: ServedFileIdentity },
+  position: number,
+): Promise<Buffer | undefined> {
+  // The file is sent only as far as its size at its stat.
+  if (position >= sentFile.sizeBytes) return undefined
+  const file = await openWithoutFollowing(path)
+  try {
+    const status = await file.stat({ bigint: true })
+    // Another file took the path since the answer began, as when a publish moved a new Wiki folder into place.
+    if (
+      status.dev !== sentFile.identity.dev ||
+      status.ino !== sentFile.identity.ino
+    )
+      throw new Error(
+        `Another file took the path of a Wiki file while it was sent: ${path}`,
+      )
+    const part = Buffer.allocUnsafe(
+      Math.min(WIKI_RESPONSE_PART_BYTES, sentFile.sizeBytes - position),
+    )
+    const { bytesRead } = await file.read(part, 0, part.length, position)
+    // A file that shrank since its stat ends where its bytes end.
+    return bytesRead === 0 ? undefined : part.subarray(0, bytesRead)
+  } finally {
+    await file.close()
+  }
 }
 
 /**
@@ -894,29 +945,96 @@ function sendJson(
 }
 
 /**
- * Ends an answer of the Wiki reader that its browser has not received within {@link WIKI_RESPONSE_SEND_LIMIT_MS} from now: its connection is closed, and with it the stream of the file it sends, which closes the file.
- * Why: a client that stops reading kept the answer in the extension host for as long as its connection lived: a prepared page's bytes and its place among the pages in hand ({@link takeWikiPagePlace}), or a file of the Wiki open, which on Windows refuses the publisher's swap of the folder.
- * Called for every answer when the reader starts to send it: by {@link endWithinSendLimit} for an answer sent at once, and by {@link sendOpenedWikiFile} before it streams a file.
+ * Ends an answer of the Wiki reader that has made no progress for {@link WIKI_RESPONSE_SEND_LIMIT_MS}: its connection is closed. The limit counts from when the reader starts to send the answer, and again from each part of it the connection takes ({@link sendInParts}), so an answer whose browser keeps reading, however slowly, is not ended.
+ * Why: a client that stops reading kept the answer in the extension host for as long as its connection lived: a prepared page's bytes and its place among the pages in hand ({@link takeWikiPagePlace}). A limit on the whole send instead cut every answer larger than a slow link carries within it, such as an image over a remote window's forwarded port.
+ * Called for every answer when the reader starts to send it: by {@link endWithinSendLimit} for an answer of one part, and by {@link sendInParts} for one sent in parts.
  * @param response - The answer.
- * @example armSendLimit(response) // the answer is ended in 30 s unless its browser has received it
+ * @returns The limit's timer, which {@link sendInParts} starts again at each part the connection takes.
+ * @example armSendLimit(response) // the answer is ended once 30 s pass in which its connection takes nothing
  */
-function armSendLimit(response: ServerResponse): void {
+function armSendLimit(response: ServerResponse): NodeJS.Timeout {
   const sendLimit = setTimeout(() => {
-    // The browser has not received the whole answer: it ends here, with its connection.
+    // The connection has taken nothing for the limit, and the browser has not received the whole answer: it ends here, with its connection.
     if (!response.writableFinished) response.destroy()
   }, WIKI_RESPONSE_SEND_LIMIT_MS)
   // The send limit alone holds neither the editor's process nor a test's open.
   sendLimit.unref()
   response.once('close', () => clearTimeout(sendLimit))
+  return sendLimit
 }
 
 /**
- * Sends an answer whose status and headers are set, whole and at once, under the send limit ({@link armSendLimit}); called by the reader for every answer but a file it streams.
+ * Waits until the connection of an answer has taken what was written to it, or until the answer has closed; at once for an answer that is ended already, for which no event may come.
+ * Called by {@link sendInParts} after each part the connection did not take at once.
+ * @param response - The answer.
+ * @example await connectionTook(response)
+ */
+function connectionTook(response: ServerResponse): Promise<void> {
+  return new Promise((resolveTaken) => {
+    // An answer destroyed already may have closed already.
+    if (response.destroyed) {
+      resolveTaken()
+      return
+    }
+    const settle = (): void => {
+      response.off('drain', settle)
+      response.off('close', settle)
+      resolveTaken()
+    }
+    response.on('drain', settle)
+    response.on('close', settle)
+  })
+}
+
+/**
+ * Sends an answer's body part by part under the send limit, each part once its connection has taken the one before, and ends the answer after the last; an answer whose browser went, or that the send limit ended, gets no further part, and no further part is read for it.
+ * Why: the send limit counts the time in which an answer makes no progress ({@link armSendLimit}), and an answer handed to its connection whole shows none until all of it is taken; each part taken is progress, so a browser that keeps reading, however slowly, receives the whole answer.
+ * Called by {@link endWithinSendLimit} for a body larger than one part ({@link WIKI_RESPONSE_PART_BYTES}), and by {@link sendWikiFileInParts} for every file of the Wiki that is no page.
+ * @param response - The answer, whose status and headers are set.
+ * @param partAt - Reads the part of the body that starts at a position; `undefined` once the body is sent whole.
+ * @throws What `partAt` throws; the answer is not ended then.
+ * @example
+ * await sendInParts(response, async (position) => (position < body.length ? body.subarray(position, position + WIKI_RESPONSE_PART_BYTES) : undefined))
+ */
+async function sendInParts(
+  response: ServerResponse,
+  partAt: (position: number) => Promise<Buffer | undefined>,
+): Promise<void> {
+  const sendLimit = armSendLimit(response)
+  for (let position = 0; !response.destroyed;) {
+    const part = await partAt(position)
+    // The whole body is sent.
+    if (!part) break
+    position += part.length
+    if (!response.write(part)) await connectionTook(response)
+    // The connection took the part: the answer moves, and its send limit counts from now.
+    if (!response.destroyed) sendLimit.refresh()
+  }
+  if (!response.destroyed) response.end()
+}
+
+/**
+ * Sends an answer whose status and headers are set, under the send limit: a body of one part ({@link WIKI_RESPONSE_PART_BYTES}) or none whole and at once ({@link armSendLimit}), a larger one in parts ({@link sendInParts}) with its length named, as an answer sent at once names it. Called by the reader for every answer but a file of the Wiki, which {@link sendWikiFileInParts} sends.
  * @param response - The answer.
  * @param body - Its body; none when left out.
  * @example endWithinSendLimit(response, qaClient)
  */
 function endWithinSendLimit(response: ServerResponse, body?: string): void {
-  armSendLimit(response)
-  response.end(body)
+  // A body of one part, or none, goes to the connection at once.
+  if (
+    body === undefined ||
+    Buffer.byteLength(body) <= WIKI_RESPONSE_PART_BYTES
+  ) {
+    armSendLimit(response)
+    response.end(body)
+    return
+  }
+  const bytes = Buffer.from(body)
+  // A JSON answer has its head written already; any other gets its length, as when it is sent at once.
+  if (!response.headersSent) response.setHeader('Content-Length', bytes.length)
+  sendInParts(response, async (position) =>
+    position < bytes.length
+      ? bytes.subarray(position, position + WIKI_RESPONSE_PART_BYTES)
+      : undefined,
+  ).catch(() => response.destroy())
 }
