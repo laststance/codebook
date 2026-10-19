@@ -5,6 +5,10 @@ import {
 } from './handWikiRequestToChat'
 import { sleepUntilAborted } from './sleepUntilAborted'
 import {
+  sortUnansweredWikiRequest,
+  type UnansweredWikiRequest,
+} from './sortUnansweredWikiRequest'
+import {
   waitForWikiChatAnswer,
   type WikiChatAnswer,
 } from './waitForWikiChatAnswer'
@@ -13,18 +17,14 @@ import {
   watchWikiChatReply,
   type WikiChatReplyWatch,
 } from './watchWikiChatReply'
-import {
-  withdrawWikiChatRequest,
-  type WikiChatWithdrawal,
-} from './withdrawWikiChatRequest'
 
-/** How the start of a VS Code Wiki update in the editor chat ended: the answers of {@link waitForWikiChatAnswer}, where `unanswered` also says which session the request went to and whether the chat held it ({@link withdrawWikiChatRequest}: `not-sent` or `left`). A request the chat answered with a reply in the moment after the bound (`replied`, {@link withdrawWikiChatRequest}: a complete reply, one with an error, or one that waits for a confirmation) is no `unanswered` start: it is that reply's answer, as within the bound. */
+/** How the start of a VS Code Wiki update in the editor chat ended: the answers of {@link waitForWikiChatAnswer}, where `unanswered` also says which session the request went to and whether the chat held it ({@link sortUnansweredWikiRequest}: `not-sent` or `left`). A request the chat answered with a reply in the moment after the bound (`replied`, {@link sortUnansweredWikiRequest}: a complete reply, one with an error, or one that waits for a confirmation) is no `unanswered` start: it is that reply's answer, as within the bound. */
 export type WikiChatStartOutcome =
   | Exclude<WikiChatAnswer, { outcome: 'unanswered' }>
   | {
       outcome: 'unanswered'
       session: WikiChatSession
-      withdrawal: Exclude<WikiChatWithdrawal, 'replied'>
+      request: Exclude<UnansweredWikiRequest, 'replied'>
     }
 
 /** The start of a VS Code Wiki update in the editor chat: how it ended, the session the request went to, which the sentence of a start without a sign words its next step by, and the watch of the reply's end, which the watch for the publish follows when the chat works on the request. */
@@ -41,7 +41,7 @@ export type WikiChatStartBounds = {
 }
 
 /**
- * Starts a VS Code Wiki update in the editor chat and says how the start ended: it watches for signs of the update, hands the request over in a chat session of its own, waits for the first answer, and when none came within the bound says what became of the request, which it leaves in the chat ({@link withdrawWikiChatRequest}).
+ * Starts a VS Code Wiki update in the editor chat and says how the start ended: it watches for signs of the update, hands the request over in a chat session of its own, waits for the first answer, and when none came within the bound says what became of the request, which it leaves in the chat ({@link sortUnansweredWikiRequest}).
  *
  * Why in one place: the steps depend on each other (the signs must be watched before the request is sent, the end of an unanswered start needs the hand-over's command and session), and whatever happens the watches must go. A step that throws leaves this function as a rejection, which the extension's guard around the start turns into a failed run.
  * Trigger: the extension calls it once per VS Code update, after the run began.
@@ -53,14 +53,14 @@ export type WikiChatStartBounds = {
  * @param options.signal - Aborts the start (the window closes).
  * @param options.bounds - The bounds of the start.
  * @param options.sleep - Delay function that ends early when its signal aborts; tests pass one of a manual clock.
- * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with the withdrawal's result, and always with the session the request went to and the watch of the reply's end ({@link watchWikiChatReply}). A reply that came in the moment between the bound and the look at what became of the request, which runs none of the chat's commands, is read as a reply within the bound is ({@link answerOfWikiChatReply}): `replied` for a complete one, `error-reply` with its message for one that reports an error, `working` for one that waits for a confirmation, after which the watch starts.
+ * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with what became of the request ({@link sortUnansweredWikiRequest}), and always with the session the request went to and the watch of the reply's end ({@link watchWikiChatReply}). A reply that came in the moment between the bound and the look at what became of the request, which runs none of the chat's commands, is read as a reply within the bound is ({@link answerOfWikiChatReply}): `replied` for a complete one, `error-reply` with its message for one that reports an error, `working` for one that waits for a confirmation, after which the watch starts.
  * @throws What `watchSigns` throws, before any command ran.
  *
  * @example
  * ```ts
  * await startWikiChatUpdate({ query, runCommand, watchSigns, readOutputStamp, signal, bounds })
  * // => { outcome: 'working', session: 'own', reply } once the chat read the manifest
- * // => { outcome: 'unanswered', session: 'own', withdrawal: 'left', reply } for a chat that is not ready
+ * // => { outcome: 'unanswered', session: 'own', request: 'left', reply } for a chat that is not ready
  * ```
  */
 export async function startWikiChatUpdate(options: {
@@ -111,11 +111,11 @@ export async function startWikiChatUpdate(options: {
     const reply = watchWikiChatReply(handOver)
     if (answer.outcome !== 'unanswered') return { ...answer, session, reply }
     // What became of the request is known before the result is published; no command of the chat can be pointed at it, so it is left there.
-    const withdrawal = await withdrawWikiChatRequest({ handOver })
+    const request = await sortUnansweredWikiRequest({ handOver })
     // A reply the chat returned after the bound answers the request as within the bound: a complete one, one with an error, or one that waits for a confirmation, for which the watch starts.
-    if (withdrawal === 'replied')
+    if (request === 'replied')
       return { ...answerOfWikiChatReply(await handOver), session, reply }
-    return { outcome: 'unanswered', session, withdrawal, reply }
+    return { outcome: 'unanswered', session, request, reply }
   } finally {
     ended.abort()
     for (const watch of watches) watch.dispose()

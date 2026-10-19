@@ -33,7 +33,7 @@ test('a chat command that threw, a start without a sign and a reply with an erro
     false,
   )
   const withoutSign = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'own', withdrawal: 'not-sent' },
+    { outcome: 'unanswered', session: 'own', request: 'not-sent' },
     30_000,
     false,
   )
@@ -65,22 +65,22 @@ test('a chat command that threw, a start without a sign and a reply with an erro
 test('a start without a sign whose request could not be taken back ends the run as failed and marked as an end the site may be replaced after, in a session of its own and in a shared one; a request never held is not marked', () => {
   // Act
   const leftInOwnSession = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'own', withdrawal: 'left' },
+    { outcome: 'unanswered', session: 'own', request: 'left' },
     30_000,
     false,
   )
   const leftInSharedSession = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'shared', withdrawal: 'left' },
+    { outcome: 'unanswered', session: 'shared', request: 'left' },
     30_000,
     false,
   )
   const neverHeld = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'own', withdrawal: 'not-sent' },
+    { outcome: 'unanswered', session: 'own', request: 'not-sent' },
     30_000,
     false,
   )
   const neverHeldInSharedSession = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'shared', withdrawal: 'not-sent' },
+    { outcome: 'unanswered', session: 'shared', request: 'not-sent' },
     30_000,
     false,
   )

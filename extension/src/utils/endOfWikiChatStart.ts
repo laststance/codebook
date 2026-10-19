@@ -35,7 +35,7 @@ function failureOfWikiChatStart(
     return describeWikiChatOpenFailure(thrownMessage(start.error))
   if (start.outcome === 'unanswered')
     return describeUnansweredWikiChat(
-      start.withdrawal,
+      start.request,
       start.session,
       answerTimeoutMs,
     )
@@ -71,11 +71,11 @@ function endWithoutFailure(
  * @param start - How the start ended.
  * @returns `true` only for a start without a sign whose request Codebook left in the chat (`left`); `false` for a request the chat never held, for a chat command that threw and for a reply that reported an error, after each of which the chat holds no request of the update.
  * @example
- * mayChatStillHoldRequest({ outcome: 'unanswered', session: 'own', withdrawal: 'left' })      // => true
- * mayChatStillHoldRequest({ outcome: 'unanswered', session: 'own', withdrawal: 'not-sent' })  // => false
+ * mayChatStillHoldRequest({ outcome: 'unanswered', session: 'own', request: 'left' })      // => true
+ * mayChatStillHoldRequest({ outcome: 'unanswered', session: 'own', request: 'not-sent' })  // => false
  */
 function mayChatStillHoldRequest(start: WikiChatStartOutcome): boolean {
-  return start.outcome === 'unanswered' && start.withdrawal === 'left'
+  return start.outcome === 'unanswered' && start.request === 'left'
 }
 
 /**
@@ -90,7 +90,7 @@ function mayChatStillHoldRequest(start: WikiChatStartOutcome): boolean {
  * @example
  * endOfWikiChatStart({ outcome: 'working' }, 30_000, false) // => undefined
  * endOfWikiChatStart({ outcome: 'replied' }, 30_000, false) // => {}
- * endOfWikiChatStart({ outcome: 'unanswered', session: 'own', withdrawal: 'not-sent' }, 30_000, false)
+ * endOfWikiChatStart({ outcome: 'unanswered', session: 'own', request: 'not-sent' }, 30_000, false)
  * // => { failure: 'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.', isFailureCodebookSentence: true }
  */
 export function endOfWikiChatStart(
