@@ -8,6 +8,7 @@ const pendingSwaps = {
   writeFile: undefined,
   readFile: undefined,
   rename: undefined,
+  halfwayWrite: undefined,
 }
 
 /** The optional read observer of {@link observeFileReads}; it holds no file bytes itself. */
@@ -49,6 +50,43 @@ export function swapBeforeMaking(isAwaited, swap) {
  */
 export function swapBeforeWriting(isAwaited, swap) {
   pendingSwaps.writeFile = { isAwaited, swap }
+}
+
+/**
+ * Asks the next write through a handle of a file that `isAwaited` names to run `swap` once half of its bytes are written, once, and then to write the rest: as a kill of the publisher while it writes a large file, which leaves the part written so far, since a write goes from the first byte on. Called by the probe that kills a publisher process (`killedPublisherProbe.mjs`).
+ * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked to write is the one whose write runs the swap halfway.
+ * @param {() => Promise<void>} swap - The swap.
+ * @returns {void}
+ * @example
+ * swapHalfwayThroughWriting((path) => path.endsWith('/next/manual.txt'), async () => process.kill(process.pid, 'SIGKILL'))
+ */
+export function swapHalfwayThroughWriting(isAwaited, swap) {
+  pendingSwaps.halfwayWrite = { isAwaited, swap }
+}
+
+/**
+ * Wraps an open handle so that its `writeFile` writes the first half of the bytes, runs `swap`, then writes the rest; every other member is the handle's own.
+ * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
+ * @param {() => Promise<void>} swap - The swap of {@link swapHalfwayThroughWriting}.
+ * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
+ * @example
+ * await handleThatSwapsHalfway(await fileSystem.open(path, 'wx'), swap).writeFile('abcd') // writes 'ab', runs the swap, then writes 'cd'
+ */
+function handleThatSwapsHalfway(handle, swap) {
+  return new Proxy(handle, {
+    get(target, property) {
+      if (property === 'writeFile')
+        return async (data) => {
+          const bytes = Buffer.from(data),
+            half = Math.floor(bytes.length / 2)
+          await target.write(bytes, 0, half)
+          await swap()
+          await target.write(bytes, half, bytes.length - half)
+        }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
 }
 
 /**
@@ -118,19 +156,24 @@ export async function writeFile(path, ...rest) {
 }
 
 /**
- * Opens a file as `open` does, after the swap of {@link swapBeforeWriting} when the file is opened to be written and is the file the swap waits for, as {@link writeFile} does.
+ * Opens a file as `open` does, after the swap of {@link swapBeforeWriting} when the file is opened to be written and is the file the swap waits for, as {@link writeFile} does; the handle of the file {@link swapHalfwayThroughWriting} waits for runs that swap halfway through its write, once.
  * @param {string} path - The file to open.
  * @param {string | number} [flags] - How the file is opened, as `open` takes it.
  * @param {...unknown} rest - The caller's mode, handed on unchanged.
- * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers.
+ * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers, wrapped for the file awaited halfway through its write.
  * @example
  * await open('/repo/.codebook/next/manual.txt', 'wx') // => a handle, after the swap that waited for this file
  */
 export async function open(path, flags, ...rest) {
-  // Only an open to write is a write the swap waits for; a numeric flag the publisher does not use is left alone.
-  if (typeof flags === 'string' && /[wa+]/.test(flags))
-    await swapIfAwaited('writeFile', path)
-  return fileSystem.open(path, flags, ...rest)
+  // Only an open to write is a write the swaps wait for; a numeric flag the publisher does not use is left alone.
+  const isWrite = typeof flags === 'string' && /[wa+]/.test(flags)
+  if (isWrite) await swapIfAwaited('writeFile', path)
+  const handle = await fileSystem.open(path, flags, ...rest)
+  const halfway = pendingSwaps.halfwayWrite
+  // Only the awaited file's handle runs its swap halfway through its write, once.
+  if (!isWrite || !halfway?.isAwaited(String(path))) return handle
+  pendingSwaps.halfwayWrite = undefined
+  return handleThatSwapsHalfway(handle, halfway.swap)
 }
 
 /**

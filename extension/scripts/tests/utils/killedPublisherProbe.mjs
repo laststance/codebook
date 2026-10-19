@@ -5,10 +5,11 @@ import {
   swapBeforeReading,
   swapBeforeRenaming,
   swapBeforeWriting,
+  swapHalfwayThroughWriting,
 } from './swappedFolderFileSystem.mjs'
 
 /**
- * Runs one step of the shipped publisher in a process of its own and kills that process at a point the test names, as a learner's closed terminal or a crashed editor stops it there. The point is a chain of calls, each `{ call, folder, name }`: the call (`writing`, an `open` to write or a `writeFile`; `reading`, a `readFile`; `renaming`, a `rename` by its source) of a file directly in `folder` whose name matches the regular expression `name`. The first step is waited for from the start, each later one from the moment the step before it was reached, and the process is killed just before the last. The publisher is the copy whose `node:fs/promises` is `swappedFolderFileSystem.mjs` (the loader hook of `markedCopyHooks.mjs`, by its mark `?swapped-folder`), so the chain runs from that file system's swaps. Started by the publisher's tests with `spawnSync(process.execPath, [probe, JSON.stringify(spec)])`.
+ * Runs one step of the shipped publisher in a process of its own and kills that process at a point the test names, as a learner's closed terminal or a crashed editor stops it there. The point is a chain of calls, each `{ call, folder, name }`: the call (`writing`, an `open` to write or a `writeFile`; `reading`, a `readFile`; `renaming`, a `rename` by its source; `writing-halfway`, the write through the handle of an `open` to write, once half of its bytes are written) of a file directly in `folder` whose name matches the regular expression `name`. The first step is waited for from the start, each later one from the moment the step before it was reached, and the process is killed just before the last, or halfway through it for `writing-halfway`, which leaves the part of the file written so far. The publisher is the copy whose `node:fs/promises` is `swappedFolderFileSystem.mjs` (the loader hook of `markedCopyHooks.mjs`, by its mark `?swapped-folder`), so the chain runs from that file system's swaps. Started by the publisher's tests with `spawnSync(process.execPath, [probe, JSON.stringify(spec)])`.
  *
  * The one argument is a JSON text: `{ operation, options, killAt }`, where `operation` is `publishWiki`, `prepareWikiStage` or `recoverWikiPublication`, `options` is what it is called with and `killAt` is the chain. The probe prints `not killed` when the step ended without reaching the point, `not killed: <message>` when it was refused before it, and nothing when it was killed there.
  * @example
@@ -20,11 +21,12 @@ const SWAPS_BEFORE = {
   writing: swapBeforeWriting,
   reading: swapBeforeReading,
   renaming: swapBeforeRenaming,
+  'writing-halfway': swapHalfwayThroughWriting,
 }
 
 /**
  * Waits for the first step of a chain, then for the rest of it from that moment on, and kills this process just before the last step.
- * @param {{ call: 'writing' | 'reading' | 'renaming', folder: string, name: string }[]} steps - The chain still to come.
+ * @param {{ call: 'writing' | 'reading' | 'renaming' | 'writing-halfway', folder: string, name: string }[]} steps - The chain still to come.
  * @returns {void}
  * @example
  * armKill([{ call: 'renaming', folder: '/repo/.codebook/next', name: '^\\.codebook-publish-' }])

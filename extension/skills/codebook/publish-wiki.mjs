@@ -579,14 +579,17 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   }
 }
 
-/** The paths of the copies of the learner's files that a stopped publish made in its candidate: each file of the candidate that the candidate's manifest does not list, that stands at the place of a learner's file in the Wiki (a file the Wiki's manifest does not list) and that holds the same bytes, by their SHA-256 digest. Called by {@link restoreStoppedCandidate}. @param wiki - The Wiki that stands in the Wiki folder now, as {@link inspectOutput} read it. @returns The paths, relative to the candidate. @throws What reading the candidate's manifest, listing the candidate or reading a file rejects with: a candidate that cannot be judged is left as it is. @example await learnerCopiesIn('/repo/.codebook/next', wiki, '/repo/.codebook/wiki', '/repo') // => ['manual.txt'] */
+/** The paths of the copies of the learner's files that a stopped publish made in its candidate: each file of the candidate that the candidate's manifest does not list, that stands at the place of a learner's file in the Wiki (a file the Wiki's manifest does not list) and that holds the start of that file's bytes or all of them ({@link isStartOf}): a kill while the publish wrote a copy leaves the part written so far, and the whole file stays in the Wiki. A file there with other bytes stays, for the next publish to name. Called by {@link restoreStoppedCandidate}. @param wiki - The Wiki that stands in the Wiki folder now, as {@link inspectOutput} read it. @returns The paths, relative to the candidate. @throws What reading the candidate's manifest, listing the candidate or reading a file rejects with: a candidate that cannot be judged is left as it is. @example await learnerCopiesIn('/repo/.codebook/next', wiki, '/repo/.codebook/wiki', '/repo') // => ['manual.txt'] */
 async function learnerCopiesIn(stage, wiki, output, root) {
   const { owned } = parseManifest(await regularBytes(join(stage, MANIFEST)), root);
   const learnerFiles = new Set(learnerFilesOf(wiki)), copies = [];
   for (const path of await listFiles(stage))
-    if (!owned.has(path) && learnerFiles.has(path) && digest(await regularBytes(join(stage, path))) === digest(await regularBytes(join(output, path)))) copies.push(path);
+    if (!owned.has(path) && learnerFiles.has(path) && isStartOf(await regularBytes(join(stage, path)), await regularBytes(join(output, path)))) copies.push(path);
   return copies;
 }
+
+/** Whether the bytes of a file are the start of another file's bytes, or all of them: what a copy holds once a kill stopped its write, which goes from the first byte on, or once the write ended. Called by {@link learnerCopiesIn}. @example isStartOf(Buffer.from('The learner ke'), Buffer.from('The learner kept these notes')) // => true */
+const isStartOf = (part, whole) => part.length <= whole.length && whole.subarray(0, part.length).equals(part);
 
 /** The prepared manifest and record a publish journal keeps, by name, for the files whose finalized bytes, by their SHA-256 digest, the journal names: the manifest's `manifestSha256` and the record's `finalizedReceiptSha256`. Called by {@link restoreStoppedCandidate}. @returns The pairs; none for a journal of an earlier version, which keeps neither, or for one whose kept bytes are not text of base64. @example preparedFilesOf(record) // => [{ name: 'codebook-wiki.json', finalizedSha256: '…', prepared: <Buffer> }, { name: 'codebook-publication.json', … }] */
 function preparedFilesOf(record) {

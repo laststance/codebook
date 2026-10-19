@@ -7224,6 +7224,76 @@ for (const stop of [
   })
 }
 
+// Value: protects=the next publish of a candidate after a publish killed while it wrote the copy of a learner's file into the candidate, and the --recover that followed; fails_when=the recovery removes only a copy that holds all of the learner's file's bytes, so the part a kill during the write left stays in the candidate and the next publish is refused for it as a file outside its manifest; why_new=Cycle 0047 row 61 (OCR1-3); seam=a publisher process killed once half of the learner's file is written into its copy (scripts/tests/utils/killedPublisherProbe.mjs, `writing-halfway`); no_claim=a file with other bytes that the learner put into the candidate at the place of a learner's file after the kill, which stays for the next publish to name
+test('a publish killed while it wrote the copy of the learner’s file into the candidate is recovered without the part it wrote, and the candidate then publishes with the learner’s file kept', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed once half of the file's bytes are written into its copy.
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    await writeFile(
+      join(wiki.output, 'manual.txt'),
+      'The learner kept these notes',
+    )
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'writing-halfway', folder: wiki.next, name: '^manual\\.txt$' },
+      ],
+    })
+    const partLeftByTheKill = await readFile(
+      join(wiki.next, 'manual.txt'),
+      'utf8',
+    ).catch(() => 'no part')
+
+    // Act: the recovery, then the candidate published again.
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const partAfterRecovery = await readFile(
+      join(wiki.next, 'manual.txt'),
+      'utf8',
+    ).catch(() => 'no part')
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        partLeftByTheKill,
+        recovery,
+        partAfterRecovery,
+        nextPublish,
+        learnerFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+      },
+      {
+        killed: '',
+        partLeftByTheKill: 'The learner ke',
+        recovery: 'published-or-restored',
+        partAfterRecovery: 'no part',
+        nextPublish: { preservedManualFiles: 1 },
+        learnerFile: 'The learner kept these notes',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the next publish of a candidate prepared from the published Wiki and published without an edit, after that publish was killed between its journal and its swap and --recover ran; fails_when=the recovery tells a swap that happened from one that did not by the manifest's digest alone, which a candidate byte-identical to the Wiki shares with it, so it leaves the candidate's finalized record and the copy of the learner's file in the candidate, and the next publish is refused for the copy as a file outside its manifest; why_new=Cycle 0047 row 60 (OCR1-1 = ADV-5); seam=a publisher process killed just before it moves the Wiki folder to its backup name (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=an unchanged republish killed after its swap (its own test below)
 test('an unchanged republish killed just before its swap is recovered with the candidate’s record as prepared and no copy of the learner’s file in it, and the candidate then publishes with that file kept', async () => {
   // Arrange: a published Wiki with a learner's file and a candidate prepared from it without an edit; the publish of the candidate is killed after it copied the learner's file and finalized the candidate, just before it moves the Wiki folder.
