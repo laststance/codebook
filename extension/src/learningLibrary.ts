@@ -1098,7 +1098,7 @@ export class LearningLibrary {
    * The run's later saves (an explanation or a learning summary after the stop, Retry storage, the final checkpoint) come after that release, when another window may have removed the study with its recording. A study whose archive and recording have both left the library is therefore never written again: the archive would come back without its recording (Cycle 0047 row 162). The look is made under the storage lock that a removal takes for its moves, so a removal ends either before it or after the write.
    * @param input - The archive to save.
    * @param checkpoint - What the caller knows of the checkpoint the archive was captured at: `isTakenAfterSealedStop` once the run's stop had ended after it sealed the recording ({@link StudyService.hasStopEndedAfterSeal}), and `recordingDirectory`, the directory of the run's recording, for a run that records; left out, only an archive that says `stopped` releases the recording, and the archive is written whatever left the library.
-   * @throws A {@link StudyRemovedWithItsRecordingError} when the study's archive and the run's recording directory are both gone, before anything is written; otherwise when the library is full, when the archive does not advance the study's kept checkpoint ({@link assertStudyCheckpoint}), or when the write fails. A writer record that cannot be removed fails nothing.
+   * @throws A {@link StudyRemovedWithItsRecordingError} when the study's archive and the run's recording directory are both gone (the directory's look answers ENOENT), before anything is written; the error of that look when it fails otherwise, before anything is written, as an ordinary save failure; otherwise when the library is full, when the archive does not advance the study's kept checkpoint ({@link assertStudyCheckpoint}), or when the write fails. A writer record that cannot be removed fails nothing.
    * @example
    * await library.saveStudy(study)
    * await library.saveStudy(archiveAfterAFailedStop, { isTakenAfterSealedStop: true }) // the sealed recording's writer record goes
@@ -1115,14 +1115,11 @@ export class LearningLibrary {
     return this.locked(async () => {
       const existing = await this.entries()
       const kept = existing.find((value) => value.id === study.id)
-      // An archive that left the library with the run's recording was removed with it: written again, the study would come back without its recording.
+      // An archive that left the library with the run's recording was removed with it: written again, the study would come back without its recording. Only a recording that is absent left; a look that fails otherwise (a permission, a disk error, a folder being deleted) fails this save, which Retry storage repeats (Cycle 0047 row 170).
       if (
         !kept &&
         checkpoint.recordingDirectory !== undefined &&
-        !(await lstat(checkpoint.recordingDirectory).then(
-          () => true,
-          () => false,
-        ))
+        (await this.optionalStat(checkpoint.recordingDirectory)) === undefined
       )
         throw new StudyRemovedWithItsRecordingError()
       if (!this.admits(existing, study.id))

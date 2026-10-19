@@ -9077,6 +9077,103 @@ test('a stopped and saved run whose study another window deletes with its record
   }
 })
 
+// Value: protects=a recorded run of this window whose first saves cannot look at its recording folder (a permission denied, a disk error, a folder Windows is deleting or a scanner holds): the study stays this window's, the failure is told in the line "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at again; fails_when=the save counts every failure of that look as the recording having left the library with the study, so the reader forgets the study and drops its pending checkpoint as if another window had deleted it, and the run's learning is never saved although nothing was removed (Cycle 0047 row 170); why_new=Cycle 0047 row 170 (S2CR-2, S2CXA-C2-1, S2OCR2-1, S2CLA-2, S2CXS-1): row 162's test has only a recording folder that is gone; seam=the look at the run's recording folder that the library's study save makes, refused with EACCES while the test says so (every other look reaches the disk)
+test('a recorded run whose saves cannot look at its recording folder keeps its study, tells "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at', async (context) => {
+  // Arrange: a recorded run of this window; while it runs and stops, every study save's look at the run's recording folder is refused.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const saveStudy = LearningLibrary.prototype.saveStudy,
+      lstatBefore = fsPromises.lstat
+    let isLookRefused = true,
+      refusedLook: string | undefined
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        ...input: Parameters<LearningLibrary['saveStudy']>
+      ) {
+        // Only the look this save makes at the run's recording folder is refused.
+        refusedLook = isLookRefused ? input[1]?.recordingDirectory : undefined
+        try {
+          return await saveStudy.apply(this, input)
+        } finally {
+          refusedLook = undefined
+        }
+      },
+    )
+    context.mock.method(
+      fsPromises,
+      'lstat',
+      async (...input: Parameters<typeof lstatBefore>) => {
+        if (refusedLook !== undefined && input[0] === refusedLook)
+          throw Object.assign(new Error('EACCES: permission denied, lstat'), {
+            code: 'EACCES',
+          })
+        return lstatBefore(...input)
+      },
+    )
+    // A run records only for a build whose source is identified.
+    harness.service.environment.build.sourceHash = sha256('recorded-build')
+    harness.acknowledgeContext()
+    const { record } = await startRun(harness)
+    record.recording!.frame({
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(100)
+    await harness.reader.action('click').catch(() => undefined)
+    harness.clock(200)
+    const studyId = `${harness.service.instanceId}_${record.id}`,
+      library = await harness.reader.learningStorage()
+
+    // Act: the learner stops the run while the look is refused, then presses Retry storage / refresh once the folder can be looked at.
+    await harness.reader.action('stop').catch(() => undefined)
+    const afterStop = structuredClone({
+      isStopped: record.stopped,
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+      history: harness.service.state(record).historyOutcome.status,
+    })
+    isLookRefused = false
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(afterStop, {
+      isStopped: true,
+      errors: [
+        'Error: History not saved: Error: EACCES: permission denied, lstat',
+      ],
+      // Retry storage / refresh is offered beside the one line.
+      unretryableErrorCount: 0,
+      history: 'failed',
+    })
+    assert.deepEqual(
+      {
+        errors: structuredClone(harness.reader.inspect().view!.errors),
+        history: harness.service.state(record).historyOutcome.status,
+        listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+        isRecordingSealed: (await lookAtRecording(record.recording!.directory))
+          .isSealed,
+      },
+      {
+        errors: [],
+        history: 'saved',
+        listed: [[studyId, 'v3']],
+        isRecordingSealed: true,
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 /**
  * Names a run of the reader's workspace that never saved its study, so a test can leave only its recording.
  * @param harness - The reader whose library the run belongs to.
