@@ -2,49 +2,71 @@ import * as fileSystem from 'node:fs/promises'
 
 export * from 'node:fs/promises'
 
-/** The write a test asked to fail: the file it waits for, the system error it fails with and what runs before it fails; gone once it failed. */
+/** The write a test asked to fail: the file it waits for, the system error it fails with and what runs before it fails; gone once it failed or was stopped. */
 let pendingWriteFailure
 
 /**
- * Asks the next write of a file that `isAwaited` names, through a handle of its `open` or by `writeFile`, to write the first half of its bytes and then fail with a system error, once: as a write that runs into a full disk (`ENOSPC`) or a file size limit (`EFBIG` under `ulimit -f`) after it made the file. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
- * @param {(path: string) => boolean} isAwaited - Whether a file `open` or `writeFile` is asked for is the one whose write fails.
+ * Asks the next write of a file that `isAwaited` names, through a handle of its `open`, to write the first half of its bytes and then fail with a system error, once: as a write that runs into a full disk (`ENOSPC`) or a file size limit (`EFBIG` under `ulimit -f`) after it made the file. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process.
+ * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose write fails.
  * @param {'EFBIG' | 'ENOSPC'} code - The system error.
  * @param {(path: string) => Promise<void>} [swap] - Runs, with the file's path, once the first half is written and before the write fails, while the handle is still open: as another process that puts a file of its own at the name meanwhile.
- * @returns {void}
+ * @returns {() => void} Drops this failure while it is still to come, without clearing a newer one.
  * @example
- * failWriteOf((path) => path.endsWith('/next/manual.txt'), 'EFBIG', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') })
+ * const stop = failWriteOf((path) => path.endsWith('/next/manual.txt'), 'EFBIG', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') }); stop()
  */
 export function failWriteOf(isAwaited, code, swap) {
-  pendingWriteFailure = { isAwaited, code, swap }
+  const failure = { isAwaited, code, swap }
+  pendingWriteFailure = failure
+  return () => {
+    if (pendingWriteFailure === failure) pendingWriteFailure = undefined
+  }
 }
 
-/** The status read or the close through a handle that a test asked to fail: the file it waits for, the call, the system error and what runs first in the failing call; gone once it failed. */
+/** The status read or the close through a handle that a test asked to fail: the file it waits for, the call, the system error and what runs first in the failing call; gone once it failed or was stopped. */
 let pendingHandleCallFailure
 
 /**
- * Asks the next close of a handle of a file that `isAwaited` names to close the file and then fail with a system error, once: as a close on a network or synced file system that runs into a full disk (`ENOSPC`) or a quota (`EDQUOT`) after the whole write was handed on. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
+ * Asks the next close of a handle of a file that `isAwaited` names to close the file and then fail with a system error, once: as a close on a network or synced file system that runs into a full disk (`ENOSPC`) or a quota (`EDQUOT`) after the whole write was handed on. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process.
  * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose close fails.
  * @param {'EDQUOT' | 'ENOSPC'} code - The system error.
  * @param {(path: string) => Promise<void>} [swap] - Runs, with the file's path, before the close closes the file and fails, while the handle is still open: as another process that puts a file of its own at the name meanwhile.
- * @returns {void}
+ * @returns {() => void} Drops this failure while it is still to come, without clearing a newer one ({@link stopHandleCallFailureOf}).
  * @example
- * failCloseOf((path) => path.endsWith('/next/manual.txt'), 'ENOSPC', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') })
+ * const stop = failCloseOf((path) => path.endsWith('/next/manual.txt'), 'ENOSPC', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') }); stop()
  */
 export function failCloseOf(isAwaited, code, swap) {
-  pendingHandleCallFailure = { isAwaited, call: 'close', code, swap }
+  const failure = { isAwaited, call: 'close', code, swap }
+  pendingHandleCallFailure = failure
+  return stopHandleCallFailureOf(failure)
 }
 
 /**
- * Asks the next status read through a handle of a file that `isAwaited` names to fail with a system error, once, right after its `open` made the file: as a read error of the disk (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
+ * Asks the next status read through a handle of a file that `isAwaited` names to fail with a system error, once, right after its `open` made the file: as a read error of the disk (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process.
  * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose status read fails.
  * @param {'EIO'} code - The system error.
  * @param {(path: string) => Promise<void>} [swap] - Runs, with the file's path, before the status read fails: as another process that puts a file of its own at the name meanwhile.
- * @returns {void}
+ * @returns {() => void} Drops this failure while it is still to come, without clearing a newer one ({@link stopHandleCallFailureOf}).
  * @example
- * failStatOf((path) => path.endsWith('/next/manual.txt'), 'EIO', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') })
+ * const stop = failStatOf((path) => path.endsWith('/next/manual.txt'), 'EIO', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') }); stop()
  */
 export function failStatOf(isAwaited, code, swap) {
-  pendingHandleCallFailure = { isAwaited, call: 'stat', code, swap }
+  const failure = { isAwaited, call: 'stat', code, swap }
+  pendingHandleCallFailure = failure
+  return stopHandleCallFailureOf(failure)
+}
+
+/**
+ * The stop of a close or a status read that {@link failCloseOf} or {@link failStatOf} asked to fail: it drops that failure while it is still to come and leaves a newer one, which another call asked for since, in place. Called by both.
+ * @param {object} failure - The failure that call put in place.
+ * @returns {() => void} The stop.
+ * @example
+ * const stop = stopHandleCallFailureOf(failure); stop()
+ */
+function stopHandleCallFailureOf(failure) {
+  return () => {
+    if (pendingHandleCallFailure === failure)
+      pendingHandleCallFailure = undefined
+  }
 }
 
 /**
@@ -113,7 +135,7 @@ function handleWhoseWriteFails(handle, code, swap) {
 let writeObserver
 
 /**
- * Asks every write of a file, through a handle of its `open` or by `writeFile`, to tell `observer` the file's path and the number of bytes asked to be written first, as long as the observer is not stopped; so a test counts what a step writes.
+ * Asks every write of a file through a handle of its `open` (its `writeFile`) to tell `observer` the file's path and the number of bytes asked to be written first, as long as the observer is not stopped; so a test counts what a step writes.
  * @param {(path: string, byteCount: number) => void} observer - Receives the path and the byte count of each write before it runs.
  * @returns {() => void} Stops this observer without clearing a newer one.
  * @example
@@ -263,33 +285,6 @@ export async function rename(from, to) {
 export async function unlink(path) {
   removalObserver?.(String(path))
   return fileSystem.unlink(path)
-}
-
-/**
- * Writes a file as `writeFile` does, after telling the observer of {@link observeWrites} its path and byte count, except for the file {@link failWriteOf} waits for: that write puts the first half of the bytes into the file, with the caller's flags, and then fails with the system error, once.
- * @param {string} path - The file to write.
- * @param {string | Buffer} data - Its bytes.
- * @param {...unknown} rest - The caller's options, handed on unchanged.
- * @returns {Promise<void>} What `writeFile` answers.
- * @example
- * await writeFile('/repo/.codebook/wiki.publish-journal.json', journalText, { flag: 'wx' }) // rejects with code ENOSPC after writing half of it, after failWriteOf named this file
- */
-export async function writeFile(path, data, ...rest) {
-  writeObserver?.(String(path), Buffer.byteLength(data))
-  const failure = pendingWriteFailure
-  // Only the awaited file's write fails, once.
-  if (!failure?.isAwaited(String(path)))
-    return fileSystem.writeFile(path, data, ...rest)
-  pendingWriteFailure = undefined
-  const bytes = Buffer.from(data)
-  await fileSystem.writeFile(
-    path,
-    bytes.subarray(0, Math.floor(bytes.length / 2)),
-    ...rest,
-  )
-  throw Object.assign(new Error(`${failure.code}: the write stopped partway`), {
-    code: failure.code,
-  })
 }
 
 /** The hard link a test asked to fail: the new name it waits for and the system error it fails with; gone once it failed. */

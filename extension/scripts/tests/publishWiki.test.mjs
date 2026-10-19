@@ -2342,7 +2342,7 @@ const markedCopies = new Map()
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
- * - `?failing`: the write of the file a test names with {@link failWriteOf}, through a handle or by `writeFile`, stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write tells the observer of {@link observeWrites} its path and byte count first, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
+ * - `?failing`: the write of the file a test names with {@link failWriteOf} through a handle stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write through a handle tells the observer of {@link observeWrites} its path and byte count first, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
  * - `?aliased-folder`: the folder a test names with {@link nameFolderAlso} answers to another name beside it too, as one folder does to names of another case on macOS and Windows (`aliasedFolderFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
  * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing' | '?aliased-folder'} mark - The mark of its stand-in.
@@ -3549,7 +3549,7 @@ test('a publish refused after it finalized the candidate whose prepared record c
     manifestPath = join(wiki.next, 'codebook-wiki.json')
   let writesBesideTheRecord = 0
   const stopFailing = failRenameOf((path) => path === wiki.next, ['EXDEV'])
-  failWriteOf(
+  const stopWriteFailure = failWriteOf(
     (path) =>
       dirname(path) === wiki.next &&
       /^\.codebook-publish-.*-codebook-publication\.json$/.test(
@@ -3619,6 +3619,7 @@ test('a publish refused after it finalized the candidate whose prepared record c
     )
   } finally {
     stopFailing()
+    stopWriteFailure()
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
@@ -3693,9 +3694,12 @@ test('a publish whose copy of the learner’s file stops partway leaves no part 
     '?failing',
   )
   const wiki = await publishedWikiWithACandidate()
+  const stopFailing = failWriteOf(
+    (path) => path === join(wiki.next, 'manual.txt'),
+    'EFBIG',
+  )
   try {
     await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
-    failWriteOf((path) => path === join(wiki.next, 'manual.txt'), 'EFBIG')
 
     // Act: the failed publish, then the candidate published again.
     const refusal = await publishWhoseCopyStops({
@@ -3735,6 +3739,7 @@ test('a publish whose copy of the learner’s file stops partway leaves no part 
       },
     )
   } finally {
+    stopFailing()
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
@@ -3747,9 +3752,12 @@ test('a publish whose copy of the learner’s file fails at its close after the 
     '?failing',
   )
   const wiki = await publishedWikiWithACandidate()
+  const stopFailing = failCloseOf(
+    (path) => path === join(wiki.next, 'manual.txt'),
+    'ENOSPC',
+  )
   try {
     await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
-    failCloseOf((path) => path === join(wiki.next, 'manual.txt'), 'ENOSPC')
 
     // Act: the failed publish, then the candidate published again.
     const refusal = await publishWhoseCopyFails({
@@ -3789,6 +3797,7 @@ test('a publish whose copy of the learner’s file fails at its close after the 
       },
     )
   } finally {
+    stopFailing()
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
@@ -3825,12 +3834,16 @@ for (const atTheName of [
     )
     const wiki = await publishedWikiWithACandidate()
     const copy = join(wiki.next, 'manual.txt')
+    const stopFailing = failStatOf(
+      (path) => path === copy,
+      'EIO',
+      atTheName.swap,
+    )
     try {
       await writeFile(
         join(wiki.output, 'manual.txt'),
         'The learner’s own notes',
       )
-      failStatOf((path) => path === copy, 'EIO', atTheName.swap)
 
       // Act: the failed publish, then the candidate published again.
       const refusal = await publishWhoseStatusReadFails({
@@ -3873,6 +3886,7 @@ for (const atTheName of [
         },
       )
     } finally {
+      stopFailing()
       await rm(wiki.directory, { recursive: true, force: true })
     }
   })
@@ -11251,18 +11265,18 @@ for (const failure of [
     )
     const wiki = await publishedWikiWithACandidate()
     const copy = join(wiki.next, 'manual.txt')
+    // The swap runs while the copy's file is open, so the file it puts at the name has another file id.
+    const stopFailing = failure.ask(
+      (path) => path === copy,
+      async (path) => {
+        await rm(path)
+        await writeFile(path, 'Another process’s notes')
+      },
+    )
     try {
       await writeFile(
         join(wiki.output, 'manual.txt'),
         'The learner’s own notes',
-      )
-      // The swap runs while the copy's file is open, so the file it puts at the name has another file id.
-      failure.ask(
-        (path) => path === copy,
-        async (path) => {
-          await rm(path)
-          await writeFile(path, 'Another process’s notes')
-        },
       )
 
       // Act
@@ -11291,6 +11305,7 @@ for (const failure of [
         },
       )
     } finally {
+      stopFailing()
       await rm(wiki.directory, { recursive: true, force: true })
     }
   })
@@ -11727,12 +11742,12 @@ for (const step of [
       '?failing',
     )
     const wiki = await publishedWikiWithACandidate()
+    const stopFailing = failWriteOf(
+      (path) => basename(path).startsWith('wiki.publish-journal.json'),
+      'ENOSPC',
+    )
     try {
       await step.arrange?.(wiki)
-      failWriteOf(
-        (path) => basename(path).startsWith('wiki.publish-journal.json'),
-        'ENOSPC',
-      )
 
       // Act: the step, then the step run again.
       const refusal = await step.run(failingPublisher, wiki).then(
@@ -11750,7 +11765,7 @@ for (const step of [
         { refusal: 'ENOSPC', besideTheWiki: [], ranAgain: step.ranAgain },
       )
     } finally {
-      failWriteOf(() => false, 'ENOSPC')
+      stopFailing()
       await rm(wiki.directory, { recursive: true, force: true })
     }
   })
@@ -11767,6 +11782,10 @@ test('a recovery whose write of its claim stops partway, as at a full disk, is r
   const output = join(root, '.codebook/wiki'),
     stage = `${output}.stage-00000000-0000-4000-8000-000000000001`,
     journal = `${output}.publish-journal.json`
+  const stopFailing = failWriteOf(
+    (path) => basename(path).startsWith('wiki.publish-journal.json.recovery-'),
+    'ENOSPC',
+  )
   try {
     await mkdir(dirname(output), { recursive: true })
     await writeFile(
@@ -11781,11 +11800,6 @@ test('a recovery whose write of its claim stops partway, as at a full disk, is r
         manifestSha256: '1'.repeat(64),
         priorLegacy: false,
       }),
-    )
-    failWriteOf(
-      (path) =>
-        basename(path).startsWith('wiki.publish-journal.json.recovery-'),
-      'ENOSPC',
     )
 
     // Act: the recovery, then the recovery run again.
@@ -11814,7 +11828,7 @@ test('a recovery whose write of its claim stops partway, as at a full disk, is r
       },
     )
   } finally {
-    failWriteOf(() => false, 'ENOSPC')
+    stopFailing()
     await rm(root, { recursive: true, force: true })
   }
 })
@@ -12266,10 +12280,7 @@ for (const list of [
 for (const failure of [
   {
     names: 'its write stops partway, as at a full disk',
-    arrange: (isUpdate) => {
-      failWriteOf(isUpdate, 'ENOSPC')
-      return () => failWriteOf(() => false, 'ENOSPC')
-    },
+    arrange: (isUpdate) => failWriteOf(isUpdate, 'ENOSPC'),
     code: 'ENOSPC',
   },
   {
