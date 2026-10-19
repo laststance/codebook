@@ -8460,7 +8460,9 @@ test('an unchanged republish killed after its swap is recovered with the publish
         outputDirectory: output,
         stageDirectory: next,
       },
+      // The kill waits for the swap's move of the candidate first: the journal is read before the swap too, to confirm it is still the publish's own.
       killAt: [
+        { call: 'renaming', folder: dirname(output), name: '^next$' },
         {
           call: 'reading',
           folder: dirname(output),
@@ -13616,7 +13618,9 @@ test('a recovery of a publish of an adopted Wiki killed after its swap, whose ne
         outputDirectory: output,
         stageDirectory: next,
       },
+      // The kill waits for the swap's move of the candidate first: the journal is read before the swap too, to confirm it is still the publish's own.
       killAt: [
+        { call: 'renaming', folder: dirname(output), name: '^next$' },
         {
           call: 'reading',
           folder: dirname(output),
@@ -17629,6 +17633,170 @@ test('a --recover on Linux without /etc/machine-id of a journal of another boot 
       },
     )
   } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+/** The refusal of a publish whose journal is no longer its own, for the Wiki folder it names. */
+const lostJournalRefusalOf = (output) =>
+  `The Wiki publication journal ${output}.publish-journal.json is no longer this publish’s: another step ended or replaced it while this publish ran (a --recover takes a journal that stood empty past the grace for a stopped step’s), so the Wiki was not changed. Publish again once no other publish or recovery of this Wiki runs.`
+
+// Value: protects=the learner's Wiki on a volume that cannot give a file a second name (FAT, exFAT, some network shares), where the publish journal is created at its name and written after, when the publisher is held between the two longer than the grace and a --recover ends the journal as one that stood empty; fails_when=the publisher writes the rest of its journal into the file the recovery removed and finalizes, copies and moves the Wiki with no journal, so a stop leaves nothing a recovery can repair and no journal keeps a preparation out; why_new=Cycle 0047 row 246 (found while row 218 was fixed); seam=a copy of the shipped publisher whose `node:fs/promises` fails the journal's hard link with EPERM and runs the test's step halfway through the journal's write (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), where the test empties the journal, dates its last change 11 seconds back and runs the shipped recovery, which ends it, and which tells the test when a move of a finalized file into the candidate begins; no_claim=a real FAT or exFAT volume, and a journal that stays empty for the whole grace, which this stands in for
+test('a publish on a volume without hard links whose journal a --recover ended while the publisher was held between the journal’s create and its write stops before it moves anything, and the candidate then publishes', async () => {
+  // Arrange: no hard link can give the journal its name; halfway through the journal's write, the journal is as a recovery finds it past the grace, empty and changed 11 seconds ago, and a recovery runs.
+  const { publishWiki: publishWhoseJournalIsEnded } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const { swapBeforeLinking } =
+    await import('./utils/swappedFolderFileSystem.mjs')
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  let recoveryMeanwhile = 'no recovery',
+    finalizedFileMoved = false
+  swapBeforeLinking(
+    (path) => path === journal,
+    async () => {
+      throw Object.assign(new Error('EPERM: operation not permitted, link'), {
+        code: 'EPERM',
+      })
+    },
+  )
+  swapHalfwayThroughWriting(
+    (path) => path === journal,
+    async () => {
+      await writeFile(journal, '')
+      const past = new Date(Date.now() - 11_000)
+      await utimes(journal, past, past)
+      recoveryMeanwhile = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+    },
+  )
+  swapBeforeRenaming(
+    (path) =>
+      dirname(path) === wiki.next &&
+      basename(path).startsWith('.codebook-publish-'),
+    async () => {
+      finalizedFileMoved = true
+    },
+  )
+  try {
+    // Act: the held publish, then the candidate published again.
+    const publish = await publishWhoseJournalIsEnded({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+    const wikiIsUnchanged =
+      (await readFile(join(wiki.output, 'index.html'), 'utf8')) ===
+      wiki.wikiPage
+    const besideTheWiki = await publisherFilesBeside(wiki.output)
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recoveryMeanwhile,
+        publish,
+        finalizedFileMoved,
+        wikiIsUnchanged,
+        besideTheWiki,
+        nextPublish,
+      },
+      {
+        recoveryMeanwhile: 'unwritten-journal-removed',
+        publish: lostJournalRefusalOf(wiki.output),
+        finalizedFileMoved: false,
+        wikiIsUnchanged: true,
+        besideTheWiki: [],
+        nextPublish: { publishedFiles: 1 },
+      },
+    )
+  } finally {
+    swapBeforeLinking(
+      () => false,
+      async () => undefined,
+    )
+    swapHalfwayThroughWriting(
+      () => false,
+      async () => undefined,
+    )
+    swapBeforeRenaming(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's Wiki when the publish journal is removed after the publisher wrote it and before its swap, as a --recover does that read the journal empty just before the publisher wrote it and removes it just after; fails_when=the publisher checks its journal only once it is written, so it moves the Wiki with no journal, and a stop then leaves nothing a recovery can repair; why_new=Cycle 0047 row 246 (the journal is confirmed again before the swap); seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's removal of the journal just before the publish's recheck reads the Wiki's record once its journal stands (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a removal in the instant between that check and the swap, which no file system call closes
+test('a publish whose journal is removed after it wrote it and before its swap stops without changing the Wiki, leaves nothing beside the Wiki folder, and the candidate then publishes', async () => {
+  // Arrange: just before the recheck reads the Wiki's record, once the journal stands, the journal is removed.
+  const { publishWiki: publishWhoseJournalIsRemoved } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  swapBeforeReading(
+    (path) =>
+      path === join(wiki.output, 'codebook-publication.json') &&
+      existsSync(journal),
+    () => rm(journal),
+  )
+  try {
+    // Act: the publish whose journal is removed, then the candidate published again.
+    const publish = await publishWhoseJournalIsRemoved({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+    const wikiIsUnchanged =
+      (await readFile(join(wiki.output, 'index.html'), 'utf8')) ===
+      wiki.wikiPage
+    const besideTheWiki = await publisherFilesBeside(wiki.output)
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { publish, wikiIsUnchanged, besideTheWiki, nextPublish },
+      {
+        publish: lostJournalRefusalOf(wiki.output),
+        wikiIsUnchanged: true,
+        besideTheWiki: [],
+        nextPublish: { publishedFiles: 1 },
+      },
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
