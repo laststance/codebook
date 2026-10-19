@@ -1,7 +1,7 @@
 # Cycle 0047 — Every defect Cycle 0046 left is fixed
 
 Type: bug-fix cycle\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: PR-open (draft [PR #91](https://github.com/laststance/codebook/pull/91), delivered through `/ship`)\
 Goal version: 10\
@@ -18,7 +18,7 @@ Can every defect Cycle 0046 left be closed, with nothing carried again, in one p
 
 - Hypothesis: each task (53 at filing, and every defect found while the cycle runs) is closed by a fix with a test that fails without it, or by recorded evidence that it is not a defect or no longer applies, and the cycle's own reviews leave nothing open.
 - Smallest observable outcome: every row of [the task table](0047-carried-defects.md) closed, the pull request merged after its reviews, required CI and the exact-head gate, and Issue #90 closed with a comment that states nothing is carried.
-- In scope: the 53 tasks and every defect found while this cycle runs (added as rows and fixed here; 165 rows on 2026-10-19).
+- In scope: the 53 tasks and every defect found while this cycle runs (added as rows and fixed here; 169 rows on 2026-10-19).
 - Out of scope for this cycle (still retained in PRODUCT_GOAL.md): any increment, among them native use in an editor for Windows (a feature cycle of its own) and the natural `/codebook` request's first-run proof (the next feature cycle's frozen request).
 - Conditions that falsify the approach: a task that neither a fix nor evidence can close; a fix that regresses a delivered behavior its tests or the native round hold.
 
@@ -108,9 +108,17 @@ The third pass, the last the ship's limit allows, read `135da98f` with the same 
 
 The pass did not converge. Under the ship's limit ([rule](../../DEVELOPMENT.md#standing-owner-direction)) fixing cycle 3 is the last: five fixers fix rows 133 to 158 and 161 to 165, and after them the ship stops, unconverged. No review of this invocation reads those fixes; only the owner starts the next invocation.
 
+### Fixing cycle 3 of the delivery (2026-10-19)
+
+Five fixers (P1 the publisher's journal and recovery, P2 its owner gate, R the reader's workers and texts, S the recordings, the Study workspace, process starts and Cursor's catalog, T two test gaps of the publisher's file guards) closed rows 133 to 158 and 161 to 165 from `135da98f`, each behavioral row with a test shown red on the unfixed code or on a mutant of its line; the parent integrated them by cherry-pick (the blocks P1 and T appended to the end of the publisher's tests met, each kept whole) and ran each fixer's files again after a build: the publisher's tests 409 of 409, the reader's 178 of 178, the stores', workspace's and catalog's 980 with 2 skipped off Windows. Four rows were found while they worked and are fixed too: row 166 (fixer T: a file id freed and taken again at the same name, closed by evidence), rows 167 and 168 (fixer P1: an empty claim of an earlier version, a manifest parsed bare) and row 169 (fixer R: a docstring). Rows 159 and 160 are the parent's. Decisions (owner away, recommended option): row 133 lets the recovery change only a candidate it can name (the publisher's own `.stage-<UUID>` or the `--stage` passed), which every flow of the skill uses, so the skill's text stays; row 136 writes journals and claims through a file beside them and a link, which never replaces a journal another step wrote, and ends an empty journal (as row 167 an empty claim) once it stood unchanged for 10 seconds; row 139 is closed by the evidence of the Windows binaries; row 142 gives a waiting page no deadline of its own; row 162 makes the save refuse to write back a study removed with its recording instead of keeping the writer record until the run retires, which would refuse other windows' Delete for that window's life.
+
+The full gate passed on `05315197` with the QA editors closed (product 5374 tests, 5371 pass and 3 skip; package 626, 624 pass and 2 skip; duplication, dead code and measured health). The gate scan after the fixes listed 12 new or changed eligible hunks of 152, and the parent read each of them (none a finding); the functional smoke of the third pass ran again on that build (7 of 7 scenarios as expected, the size refusal with row 148's sentence).
+
+This was the third and last fixing cycle the ship allows, so the first `/ship` invocation stopped here unconverged ([rule](../../DEVELOPMENT.md#standing-owner-direction)): no review of it reads fixing cycle 3. The owner directed the next invocation on 2026-10-19: "了解、ゲートが通ったら新しい/shipを始めてください". That second invocation has its own record and its own limit of three fixing cycles, and its review reads the whole candidate from the start; if it also stops unconverged, the findings still open become Cycle 0048's tasks, and that cycle's pull request holds only their fixes.
+
 ## Result and decision
 
-Result pending. Counts: 165 rows, 133 closed, 32 implementing; fixing cycle 3, the last the ship allows, fixes the findings of its third review pass.
+Result pending. Counts: 169 rows, 169 closed, 0 implementing. The first `/ship` invocation stopped unconverged after its third fixing cycle; the second, which the owner directed on 2026-10-19, reviews the candidate from the start before the native round, CI, the exact-head merge and Issue #90's closing comment.
 
 ## Handoff
 
