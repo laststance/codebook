@@ -259,6 +259,25 @@ test('the packaged README states the limits of a storage lock and of the Wiki up
   assert.equal(STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS / MS_PER_MINUTE, 1)
 })
 
+// Value: protects=a Linux learner whose /proc hides other users' processes (hidepid), whose lock or update marker names a process id that another user's process took after the editor was killed, learning why it stays and how to get past it; fails_when=the README's limits leave out that on Ubuntu's default /proc another user's process is judged by its start and that under hidepid=2 such a lock stays until it is moved away and such a marker counts until its run's longest time; why_new=Cycle 0047 row 33 (P3RT11, its Linux half): closed by evidence and this README limit instead of a code change; seam=none; no_claim=that hidepid was observed in an editor
+test('the packaged README states, among the limits of a lock and an update marker, that under hidepid on Linux a lock whose process id went to another user’s process stays until it is moved away and such a marker counts until its run’s longest time', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const limit =
+    "- **Another user's process on Linux.** A window reads the start of a process in `/proc`. On Ubuntu's default `/proc` it reads the start of another user's process as well, so a process id that went to another user's process is judged by its start like any other. Where `/proc` is mounted with a `hidepid` option such as `hidepid=2` (a hardening that Ubuntu does not set by default), the start of another user's process cannot be read, and a lock or a marker whose process id another user's process has now is taken for one whose writer may still run: such a lock stays until you move it away (make sure that no Codebook window on any host or system still writes to this storage, then move the named file away and retry), and such a marker counts until its run's longest time has passed."
+
+  // Act: the limit, and where it stands: under the heading of the limits, before the next section.
+  const limitAt = readme.indexOf(limit)
+  const isUnderTheLimits =
+    limitAt >
+      readme.indexOf('### What a lock or an update marker cannot tell\n') &&
+    limitAt < readme.indexOf('## Validation\n')
+
+  // Assert
+  assert.notEqual(limitAt, -1)
+  assert.equal(isUnderTheLimits, true)
+})
+
 // Cycle 0045 (S1a-F2): red while the README said that a focused editor that is no text editor refuses a presentation selection; since cause 7 such a tab is admitted, stays where it is and gets its focus back.
 test('the packaged README says that a focused tab that is no text editor is admitted and gets its focus back, and names the two focused tabs that still refuse a selection', async () => {
   // Arrange
