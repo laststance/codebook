@@ -16875,8 +16875,14 @@ for (const { read, code, isRead } of [
     isRead: (wiki) => (path) =>
       path.startsWith(`${wiki.output}.publish-journal.json.copies-`),
   },
+  {
+    read: 'the side file that keeps the candidate’s prepared manifest and record',
+    code: 'EBUSY',
+    isRead: (wiki) => (path) =>
+      path.startsWith(`${wiki.output}.publish-journal.json.prepared-`),
+  },
 ]) {
-  // Value: protects=a candidate whose publish was killed past finalize, after it copied a learner's file, and the --recover whose read of the candidate's finalized record, of the copy or of the list of copies fails at that moment (a file this user may not read, a scanner or an indexer that holds it on Windows); fails_when=the recovery takes the failed read for a changed record or for no copies, so it puts back only the manifest or leaves the copy, removes the journal, the list of copies and the side file and answers success, and the candidate never publishes again (a changed finalized candidate, or a copy outside its manifest), with nothing left for a recovery to repair it; why_new=Cycle 0047 row 216 (P2CXS-1, P2RT-2); seam=a publisher process killed past finalize (scripts/tests/utils/killedPublisherProbe.mjs), and a copy of the shipped publisher whose `node:fs/promises` fails the first look at the file the row names with the row's system error (scripts/tests/utils/markedCopyHooks.mjs, `?failing`), once; no_claim=a read that fails for good, which keeps the Wiki locked until the file can be read
+  // Value: protects=a candidate whose publish was killed past finalize, after it copied a learner's file, and the --recover whose read of the candidate's finalized record, of the copy, of the list of copies or of the side file fails at that moment (a file this user may not read, a scanner or an indexer that holds it on Windows); fails_when=the recovery takes the failed read for a changed record or for no copies, so it puts back only the manifest, neither file or leaves the copy, removes the journal, the list of copies and the side file and answers success, and the candidate never publishes again (a changed finalized candidate, or a copy outside its manifest), with nothing left for a recovery to repair it; why_new=Cycle 0047 row 216 (P2CXS-1, P2RT-2); seam=a publisher process killed past finalize (scripts/tests/utils/killedPublisherProbe.mjs), and a copy of the shipped publisher whose `node:fs/promises` fails the first look at the file the row names with the row's system error (scripts/tests/utils/markedCopyHooks.mjs, `?failing`), once; no_claim=a read that fails for good, which keeps the Wiki locked until the file can be read
   test(`a --recover whose read of ${read} fails with ${code} is refused by that code alone and keeps the journal and the files beside it, and the next --recover recovers the candidate, which then publishes with the learner’s file kept`, async () => {
     // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; the first look of the recovery at the row's file fails with the row's code.
     const { recoverWikiPublication: recoverWhoseReadFails } =
