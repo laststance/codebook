@@ -26,6 +26,7 @@ import {
 } from '../../skills/codebook/publish-wiki.mjs'
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
+import { failWriteOf } from './utils/failingFileSystem.mjs'
 import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
   swapBeforeMaking,
@@ -2326,8 +2327,9 @@ const markedCopies = new Map()
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
+ * - `?failing`: the write through a handle of the file a test names with {@link failWriteOf} stops partway with a system error (`failingFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
- * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids'} mark - The mark of its stand-in.
+ * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing'} mark - The mark of its stand-in.
  * @returns {Promise<Record<string, Function>>} The copy's exports.
  * @example
  * const { prepareWikiStage } = await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
@@ -3423,6 +3425,60 @@ test('a publish refused for a learner’s file that conflicts with a new page le
     )
   } finally {
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the next publish of a candidate after a publish whose copy of the learner's file stopped partway, as at a full disk or under a file size limit (`ulimit -f`); fails_when=writeOwnFile keeps no record of the file its 'wx' open made until the write succeeds, so the partial copy stays in the candidate and the next publish is refused for it as a file outside the manifest; why_new=Cycle 0047 row 20 (P3OCR2-2); seam=a copy of the shipped publisher whose `node:fs/promises` writes half of the learner's file into the candidate and then fails with EFBIG (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a page write that stops partway, whose file the manifest lists
+test('a publish whose copy of the learner’s file stops partway leaves no part of it in the candidate, and the candidate publishes when run again', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; the publish's copy of it into the candidate stops after half of its bytes.
+  const { publishWiki: publishWhoseCopyStops } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+    failWriteOf((path) => path === join(wiki.next, 'manual.txt'), 'EFBIG')
+
+    // Act: the failed publish, then the candidate published again.
+    const refusal = await publishWhoseCopyStops({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.code,
+    )
+    const copyInTheCandidate = await readFile(
+      join(wiki.next, 'manual.txt'),
+      'utf8',
+    ).catch(() => 'no copy')
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        copyInTheCandidate,
+        nextPublish,
+        manualFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+      },
+      {
+        refusal: 'EFBIG',
+        copyInTheCandidate: 'no copy',
+        nextPublish: { preservedManualFiles: 1 },
+        manualFile: 'The learner’s own notes',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
   }
 })
 

@@ -255,7 +255,7 @@ async function holdOfPath(paths, entries) {
   };
 }
 
-/** Whether a status and another status or the record of a written file ({@link writeOwnFile}), all with bigint ids, are of one file: the same device and file id. Called by {@link folderLookOf} and {@link removeWritten}. @example isSameFile(await stat(a, { bigint: true }), await stat(a, { bigint: true })) // => true */
+/** Whether a status and another status or the record of a written file ({@link writeOwnFile}), all with bigint ids, are of one file: the same device and file id. Called by {@link folderLookOf} and {@link isSameFileAt}. @example isSameFile(await stat(a, { bigint: true }), await stat(a, { bigint: true })) // => true */
 const isSameFile = (status, other) => status.dev === other.dev && status.ino === other.ino;
 
 /** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the publish first wrote there. Called by {@link publishWiki} and {@link prepareWikiStage} for the candidate, and by {@link restoreManifestHeld} for the Wiki folder, once each. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not, nor does any folder of a stage whose real path could not be named when the look was taken. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
@@ -278,29 +278,38 @@ async function makeFolderHeld(folder, requirePathHeld, isFolderWhereItWas) {
   return madeFolders;
 }
 
-/** Writes a file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing, so its partial file is not counted as the step's. Called by {@link writeFilesHeld}, {@link publishWiki} and {@link restoreManifestHeld} for each file they record. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText, 'wx') // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
+/** Whether the entry at a written file's path, looked at without following it, is a regular file with the device and file id the record names ({@link writeOwnFile}). Called by {@link removeWritten} and {@link writeOwnFile}. @example await isSameFileAt({ path: '/repo/.codebook/next/index.html', dev: 2049n, ino: 131074n }) // => false once a link stands at the path */
+const isSameFileAt = file => lstat(file.path, { bigint: true }).then(status => status.isFile() && isSameFile(status, file), () => false);
+
+/** Writes a file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing; a file its 'wx' open made holds part of the bytes at most then, and is removed by its device and file id before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). Called by {@link writeFilesHeld}, {@link publishWiki} and {@link restoreManifestHeld} for each file they record. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open or the write rejects with. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText, 'wx') // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
 async function writeOwnFile(path, bytes, flag) {
   const handle = await open(path, flag);
+  let file, isWritten = false;
   try {
-    await handle.writeFile(bytes);
     const { dev, ino } = await handle.stat({ bigint: true });
-    return { path, hash: digest(bytes), dev, ino };
-  } finally { await handle.close(); }
+    file = { path, hash: digest(bytes), dev, ino };
+    await handle.writeFile(bytes);
+    isWritten = true;
+    return file;
+  } finally {
+    await handle.close();
+    // A file this open made holds part of the bytes at most; the path may lead to another file by now, so it is removed only while it is the same file.
+    if (!isWritten && flag === 'wx' && file !== undefined && await isSameFileAt(file)) await unlink(path).catch(() => undefined);
+  }
 }
 
 /** Removes the files a refused step wrote that are still its own, last written first, then the folders it made, each empty ({@link removeMadeFolders}). A file is the step's own while its path names the file the step wrote, by its device and file id ({@link writeOwnFile}), and that file still holds the step's bytes, by their SHA-256 digest; a file whose bytes were edited since, that is gone, or that a link on its path now leads to in its place, such as a published file of the same name and bytes, stays as it is. Digests keep rollback evidence bounded per file without retaining image Buffers. Called by {@link writeFilesHeld} and {@link restoreManifestHeld} when a hold refuses, and by {@link publishWiki} for every refusal before its swap. @example await removeWritten([await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText, 'wx')], ['/repo/.codebook/next']) */
 async function removeWritten(written, folders) {
   for (const file of [...written].reverse()) {
-    const status = await lstat(file.path, { bigint: true }).catch(() => undefined);
     // Only the file the step wrote: through a folder swapped for a link, the path names another file.
-    if (status === undefined || !status.isFile() || !isSameFile(status, file)) continue;
+    if (!(await isSameFileAt(file))) continue;
     const current = await regularBytes(file.path, true).catch(() => undefined);
     if (current !== undefined && digest(current) === file.hash) await unlink(file.path).catch(() => undefined);
   }
   await removeMadeFolders(folders);
 }
 
-/** Writes the files of a step, each new, with the hold of its folder before and after it ({@link makeFolderHeld}); a refused hold removes what the step wrote that is still its own and the folders it made, with `madeBefore` after them ({@link removeWritten}). An asset read failure rolls back completed writes too, but keeps the initial empty stage as preparation did before lazy reads. Ordinary write errors keep their partial files. Called by {@link prepareWikiStage} for a new candidate's files. @example await writeFilesHeld([['/repo/.codebook/next/codebook-publication.json', receiptText]], requirePathHeld, isFolderWhereItWas, ['/repo/.codebook/next']) */
+/** Writes the files of a step, each new, with the hold of its folder before and after it ({@link makeFolderHeld}); a refused hold removes what the step wrote that is still its own and the folders it made, with `madeBefore` after them ({@link removeWritten}). An asset read failure rolls back completed writes too, but keeps the initial empty stage as preparation did before lazy reads. Ordinary write errors keep the files written before them; the failed write's own partial file is removed ({@link writeOwnFile}). Called by {@link prepareWikiStage} for a new candidate's files. @example await writeFilesHeld([['/repo/.codebook/next/codebook-publication.json', receiptText]], requirePathHeld, isFolderWhereItWas, ['/repo/.codebook/next']) */
 async function writeFilesHeld(files, requirePathHeld, isFolderWhereItWas, madeBefore) {
   const written = [], made = [];
   try {

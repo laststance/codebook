@@ -4,7 +4,8 @@
  * - `?swapped-folder`: `swappedFolderFileSystem.mjs`, which runs a test's swap of a folder just before a `mkdir` (`swapBeforeMaking`), a `writeFile` or an `open` to write (`swapBeforeWriting`) or a `readFile` (`swapBeforeReading`) of a path the test names;
  * - `?unnamed-real-path`: `unnamedRealPathFileSystem.mjs`, whose `realpath` fails for the folder a test names;
  * - `?crlf-shell`: `crlfShellFileSystem.mjs`, which reads the reader shell with CRLF line endings;
- * - `?large-file-ids`: `largeFileIdsFileSystem.mjs`, which gives the folder a test names file ids above 2^53 that change in their low bits (`giveLargeFileIds`).
+ * - `?large-file-ids`: `largeFileIdsFileSystem.mjs`, which gives the folder a test names file ids above 2^53 that change in their low bits (`giveLargeFileIds`);
+ * - `?failing`: `failingFileSystem.mjs`, whose write through a handle of the file a test names stops partway with a system error (`failWriteOf`).
  */
 const STAND_INS = {
   '?wrong-look': './wrongLookFileSystem.mjs',
@@ -12,6 +13,7 @@ const STAND_INS = {
   '?unnamed-real-path': './unnamedRealPathFileSystem.mjs',
   '?crlf-shell': './crlfShellFileSystem.mjs',
   '?large-file-ids': './largeFileIdsFileSystem.mjs',
+  '?failing': './failingFileSystem.mjs',
 }
 
 /**
