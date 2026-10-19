@@ -76,7 +76,7 @@ Decisions taken while they worked (owner away, recommended option each time):
 - Row 33: the Linux half (`hidepid=2`) is closed by evidence and a README limit; a rule that judged another user's process gone broke the deliberate test of Cycle 0046 (another user's process is a writer this computer cannot confirm).
 - Row 31: the throw out of the release's `finally` stays, as it reports an unreleased lock to the learner; the take-back on the next write ends the failed writes.
 - Row 2: the filter reads a page by Chrome's rules, by the older select rules and with scripting off, and a page with a select costs about twice an ordinary page (with a select and a noscript about four times); generated pages hold neither.
-- Row 4: the page file limit is 2 MiB and a page worker's heap 256 MB; the native round measures the real editor hosts.
+- Row 4: the page file limit is 2 MiB and a page worker's heap was 256 MB; row 107 returned the heap to 512 MB, as a page below 2 MiB stopped the whole process at 256 MB on a Node build without pointer compression; the native round measures the real editor hosts.
 
 The integrated product suite on `2bcbc816` (before rows 44, 45 and 54 to 57): 5307 tests, 5306 pass, 1 existing skip, 0 fail.
 
@@ -96,9 +96,13 @@ The full gate passed on `56d5629d` (product 5351 tests, 5348 pass and 3 skip; pa
 
 Row 107 is the weightiest: on plain Node 24.21.0 without pointer compression, the build a remote editor's extension host can run on, a 2,097,000-byte page of nested `<b>` stopped the whole process at row 4's heap limit of 256 MB ("Reached heap limit", exit 134) in 3 of 4 runs and ended as a refusal at 512 MB in 5 of 5; 29 crafted shapes end cleanly at 512 MB (refused, served or past the deadline). Decisions (owner away, recommended option): the heap limit returns to 512 MB with row 4's 2 MiB file limit kept, and a test holds it in a child process; repeatable `--gone-host` and `--gone-space` pairs, each naming the owner of the journal or of a claim in its chain (row 114); the Windows creation time read with its UTC offset (row 117); the journal records the learner files a publish copies, and the recovery removes only a recorded copy's part (row 118); the writer record goes only when the saved archive holds the recording sealed (row 124). This is the delivery's second fixing cycle; one review pass after it must find nothing, or the ship stops at its limit of three ([rule](../../DEVELOPMENT.md#standing-owner-direction)).
 
+### Fixing cycle 2 of the delivery (2026-10-19)
+
+Six fixers (R the page workers and the refusal page, F the filter's readings, P1 the publisher's owner gate, P2 the publisher's recovery, S the process starts, locks, recordings and the Study workspace, C the update marker) closed rows 107 to 129, 131 and 132 from `56d5629d`, each behavioral row with a test shown red on the unfixed code or on a mutant of its line; the parent integrated them by cherry-pick (no conflict) and ran each fixer's files again, and corrected the texts the fixes left behind (the README's sentences on the gone pairs, the unreadable marker and the six pages, the marker's and `systemErrorCode`'s docstrings). Decisions (owner away, recommended option): row 109 bounds an ending worker's place at 5 seconds and keeps at most as many lost threads as workers; row 112 records a computer's own host name outside the accepted form as a fixed stand-in, so such a computer can still recover its Wiki; row 128's partial close is not a defect (VS Code 1.140.0 and Cursor 3.23.12 close no tab on a refused group close); row 131's journal stage is answered only for the default name or the `--stage` passed, and a kept prior Wiki must have the publisher's `.previous-<UUID>` form. The row 107 test fails in about half of its runs at 256 MB, as the abort is not certain.
+
 ## Result and decision
 
-Result pending. Counts: 132 rows, 107 closed, 25 implementing (rows 107 to 129, 131 and 132, the findings of the delivery's second review pass).
+Result pending. Counts: 132 rows, 132 closed, 0 implementing; the third and last review pass of the delivery reads the candidate of fixing cycle 2.
 
 ## Handoff
 
