@@ -14464,3 +14464,20 @@ for (const volume of [
     }
   })
 }
+
+// Value: protects=the editor agent whose publish or preview is refused for the publish lock of another publish of the same Wiki; fails_when=the skill does not tell the agent to wait for that publish, or to run --recover once a stopped publish's process exits, or lets it delete the lock by hand, so the agent ends a publish that still runs or leaves the Wiki locked; why_new=Cycle 0047 row 172 (S2CXA-A1: a publish and a preview take the publish lock); seam=none; no_claim=what the agent does with the answer
+test('the bundled skill tells the agent to wait for the publish that holds the Wiki’s publish lock, to run --recover once a stopped one’s process exits, and never to delete the lock', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      "A publish or a `--render-only` run beside another publish of the same Wiki (another agent or another editor window) is refused before it writes anything, with a sentence that names the Wiki's publish lock (`<output>.publish-lock.json`): wait until that publish ends, then run the command again. If that publish was stopped, run `--recover --project <root> --output <output>` once its process exits; the recovery ends the lock with the same checks as a journal, the `--gone-host` and `--gone-space` pairs above included, and its result is `publish-lock-removed`. Never delete or rewrite the lock, a journal or the files the publisher keeps beside them.",
+    ),
+    true,
+  )
+})
