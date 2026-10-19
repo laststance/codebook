@@ -181,7 +181,7 @@ async function makeStorageFolder(directory: string): Promise<void> {
  * @param directory - The private storage directory; it is created when absent.
  * @param operation - The write to run while the lock is held.
  * @param identity - The machine and the boot this process records in the lock and judges a present lock by; {@link currentStorageOwner} unless a test names its own.
- * @param holderStarts - The process starts a caller that asks for the lock again keeps for all its tries of one write, by process id ({@link withCatalogLockRetry}), so that a present lock's live writer is read once for them, not at every try; a kept start only confirms that writer alive ({@link removeStaleStorageLock}). A new one for each hold when left out.
+ * @param holderStarts - The process starts a caller that asks for the lock again keeps for all its tries of one write, by process id ({@link withCatalogLock}), so that a present lock's live writer is read once for them, not at every try, also one whose start cannot be read; a kept answer only keeps that writer running ({@link removeStaleStorageLock}). A new one for each hold when left out.
  * @returns What `operation` returned, after the lock is released.
  * @throws
  * - "Learning storage is not a regular directory: <path>. …" when the directory's path holds a link or something that is no folder ({@link makeStorageFolder}); nothing was written

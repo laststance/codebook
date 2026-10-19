@@ -37,10 +37,12 @@ export type ProcessStartInputs = ProcessStartFormInputs & {
   readFile?: (path: string) => Promise<string>
   /** Runs `ps` (macOS) or PowerShell (Windows) without a shell and answers what it printed; it rejects when the query fails, runs too long or prints too much. {@link runBoundedQuery} unless a test names its own. */
   run?: BoundedQueryRunner
-  /** The starts one sweep has read so far, by process id; the caller owns it and drops it with its sweep. A kept start is answered only when it equals `expectedStart`. */
+  /** The starts one sweep has read so far, by process id; the caller owns it and drops it with its sweep. A kept start is answered only when it equals `expectedStart`, and a kept read that found no start only with `keepsUnreadable`. */
   cache?: Map<number, Promise<string | undefined>>
   /** The start a record names for this process id, which a start kept in `cache` may confirm. */
   expectedStart?: string
+  /** Whether a read kept in `cache` that found no start is answered again (no start) instead of a read now: for a caller that counts a process whose start cannot be read as running at every look anyway, as the takeover of a storage lock does through the tries of one write ({@link removeStaleStorageLock}). */
+  keepsUnreadable?: boolean
   /** Where this process's own start is kept; the one of this module unless a test names its own. */
   ownStart?: OwnProcessStart
   /** A clock that no correction of the wall clock moves (milliseconds), by which a failed read of this process's own start is read again. */
@@ -400,20 +402,28 @@ function readOwnProcessStart(
 
 /**
  * Reads another process's start for a caller that may keep the starts of its sweep; called by {@link readProcessStart} for every process id but this process's own.
- * A kept start may only confirm that the process is the recorded one: it is answered when it equals `expectedStart`. Every other start is read now and kept, so a process id that was given to another process between two looks is never judged by the earlier process's start. A caller without a cache keeps nothing.
+ * A kept start that equals `expectedStart` is answered: it confirms the recorded process. Every other start is read now and kept, so a start that differs from the record, which calls its owner gone, is always one read at this look. A kept answer can therefore only keep an owner running: a process id that went to another process after its read is taken for the recorded process until the caller drops its cache (the safe direction: what the record holds stays). With `keepsUnreadable`, a kept read that found no start is answered too, since the caller counts that process as running anyway. A caller without a cache keeps nothing.
  * @param pid - A positive safe integer.
- * @param inputs - The cache, the expected start, the platform, the file read and the runner of {@link ProcessStartInputs}.
- * @returns The kept start when it equals the expected one, else the start the system names now.
+ * @param inputs - The cache, the expected start, `keepsUnreadable`, the platform, the file read and the runner of {@link ProcessStartInputs}.
+ * @returns The kept start when it equals the expected one; no start when the kept read found none and the caller keeps such a read; else the start the system names now.
  * @example
- * await readThroughCache(4242, { cache, expectedStart: 'linux@4026531836:16362446' }) // => 'linux@4026531836:16362446'
+ * await readThroughCache(4242, { cache, expectedStart: 'linux@4026531836:16362446' })                          // => 'linux@4026531836:16362446'
+ * await readThroughCache(4242, { cache, expectedStart: 'linux@4026531836:16362446', keepsUnreadable: true }) // => undefined, not read again, after a read of it failed
  */
 async function readThroughCache(
   pid: number,
   inputs: ProcessStartInputs,
 ): Promise<string | undefined> {
   const cache = inputs.cache ?? new Map<number, Promise<string | undefined>>()
-  const keptStart = await cache.get(pid)
-  if (keptStart !== undefined && keptStart === inputs.expectedStart)
+  const kept = cache.get(pid)
+  const keptStart = await kept
+  // A kept start confirms the recorded process; a kept read without a start answers again only for a caller that counts it as running anyway.
+  if (
+    kept !== undefined &&
+    (keptStart === undefined
+      ? inputs.keepsUnreadable === true
+      : keptStart === inputs.expectedStart)
+  )
     return keptStart
   const liveStart = queryProcessStart(pid, inputs)
   cache.set(pid, liveStart)
@@ -425,7 +435,7 @@ async function readThroughCache(
  *
  * Linux reads field 22 of `/proc/<pid>/stat` and names it with the pid namespace it was read in ({@link processStartFormHere}); macOS asks `/bin/ps -o lstart=` in the C locale and UTC; Windows asks PowerShell, started by its full path under the system root, for the creation time in UTC, and, where this user may not read it, for the creation time the process table names, to the microsecond, in WMI's text with its offset from UTC, by which it is converted to UTC, and which confirms a recorded start of the same microsecond. A query is bounded by {@link PROCESS_START_QUERY_TIMEOUT_MS}, or by the time its caller names, and by {@link PROCESS_START_QUERY_MAX_BYTES}.
  * A read of `process.pid` answers this process's own start, which is kept once the system has answered it and is not asked for again; a read that failed is kept for {@link PROCESS_START_RETRY_AFTER_FAILURE_MS} and then made again, as often as it fails ({@link readOwnProcessStart}).
- * With a `cache`, a kept start may only confirm that the process is the recorded one: it is answered when it equals `expectedStart`. Every other start is read now, so a process id that was given to another process between two looks is never judged by the earlier process's start ({@link readThroughCache}).
+ * With a `cache`, a kept start is answered when it equals `expectedStart`, and with `keepsUnreadable` a kept read that found no start: a kept answer only keeps the recorded process running, also after its process id went to another process, until the caller drops the cache. Every other start is read now, so an owner is never called gone by a start of an earlier look ({@link readThroughCache}).
  *
  * @param pid - The process id a record names. One that is not a positive safe integer reaches neither a path nor a command line.
  * @param inputs - The platform, the file read, the read of the namespace link, the runner, the query's time bound, the environment that names the Windows system root and a caller's cache; the real ones when left out.

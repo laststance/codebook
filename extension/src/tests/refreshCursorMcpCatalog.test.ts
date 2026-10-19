@@ -496,6 +496,81 @@ test('a Cursor MCP setup takes over the catalog lock of a window that was killed
   )
 })
 
+// Value: protects=Cursor chat setup in a window that finds the catalog's lock held by another live window whose start this window cannot read (a PowerShell that fails or runs into its 3 s bound on Windows, a /bin/ps that fails on macOS); fails_when=the tries keep only a start that confirms the holder, so an unreadable start, which counts as a running holder at every try anyway, is asked for again at each of them, and one setup starts 21 process-start queries and reports the lock after up to a minute on Windows (Cycle 0047 row 125, P2PERF-1); why_new=Cycle 0047 row 125 (P2PERF-1 = ADV2-4); seam=node:timers/promises setTimeout of the loaded catalog, which counts the pauses instead of waiting, and the process-start reader of a loaded takeover under a loaded storage lock, whose file read and query fail as an unreadable start does and count each attempt; no_claim=the time of a real PowerShell, and a holder whose process id goes to another process between the tries (it is answered as running until the call ends)
+test('a Cursor MCP setup that finds the catalog locked by another live window whose start cannot be read asks for that start once through all twenty retries', async (context) => {
+  // Arrange: a running process holds the catalog's lock, recorded with its real start; every read of a process start fails and is counted by the process it asks about; the pauses are counted, not waited.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const storageRoot = join(directory, 'storage'),
+    lockDirectory = join(storageRoot, 'cursor-mcp-catalog')
+  await mkdir(lockDirectory, { recursive: true })
+  const holder = await idleChild(context)
+  const holderPid = holder.pid!
+  const lockOfTheHolder = JSON.stringify({
+    pid: holderPid,
+    hostname: hostname(),
+    processStart: await realProcessStart(holderPid),
+  })
+  await writeFile(join(lockDirectory, 'writer.lock'), lockOfTheHolder)
+  const startQueries: number[] = []
+  let pauses = 0
+  // Fails as the system's own file read (Linux) or query (macOS, Windows) fails for a start that cannot be read, and counts each attempt.
+  const failingReadProcessStart: ProcessStartReader = (pid, inputs) =>
+    readProcessStart(pid, {
+      ...inputs,
+      readFile: async () => {
+        startQueries.push(pid)
+        throw new Error('EACCES: permission denied')
+      },
+      run: async () => {
+        startQueries.push(pid)
+        throw new Error('Command failed: the query ran into its time bound')
+      },
+    })
+  const takeover = await loadModule<typeof TakeoverModule>(
+    resolve(__dirname, '../utils/removeStaleStorageLock.js'),
+    { './readProcessStart': { readProcessStart: failingReadProcessStart } },
+  )
+  const storageLock = await loadModule<typeof LockModule>(
+    resolve(__dirname, '../utils/withStorageLock.js'),
+    { './removeStaleStorageLock': takeover },
+  )
+  const catalog = await loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      './withStorageLock': storageLock,
+      'node:timers/promises': {
+        setTimeout: async () => {
+          pauses += 1
+        },
+      },
+    },
+    // The catalog tells the lock's refusal by its class and a missing file by `instanceof Error`; these errors belong to this realm.
+    { Error },
+  )
+
+  // Act
+  const refusal = await answerOrRefusalOf(
+    catalog.refreshCursorMcpCatalog(storageRoot, directory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusal,
+      pauses,
+      startQueries,
+      lock: await readFile(join(lockDirectory, 'writer.lock'), 'utf8'),
+    },
+    {
+      refusal: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(lockDirectory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
+      pauses: 20,
+      startQueries: [holderPid],
+      lock: lockOfTheHolder,
+    },
+  )
+})
+
 test('Cursor MCP discovery refresh refuses redirected config files', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
