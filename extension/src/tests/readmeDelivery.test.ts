@@ -33,6 +33,7 @@ import {
   WIKI_PAGE_WAITING_LIMIT,
   WIKI_PAGE_WORKER_CONCURRENCY_LIMIT,
   WIKI_PAGE_WORKER_HEAP_LIMIT_MB,
+  WIKI_RESPONSE_SEND_LIMIT_MS,
   WIKI_UPDATE_MARKER_CHANGE_RETRIES,
   WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
@@ -1057,7 +1058,7 @@ test('the packaged README says, where it names the Wiki folder, that an untruste
   assert.equal(saysIt, true)
 })
 
-// Value: protects=a learner whose Wiki page shows a dead link, a short page "Page not shown" or a refusal, reading under "LLM Wiki: open and update" what the reader makes inert and what it refuses, with the sentences and the numbers the product keeps; fails_when=the README's section loses the address filter, the page workers' limits (two at a time, four waiting, 30 seconds of waiting, 10 seconds, 512 MB, 2 MiB), one of the five sentences of the refusal page, the refusal of a page asked for as a part of a page or of a file that is no regular file, or quotes a sentence or a number the product no longer prints or keeps; why_new=Cycle 0047 row 50 (D14.5-2): only the change history described them, with the limits of before Cycle 0047 rows 3, 4 and 19; Cycle 0047 row 104 the sentence of a page that needs more memory; Cycle 0047 row 107 (ADV2-1) the heap limit of 512 MB again; Cycle 0047 row 132 (RT2-2) the sentence of a page too large names an earlier Codebook beside a hand edit; Cycle 0047 row 189 (D7) a page that waited 30 seconds for a worker is answered busy too; seam=none
+// Value: protects=a learner whose Wiki page shows a dead link, a short page "Page not shown" or a refusal, reading under "LLM Wiki: open and update" what the reader makes inert and what it refuses, with the sentences and the numbers the product keeps; fails_when=the README's section loses the address filter, the page workers' limits (two at a time, four waiting, 30 seconds of waiting, 10 seconds, 512 MB, 2 MiB), the send limit of 30 seconds, one of the five sentences of the refusal page, the refusal of a page asked for as a part of a page or of a file that is no regular file, or quotes a sentence or a number the product no longer prints or keeps; why_new=Cycle 0047 row 50 (D14.5-2): only the change history described them, with the limits of before Cycle 0047 rows 3, 4 and 19; Cycle 0047 row 104 the sentence of a page that needs more memory; Cycle 0047 row 107 (ADV2-1) the heap limit of 512 MB again; Cycle 0047 row 132 (RT2-2) the sentence of a page too large names an earlier Codebook beside a hand edit; Cycle 0047 row 189 (D7) a page that waited 30 seconds for a worker is answered busy too; Cycle 0047 row 188 (S2CXA-B1) a page holds its place until its answer is sent, and an answer not received within 30 seconds is ended; seam=none
 test('the packaged README says under LLM Wiki what the reader makes inert in a served page and which pages and files it refuses, with the refusal page’s sentences and the limits of its page workers', async () => {
   // Arrange
   const readme = await readPackagedReadme()
@@ -1079,7 +1080,7 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
   // Act: the section's three paragraphs and five items, each whole, and what the product prints and keeps for them.
   const delivered = heldSentences(section, [
     "Before it serves a page, the reader reads the page's tags as a browser reads them and makes inert each address that is no relative path, `#fragment`, `http`, `https` or `mailto` address and not Codebook's own (an editor address that opens a file or calls another extension, `javascript:`, `data:`, `file:`): the attribute's name becomes `data-codebook-unlinked`, so the element and its text stay and a browser follows nothing. A refresh (`<meta http-equiv=\"refresh\">`), a frame's own page (`srcdoc`) and an svg animation of an address are made inert the same way. This holds for a page of any age, also one that a cloned repository carries or one written by hand into the Wiki folder. Codebook's own addresses get the scheme of the editor that serves the page.",
-    "The reader prepares each page in a worker thread, so the editor goes on working while a page is read: at most two pages at a time, each within 10 seconds and 512 MB of heap, and at most six pages are prepared or wait for a worker at once (a worker that is still ending lets one more page wait). A page it does not prepare is answered with status 503 by a short page, `Page not shown`, with one sentence and a link to the Wiki's overview (the overview's own has no such link):",
+    "The reader prepares each page in a worker thread, so the editor goes on working while a page is read: at most two pages at a time, each within 10 seconds and 512 MB of heap, and at most six pages are read, prepared, waiting for a worker or being sent at once (a worker that is still ending lets one more page wait). An answer of the reader that the browser has not received within 30 seconds is ended, so a browser that stops reading holds a page in the editor, or a file of the Wiki open, for 30 seconds at most. A page it does not prepare is answered with status 503 by a short page, `Page not shown`, with one sentence and a link to the Wiki's overview (the overview's own has no such link):",
     `- \`${tooLarge}\` for a page file larger than 2 MiB, which is not read; the publisher of this build writes no such page, but one of 0.2.30.0 or earlier could.`,
     `- \`${needsMoreMemory}\` for a page whose preparation needs more than the 512 MB of heap.`,
     `- \`${pastTheDeadline}\` for a page whose preparation passes the 10 seconds.`,
@@ -1136,6 +1137,7 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
   assert.equal(WIKI_PAGE_WAIT_LIMIT_MS, 30_000)
   assert.equal(WIKI_PAGE_SERVE_DEADLINE_MS, 10_000)
   assert.equal(WIKI_PAGE_WORKER_HEAP_LIMIT_MB, 512)
+  assert.equal(WIKI_RESPONSE_SEND_LIMIT_MS, 30_000)
   assert.equal(WIKI_PAGE_FILE_LIMIT_BYTES, 2_097_152)
   assert.deepEqual(WIKI_PAGE_NAVIGATION_DESTINATIONS, ['document', 'iframe'])
 })
