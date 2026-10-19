@@ -5232,7 +5232,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.afterDeadlineReason())
     this.track(this.observeAfter(continuation))
   }
-  /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, waits until no participant is still paused at a pause the adapter made for itself, and reads the conditions once more after the after image, failing the run when they no longer hold. @example await this.observeAfter(continuation) */
+  /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, waits until no participant is still paused at a pause the adapter made for itself, and reads the conditions once more after the after image, failing the run when they no longer hold; the run completes with the save of its final events and run record, and fails when that save fails. @example await this.observeAfter(continuation) */
   private async observeAfter(continuation: Continuation): Promise<void> {
     const current = (): void => {
       this.alive()
@@ -5298,7 +5298,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       pause: continuation.pause,
       actionId: REPOSITORY_BROWSER_ACTION,
     })
-    await this.persist()
+    try {
+      await this.persist()
+    } catch (error) {
+      // The final save belongs to the completion: a run whose final events or record were not saved (a failed write, the event limit passed by this last event) fails with it, so its journal ends with `run.failed` and its recording is sealed partial (Cycle 0047 row 197). A failure that reaches the run after this save leaves it completed (row 41).
+      if (this.status === 'completed') this.enterFailure(String(error))
+    }
   }
 
   /** Evaluates owned DOM data only after origin verification; invalid selectors/conditions never dispatch input. @example await this.readDom('before') */
@@ -5704,6 +5709,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.status === 'completed'
     )
       return
+    this.enterFailure(reason)
+  }
+  /**
+   * Fails the run: records the reason, revokes every completion token, journals `run.failed` and schedules the cleanup; the body of {@link fail} for a run that may still fail, and called by {@link observeAfter} for a completed run whose final save failed, which {@link fail} leaves completed (Cycle 0047 row 197).
+   * @param reason - The failure, as the run's failures and its journal name it.
+   * @example this.enterFailure('Error: ENOSPC: no space left on device, write')
+   */
+  private enterFailure(reason: string): void {
     this.failures.push(reason)
     this.status = 'failed'
     this.continuation = undefined

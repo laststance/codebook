@@ -584,3 +584,123 @@ for (const differentPixels of [false, true])
     assert.equal(record.recordingReceipt?.status, 'saved')
     assert.equal(harness.mouse.length, 2)
   })
+
+// Value: protects=the end of the recording of a run that completed but whose final save of its events and run record failed: the run fails with that save's error, its journal ends with `run.failed`, and its recording is sealed partial, so the saved study does not claim a complete, demonstrated run whose last evidence is missing; fails_when=the failure of the save that follows the completion reaches `fail()` after the run's state became completed and is ignored there as a late failure (row 41), so nothing records it and the recording is sealed complete (Cycle 0047 row 197); why_new=Cycle 0047 row 197 (S2CXA-C2-3): row 41's tests fail the run only after its final save; seam=the run evidence's save of runtime.json, which fails once, at the save that follows the completion; no_claim=an overflow of the event limit at the completion, which ends in the same failed save
+test('a completed run whose final save fails records the failure and seals its recording partial', async (context) => {
+  // Arrange: a recorded run of the real coordinator; the save of its run record that follows its completion fails once.
+  let service: StudyService | undefined, books: RepositoryBookStore | undefined
+  context.after(async () => {
+    await service?.shutdown()
+    books?.dispose()
+  })
+  const harness = await configuredRuntimeHarness(context),
+    directory = join(harness.directory, '.learning')
+  const library = new LearningLibrary(directory, '0'.repeat(64)),
+    store = new RecordingStore(directory, library.workspaceKey)
+  books = new RepositoryBookStore(harness.sources, library)
+  await books.publish({
+    bookId: 'interface',
+    expectedRevision: 0,
+    key: 'article',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: harness.definition.descriptor.anchors,
+          observations: [],
+        },
+      ],
+      edges: [],
+    },
+  })
+  service = new StudyService(
+    {
+      workspace: harness.directory,
+      host: {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+      },
+      build: {
+        revision: 'controlled-runtime',
+        dirty: false,
+        sourceHash: '0'.repeat(64),
+      },
+      prerequisites: async () => ({ ready: true, missing: [] }),
+      createRuntime: async () => harness.run,
+    },
+    join(harness.directory, '.service'),
+  )
+  service.repository = books
+  service.recordings = store
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'final-save-fails',
+    configuration: harness.definition.configuration,
+  })
+  const record = service.record(receipt)
+  harness.observeRecording(() => createRecordingObserver(record))
+  await record.preparation
+  const evidence = harness.run.evidence,
+    save = evidence.save.bind(evidence)
+  let hasFinalSaveFailed = false
+  context.mock.method(
+    evidence,
+    'save',
+    async (...input: Parameters<typeof evidence.save>) => {
+      // Only the save that follows the completion fails; the release saves the run record again.
+      if (harness.run.view().status === 'completed' && !hasFinalSaveFailed) {
+        hasFinalSaveFailed = true
+        throw new Error('ENOSPC: no space left on device, write')
+      }
+      return save(...input)
+    },
+  )
+  service.action({ ...receipt, key: 'click-once', action: 'repository-click' })
+  const snapshot = await waitUntil(
+    () => harness.run.view().snapshots[0],
+    'configured recorded pause',
+  )
+
+  // Act: the run continues to its completion, whose final save fails, and is released.
+  await service.continue({
+    ...receipt,
+    participant: 'browser',
+    ...snapshot.pause,
+  })
+  await waitUntil(() => hasFinalSaveFailed, 'the final save of the run')
+  await service.stop(receipt)
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: harness.run.view().status,
+      failures: [...harness.run.view().failures],
+      journaledFailures: harness.run.evidence.events
+        .filter((event) => event.type === 'run.failed')
+        .map((event) => event.detail),
+      recordingSeal: {
+        status: record.recordingSeal?.status,
+        reason: record.recordingSeal?.reason,
+      },
+    },
+    {
+      status: 'failed',
+      failures: ['Error: ENOSPC: no space left on device, write'],
+      journaledFailures: [
+        { reason: 'Error: ENOSPC: no space left on device, write' },
+      ],
+      recordingSeal: {
+        status: 'partial',
+        reason:
+          'Runtime interrupted or cleanup incomplete; recorded prefix retained.',
+      },
+    },
+  )
+})
