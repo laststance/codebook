@@ -8211,9 +8211,9 @@ for (const kill of [
   })
 }
 
-// Value: protects=the next publish of a candidate after a publish killed just before it moved its list of copies, with the copy of the learner's file named, into place beside its journal; fails_when=the recovery leaves the file in the candidate through which the publish was putting that list in place, so the next publish is refused for it as a file outside its manifest; why_new=Cycle 0047 row 118 (CXA2-2: the journal names each copy before it begins, through a file in the candidate), whose list moved beside the journal by row 135 (P3OCR1-1); seam=a publisher process killed just before that move (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a kill after the move and before the copy's file is made, which leaves no file in the candidate
-test('a publish killed just before it moved its list of copies that names the copy of the learner’s file into place is recovered without the file it wrote for that, and the candidate then publishes with the learner’s file kept', async () => {
-  // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed just before it moves the list of copies that names the copy of that file into place.
+// Value: protects=the next publish of a candidate after a publish killed while it appended the line of its list of copies that names the copy of the learner's file, before that copy began; fails_when=the recovery reads the list's cut line as a whole one, or refuses the list for it, so it takes the learner's file at the copy's place for a copy or leaves the journal, or the list is no list of lines and the recovery reads none of it; why_new=Cycle 0047 row 175 (S2PERF-1 = S2CLA-4: the list of copies is appended to, one line for each copy, in place of row 135's list written again whole through a file in the candidate before each copy, which this test's kill before that move pinned); seam=a publisher process killed halfway through that line (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a kill after the line and before the copy's file is made, which leaves no file in the candidate
+test('a publish killed halfway through the line of its list of copies that names the copy of the learner’s file is recovered with no copy of that file, and the candidate then publishes with the learner’s file kept', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed halfway through the line of its list of copies that names the copy of that file.
   const wiki = await publishedWikiWithACandidate()
   try {
     await writeFile(
@@ -8229,15 +8229,19 @@ test('a publish killed just before it moved its list of copies that names the co
       },
       killAt: [
         {
-          call: 'renaming',
-          folder: wiki.next,
-          name: '^\\.codebook-publish-.*-publish-copies\\.json$',
+          call: 'writing-halfway',
+          folder: dirname(wiki.output),
+          name: '^wiki\\.publish-journal\\.json\\.copies-',
         },
       ],
     })
-    const filesLeftByTheKill = (await readdir(wiki.next)).filter((name) =>
-      name.endsWith('-publish-copies.json'),
-    ).length
+    const listName = (await readdir(dirname(wiki.output))).find((name) =>
+      name.startsWith('wiki.publish-journal.json.copies-'),
+    )
+    const listLeftByTheKill = await readFile(
+      join(dirname(wiki.output), String(listName)),
+      'utf8',
+    ).catch(() => 'no list')
 
     // Act: the recovery, then the candidate published again.
     // The recovery is given again, with --stage, the candidate the agent prepared by a name of its own.
@@ -8249,6 +8253,7 @@ test('a publish killed just before it moved its list of copies that names the co
       ({ status }) => status,
       (error) => error.message,
     )
+    const copyInTheCandidate = existsSync(join(wiki.next, 'manual.txt'))
     const nextPublish = await publishWiki({
       projectRoot: wiki.root,
       outputDirectory: wiki.output,
@@ -8262,15 +8267,17 @@ test('a publish killed just before it moved its list of copies that names the co
     assert.deepEqual(
       {
         killed,
-        filesLeftByTheKill,
+        listLeftByTheKill,
         recovery,
+        copyInTheCandidate,
         nextPublish,
         learnerFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
       },
       {
         killed: '',
-        filesLeftByTheKill: 1,
+        listLeftByTheKill: '"manua',
         recovery: 'published-or-restored',
+        copyInTheCandidate: false,
         nextPublish: { preservedManualFiles: 1 },
         learnerFile: 'The learner kept these notes',
       },
@@ -12269,27 +12276,25 @@ for (const list of [
 for (const failure of [
   {
     names: 'its write stops partway, as at a full disk',
-    arrange: (isUpdate) => failWriteOf(isUpdate, 'ENOSPC'),
+    arrange: (isList) => failWriteOf(isList, 'ENOSPC'),
     code: 'ENOSPC',
   },
   {
-    names: 'its move into place fails, as across volumes',
-    arrange: (isUpdate) => failRenameOf(isUpdate, ['EXDEV']),
-    code: 'EXDEV',
+    names: 'its close fails, as on a network share at a full disk',
+    arrange: (isList) => failCloseOf(isList, 'ENOSPC'),
+    code: 'ENOSPC',
   },
 ]) {
-  // Value: protects=the next publish of a candidate after a publish whose update of its list of copies, before the copy of the learner's file, failed; fails_when=the file in the candidate through which the update goes is kept after the failed write or move, or the journal is kept, so the next publish is refused for that file as one outside its manifest, or for the journal; why_new=Cycle 0047 row 156 (P3TEST-5: the failed update of row 118's record of the copies was untested); seam=a copy of the shipped publisher whose `node:fs/promises` fails that write or that move (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a kill during the update, which the killed-publish test of the move covers
-  test(`a publish whose update of its list of copies, before the copy of the learner’s file, fails (${failure.names}) is refused, leaves no file of that update in the candidate and no journal, and the candidate then publishes with the learner’s file kept`, async () => {
-    // Arrange: the published Wiki holds a file of the learner's; the update of the list that names its copy fails as the row says.
-    const { publishWiki: publishWhoseUpdateFails } = await loadMarkedCopy(
+  // Value: protects=the next publish of a candidate after a publish whose list of copies, which names the copy of the learner's file, failed; fails_when=the list or the journal is kept after the failed write or close, or a file of the update is left in the candidate, so the next publish is refused for the journal or for that file as one outside its manifest; why_new=Cycle 0047 row 156 (P3TEST-5: the failed update of row 118's record of the copies was untested), whose list is appended to beside the journal since row 175 (S2PERF-1 = S2CLA-4), so its write and its close fail where a move did before; seam=a copy of the shipped publisher whose `node:fs/promises` fails that write or that close (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a kill during the update, which the killed-publish test of the line cut short covers
+  test(`a publish whose list of copies, which names the copy of the learner’s file, fails (${failure.names}) is refused, leaves no copy in the candidate and no list or journal beside the Wiki, and the candidate then publishes with the learner’s file kept`, async () => {
+    // Arrange: the published Wiki holds a file of the learner's; the list of copies that names its copy fails as the row says.
+    const { publishWiki: publishWhoseListFails } = await loadMarkedCopy(
       'publish-wiki.mjs',
       '?failing',
     )
     const wiki = await publishedWikiWithACandidate()
-    const stopFailing = failure.arrange(
-      (path) =>
-        dirname(path) === wiki.next &&
-        /^\.codebook-publish-.*-publish-copies\.json$/.test(basename(path)),
+    const stopFailing = failure.arrange((path) =>
+      path.startsWith(`${wiki.output}.publish-journal.json.copies-`),
     )
     try {
       await writeFile(
@@ -12298,7 +12303,7 @@ for (const failure of [
       )
 
       // Act: the failed publish, then the candidate published again.
-      const refusal = await publishWhoseUpdateFails({
+      const refusal = await publishWhoseListFails({
         projectRoot: wiki.root,
         outputDirectory: wiki.output,
         stageDirectory: wiki.next,
@@ -12306,8 +12311,9 @@ for (const failure of [
         () => 'published',
         (error) => error.code,
       )
-      const leftInTheCandidate = (await readdir(wiki.next)).filter((name) =>
-        name.startsWith('.codebook-publish-'),
+      const leftInTheCandidate = (await readdir(wiki.next)).filter(
+        (name) =>
+          name === 'manual.txt' || name.startsWith('.codebook-publish-'),
       )
       const leftBesideTheWiki = (await readdir(dirname(wiki.output))).filter(
         (name) => name.startsWith('wiki.publish-journal'),
@@ -13988,4 +13994,29 @@ test('a --recover beside a journal without a byte that has stood a minute ends i
     )
     await rm(root, { recursive: true, force: true })
   }
+})
+
+// Value: protects=the time and the disk wear of a publish beside a Wiki with many of the learner's files; fails_when=the publish names each copy by writing its whole list of copies again, so its writes grow with the square of the number of the learner's files (about 400 KB for 200 copies); why_new=Cycle 0047 row 175 (S2PERF-1 = S2CLA-4: row 135's 21 files stayed under the bound with the quadratic list); seam=a copy of the shipped publisher whose `node:fs/promises` tells the test each write (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=the time the writes take, and the renames a list written whole needs, each retried on Windows
+test('a publish beside a Wiki with two hundred more of the learner’s files writes, for each, its copy and at most 1 KiB more', async () => {
+  // Arrange: the same candidate beside a Wiki with 1 file of the learner's and beside one with 201.
+  const learnerFileBytes = 32
+
+  // Act
+  const besideOne = await bytesWrittenByAPublishBeside(1)
+  const besideTwoHundredOne = await bytesWrittenByAPublishBeside(201)
+
+  // Assert
+  assert.deepEqual(
+    {
+      kept: [
+        besideOne.preservedManualFiles,
+        besideTwoHundredOne.preservedManualFiles,
+      ],
+      isWithinTheBound:
+        besideTwoHundredOne.written - besideOne.written <=
+        200 * (learnerFileBytes + 1024),
+    },
+    { kept: [1, 201], isWithinTheBound: true },
+    `the publish beside 201 files wrote ${besideTwoHundredOne.written - besideOne.written} bytes more than the one beside 1`,
+  )
 })
