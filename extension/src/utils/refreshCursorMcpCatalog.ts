@@ -890,7 +890,7 @@ async function recoverRemoval(
 /**
  * Holds the catalog's storage lock for one write, and waits for other active Cursor windows' catalog writers, also one that is taking a stale lock over; called by {@link refreshCursorMcpCatalog}, {@link captureOwnedCursorMcpCatalogGeneration} and {@link removeOwnedCursorMcpCatalog} for their write under that lock. The retries displace no lock themselves: {@link withStorageLock} takes over a lock whose writer process is gone from this machine, and any other lock that stays through the retries is reported. Only the lock's own refusal ({@link StorageLockHeldError}) is waited for, never any failure with an `EEXIST` under it.
  * Cursor windows that restart together all refresh the catalog at once. Each pause is {@link CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS} plus a random draw below {@link CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS}, so the windows do not ask again in step, and {@link CURSOR_MCP_CATALOG_LOCK_RETRIES} tries leave room for dozens of them.
- * The tries share one cache of process starts, which this call owns and hands to {@link withStorageLock} at each try: the start of a live window that holds the lock is read once for all of them (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows, a `/bin/ps` on macOS), not at each try, so the retries take the pauses' one to three seconds and one read for each holder; a start that cannot be read is read once too, since it counts as a running holder at every try anyway ({@link removeStaleStorageLock}). A kept answer only keeps its holder running: a holder whose process ended is still taken over at the next try, since no process has its id then; one whose process id went to another process between the tries is answered as the live holder until this call ends, and its lock is reported (the safe direction; the next call reads that start again).
+ * The tries share one cache of process starts, and one memory of this window's own leftover lock whose take-back was found kept, which this call owns and hands to {@link withStorageLock} at each try: a leftover that stays unreadable is tried once for all the tries, not at each try (each such try spends the release's attempts, about half a second; Cycle 0047 row 199), and the start of a live window that holds the lock is read once for all of them (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows, a `/bin/ps` on macOS), not at each try, so the retries take the pauses' one to three seconds, one read for each holder and at most one such take-back; a start that cannot be read is read once too, since it counts as a running holder at every try anyway ({@link removeStaleStorageLock}). A kept answer only keeps its holder running: a holder whose process ended is still taken over at the next try, since no process has its id then; one whose process id went to another process between the tries is answered as the live holder until this call ends, and its lock is reported (the safe direction; the next call reads that start again).
  * @param storageDirectory - The catalog's private storage directory, whose `writer.lock` each try holds.
  * @param operation - The write to run while the lock is held.
  * @returns What the write returned at the first try that got the lock.
@@ -901,7 +901,8 @@ async function withCatalogLock<Result>(
   storageDirectory: string,
   operation: () => Promise<Result>,
 ): Promise<Result> {
-  const holderStarts = new Map<number, Promise<string | undefined>>()
+  const holderStarts = new Map<number, Promise<string | undefined>>(),
+    keptTakeBacks = new Set<string>()
   for (let retry = 0; ; retry += 1) {
     try {
       return await withStorageLock(
@@ -909,6 +910,7 @@ async function withCatalogLock<Result>(
         operation,
         undefined,
         holderStarts,
+        keptTakeBacks,
       )
     } catch (error) {
       if (

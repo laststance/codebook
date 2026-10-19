@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import fsPromises, {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -9,6 +10,7 @@ import fsPromises, {
   rename,
   rm,
   symlink,
+  truncate,
   unlink,
   utimes,
   writeFile,
@@ -17,12 +19,14 @@ import os, { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
 
+import { WIKI_METADATA_FILE_LIMIT_BYTES } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import type * as placementModule from '../utils/placeStorageLock'
 import {
   readRecordedOwner,
   type StorageOwnerIdentity,
 } from '../utils/readRecordedOwner'
+import type * as catalogModule from '../utils/refreshCursorMcpCatalog'
 import type * as lockModule from '../utils/withStorageLock'
 import { withStorageLock } from '../utils/withStorageLock'
 
@@ -1225,6 +1229,230 @@ test('a window whose leftover lock another live window has replaced by its own r
       writesMade: 1,
       lockAfterTheNextWrite: lockOfTheOtherWindow,
       entriesAfterTheNextWrite: ['writer.lock'],
+    },
+  )
+})
+
+/**
+ * Loads {@link withStorageLock} as one window with its own queue, whose reads of its lock's owner are counted while a test says so, and answer nothing while it says so, as on Windows while a scanner or an indexer holds the file.
+ * @param lockPath - The `writer.lock` file whose reads are counted.
+ * @returns The loaded write and the switches: `isCounting` counts each read of the lock's owner into `ownerReads`; `isOwnerUnread` makes each read answer nothing.
+ * @example const window = await windowThatCountsOwnerReads(lockPath); window.isCounting = true
+ */
+async function windowThatCountsOwnerReads(lockPath: string): Promise<{
+  withStorageLock: typeof withStorageLock
+  ownerReads: number
+  isCounting: boolean
+  isOwnerUnread: boolean
+}> {
+  const switches = { ownerReads: 0, isCounting: false, isOwnerUnread: false }
+  const loaded = await loadModule<typeof lockModule>(
+    resolve(__dirname, '../utils/withStorageLock.js'),
+    {
+      './readRecordedOwner': {
+        readRecordedOwner: async (path: string) => {
+          if (path === lockPath && switches.isCounting) switches.ownerReads += 1
+          return path === lockPath && switches.isOwnerUnread
+            ? undefined
+            : readRecordedOwner(path)
+        },
+      },
+    },
+  )
+  return Object.assign(switches, { withStorageLock: loaded.withStorageLock })
+}
+
+/**
+ * Puts an entry that cannot be this window's lock in the lock's place, as another window or a program may leave one there.
+ * @param kind - What is put there: an empty file (the lock of an earlier build, created and not yet written), a folder, a file larger than any owner record ({@link WIKI_METADATA_FILE_LIMIT_BYTES} and one byte, sparse) or a link to a folder (a junction on Windows, which every user may create).
+ * @example await putInTheLocksPlace(lockPath, 'folder')
+ */
+async function putInTheLocksPlace(
+  lockPath: string,
+  kind: 'empty file' | 'folder' | 'oversized file' | 'link',
+): Promise<void> {
+  await rm(lockPath, { recursive: true, force: true })
+  if (kind === 'empty file') await writeFile(lockPath, '')
+  if (kind === 'folder') await mkdir(lockPath)
+  if (kind === 'oversized file') {
+    await writeFile(lockPath, '')
+    await truncate(lockPath, WIKI_METADATA_FILE_LIMIT_BYTES + 1)
+  }
+  if (kind === 'link') {
+    const elsewhere = `${lockPath}-elsewhere`
+    await mkdir(elsewhere)
+    await symlink(elsewhere, lockPath, 'junction')
+  }
+}
+
+/** Says in a few words what stands at a path, without following a link. @example await entryAt(lockPath) // => 'file of 0 bytes' */
+async function entryAt(path: string): Promise<string> {
+  const entry = await lstat(path).catch(() => undefined)
+  if (!entry) return 'nothing'
+  if (entry.isSymbolicLink()) return 'link'
+  if (entry.isDirectory()) return 'folder'
+  return `file of ${entry.size} bytes`
+}
+
+// Value: protects=the release of this window's lock when an entry that cannot be this window's lock stands in its place (another window's lock of an earlier build not written yet, a folder, a file larger than any owner record, a link): it reads the entry once, leaves it as it is and notes nothing for a take-back; fails_when=the release answers 'kept' for such an entry (withStorageLock.ts releaseOfUnreadOwner), so it reads it 20 times over about half a second and notes the path, which every later hold of this window then tries to take back (Cycle 0047 row 199); why_new=Cycle 0047 row 199 (S2TEST-2, S2SM-U37): no test failed when that branch answered 'kept'; seam=the read of the lock's owner in a loaded withStorageLock, counted from the end of the write; the entries are real
+test('a release that finds an empty file, a folder, a file larger than any owner record or a link in its lock’s place reads it once and leaves it as it is', async (context) => {
+  // Arrange
+  const kinds = ['empty file', 'folder', 'oversized file', 'link'] as const
+  const releases: Record<string, unknown> = {}
+  for (const kind of kinds) {
+    const directory = await storageDirectory(context)
+    const lockPath = join(directory, 'writer.lock')
+    const window = await windowThatCountsOwnerReads(lockPath)
+
+    // Act: while the window writes, the entry takes its lock's place; the reads of the release are counted.
+    const outcome = await window
+      .withStorageLock(directory, async () => {
+        await putInTheLocksPlace(lockPath, kind)
+        window.isCounting = true
+        return 'written'
+      })
+      .catch((error: unknown) => String(error))
+    releases[kind] = {
+      outcome,
+      ownerReads: window.ownerReads,
+      entry: await entryAt(lockPath),
+    }
+  }
+
+  // Assert
+  assert.deepEqual(releases, {
+    'empty file': {
+      outcome: 'written',
+      ownerReads: 1,
+      entry: 'file of 0 bytes',
+    },
+    folder: { outcome: 'written', ownerReads: 1, entry: 'folder' },
+    'oversized file': {
+      outcome: 'written',
+      ownerReads: 1,
+      entry: 'file of 67108865 bytes',
+    },
+    link: { outcome: 'written', ownerReads: 1, entry: 'link' },
+  })
+})
+
+// Value: protects=a write whose lock was removed while it ran (by the learner, as a refusal tells, or by a program): the write ends without an error after one look at the lock's path, and the next write places its lock and runs; fails_when=the release takes a lock that is gone for one whose owner could not be read (withStorageLock.ts releaseOfUnreadOwner, ENOENT), so it looks for it 20 times over about half a second and notes the path for a take-back, or fails the write; why_new=Cycle 0047 row 199 (S2SM-U38): no test removed the lock during the write; seam=the read of the lock's owner in a loaded withStorageLock, counted from the end of the first write
+test('a write whose lock was removed while it ran ends without an error after one look at its lock, and the next write places its lock and runs', async (context) => {
+  // Arrange
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowThatCountsOwnerReads(lockPath)
+
+  // Act
+  const firstOutcome = await window
+    .withStorageLock(directory, async () => {
+      await rm(lockPath)
+      window.isCounting = true
+      return 'written'
+    })
+    .catch((error: unknown) => String(error))
+  const ownerReadsOfTheRelease = window.ownerReads
+  window.isCounting = false
+  const nextOutcome = await window
+    .withStorageLock(directory, async () => 'written again')
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstOutcome,
+      ownerReadsOfTheRelease,
+      nextOutcome,
+      entriesAfterTheNextWrite: await readdir(directory),
+    },
+    {
+      firstOutcome: 'written',
+      ownerReadsOfTheRelease: 1,
+      nextOutcome: 'written again',
+      entriesAfterTheNextWrite: [],
+    },
+  )
+})
+
+// Value: protects=a folder or a link that took the lock's place during a write (no lock of this window's): it stays, and the next write of this window is refused by it as a lock it cannot judge, without trying to take it back; fails_when=the release notes such an entry as this window's leftover (withStorageLock.ts releaseOfUnreadOwner answers 'kept'), so the next write runs the release's 20 attempts on it again before it is refused (Cycle 0047 row 199); why_new=Cycle 0047 row 199 (S2SM-U37): no test wrote again after such an entry; seam=the read of the lock's owner in a loaded withStorageLock, counted during the next write; the entries are real
+test('a folder or a link that took the lock’s place during a write stays, and the next write is refused without trying to take it back', async (context) => {
+  // Arrange: a write during which the entry takes its lock's place.
+  const kinds = ['folder', 'link'] as const
+  const nextWrites: Record<string, unknown> = {}
+  for (const kind of kinds) {
+    const directory = await storageDirectory(context)
+    const lockPath = join(directory, 'writer.lock')
+    const window = await windowThatCountsOwnerReads(lockPath)
+    await window.withStorageLock(directory, () =>
+      putInTheLocksPlace(lockPath, kind),
+    )
+    window.isCounting = true
+
+    // Act
+    const nextOutcome = await window
+      .withStorageLock(directory, async () => 'written')
+      .catch((error: unknown) => String(error))
+    nextWrites[kind] = {
+      nextOutcome: nextOutcome.replace(lockPath, '<lock file>'),
+      ownerReadsOfTheNextWrite: window.ownerReads,
+      entry: await entryAt(lockPath),
+    }
+  }
+
+  // Assert
+  const refusal =
+    'Error: Learning storage is locked by another writer or an interrupted session (lock file: <lock file>). No data changed; retry after resolving the lock.'
+  assert.deepEqual(nextWrites, {
+    folder: {
+      nextOutcome: refusal,
+      ownerReadsOfTheNextWrite: 0,
+      entry: 'folder',
+    },
+    link: { nextOutcome: refusal, ownerReadsOfTheNextWrite: 0, entry: 'link' },
+  })
+})
+
+// Value: protects=a Cursor setup in a window whose own leftover catalog lock stays unreadable (a scanner holds it): the catalog's tries of one setup take back that leftover once, and the setup is refused within the catalog's one to three seconds of pauses and that one take-back of about half a second; fails_when=every try of the hold runs the release's 20 attempts again (withStorageLock.ts takeBackOwnLeftover), about half a second each, so the catalog's 21 tries keep the setup waiting about 12 s before it is refused (Cycle 0047 row 199); why_new=Cycle 0047 row 199 (S2PERF-3): no test measured a take-back that keeps failing; seam=the read of the lock's owner in a loaded withStorageLock, which answers nothing, given to a loaded Cursor MCP catalog; no_claim=the length of each pause (a random draw)
+test('a Cursor setup whose own leftover catalog lock stays unreadable takes it back once and is refused within a few seconds, not after every try’s half second', async (context) => {
+  // Arrange: a first hold of the catalog's storage whose release cannot read its lock, so the lock is left and noted; it stays unreadable.
+  const cursorDirectory = await storageDirectory(context)
+  const storageRoot = join(cursorDirectory, 'storage'),
+    catalogStorage = join(storageRoot, 'cursor-mcp-catalog')
+  await mkdir(catalogStorage, { recursive: true })
+  const lockPath = join(await realpath(catalogStorage), 'writer.lock')
+  const window = await windowThatCountsOwnerReads(lockPath)
+  await window.withStorageLock(catalogStorage, async () => {
+    window.isOwnerUnread = true
+  })
+  const catalog = await loadModule<typeof catalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    { './withStorageLock': { withStorageLock: window.withStorageLock } },
+    // The catalog tells a missing file by `instanceof Error`; the file system's errors belong to this realm.
+    { Error },
+  )
+  window.isCounting = true
+  const startedAt = performance.now()
+
+  // Act
+  const setup = await catalog
+    .refreshCursorMcpCatalog(storageRoot, cursorDirectory)
+    .then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+  const elapsedMs = performance.now() - startedAt
+
+  // Assert: the pauses take one to three seconds and the one take-back half a second; the bound, half the 12 s of a take-back at every try, leaves room for a loaded machine.
+  assert.deepEqual(
+    {
+      setup,
+      ownerReadsOfTheSetup: window.ownerReads,
+      isRefusedWithinSixSeconds: elapsedMs < 6_000,
+    },
+    {
+      setup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+      ownerReadsOfTheSetup: 20,
+      isRefusedWithinSixSeconds: true,
     },
   )
 })
