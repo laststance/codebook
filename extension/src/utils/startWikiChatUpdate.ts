@@ -53,7 +53,7 @@ export type WikiChatStartBounds = {
  * @param options.signal - Aborts the start (the window closes).
  * @param options.bounds - The bounds of the start.
  * @param options.sleep - Delay function that ends early when its signal aborts; tests pass one of a manual clock.
- * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with the withdrawal's result, and always with the session the request went to and the watch of the reply's end ({@link watchWikiChatReply}). A reply that came in the moment after the bound, before the withdrawal ran any command, is read as a reply within the bound is ({@link answerOfWikiChatReply}): `replied` for a complete one, `error-reply` with its message for one that reports an error, `working` for one that waits for a confirmation, after which the watch starts.
+ * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with the withdrawal's result, and always with the session the request went to and the watch of the reply's end ({@link watchWikiChatReply}). A reply that came in the moment between the bound and the look at what became of the request, which runs none of the chat's commands, is read as a reply within the bound is ({@link answerOfWikiChatReply}): `replied` for a complete one, `error-reply` with its message for one that reports an error, `working` for one that waits for a confirmation, after which the watch starts.
  * @throws What `watchSigns` throws, before any command ran.
  *
  * @example
