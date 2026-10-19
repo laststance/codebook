@@ -916,7 +916,7 @@ async function removeCopiesStillWritten(copies, requireHeld) {
   return changedCopies;
 }
 
-/** Whether a journal's or a claim's id is a random UUID, as the publisher writes it. Called by {@link restoreStoppedCandidate}, {@link copiesBegunOf}, {@link keptPreparedOf}, {@link isManifestJournal}, {@link isPublishersOwnName}, {@link endStoppedLock} and {@link runRecovery}. @example isRecordId('6f1c2a7e-…') // => true for a whole UUID */
+/** Whether a journal's or a claim's id is a random UUID, as the publisher writes it. Called by {@link restoreStoppedCandidate}, {@link copiesBegunOf}, {@link keptPreparedOf}, {@link isManifestJournal}, {@link isPublishersOwnName}, {@link endStoppedLock}, {@link runRecovery} and {@link wholeRecordOf}. @example isRecordId('6f1c2a7e-…') // => true for a whole UUID */
 const isRecordId = id => typeof id === 'string' && /^[a-f0-9-]{36}$/.test(id);
 
 /** The hold of a file of a stopped publish's candidate: the output's path ({@link holdOfPath}) and the candidate's folder the file lies in ({@link folderLookOf}) must still be where they were, and the candidate must not be the Wiki folder or the kept prior Wiki under another name (`requireStageHere`, {@link requireStageOfItsOwn}). Called by {@link restoreStoppedCandidate}. @returns The check, which resolves while all three hold and throws the refusal of the first that does not. @example await candidateHoldOf(requirePathHeld, isFolderWhereItWas, () => requireStageOfItsOwn(record, output))('/repo/.codebook/next/manual.txt') */
