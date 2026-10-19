@@ -718,6 +718,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
         isTarget,
         htmlScopeEnds,
       )
+      // The first element that is looked for or ends the scope decides; any other lets the walk go on below it.
       if (answer !== undefined) return answer
     }
     return true
@@ -742,6 +743,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     htmlScopeEnds: ReadonlySet<Parse5.html.TAG_ID>,
   ): boolean | undefined {
     const namespace = this.treeAdapter.getNamespaceURI(element)
+    // Only an HTML element can be the one looked for, and an HTML select ends every scope it wraps.
     if (namespace === htmlTree.NS.HTML) {
       if (isTarget(tagID)) return true
       return htmlScopeEnds.has(tagID) || tagID === htmlTree.TAG_ID.SELECT
