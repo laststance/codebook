@@ -43,6 +43,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
  * @param options.typedWhileRunning - The learner types this text into the cited source right after Codebook's continue request with this number (1 is the continue of the entry pause, 2 the first continuation of a declared stop), while the test runs to its next stop.
  * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
+ * @param options.closeFailures - How many first releases of the owned test process fail, each with "process group still running (close <n>)"; the later ones succeed.
  *
  * @example
  * ```ts
@@ -69,6 +70,7 @@ async function nodeRunHarness({
   verifiedByNews,
   openDocumentText,
   typedWhileRunning,
+  closeFailures = 0,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -110,6 +112,7 @@ async function nodeRunHarness({
   }
   openDocumentText?: string
   typedWhileRunning?: { continueRequest: number; text: string }
+  closeFailures?: number
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -170,6 +173,8 @@ async function nodeRunHarness({
   if (openDocumentText !== undefined) typeIntoCitedSource(openDocumentText)
   // How many continue requests Codebook has sent to the session.
   let continueRequests = 0
+  // How many times the run asked to release its owned test process.
+  let closeRequests = 0
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
     continued = 0,
@@ -551,7 +556,14 @@ async function nodeRunHarness({
           async waitForExit() {
             return exitAfterEntry ? { exitCode: 0, signal: null } : undefined
           },
-          async close(): Promise<void> {},
+          async close(): Promise<void> {
+            closeRequests += 1
+            // The first releases fail as a process group that outlives its signal would.
+            if (closeRequests <= closeFailures)
+              throw new Error(
+                `process group still running (close ${closeRequests})`,
+              )
+          },
         }),
       },
       './utils/verifyVitestTestResult': {
@@ -608,6 +620,7 @@ async function nodeRunHarness({
     events,
     debugStartOptions,
     launchPreparations: (): number => launchPreparations,
+    closeRequests: (): number => closeRequests,
     typeIntoCitedSource,
     launch,
     reportDirectory,
@@ -1161,6 +1174,37 @@ test('releasing a run removes its private Vitest report folder', async () => {
   // Assert
   await assert.rejects(stat(harness.reportDirectory), { code: 'ENOENT' })
   await harness.cleanup()
+})
+
+// Value: protects=a Node test run whose release failed once (its process group outlived the signal) being released by the next stop, so the service can mark the run stopped and admit the next codebook_start; fails_when=the run keeps the rejected release and answers every later stop with it without asking the process again, so the run is never stopped and every codebook_start answers BUSY until a reload; why_new=Cycle 0047 row 40 (P3RT18); seam=the owned test process's close, which fails the first time; no_claim=a real process group that outlives SIGKILL
+test('a Node test run whose release failed once is released by the next stop, which asks the test process again', async () => {
+  // Arrange: the first release of the owned test process fails.
+  const harness = await nodeRunHarness({ closeFailures: 1 })
+  try {
+    await harness.run.prepare()
+    const firstStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+
+    // Act
+    const secondStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.deepEqual(
+      { firstStop, secondStop, closeRequests: harness.closeRequests() },
+      {
+        firstStop: 'Error: process group still running (close 1)',
+        secondStop: 'released',
+        closeRequests: 2,
+      },
+    )
+  } finally {
+    await harness.cleanup()
+  }
 })
 
 test('a learner breakpoint earlier in the declared source holds the run until the learner continues, without failing or being resumed by Codebook', async () => {
