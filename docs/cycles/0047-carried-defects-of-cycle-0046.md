@@ -241,7 +241,7 @@ Decisions:
 - Row 198 makes the window whose staged config was swept stage it again, since the sweeping window cannot read another profile's records.
 - Row 210 keeps the record and names the system's reason.
 
-The gate scan after the fixes listed 27 new or changed eligible hunks of 170, and the parent read each of them, none a finding. The full gate then failed twice, and each failure is a row: a structural test pinned the place row 198 moved (row 211), and the measured health gate found functions of the fixes past its limits (rows 212 and 213, split with the same behavior). The tests that changed since `d2b17c4f` were compared block by block: each removed or renamed test is replaced or extended, and none of their assertions is weakened.
+The gate scan after the fixes listed 28 new or changed eligible hunks of 171, and the parent read each of them, none a finding. The full gate then failed twice, and each failure is a row: a structural test pinned the place row 198 moved (row 211), and the measured health gate found functions of the fixes past its limits (rows 212 and 213, split with the same behavior). The tests that changed since `d2b17c4f` were compared block by block: each removed or renamed test is replaced or extended, and none of their assertions is weakened.
 
 ## Result and decision
 
