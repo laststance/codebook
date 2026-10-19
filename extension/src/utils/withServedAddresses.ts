@@ -94,7 +94,7 @@ function referencedCharacter(
 }
 
 /**
- * Reads an attribute value as the publisher reads it (`attributeText` of `render-wiki-diagrams.mjs`): every character reference of {@link CHARACTER_REFERENCE} becomes its character. Called by {@link isRefusedAttribute}.
+ * Reads an attribute value as the publisher reads it (`attributeText` of `render-wiki-diagrams.mjs`): every character reference of {@link CHARACTER_REFERENCE} becomes its character. Called by {@link isRefusedAddress}.
  * @param value - The value as the page writes it.
  * @returns The value's text.
  * @example
@@ -105,7 +105,7 @@ function attributeText(value: string): string {
 }
 
 /**
- * The addresses one attribute value holds, as the publisher splits them (`addressesOf` of `render-wiki-diagrams.mjs`): for `srcset` the address of each candidate, split at every comma; the whole value otherwise. Called by {@link isRefusedAttribute}.
+ * The addresses one attribute value holds, as the publisher splits them (`addressesOf` of `render-wiki-diagrams.mjs`): for `srcset` the address of each candidate, split at every comma; the whole value otherwise. Called by {@link isRefusedAddress}.
  * @param name - The attribute's name in lower case.
  * @param text - The value's text, its references read ({@link attributeText}).
  * @returns The addresses.
@@ -121,7 +121,7 @@ function addressesOf(name: string, text: string): string[] {
 }
 
 /**
- * Whether the publisher accepts one address today (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), read as a browser reads it: without the spaces and control characters at its ends and without any tab or line break in it. Accepted are a relative path and a `#fragment` (no colon before the first slash, question mark or number sign, and no named reference there), an `http`, `https` or `mailto` address, and Codebook's own editor address ({@link CODEBOOK_ADDRESS_STARTS}); never one of {@link REFUSED_IN_ANY_ADDRESS}. Called by {@link isRefusedAttribute}.
+ * Whether the publisher accepts one address today (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), read as a browser reads it: without the spaces and control characters at its ends and without any tab or line break in it. Accepted are a relative path and a `#fragment` (no colon before the first slash, question mark or number sign, and no named reference there), an `http`, `https` or `mailto` address, and Codebook's own editor address ({@link CODEBOOK_ADDRESS_STARTS}); never one of {@link REFUSED_IN_ANY_ADDRESS}. Called by {@link isRefusedAddress}.
  * @param address - One address, its references read.
  * @returns Whether a page may keep it as a link.
  * @example
