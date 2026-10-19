@@ -16,6 +16,8 @@ const parse5: typeof Parse5 = require('parse5')
 
 /** How many times as long as {@link ORDINARY_PAGE} the reader may take for one crafted page of the timing tests. Measured again on 2026-10-19, after Cycle 0047 row 2 made the filter read every page with a select twice (by the select rules of 2025 and by those before), on a WSL2 host (16 CPUs, Node 24.21), this test file run alone, three times plain and twice under c8: the slowest crafted page of each test took 1.37 to 1.54 times the ordinary page's time for the pages built to make every < slow (svgStyles; 0.93 to 0.95 under c8), 1.73 to 1.95 for deep nesting with unmatched ends (inputsAfterAClosedSelectAndDeepNesting, which holds a select; 1.47 to 1.58 under c8), 1.60 to 1.78 for select pairs after deep nesting (1.70 to 1.74 under c8) and 2.06 to 2.13 for the pages of the rebinding (numberedIds; 1.99 to 2.08 under c8), while a reading that rescans a deep stack took many times as long. A fixed bound in milliseconds measured only the speed of the host: the full HTML parser of row 1058 took 111 to 135 ms for the ordinary page alone there, and 439 to 482 ms under coverage. */
 const CRAFTED_PAGE_BOUND_RATIO = 4
+/** How many times as long as {@link ORDINARY_PAGE} the reader may take, both served with the reader's tag, for a page with a select and a noscript whose svg Chrome's reading closes before the tag's place: the filter then reads the page under the three other readings up to the place as well ({@link withServedAddresses}). By the filter's count, the ordinary page takes two readings by Chrome's rules (the tag goes at its end, and the page is read again with it), such a page with a body end seven (Chrome's, the three up to the place, the round of the three others) and one without a body end eight (Chrome's once more, with the tag in it), so four times the ordinary page's time at most; the bound gives that half as much again. On the development host (16 CPUs, Node 24.21), in five runs of the rows alone (three plain, two under c8) and three runs of this test file, the rows took 3.14 to 3.75 times the ordinary page with a body end and 3.46 to 4.25 without one, while time that grows faster than the page took many times as long in the earlier rows. */
+const CLOSED_SVG_PAGE_BOUND_RATIO = 6
 /** How many times as long as its first half the whole {@link ORDINARY_PAGE} may take in the growth test: time that grows with the page gives about two, time that grows with its square about four. On the development host (16 CPUs, Node 24) the ratio was 1.97 to 2.29 plain and 2.01 to 2.03 under c8. */
 const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
 /** How many times as long as the HTML parser alone the reader may take for select pairs after deep nesting, where the parser's own time grows with the square of the nesting. The reader keeps the mode a select was pushed in, where the parser alone walks the stack at each select end: on the development host the reader took 0.16 to 0.18 times the parser's time (0.09 under c8); when each select start and end walked the stack to reset the mode, 2.2 times (2.9 under c8). */
@@ -451,7 +453,7 @@ test('the reader filters an ordinary page of more than 1 MB within three times t
   )
 })
 
-// Value: protects=the extension host's page workers against the filter's cost on the path the reader takes for every page: the reader hands its script tag to the filter (servedWikiPageHtml), which puts it at the body's end or the page's end, after a meta where svg content is open there, reads the page again with them in it, and reads a page with a select and a noscript under all four readings, again after each round that renamed an attribute; fails_when=the pass with the reader's tag, the meta or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts, so a page of 1 MB with a select, a noscript and an svg before its end takes more than four times as long as the ordinary page served the same way (these rows took 2.4 to 2.7 times it plain and 2.4 to 2.5 under c8 on the development host, 16 CPUs, Node 24.21); why_new=Cycle 0047 row 191 (S2PERF-2 = S2TEST-4): every timing test called the filter without the reader's tag, so this path was never timed; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=a page whose svg Chrome's reading closes before the tag's place while the page holds a select and a noscript, which the filter also reads under the three other readings up to the tag (3.3 to 3.45 times the ordinary page with a body end, 3.9 to 4.1 without one, by the count of its readings), and native editor responsiveness
+// Value: protects=the extension host's page workers against the filter's cost on the path the reader takes for every page: the reader hands its script tag to the filter (servedWikiPageHtml), which puts it at the body's end or the page's end, after a meta where svg content is open there, reads the page again with them in it, and reads a page with a select and a noscript under all four readings, again after each round that renamed an attribute; fails_when=the pass with the reader's tag, the meta or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts, so a page of 1 MB with a select, a noscript and an svg before its end takes more than four times as long as the ordinary page served the same way (these rows took 2.4 to 2.7 times it plain and 2.4 to 2.5 under c8 on the development host, 16 CPUs, Node 24.21); why_new=Cycle 0047 row 191 (S2PERF-2 = S2TEST-4): every timing test called the filter without the reader's tag, so this path was never timed; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness
 test('the reader filters a page of more than 1 MB with a select, a noscript and an svg open before its body end, or before its end without a body end, with its script tag put in as the reader serves it, within four times the time of an ordinary page served the same way', async () => {
   // Arrange: a select, a noscript, the ordinary page's sections or refused links, and an svg left open, with a body end and without one.
   const start =
@@ -486,6 +488,57 @@ test('the reader filters a page of more than 1 MB with a select, a noscript and 
         name !== 'ordinary' &&
         (milliseconds === 'unfinished' ||
           milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
+    ),
+    [],
+    `the ordinary page took ${ordinary} ms`,
+  )
+})
+
+// Value: protects=the extension host's page workers against the filter's cost on a page with a select and a noscript whose svg Chrome's reading closes before the reader's tag: the filter reads such a page under the three other readings up to the tag's place, to tell whether one of them leaves the svg open there, besides Chrome's reading and the round of the three others, and once more by Chrome's rules with the tag in it when the tag goes at the page's end; fails_when=that check, the reading with the tag or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts by more than half again, so such a page of more than 1 MB takes more than six times as long as the ordinary page served the same way (these rows took 3.14 to 3.75 times it with a body end and 3.46 to 4.25 without one on the development host, 16 CPUs, Node 24.21, plain and under c8); why_new=Cycle 0047 row 205 (found while fixing row 191): the timing test of row 191 left this shape out, as its count of readings (seven with a body end and eight without, against the ordinary page's two) puts it at that test's bound of four; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=a page whose rounds rename attributes in a reading beside Chrome's, which every reading then reads again (the rounds' own tests), and native editor responsiveness
+test('the reader filters a page of more than 1 MB with a select, a noscript and an svg closed before its body end, or before its end without a body end, with its script tag put in as the reader serves it, within six times the time of an ordinary page served the same way', async (context) => {
+  // Arrange: a select, a noscript and a closed svg, then the ordinary page's sections or refused links, with a body end and without one.
+  const start =
+    '<body><select><option>a</option></select><noscript><p>n</p></noscript><svg><g></g></svg>'
+  const refusedLinks = '<a href="vscode://file/x">x</a>'.repeat(35_000)
+  const pages = {
+    sectionsAfterAClosedSvgAtTheBodyEnd: `${start}${ORDINARY_PAGE}</body>`,
+    sectionsAfterAClosedSvgWithoutABodyEnd: `${start}${ORDINARY_PAGE}`,
+    refusedLinksAfterAClosedSvgAtTheBodyEnd: `${start}${refusedLinks}</body>`,
+    refusedLinksAfterAClosedSvgWithoutABodyEnd: `${start}${refusedLinks}`,
+  }
+
+  // Act
+  const times = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+    READER_SCRIPT_TAG,
+  )
+
+  // Assert: every page is over 1 MB, and each was filtered within the bound of the ordinary page's time.
+  assert.deepEqual(
+    Object.values(pages).map((page) => page.length > 1_000_000),
+    [true, true, true, true],
+  )
+  const ordinary = times.ordinary
+  if (typeof ordinary !== 'number')
+    assert.fail('the ordinary page was not filtered before the deadline')
+  // The run's ratios stand in the test's output, so a runner's log shows how near the bound they came.
+  context.diagnostic(
+    Object.entries(times)
+      .map(([name, milliseconds]) =>
+        typeof milliseconds === 'number'
+          ? `${name} ${(milliseconds / ordinary).toFixed(2)}`
+          : `${name} unfinished`,
+      )
+      .join(', '),
+  )
+  assert.deepEqual(
+    Object.entries(times).filter(
+      ([name, milliseconds]) =>
+        name !== 'ordinary' &&
+        (milliseconds === 'unfinished' ||
+          milliseconds > CLOSED_SVG_PAGE_BOUND_RATIO * ordinary),
     ),
     [],
     `the ordinary page took ${ordinary} ms`,
