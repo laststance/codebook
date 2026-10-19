@@ -13700,6 +13700,10 @@ for (const { names, rewrite } of [
 
 // Cycle 0047, second /ship, fixing cycle 1, fixer P1: the publisher's write protocol (rows 172 to 178).
 
+/** The swaps of `swappedFolderFileSystem.mjs` before a move, which the tests below arm on the copy of the publisher marked `?swapped-folder`. The module is the one the static import above loads, so its swaps are shared. */
+const { swapBeforeRenaming } =
+  await import('./utils/swappedFolderFileSystem.mjs')
+
 // Value: protects=the learner who follows the refusal of a publish whose status read of a file it made beside its journal failed; fails_when=the publish removes the file beside the journal in every case after the refusal said it was kept, so the learner looks for a file that is gone, which may be another process's; why_new=Cycle 0047 row 177 (S2OCR1a-1); seam=a copy of the shipped publisher whose `node:fs/promises` fails the status read of that file with EIO (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=the same failure for a recovery's claim, which is written the same way
 test('a publish whose status read of the file it made beside its journal fails keeps that file, as its refusal says', async () => {
   // Arrange: the status read of the file the publish writes its journal's bytes into, beside the journal, fails with EIO.
@@ -13803,3 +13807,88 @@ for (const syntaxError of [
     }
   })
 }
+
+// Value: protects=a learner's file of a stopped publish's candidate that the learner saves again while --recover puts the candidate back; fails_when=the recovery checks the copies of the learner's files once and removes them after it put the candidate's manifest and record back, so the learner's save in between is deleted; why_new=Cycle 0047 row 176 (S2CXA-A4); seam=a publisher process killed after it copied the learner's file and finalized the candidate (scripts/tests/utils/killedPublisherProbe.mjs), and a copy of the shipped publisher whose `node:fs/promises` has the learner save the copy just before the recovery moves the prepared manifest back into place (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a save in the instant between the last check of a copy and its removal, which no file system call closes
+test('a recovery that puts a stopped publish’s candidate back keeps the copy of the learner’s file that the learner saved again after the recovery checked it, and says so', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed after it copied that file and finalized the candidate; the learner saves the copy just before the recovery moves the prepared manifest back.
+  const { recoverWikiPublication: recoverWhileTheLearnerSaves } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const copy = join(wiki.next, 'manual.txt')
+  try {
+    await writeFile(
+      join(wiki.output, 'manual.txt'),
+      'The learner kept these notes',
+    )
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        {
+          call: 'renaming',
+          folder: wiki.next,
+          name: '^\\.codebook-publish-.*-codebook-publication\\.json$',
+        },
+        {
+          call: 'reading',
+          folder: wiki.output,
+          name: '^codebook-publication\\.json$',
+        },
+      ],
+    })
+    swapBeforeRenaming(
+      (path) =>
+        dirname(path) === wiki.next &&
+        /^\.codebook-publish-.*-codebook-wiki\.json$/.test(basename(path)),
+      () =>
+        writeFile(copy, 'The learner kept these notes, and saved them again'),
+    )
+
+    // Act: the recovery, given the candidate the agent prepared, then the candidate published again.
+    const recovery = await recoverWhileTheLearnerSaves({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status, changedFilesKept }) => ({ status, changedFilesKept }),
+      (error) => error.message,
+    )
+    const fileInTheCandidate = await readFile(copy, 'utf8').catch(
+      () => 'removed',
+    )
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, recovery, fileInTheCandidate, nextPublish },
+      {
+        killed: '',
+        recovery: {
+          status: 'published-or-restored',
+          changedFilesKept: ['manual.txt'],
+        },
+        fileInTheCandidate:
+          'The learner kept these notes, and saved them again',
+        nextPublish:
+          "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+      },
+    )
+  } finally {
+    swapBeforeRenaming(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
