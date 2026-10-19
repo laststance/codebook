@@ -13039,3 +13039,121 @@ test('the bundled skill tells the agent to ask the learner about another compute
     true,
   )
 })
+
+for (const { claim, claimOf, named, outcome, ended } of [
+  {
+    claim: 'of another place, without --gone-host and --gone-space',
+    claimOf: (record) => ({
+      pid: 4242,
+      owner: { ...record.owner, space: 'linux@1' },
+    }),
+    named: () => [],
+    outcome:
+      'is refused naming the claim’s place with the pair as the way out, and keeps the journal and the claim',
+    ended: (record) => ({
+      recovery: `The prior Wiki publisher process 4242 ran on ${JSON.stringify(record.owner.host)} (linux@1), where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.`,
+      journal: 'kept',
+      claims: 1,
+    }),
+  },
+  {
+    claim: 'of a recovery that runs here, without --gone-host and --gone-space',
+    claimOf: (record) => ({
+      pid: process.pid,
+      owner: { ...record.owner, start: undefined },
+    }),
+    named: () => [],
+    outcome:
+      'is refused as one that may still be running, and keeps the journal and the claim',
+    ended: () => ({
+      recovery: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+      journal: 'kept',
+      claims: 1,
+    }),
+  },
+  {
+    claim:
+      'of a recovery that runs here, with --gone-host and --gone-space naming this place',
+    claimOf: (record) => ({
+      pid: process.pid,
+      owner: { ...record.owner, start: undefined },
+    }),
+    named: (record) => [{ host: record.owner.host, space: record.owner.space }],
+    outcome:
+      'is refused as one that may still be running, as a pair never ends a recovery that runs here, and keeps the journal and the claim',
+    ended: () => ({
+      recovery: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+      journal: 'kept',
+      claims: 1,
+    }),
+  },
+  {
+    claim: 'of a recovery killed here, without --gone-host and --gone-space',
+    claimOf: (record) => ({ pid: 99999999, owner: record.owner }),
+    named: () => [],
+    outcome: 'recovers the Wiki and removes the journal and the claim',
+    ended: () => ({
+      recovery: 'published-or-restored',
+      journal: 'gone',
+      claims: 0,
+    }),
+  },
+  {
+    claim:
+      'of a recovery killed here, with --gone-host and --gone-space naming this place',
+    claimOf: (record) => ({ pid: 99999999, owner: record.owner }),
+    named: (record) => [{ host: record.owner.host, space: record.owner.space }],
+    outcome:
+      'recovers the Wiki and removes the journal and the claim, as without the pair',
+    ended: () => ({
+      recovery: 'published-or-restored',
+      journal: 'gone',
+      claims: 0,
+    }),
+  },
+]) {
+  // Value: protects=the Wiki of a recovery that may still run (in another place, or here) and the learner whose stopped recovery was killed here; fails_when=the recovery does not judge the owner of a stopped claim beside a journal killed here, takes a pair for a recovery that runs here, or does not take up and remove the claim of a recovery killed here, so it moves the files of a recovery that may still run or leaves the Wiki locked or a claim behind; why_new=Cycle 0047 row 181 (S2SM-U5 to U9: the cells of the claim owner gate); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), and a claim written beside the journal as a stopped recovery leaves it, of the row's process and place; no_claim=a recovery really killed after its claim
+  test(`a --recover beside a journal of a publish killed here and a stopped recovery claim ${claim}, ${outcome}`, async () => {
+    // Arrange: the journal of a publish killed here, and its first claim, of the row's process in the row's place.
+    const { wiki, killed, record } = await publishKilledAfterItsJournal(
+      () => {},
+    )
+    const journal = `${wiki.output}.publish-journal.json`
+    try {
+      await writeFile(
+        `${journal}.recovery-${createHash('sha256')
+          .update(await readFile(journal))
+          .digest('hex')}`,
+        JSON.stringify({
+          ...claimOf(record),
+          id: '11111111-1111-4111-8111-111111111111',
+        }),
+      )
+
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        goneOwners: named(record),
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          recovery,
+          journal: existsSync(journal) ? 'kept' : 'gone',
+          claims: (await readdir(dirname(journal))).filter((name) =>
+            name.startsWith(`${basename(journal)}.recovery-`),
+          ).length,
+        },
+        { killed: '', ...ended(record) },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
