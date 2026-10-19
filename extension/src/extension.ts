@@ -21,7 +21,6 @@ import {
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CHAT_SESSION_START_TIMEOUT_MS,
   WIKI_CHAT_WATCH_CANCEL_COMMAND,
-  WIKI_CHAT_WITHDRAW_SETTLE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_ENTRY_FILE,
@@ -1702,7 +1701,7 @@ export function activate(
           if (activeWikiRun === opening) activeWikiRun = undefined
           reportOpeningEnded()
         }
-        // The request gets a chat session of its own; only what the update's own steps name counts as a sign that the chat works on it, and a request without a sign within the bound is taken back.
+        // The request gets a chat session of its own; only what the update's own steps name counts as a sign that the chat works on it, and a request without a sign within the bound is left in the chat, whose commands cannot name it.
         const chatStart = await startWikiChatUpdate({
           query,
           // A command without an argument is run without one: the editor reads an argument that is `undefined` as a given one.
@@ -1730,7 +1729,6 @@ export function activate(
           bounds: {
             sessionStartMs: WIKI_CHAT_SESSION_START_TIMEOUT_MS,
             answerMs: WIKI_CHAT_OPEN_TIMEOUT_MS,
-            withdrawSettleMs: WIKI_CHAT_WITHDRAW_SETTLE_MS,
             outputPollMs: WIKI_UPDATE_WATCH_POLL_MS,
           },
         })

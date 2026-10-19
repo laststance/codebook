@@ -6,7 +6,7 @@ export type BoundedWait = {
 }
 
 /**
- * Waits for a promise for at most a bound, and no longer than an abort; the hand-over of a Wiki update request to the editor chat and its withdrawal bound every editor command and every wait for one with it ({@link chatCommandReturnsInTime}, {@link withdrawWikiChatRequest}).
+ * Waits for a promise for at most a bound, and no longer than an abort; the hand-over of a Wiki update request to the editor chat bounds every editor command that starts its chat session with it ({@link chatCommandReturnsInTime}).
  * @param pending - What is waited for; it must not reject.
  * @param wait - The bound, the abort and the delay function (one that ends early when its signal aborts).
  * @returns What `pending` resolved with, or `undefined` when the bound passed or the signal aborted first.

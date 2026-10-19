@@ -37,7 +37,7 @@ async function startOwnChatSession(
 }
 
 /**
- * Hands the request of a VS Code Wiki update to the editor chat in a chat session of its own, so that it is neither queued behind a request of the learner nor makes the editor cancel one, and the chat's Cancel at the bound finds Codebook's request alone.
+ * Hands the request of a VS Code Wiki update to the editor chat in a chat session of its own, so that it is neither queued behind a request of the learner nor makes the editor cancel one.
  *
  * Why: sent into the session the learner uses, the request acts like a typed message. The editor queues it behind a request in progress (`chatWidget.ts`, `options.queue ??= ChatRequestQueueKind.Queued`), so a busy chat looks like one that does not answer, and it cancels a request that waits for a confirmation (`cancelCurrentRequestForSession(…, 'acceptInput-needsInput')`).
  * Trigger: the extension calls it once per VS Code update, after the start checks and before the wait for the chat's first answer.

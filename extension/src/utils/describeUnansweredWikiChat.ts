@@ -27,7 +27,7 @@ const UNANSWERED_ENDINGS: Record<
 }
 
 /**
- * Words the failure of a VS Code Wiki update that showed no sign within its bound; called when the extension records that end, after {@link withdrawWikiChatRequest} took the request back or could not.
+ * Words the failure of a VS Code Wiki update that showed no sign within its bound; called when the extension records that end, after {@link withdrawWikiChatRequest} said what became of the request: the chat never held it (`not-sent`) or it was left in the chat (`left`). `withdrawn`, a request Codebook saw leave the chat, is still worded, but the start no longer ends with it ({@link WikiChatWithdrawal}).
  *
  * Why: the sentence says what Codebook observed and did, because that is all it knows. No sign within the bound is not "the chat did not answer": a chat can work on the request with steps the editor does not report. And "no update is running" is true only when Codebook saw its request end. "Check that Copilot Chat is enabled" is the whole next step only where the request had a chat session of its own: in a session shared with the learner the editor queues the request behind a request in progress, so a chat that is only busy shows no sign either. Every sentence ends with the next step and is marked as Codebook's own, so the page shows it whole.
  *
