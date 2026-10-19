@@ -31,7 +31,9 @@ import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
 import { nameFolderAlso } from './utils/aliasedFolderFileSystem.mjs'
 import {
+  failCloseOf,
   failRenameOf,
+  failStatOf,
   failWriteOf,
   observeRemovals,
 } from './utils/failingFileSystem.mjs'
@@ -2335,7 +2337,7 @@ const markedCopies = new Map()
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
- * - `?failing`: the write through a handle of the file a test names with {@link failWriteOf} stops partway with a system error, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
+ * - `?failing`: the write through a handle of the file a test names with {@link failWriteOf} stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
  * - `?aliased-folder`: the folder a test names with {@link nameFolderAlso} answers to another name beside it too, as one folder does to names of another case on macOS and Windows (`aliasedFolderFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
  * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing' | '?aliased-folder'} mark - The mark of its stand-in.
@@ -3729,6 +3731,76 @@ test('a publish whose copy of the learner’s file stops partway leaves no part 
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+for (const { failOf, code, when } of [
+  {
+    failOf: failCloseOf,
+    code: 'ENOSPC',
+    when: 'fails at its close after the whole write, as at a full disk on a network or synced file system,',
+  },
+  {
+    failOf: failStatOf,
+    code: 'EIO',
+    when: 'fails at its status read right after its open made the file,',
+  },
+]) {
+  // Value: protects=the next publish of a candidate after a publish whose copy of the learner's file failed at its close or at its status read, after its 'wx' open made the file; fails_when=writeOwnFile closes the handle before its clean-up and passes on a failed close before it, or keeps no record of the file when the status read fails, so the file stays in the candidate without a record and the next publish is refused for it as a file outside the manifest; why_new=Cycle 0047 row 65 (OCR1-2 = ADV-7); seam=a copy of the shipped publisher whose `node:fs/promises` fails the close or the status read through the handle of the learner's file in the candidate (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a close that fails on a real file system
+  test(`a publish whose copy of the learner’s file ${when} leaves no file of it in the candidate, and the candidate publishes when run again`, async () => {
+    // Arrange: the published Wiki holds a file of the learner's; the publish's copy of it into the candidate fails as named.
+    const { publishWiki: publishWhoseCopyFails } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      await writeFile(
+        join(wiki.output, 'manual.txt'),
+        'The learner’s own notes',
+      )
+      failOf((path) => path === join(wiki.next, 'manual.txt'), code)
+
+      // Act: the failed publish, then the candidate published again.
+      const refusal = await publishWhoseCopyFails({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => 'published',
+        (error) => error.code,
+      )
+      const copyInTheCandidate = await readFile(
+        join(wiki.next, 'manual.txt'),
+        'utf8',
+      ).catch(() => 'no copy')
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ preservedManualFiles }) => ({ preservedManualFiles }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          copyInTheCandidate,
+          nextPublish,
+          manualFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+        },
+        {
+          refusal: code,
+          copyInTheCandidate: 'no copy',
+          nextPublish: { preservedManualFiles: 1 },
+          manualFile: 'The learner’s own notes',
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
 
 for (const linkKind of ['symbolic link', 'hard link']) {
   // Value: protects=a file outside the project when another process puts a link to it at the name of a candidate's page after the publisher listed the candidate; fails_when=the page write opens the page's own name to write ('w') and follows the link standing there, so a preview writes the rendered page into the file outside the project; why_new=Cycle 0047 row 25 (P3RT3, security); seam=a copy of the shipped publisher whose `node:fs/promises` puts the link in place just before the publisher reads the candidate's record, after its listing and its rendering (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a link put in place between the publisher's removal of the name and its exclusive open, which that open refuses

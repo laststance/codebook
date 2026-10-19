@@ -5,7 +5,7 @@
  * - `?unnamed-real-path`: `unnamedRealPathFileSystem.mjs`, whose `realpath` fails for the folder a test names;
  * - `?crlf-shell`: `crlfShellFileSystem.mjs`, which reads the reader shell with CRLF line endings;
  * - `?large-file-ids`: `largeFileIdsFileSystem.mjs`, which gives the folder a test names file ids above 2^53 that change in their low bits (`giveLargeFileIds`);
- * - `?failing`: `failingFileSystem.mjs`, whose write through a handle of the file a test names stops partway with a system error (`failWriteOf`), whose rename of a path a test names fails with the system errors it names (`failRenameOf`), and whose `unlink` tells a test's observer each path first (`observeRemovals`).
+ * - `?failing`: `failingFileSystem.mjs`, whose write through a handle of the file a test names stops partway with a system error (`failWriteOf`), whose close or status read through such a handle fails with one (`failCloseOf`, `failStatOf`), whose rename of a path a test names fails with the system errors it names (`failRenameOf`), and whose `unlink` tells a test's observer each path first (`observeRemovals`).
  * - `?aliased-folder`: `aliasedFolderFileSystem.mjs`, through which a folder a test names answers to another name beside it too (`nameFolderAlso`), as one folder does to names of another case on macOS and Windows.
  */
 const STAND_INS = {

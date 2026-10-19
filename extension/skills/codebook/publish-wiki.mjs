@@ -309,21 +309,26 @@ async function makeFolderHeld(folder, requirePathHeld, isFolderWhereItWas) {
 /** Whether the entry at a written file's path, looked at without following it, is a regular file with the device and file id the record names ({@link writeOwnFile}). Called by {@link removeWritten} and {@link writeOwnFile}. @example await isSameFileAt({ path: '/repo/.codebook/next/index.html', dev: 2049n, ino: 131074n }) // => false once a link stands at the path */
 const isSameFileAt = file => lstat(file.path, { bigint: true }).then(status => status.isFile() && isSameFile(status, file), () => false);
 
-/** Writes a new file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). The open is exclusive ('wx'): it refuses any entry at the name, a link or a second name of another file included, so the write never lands in a file the step did not make. Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing; the file the open made holds part of the bytes at most then, and is removed by its device and file id before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). Called by {@link writeFilesHeld}, {@link replaceOwnFile}, {@link replaceOwnFileThrough} and {@link restoreManifestHeld}, and by {@link publishWiki} for each copy of a learner's file. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open or the write rejects with; `EEXIST` while an entry stands at the name. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText) // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
+/** Writes a new file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). The open is exclusive ('wx'): it refuses any entry at the name, a link or a second name of another file included, so the write never lands in a file the step did not make. Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing, and neither does a close that fails, since the bytes it handed on may be lost (a full disk or a quota met at the close on a network or synced file system); the file the open made holds part of the bytes at most then, and is removed ({@link removeUnwrittenFile}) before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). Called by {@link writeFilesHeld}, {@link replaceOwnFile}, {@link replaceOwnFileThrough} and {@link restoreManifestHeld}, and by {@link publishWiki} for each copy of a learner's file. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open, the status read, the write or the close rejects with, the first of them; `EEXIST` while an entry stands at the name. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText) // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
 async function writeOwnFile(path, bytes) {
   const handle = await open(path, 'wx');
-  let file, isWritten = false;
+  let file, failure, hasFailed = false;
   try {
     const { dev, ino } = await handle.stat({ bigint: true });
     file = { path, hash: digest(bytes), dev, ino };
     await handle.writeFile(bytes);
-    isWritten = true;
-    return file;
-  } finally {
-    await handle.close();
-    // A file this open made holds part of the bytes at most; the path may lead to another file by now, so it is removed only while it is the same file.
-    if (!isWritten && file !== undefined && await isSameFileAt(file)) await unlink(path).catch(() => undefined);
-  }
+  } catch (error) { failure = error; hasFailed = true; }
+  // A close that fails may lose bytes the write handed on, so the file counts as not written; the first failure is the one passed on.
+  await handle.close().catch(error => { if (!hasFailed) { failure = error; hasFailed = true; } });
+  if (!hasFailed) return file;
+  await removeUnwrittenFile(file, path);
+  throw failure;
+}
+
+/** Removes the file a failed {@link writeOwnFile} made, which holds part of the bytes at most: the path may lead to another file by now, so it is removed only while it is that file, by its device and file id ({@link isSameFileAt}); where its status could not be read, only while an empty regular file stands at the path, as the exclusive open made it, so no byte of another file is lost. @param file - The record of the file the open made; undefined when its status could not be read. @example await removeUnwrittenFile({ path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131074n }, '/repo/.codebook/next/manual.txt') */
+async function removeUnwrittenFile(file, path) {
+  const isTheOpenedFile = file !== undefined ? await isSameFileAt(file) : await lstat(path, { bigint: true }).then(status => status.isFile() && status.size === 0n, () => false);
+  if (isTheOpenedFile) await unlink(path).catch(() => undefined);
 }
 
 /** Writes a file of the candidate in place of the entry that stands at its name, without following that entry: the entry is removed first, which removes a link itself or one name of a file with several, never what it leads to, then the file is written new ({@link writeOwnFile}), whose exclusive open refuses an entry put there in between. A link put at the name of a rendered page after the publisher listed the candidate therefore leads no write out of the candidate; a stop between the removal and the write leaves the page missing or partial, which the next render writes again. Called by {@link publishWiki} for the rendered pages. @returns The new file's record ({@link writeOwnFile}). @throws What the removal rejects with, other than a missing entry (a folder at the name), and what {@link writeOwnFile} throws. @example await replaceOwnFile('/repo/.codebook/next/index.html', html) // => { path: '/repo/.codebook/next/index.html', hash: '…', dev: 2049n, ino: 131075n } */

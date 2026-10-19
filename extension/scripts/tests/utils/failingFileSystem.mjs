@@ -17,6 +17,65 @@ export function failWriteOf(isAwaited, code) {
   pendingWriteFailure = { isAwaited, code }
 }
 
+/** The status read or the close through a handle that a test asked to fail: the file it waits for, the call and the system error; gone once it failed. */
+let pendingHandleCallFailure
+
+/**
+ * Asks the next close of a handle of a file that `isAwaited` names to close the file and then fail with a system error, once: as a close on a network or synced file system that runs into a full disk (`ENOSPC`) or a quota (`EDQUOT`) after the whole write was handed on. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
+ * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose close fails.
+ * @param {'EDQUOT' | 'ENOSPC'} code - The system error.
+ * @returns {void}
+ * @example
+ * failCloseOf((path) => path.endsWith('/next/manual.txt'), 'ENOSPC')
+ */
+export function failCloseOf(isAwaited, code) {
+  pendingHandleCallFailure = { isAwaited, call: 'close', code }
+}
+
+/**
+ * Asks the next status read through a handle of a file that `isAwaited` names to fail with a system error, once, right after its `open` made the file: as a read error of the disk (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
+ * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose status read fails.
+ * @param {'EIO'} code - The system error.
+ * @returns {void}
+ * @example
+ * failStatOf((path) => path.endsWith('/next/manual.txt'), 'EIO')
+ */
+export function failStatOf(isAwaited, code) {
+  pendingHandleCallFailure = { isAwaited, call: 'stat', code }
+}
+
+/**
+ * Wraps an open handle so that its `close` closes the file and then fails with `code`, or its `stat` fails with `code` and reads nothing; every other member is the handle's own.
+ * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
+ * @param {'close' | 'stat'} call - The call that fails.
+ * @param {string} code - The system error.
+ * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
+ * @example
+ * await handleWhoseCallFails(await fileSystem.open(path, 'wx'), 'close', 'ENOSPC').close() // rejects with code ENOSPC after the file was closed
+ */
+function handleWhoseCallFails(handle, call, code) {
+  const failure = () =>
+    Object.assign(new Error(`${code}: the ${call} of the file failed`), {
+      code,
+    })
+  return new Proxy(handle, {
+    get(target, property) {
+      // The close closes the file first, so no descriptor is left open.
+      if (property === call && call === 'close')
+        return async () => {
+          await target.close()
+          throw failure()
+        }
+      if (property === call)
+        return async () => {
+          throw failure()
+        }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
 /**
  * Wraps an open handle so that its `writeFile` writes the first half of the bytes and then fails with `code`; every other member is the handle's own.
  * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
@@ -43,7 +102,7 @@ function handleWhoseWriteFails(handle, code) {
 }
 
 /**
- * Opens a file as `open` does; the handle of the file {@link failWriteOf} waits for fails its write partway, once.
+ * Opens a file as `open` does; the handle of the file {@link failWriteOf} waits for fails its write partway, once, and the handle of the file {@link failCloseOf} or {@link failStatOf} waits for fails that call, once.
  * @param {string} path - The file to open.
  * @param {...unknown} rest - The caller's flags and mode, handed on unchanged.
  * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers, wrapped for the awaited file.
@@ -52,8 +111,13 @@ function handleWhoseWriteFails(handle, code) {
  */
 export async function open(path, ...rest) {
   const handle = await fileSystem.open(path, ...rest)
-  const failure = pendingWriteFailure
+  const failure = pendingWriteFailure,
+    callFailure = pendingHandleCallFailure
   // Only the awaited file's handle fails, once.
+  if (callFailure?.isAwaited(String(path))) {
+    pendingHandleCallFailure = undefined
+    return handleWhoseCallFails(handle, callFailure.call, callFailure.code)
+  }
   if (!failure?.isAwaited(String(path))) return handle
   pendingWriteFailure = undefined
   return handleWhoseWriteFails(handle, failure.code)
