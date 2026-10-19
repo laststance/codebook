@@ -106,6 +106,13 @@ const shellScriptHashOf = template => {
   return `'sha256-${createHash('sha256').update(scripts[0]).digest('base64')}'`;
 };
 
+/** Answers a rendered page the Codebook reader can open, so that a page it would refuse for good is refused here, by its bytes as written (UTF-8), and the agent splits it instead of publishing a page nobody can read; called by {@link renderWikiPages} for each page, before anything is written. @throws When the page has more than {@link PAGE_FILE_LIMIT_BYTES} bytes. @example requireReadablePage('index.html', '<!doctype html>…') // => '<!doctype html>…' */
+function requireReadablePage(path, pageHtml) {
+  const pageBytes = Buffer.byteLength(pageHtml, 'utf8');
+  if (pageBytes > PAGE_FILE_LIMIT_BYTES) throw new Error(`Wiki page ${path} renders to ${pageBytes} bytes, more than the ${PAGE_FILE_LIMIT_BYTES} bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.`);
+  return pageHtml;
+}
+
 /** Renders shared offline pages for {@link publishWiki}; the agent still authors every article and diagram. @throws When the reader data are invalid ({@link validatePages}), a citation does not match its source, or a rendered page is larger than the reader opens ({@link PAGE_FILE_LIMIT_BYTES}). @example await renderWikiPages(manifest, { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function renderWikiPages(manifest, { projectRoot, outputDirectory }) {
   validatePages(manifest);
@@ -171,10 +178,7 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
       if (!Object.hasOwn(values, key)) throw new Error(`Unknown reader template field: ${key}`);
       return values[key];
     });
-    // A page the reader would refuse is refused here, by its bytes as written (UTF-8), so the agent splits it instead of publishing a page nobody can read.
-    const pageBytes = Buffer.byteLength(pageHtml, 'utf8');
-    if (pageBytes > PAGE_FILE_LIMIT_BYTES) throw new Error(`Wiki page ${page.path} renders to ${pageBytes} bytes, more than the ${PAGE_FILE_LIMIT_BYTES} bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.`);
-    pages.set(page.path, pageHtml);
+    pages.set(page.path, requireReadablePage(page.path, pageHtml));
   }
   return pages;
 }
