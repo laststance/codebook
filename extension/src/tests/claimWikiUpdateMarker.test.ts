@@ -1872,8 +1872,13 @@ test('a start in a second window whose open of the running window’s marker fai
           .windowId,
       },
       {
+        // Past the 2 s a write takes, the holder also names the file and the last moment it counts (Cycle 0047 row 85).
         startOfWindowB: {
-          heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+          heldBy: {
+            beingWrittenSinceMs: 1_790_000_000_000,
+            unreadableMarkerPath: wiki.markerPath,
+            countsUntilMs: 1_790_001_290_000,
+          },
         },
         markerAfterTheStart: 'window-a',
       },

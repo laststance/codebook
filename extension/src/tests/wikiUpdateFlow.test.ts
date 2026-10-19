@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -3069,6 +3070,59 @@ test('an Update is refused with the sentence of a starting update while another 
     await wiki.close()
   }
 })
+
+// Value: protects=the learner whose Update is refused beside a marker file this user may not read (another user's private marker; on Windows one a scanner or an indexer holds open for long); fails_when=the refusal says "Wait a moment and try again" for all the 21 minutes 30 seconds such a file counts and names no file, or the start removes the file and runs beside the update it may stand for; why_new=Cycle 0047 row 85 (ADV-8); seam=none: the file's mode refuses the read (EACCES); no_claim=Windows' EBUSY and EPERM, which readLiveWikiUpdateMarker.test.ts and claimWikiUpdateMarker.test.ts inject, and the exact minute the refusal names (describeOtherWikiWindow.test.ts)
+test(
+  'an Update beside a marker file this user may not read, written 3 s before, is refused with the sentence that names the file, what can make it readable and when the refusal ends, and the file stays',
+  {
+    skip:
+      (process.platform === 'win32' &&
+        'Windows lets the owner read a file without read permission') ||
+      (process.getuid?.() === 0 && 'root reads a file without read permission'),
+  },
+  async () => {
+    // Arrange: another window's marker file, last written 3 s ago, that this user may not read.
+    const wiki = await openWikiWindow()
+    const markerPath = `${wiki.outputDirectory}.update-run.json`
+    await writeFile(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        windowId: 'another-window',
+        host: 'vscode',
+        startedAtMs: Date.now() - 3_000,
+      }),
+    )
+    const written3SecondsAgo = new Date(Date.now() - 3_000)
+    await utimes(markerPath, written3SecondsAgo, written3SecondsAgo)
+    await chmod(markerPath, 0o000)
+    try {
+      // Act
+      await wiki.clickUpdate()
+
+      // Assert: the refusal names the file; the minute it names depends on the clock, so it is read as a clock time.
+      const refused = wiki.status()
+      assert.equal(refused.state, 'failed')
+      const reason = refused.state === 'failed' ? refused.reason : ''
+      assert.equal(
+        reason.replace(
+          new RegExp(`ends at ${CLOCK_TIME}[^.]*\\.$`),
+          'ends at <time>.',
+        ),
+        `Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (${markerPath}), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at <time>.`,
+      )
+      assert.deepEqual(wiki.chatRequests, [])
+      await chmod(markerPath, 0o600)
+      assert.equal(
+        JSON.parse(await readFile(markerPath, 'utf8')).windowId,
+        'another-window',
+      )
+    } finally {
+      await chmod(markerPath, 0o600)
+      await wiki.close()
+    }
+  },
+)
 
 // Value: protects=the learner who presses Update at the moment another window begins its update, while this window still has a leftover of its own (a stopped watch); fails_when=the marker another window is writing is weighed after the leftovers, so the refusal names the leftover and offers "Update anyway", which a learner takes to start beside the other window's update; why_new=Cycle 0046 rows 9 and 16 (ER-11): the look names a marker being written since this cycle; seam=the marker file's modification time
 test('a marker file another window is writing refuses an Update before this window’s own stopped watch is weighed, so Update anyway is not offered', async () => {

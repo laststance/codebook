@@ -53,3 +53,32 @@ test('a refusal beside a marker another window is writing, or is removing or rep
     'Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.',
   )
 })
+
+// Value: protects=the learner refused beside a marker file that stays unreadable (another user's private marker, or one a Windows program holds open for long), who needs to know which file is in the way, what makes it readable and when the refusal ends; fails_when=the refusal says "Wait a moment and try again" for all the 21 minutes 30 seconds such a file counts, names no file, or names a time at which the start is still refused; why_new=Cycle 0047 row 85 (ADV-8); seam=none; no_claim=how long the file counts and when the look names it (readLiveWikiUpdateMarker.test.ts)
+test('a refusal beside a marker file that stayed unreadable longer than a write takes names the file, what can make it readable, and the first whole minute after it stops counting', () => {
+  // Arrange: this Wiki's marker file could not be read since 12:00 UTC; one look finds that it counts until 12:21:30 UTC, another until 12:21:00 UTC, a moment at which it still counts.
+  const markerPath = '/repo/.codebook/wiki.update-run.json'
+  const firstMinuteAfter1221 = formatClockTime(Date.UTC(2026, 9, 3, 12, 22), {})
+
+  // Act
+  const countingUntilHalfAMinute = describeOtherWikiWindow({
+    beingWrittenSinceMs: Date.UTC(2026, 9, 3, 12, 0),
+    unreadableMarkerPath: markerPath,
+    countsUntilMs: Date.UTC(2026, 9, 3, 12, 21, 30),
+  })
+  const countingUntilAWholeMinute = describeOtherWikiWindow({
+    beingWrittenSinceMs: Date.UTC(2026, 9, 3, 12, 0),
+    unreadableMarkerPath: markerPath,
+    countsUntilMs: Date.UTC(2026, 9, 3, 12, 21),
+  })
+
+  // Assert: both name 12:22, the first whole minute at which the file no longer counts.
+  assert.equal(
+    countingUntilHalfAMinute,
+    `Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (/repo/.codebook/wiki.update-run.json), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at ${firstMinuteAfter1221}.`,
+  )
+  assert.equal(
+    countingUntilAWholeMinute,
+    `Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (/repo/.codebook/wiki.update-run.json), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at ${firstMinuteAfter1221}.`,
+  )
+})

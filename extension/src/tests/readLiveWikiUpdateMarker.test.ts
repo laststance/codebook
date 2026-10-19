@@ -313,15 +313,23 @@ test('a marker file that cannot be read at this moment counts as one being writt
     writtenFurtherAhead: await lookAtTheHeldMarker(NOW_MS - 300_001),
   }
 
-  // Assert
+  // Assert: past the 2 s a write takes, the look also names the file and the last moment it counts (Cycle 0047 row 85).
   assert.deepEqual(looks, {
     after3Seconds: {
       kind: 'being-written',
-      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
     },
     after21Minutes30Seconds: {
       kind: 'being-written',
-      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
     },
     after21Minutes30SecondsAnd1Ms: { kind: 'unowned' },
     written5MinutesAhead: {
@@ -329,6 +337,77 @@ test('a marker file that cannot be read at this moment counts as one being writt
       heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
     },
     writtenFurtherAhead: { kind: 'unowned' },
+  })
+})
+
+// Value: protects=the learner refused beside a marker file that stays unreadable (another user's private marker, or one a Windows program holds open for long), whose refusal must name that file and when it stops counting, while a file a window is still writing keeps the short refusal; fails_when=the look names no file for one that stayed unreadable past the 2 s a write takes, so the refusal says "Wait a moment and try again" for 21 minutes 30 seconds, or names the file already within those 2 s, or stops refusing the start; why_new=Cycle 0047 row 85 (ADV-8); seam=the look loaded with loadModule, whose every open of the marker file fails with EACCES, and the clock handed to it; no_claim=the sentence (describeOtherWikiWindow.test.ts)
+test('a marker file that cannot be read still counts as one being written, and names its path and the last moment it counts once it has stayed unreadable for 2 s after its write', async (context) => {
+  // Arrange: a marker file of another window's run, last written at the fixed present, whose every open fails as for a file this user may not read.
+  const outputDirectory = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS,
+    }),
+    NOW_MS,
+  )
+  const markerPath = `${outputDirectory}.update-run.json`
+  const readerWhoseMarkerOpenIsRefused = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...openInputs: Parameters<typeof openWithoutFollowing>
+        ) => {
+          if (openInputs[0] === markerPath)
+            throw Object.assign(
+              new Error(`EACCES: permission denied, open '${markerPath}'`),
+              { code: 'EACCES' },
+            )
+          return openWithoutFollowing(...openInputs)
+        },
+      },
+    },
+  )
+  const { readLiveWikiUpdateMarker: lookInThatWindow } = await loadModule<
+    typeof lookModule
+  >(resolve(__dirname, '../utils/readLiveWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerWhoseMarkerOpenIsRefused,
+  })
+  // The loaded module answers objects of its own context; a copy makes them comparable here.
+  const lookAtTheUnreadableMarker = async (
+    nowMs: number,
+  ): Promise<WikiUpdateMarkerLook> =>
+    structuredClone(
+      await lookInThatWindow(outputDirectory, 'own-window', {
+        identity: THIS_WINDOW,
+        nowMs,
+        readStart: async () => undefined,
+      }),
+    )
+
+  // Act
+  const looks = {
+    after1999Ms: await lookAtTheUnreadableMarker(NOW_MS + 1_999),
+    after2000Ms: await lookAtTheUnreadableMarker(NOW_MS + 2_000),
+  }
+
+  // Assert: both refuse the start; only the look past the 2 s names the file and the last moment it counts, 21 min 30 s after its write.
+  assert.deepEqual(looks, {
+    after1999Ms: {
+      kind: 'being-written',
+      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+    },
+    after2000Ms: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
   })
 })
 
