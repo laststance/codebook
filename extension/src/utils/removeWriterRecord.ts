@@ -5,7 +5,7 @@ import { readRecordingWriterRecord } from './readRecordingWriterRecord'
 import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
 
 /**
- * Removes the record of a recording's writer once the recording has no writer any more, and only from a real folder of records ({@link hasOwnWriterRecordFolder}); called for the sealed recording alone by {@link RecordingWriter.finish} after the seal of a recording whose study is saved, and by {@link removeWriterRecordsOfSealedRecordings} when the study of a sealed recording is saved, and by {@link LearningLibrary.removeStudy} after every recording of the study moved.
+ * Removes the record of a recording's writer once the recording has no writer any more, and only from a real folder of records ({@link hasOwnWriterRecordFolder}); called for the sealed recording alone by {@link removeWriterRecordsOfSealedRecordings} when its study is saved from a checkpoint its run took after the seal, and by {@link LearningLibrary.removeStudy} after every recording of the study moved. The seal itself removes no record ({@link RecordingWriter.finish}).
  * A link or anything else at the folder's place is left as it is, with what it leads to; a record that cannot be removed stays for the sweep at a later start of a recording. The look and the removal are separate steps ({@link hasOwnWriterRecordFolder}: only this user's own processes can put a link there between them), and the removal never follows a link at the record's own name.
  * @param learningDirectory - The private learning directory that holds the `recordings.vN` folders.
  * @param studyId - The recording's study id.
@@ -20,7 +20,7 @@ export async function removeWriterRecord(
   sealed?: { directory: string; createdAt: string },
 ): Promise<void> {
   if (!(await hasOwnWriterRecordFolder(learningDirectory))) return
-  // At a seal, a record of another recording of the id is that recording's and stays.
+  // For a sealed recording, a record of another recording of the id is that recording's and stays.
   if (
     sealed &&
     !(await readRecordingWriterRecord(sealed.directory, sealed.createdAt))
