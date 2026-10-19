@@ -15,6 +15,7 @@ import {
   WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES,
 } from './constants'
 import { servedWikiPageHtml } from './utils/servedWikiPageHtml'
+import { systemErrorCode } from './utils/systemErrorCode'
 import type { WikiPageRefusalReason } from './utils/wikiPageRefusalHtml'
 
 /** How {@link servedWikiPageHtml} is told the editor, the reader's script address and the publication of the page it prepares. */
@@ -106,7 +107,7 @@ export function servedWikiPageOffThread(
 
 /**
  * Hands one page to an idle worker, or to a new one, and answers it once: with the page, at the deadline, at a failure or when the request goes. Afterwards the worker waits for the next page only when it answered a page, and the first page waiting then gets a worker; otherwise it is stopped, and the first page waiting gets a worker once the stopped one's thread has ended ({@link stopInItsPlace}). A page whose new worker cannot start is answered as failed at once, and the first page waiting then tries a worker of its own; a page that waited keeps its cancellation from the line until its worker took it.
- * Called by {@link servedWikiPageOffThread} when a worker is free, and for the next waiting page whenever a page is answered.
+ * Called by {@link servedWikiPageOffThread} when a place among the busy workers is free, and by {@link startNextWaitingPage} for the oldest waiting page when a place is free again.
  * @param page - The page asked for; its request has not gone.
  * @example preparePage({ request: { html, options }, limits, answer: resolve, leaveLine })
  */
@@ -154,7 +155,15 @@ function preparePage(page: AskedWikiPage): void {
   const fail = (): void => settle({ state: 'failed' }, false)
   // A worker past its heap limit ends with ERR_WORKER_OUT_OF_MEMORY: the page needs more memory than a worker may use, which no reload changes.
   const failWith = (error: unknown): void =>
-    settle({ state: isOutOfMemory(error) ? 'memory-limit' : 'failed' }, false)
+    settle(
+      {
+        state:
+          systemErrorCode(error) === 'ERR_WORKER_OUT_OF_MEMORY'
+            ? 'memory-limit'
+            : 'failed',
+      },
+      false,
+    )
   const deadline = setTimeout(
     () => settle({ state: 'deadline' }, false),
     page.limits.deadlineMs,
@@ -256,28 +265,14 @@ function dropIdleWorker(worker: Worker): void {
 }
 
 /**
- * Hands the oldest waiting page to the worker just freed; called by {@link preparePage} after every answer. The page keeps its cancellation from the line until {@link preparePage} gave it a worker.
+ * Hands the oldest waiting page, if one waits, to {@link preparePage} for the place that is free now among the busy workers. The page keeps its cancellation from the line until {@link preparePage} gave it a worker.
+ * Called by {@link preparePage} after a page whose worker waits for the next one was answered, and after a page whose worker could not start was answered as failed; and by {@link stopInItsPlace} once a stopped worker's thread has ended and its place is free.
  * @example startNextWaitingPage()
  */
 function startNextWaitingPage(): void {
   const next = waitingPages.shift()
   if (!next) return
   preparePage(next)
-}
-
-/**
- * Tells whether a worker's error is the end at its heap limit ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}); asked by {@link preparePage} for the error a worker ends with.
- * @param error - What the worker's `error` event carried.
- * @returns Whether its code is `ERR_WORKER_OUT_OF_MEMORY`.
- * @example isOutOfMemory(Object.assign(new Error('Worker terminated due to reaching memory limit'), { code: 'ERR_WORKER_OUT_OF_MEMORY' })) // => true
- */
-function isOutOfMemory(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === 'ERR_WORKER_OUT_OF_MEMORY'
-  )
 }
 
 /**
