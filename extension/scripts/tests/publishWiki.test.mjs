@@ -11219,3 +11219,96 @@ test('a publish whose move of the finalized manifest into place fails, after ano
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// The journal and the recovery of the publisher (Cycle 0047, fixing cycle 3 of the delivery, fixer P1).
+
+// Value: protects=the agent's way out of a recovery whose journal names as its stage the Wiki folder under another name that holds the word "Wiki" (`Wiki` beside `wiki` on a file system that ignores the case of names), with the Wiki folder missing at the recovery's first look; fails_when=the recovery takes every refusal whose text holds the stage's name for one that repeats the journal's text, so the publisher's own fixed refusal of the stage reaches the agent as the sentence that asks for --recover with --stage, which gives the same sentence again; why_new=Cycle 0047 row 161 (P3RT-1); seam=a copy of the shipped publisher whose `node:fs/promises` lets the Wiki folder answer to `Wiki` too (scripts/tests/utils/markedCopyHooks.mjs, `?aliased-folder`); no_claim=a refusal of the file system that names the stage, which the recovery still words without the stage's name
+test('a recovery whose journal names as its stage the Wiki folder as `Wiki` while the Wiki folder is missing answers the refusal of a stage that is no sibling of its own, not the sentence that asks for --stage', async () => {
+  // Arrange: a published Wiki with a learner's file, moved to its backup name as a publish stopped between its two moves leaves it; `Wiki` names the Wiki folder too; a journal of this version, whose process is gone, names `Wiki` as its stage, the Wiki's manifest and record as the finalized ones with other prepared bytes, and the learner's file as a copy that began.
+  const { recoverWikiPublication: recoverWhereTheWikiHasTwoNames } =
+    await loadMarkedCopy('publish-wiki.mjs', '?aliased-folder')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-stage-named-wiki-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    backup = join(
+      root,
+      '.codebook/wiki.previous-00000000-0000-4000-8000-000000000001',
+    ),
+    otherName = join(root, '.codebook/Wiki'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'manual.txt'), 'The learner’s own notes')
+    const manifest = await readFile(join(output, 'codebook-wiki.json'), 'utf8')
+    const publicationRecord = await readFile(
+      join(output, 'codebook-publication.json'),
+      'utf8',
+    )
+    await rename(output, backup)
+    const record = JSON.stringify({
+      projectRoot: root,
+      output,
+      stage: otherName,
+      backup,
+      pid: 99999999,
+      id: '00000000-0000-4000-8000-000000000000',
+      operation: 'publish',
+      manifestSha256: createHash('sha256').update(manifest).digest('hex'),
+      priorManifestSha256: createHash('sha256').update(manifest).digest('hex'),
+      priorLegacy: false,
+      finalizedReceiptSha256: createHash('sha256')
+        .update(publicationRecord)
+        .digest('hex'),
+      prepared: {
+        manifest: Buffer.from('{"crafted":"manifest"}').toString('base64'),
+        receipt: Buffer.from('{"crafted":"record"}').toString('base64'),
+      },
+      learnerCopies: ['manual.txt'],
+    })
+    await writeFile(journal, record)
+    nameFolderAlso(otherName, output)
+
+    // Act
+    const recovery = await recoverWhereTheWikiHasTwoNames({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recovery,
+        wikiManifest: await readFile(
+          join(output, 'codebook-wiki.json'),
+          'utf8',
+        ),
+        learnerFile: await readFile(join(output, 'manual.txt'), 'utf8').catch(
+          () => 'deleted',
+        ),
+        journal: await readFile(journal, 'utf8').catch(() => 'removed'),
+      },
+      {
+        recovery:
+          'The Wiki publication journal does not identify a sibling stage/backup.',
+        wikiManifest: manifest,
+        learnerFile: 'The learner’s own notes',
+        journal: record,
+      },
+    )
+  } finally {
+    nameFolderAlso(undefined)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
