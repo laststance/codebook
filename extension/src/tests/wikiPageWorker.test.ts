@@ -23,7 +23,7 @@ const SLOW_PAGE = `<!doctype html><body>${'<x>'.repeat(10_000)}${'</p>'.repeat(1
  * Loads the page-worker module with a `Worker` class that records each worker thread it starts, how many threads it started before were still alive then, and when each thread ends, so a test can tell how many workers prepared its pages and how many lived at once; the threads themselves are the real ones, running the compiled worker file.
  * Called by the tests of the workers' reuse, limit and stop.
  * @param constantOverrides - Constants the loaded module reads instead of the shipped ones.
- * @param whenStopIsAsked - Called with the worker each time the module asks a worker to stop (`terminate`), before the stop begins; by default nothing is done.
+ * @param whenStopIsAsked - Called with the worker each time the module asks a worker to stop (`terminate`), before the stop begins; when it answers a promise, the stop begins only once that promise settles, so a test can make a stop take long. By default nothing is done.
  * @returns The loaded module's {@link servedWikiPageOffThread}, the workers it started in their order, for each of them how many threads started before it had not ended at its start, the start of the worker started n-th (from 0): a promise that settles with `'online'` when its thread runs, or at once with `'never started'`, and that worker's end: a promise that settles with `'ended'` when its thread has ended, or at once with `'never started'`.
  * @example
  * const pool = await loadPageWorkerRecordingThreads({})
@@ -33,7 +33,9 @@ const SLOW_PAGE = `<!doctype html><body>${'<x>'.repeat(10_000)}${'</p>'.repeat(1
  */
 async function loadPageWorkerRecordingThreads(
   constantOverrides: Partial<Record<keyof typeof constants, unknown>>,
-  whenStopIsAsked: (worker: workerThreads.Worker) => void = () => undefined,
+  whenStopIsAsked: (
+    worker: workerThreads.Worker,
+  ) => Promise<void> | void = () => undefined,
 ): Promise<{
   servedWikiPageOffThread: typeof servedWikiPageOffThread
   startedWorkers: workerThreads.Worker[]
@@ -71,8 +73,11 @@ async function loadPageWorkerRecordingThreads(
     }
 
     override terminate(): Promise<number> {
-      whenStopIsAsked(this)
-      return super.terminate()
+      const stopHeld = whenStopIsAsked(this)
+      // A stop the test holds begins once the test lets it go.
+      return stopHeld
+        ? stopHeld.then(() => super.terminate())
+        : super.terminate()
     }
   }
   const loaded = await loadModule<typeof wikiPageWorkerModule>(
@@ -360,6 +365,86 @@ test('a page asked for while an idle worker whose time is up is being stopped ge
       threadsAliveAtEachStart: [0, 0],
     },
   )
+})
+
+// Value: protects=every page the reader admitted within its own bound (takeWikiPagePlace: WIKI_PAGE_WORKER_CONCURRENCY_LIMIT + WIKI_PAGE_WAITING_LIMIT pages in hand) while a stopped page worker is still ending: the reader gives a page's place back at its answer, and the worker it was prepared by keeps its place in the pool until its thread has ended (row 79), so a page admitted in that moment found every worker busy and the line full, and was refused as busy; fails_when=a worker that is only ending still counts against the line of waiting pages, so a page the reader admitted is answered as busy, or the pool takes more pages than the reader's bound while workers end; why_new=Cycle 0047 row 103 (found while fixing row 79); seam=the page-worker module loaded with a Worker class that records the threads it starts and holds every stop until the test lets it go (the threads are real), under the shipped limits; no_claim=the time a real stop takes (about 2 ms on the development host), which the held stop stands for
+test('while both page workers are ending, the two pages the reader admits in their place wait and are served, and a page beyond the reader’s bound is still refused as busy', async () => {
+  // Arrange: every stop is held until the test lets it go; two slow pages under a deadline of 500 ms take both workers, and four small pages wait.
+  let letTheStopsGo: () => void = () => undefined
+  const stopsLetGo = new Promise<void>((resolveStops) => {
+    letTheStopsGo = resolveStops
+  })
+  const pool = await loadPageWorkerRecordingThreads({}, () => stopsLetGo)
+  const signal = new AbortController().signal
+  /** Asks for a small page of the given name under a deadline of 10 s. */
+  const askSmallPage = (
+    name: string,
+  ): ReturnType<typeof servedWikiPageOffThread> =>
+    pool.servedWikiPageOffThread(`<body><p>${name}</p></body>`, PAGE_OPTIONS, {
+      deadlineMs: 10_000,
+      signal,
+    })
+  const slowPages = Promise.all([
+    pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+      deadlineMs: 500,
+      signal,
+    }),
+    pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+      deadlineMs: 500,
+      signal,
+    }),
+  ])
+  const waitingPages = [1, 2, 3, 4].map((number) =>
+    askSmallPage(`Waiting page ${number}`),
+  )
+  const slowAnswers = await within(slowPages, 5_000)
+
+  // Act: both slow pages are answered and their workers are ending; the reader admits two pages in their places, and a third page beyond its bound; then the stops go on.
+  const admittedPages = [
+    askSmallPage('Admitted page 1'),
+    askSmallPage('Admitted page 2'),
+  ]
+  const beyondTheBound = await within(
+    askSmallPage('Page beyond the bound'),
+    1_000,
+  )
+  letTheStopsGo()
+  const answers = await within(
+    Promise.all([...waitingPages, ...admittedPages]),
+    10_000,
+  )
+
+  // Assert: the answers are copied out of the loaded module's context.
+  assert.deepEqual(structuredClone({ slowAnswers, beyondTheBound, answers }), {
+    slowAnswers: [{ state: 'deadline' }, { state: 'deadline' }],
+    beyondTheBound: { state: 'busy' },
+    answers: [
+      {
+        state: 'served',
+        html: '<body><p>Waiting page 1</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      {
+        state: 'served',
+        html: '<body><p>Waiting page 2</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      {
+        state: 'served',
+        html: '<body><p>Waiting page 3</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      {
+        state: 'served',
+        html: '<body><p>Waiting page 4</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      {
+        state: 'served',
+        html: '<body><p>Admitted page 1</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      {
+        state: 'served',
+        html: '<body><p>Admitted page 2</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+    ],
+  })
 })
 
 // Value: protects=the editor's machine against many pages asked for at once (tabs, or a page that names others), each of which may keep a core busy until the deadline; fails_when=the reader starts a worker for every page asked for at once, or a page waiting for a worker is never served, or a page whose request went while it waited still gets a worker or keeps its answer until a worker is free; why_new=P2RT3; seam=the page-worker module loaded with a Worker class that records the threads it starts (the threads are real); no_claim=the number of cores of the learner's machine (the limit is the same everywhere)

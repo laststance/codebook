@@ -43,13 +43,15 @@ const WIKI_PAGE_WORKER_ROLE = 'codebook-wiki-page'
 const idleWorkers: { worker: Worker; retirement: NodeJS.Timeout }[] = []
 /** How many workers prepare a page now or are being stopped, each until its thread has ended; never more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT}. The idle workers are never more than the places left free, so no more threads than that limit are alive at once, and their heaps stay within that many times {@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}. */
 let busyWorkerCount = 0
-/** Pages asked for while every worker was busy, oldest first; never more than {@link WIKI_PAGE_WAITING_LIMIT}. */
+/** How many of the busy workers are only ending: stopped, they prepare no page and hold their place until their thread has ended ({@link stopInItsPlace}). Each holds a place among the busy ones but no page, so the line takes one more page for it, and the pages the pool holds stay as many as with every worker preparing one. */
+let endingWorkerCount = 0
+/** Pages asked for while every worker was busy, oldest first; never more than {@link WIKI_PAGE_WAITING_LIMIT} and one more for each worker that is only ending, so the pages prepared and the pages waiting are never more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} and {@link WIKI_PAGE_WAITING_LIMIT} together, the pages the reader holds at once ({@link takeWikiPagePlace}). */
 const waitingPages: AskedWikiPage[] = []
 
 /**
  * Prepares one Wiki page for serving ({@link servedWikiPageHtml}) on a worker thread, so that the editor's extension host runs on while the page is read, and stops the worker when the deadline passes.
  * Why: the HTML parser takes time that grows with the square of the page on some crafted pages (from 13 s to minutes for 1 MB), well within the page file limit ({@link WIKI_PAGE_FILE_LIMIT_BYTES}); on the host's own thread such a page would stop every extension of the window. The worker's heap is limited ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}), because it runs in the host's process, which a crafted page would otherwise grow by many times its size (a page of 20 MB took 1.6 GB without a limit).
- * At most {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} workers prepare pages at once, so pages asked for together keep that many cores busy at most; a page asked for while every worker is busy waits for the first one free, and its deadline counts from then. A worker that is stopped keeps its place until its thread has ended, as it keeps its heap until then, so no new worker starts beside it. At most {@link WIKI_PAGE_WAITING_LIMIT} pages wait, each holding its page in the host's memory; a further page is answered at once as `busy`, so the wait is bounded too (the last waiting page gets a worker within two deadlines). A worker that answered its page with a heap of at most {@link WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES} waits {@link WIKI_PAGE_WORKER_IDLE_MS} for the next one and prepares it without loading the reader's code again ({@link servedWikiPageHtml} keeps nothing from one page to the next); a waiting worker keeps the heap its pages grew it to, so one whose heap grew past that bound is stopped after its answer. A worker stopped at the deadline, one that failed and one whose request went are stopped and never reused, so a stopped worker takes nothing of a later page with it.
+ * At most {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} workers prepare pages at once, so pages asked for together keep that many cores busy at most; a page asked for while every worker is busy waits for the first one free, and its deadline counts from then. A worker that is stopped keeps its place until its thread has ended, as it keeps its heap until then, so no new worker starts beside it. At most {@link WIKI_PAGE_WAITING_LIMIT} pages wait, each holding its page in the host's memory, and one more for each worker that is only ending, whose page was answered: the pages prepared and waiting are never more than the pages the reader holds at once ({@link takeWikiPagePlace}), so a page the reader admitted is never refused because a worker is still ending. A further page is answered at once as `busy`, so the wait is bounded too (the last waiting page gets a worker within two deadlines). A worker that answered its page with a heap of at most {@link WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES} waits {@link WIKI_PAGE_WORKER_IDLE_MS} for the next one and prepares it without loading the reader's code again ({@link servedWikiPageHtml} keeps nothing from one page to the next); a waiting worker keeps the heap its pages grew it to, so one whose heap grew past that bound is stopped after its answer. A worker stopped at the deadline, one that failed and one whose request went are stopped and never reused, so a stopped worker takes nothing of a later page with it.
  * The worker is this module's compiled file, loaded from the folder of the running code (`dist`), where the package ships it as a bundle of its own.
  * Called by the Wiki reader for every HTML file it serves.
  * @param html - The page as the Wiki folder holds it.
@@ -60,7 +62,7 @@ const waitingPages: AskedWikiPage[] = []
  * - `{ state: 'served', html }` with the page as served
  * - `{ state: 'deadline' }` when the deadline passed first; the worker is stopped
  * - `{ state: 'too-large' }` when the worker reached its heap limit ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}, `ERR_WORKER_OUT_OF_MEMORY`): a reload would only run another worker to the same end
- * - `{ state: 'busy' }` at once when every worker is busy and {@link WIKI_PAGE_WAITING_LIMIT} pages wait already; no worker starts for it
+ * - `{ state: 'busy' }` at once when every worker is busy and {@link WIKI_PAGE_WAITING_LIMIT} pages wait already, and one more for each worker that is only ending; no worker starts for it
  * - `{ state: 'failed' }` when the worker failed otherwise, answered no page, or the request went, also while the page waited; never the page unprepared
  * @example
  * await servedWikiPageOffThread('<body></body>', { editorScheme: 'vscode', clientAddress: '/w/t/codebook-qa.js', publication: undefined }, { deadlineMs: 10_000, signal })
@@ -91,8 +93,8 @@ export function servedWikiPageOffThread(
       preparePage(page)
       return
     }
-    // Every worker is busy and the line is full: the page would only hold its bytes in the host for a wait that long.
-    if (waitingPages.length >= WIKI_PAGE_WAITING_LIMIT) {
+    // Every worker is busy and the line is full: the page would only hold its bytes in the host for a wait that long. A worker that is only ending holds no page, so its page's place goes to the line.
+    if (waitingPages.length >= WIKI_PAGE_WAITING_LIMIT + endingWorkerCount) {
       resolve({ state: 'busy' })
       return
     }
@@ -193,15 +195,18 @@ function startPageWorker(): Worker | undefined {
 }
 
 /**
- * Stops a worker that holds a place among the busy ones, and gives that place to the first waiting page only once the worker's thread has ended.
+ * Stops a worker that holds a place among the busy ones, and gives that place to the first waiting page only once the worker's thread has ended; meanwhile the worker counts as only ending ({@link endingWorkerCount}), and the line of waiting pages takes one more page.
  * Why: `terminate` only asks the thread to stop, and the thread keeps its heap (up to {@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}) until its `exit`; a place given back at once let a new worker start beside it, so pages stopped at the deadline one after another kept more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} heaps at once.
  * Called by {@link preparePage} for a worker that was stopped, failed, passed the deadline or lost its request, and by {@link keepIdle} for an idle worker whose time is up, which takes a place for its stop.
  * @param worker - The worker; its place is counted in {@link busyWorkerCount}.
  * @example stopInItsPlace(worker) // the place is free, and the next waiting page starts, once the thread has ended
  */
 function stopInItsPlace(worker: Worker): void {
+  // Until its thread has ended, the worker prepares no page, and the line takes a page in its page's place.
+  endingWorkerCount += 1
   /** Gives the place back and hands it to the first waiting page. */
   const freePlace = (): void => {
+    endingWorkerCount -= 1
     busyWorkerCount -= 1
     startNextWaitingPage()
   }
