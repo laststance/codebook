@@ -1158,6 +1158,9 @@
     "signalProcessGroup.test.js": {
       "totalMs": 3
     },
+    "sortUnansweredWikiRequest.test.js": {
+      "totalMs": 9
+    },
     "sourceMapGeneratedRange.test.js": {
       "totalMs": 5
     },
@@ -2446,9 +2449,6 @@
     },
     "withUnannouncedPauses.test.js": {
       "totalMs": 1
-    },
-    "withdrawWikiChatRequest.test.js": {
-      "totalMs": 9
     },
     "withoutErrorName.test.js": {
       "totalMs": 1

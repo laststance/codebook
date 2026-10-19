@@ -2307,7 +2307,7 @@ test('in an editor without the New Chat command a queue command that would fail 
   }
 })
 
-// Value: protects=the chat that works on an update: Codebook never stops a request the chat answered; fails_when=the withdrawal also runs for a request with a first answer (at the 30 seconds), or the Cancel of the watch, which "stops watching, not the chat", stops the chat's request; why_new=Cycle 0046 row 82 added the withdrawal beside the watch; seam=the sleep of the wait for the chat's answer, on a manual clock
+// Value: protects=the chat that works on an update: Codebook never stops a request the chat answered; fails_when=a chat command runs for a request with a first answer (at the 30 seconds), or the Cancel of the watch, which "stops watching, not the chat", stops the chat's request; why_new=Cycle 0046 row 82 added the withdrawal beside the watch; seam=the sleep of the wait for the chat's answer, on a manual clock
 test('a request the chat works on is left to the chat when the 30 seconds pass and when the learner cancels the watch: the editor ran no command after the request', async () => {
   // Arrange: the chat command stays pending, as for a chat that works without asking for a confirmation.
   const { clock, sleep } = manualAnswerClock()
@@ -2321,7 +2321,7 @@ test('a request the chat works on is left to the chat when the 30 seconds pass a
     const press = wiki.clickUpdate()
     await waitForChatRequest(wiki.chatRequests)
 
-    // Act: five seconds later the chat opens the manifest; the bound and the settle times of a withdrawal pass; then the learner cancels the watch.
+    // Act: five seconds later the chat opens the manifest; the bound and four seconds after it pass; then the learner cancels the watch.
     clock.advance(5_000)
     wiki.openDocument(wiki.manifestPath)
     await new Promise((resolveWait) => setImmediate(resolveWait))
@@ -2784,7 +2784,7 @@ test('a folder the publisher prepares beside the Wiki counts as the chat’s wor
     await waitForStampReads(wiki.looks, 2)
     await new Promise((resolveWait) => setImmediate(resolveWait))
     clock.advance(28_000)
-    // The settle time of a withdrawal passes as well.
+    // Two seconds past the bound pass as well.
     await new Promise((resolveWait) => setImmediate(resolveWait))
     clock.advance(2_000)
     await press
