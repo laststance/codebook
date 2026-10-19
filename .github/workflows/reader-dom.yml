@@ -17,6 +17,9 @@ jobs:
   reader-dom:
     # Renders the compiled Study reader in real Chrome and fails on a DOM regression: labels, render keys, keyboard
     # focus, page overflow and reader density. The unit suites never load the reader's document, so only this job sees them.
+    # A second check does the same for a page of the Wiki reader: the right rail, the focus rings and the reading column.
+    # Three more run in the same browser setup: the Study reader's reading pose, the understanding checkbox of both panes
+    # and the Repository Wiki pane. A browser check of extension/scripts that no step here runs fails a script test.
     name: Reader DOM cases
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -70,12 +73,49 @@ jobs:
 
       # Run from the repository root: the harness reads extension/dist and exits non-zero when any case fails.
       - name: Run the reader DOM cases
+        id: study
         run: node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom
 
-      - name: Keep the DOM report, screenshots and video after a failure
+      # The same browser setup, a browser session of its own and a folder of its own: the check publishes a sample Wiki
+      # with the shipped publisher, serves it with the compiled reader and measures the served page. It records no video.
+      # It also runs after the Study reader's cases failed, so one push shows the failures of both checks and the kept
+      # artifact holds both folders. It does not run when that step was skipped (the build or the browser tools before
+      # it failed, so this check could not run either) or when the job was cancelled.
+      - name: Run the Wiki reader DOM cases
+        if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}
+        run: node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom
+
+      # The three checks below ran by hand only until Cycle 0046, and two of them could no longer start without anyone
+      # noticing. Each has a browser session and a folder of its own and runs under the same condition as the Wiki
+      # reader's check, so one push shows the failures of all five.
+      # The reading pose: what the Study reader captures before the host replaces its document (reading position, open
+      # disclosures, visited links, the focused control) and restores in the new one, and what later input of the learner
+      # does to a restore.
+      - name: Run the reading pose cases of the Study reader
+        if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}
+        run: node extension/scripts/study-reading-pose-qa.mjs verify artifacts/reading-pose-dom
+
+      # The understanding checkbox of the Study reader and of the Repository Wiki pane under real key and pointer input:
+      # one save per decision, the focus kept while a save is pending and after it failed, no focus taken back.
+      - name: Run the understanding checkbox cases of both panes
+        if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}
+        run: node extension/scripts/understanding-focus-qa.mjs verify artifacts/understanding-dom
+
+      # The Repository Wiki pane: the place a Return restores, and where the keyboard stands after the learner left the
+      # pane and returned to it the way the editor's webview does it.
+      - name: Run the Repository Wiki pane cases
+        if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}
+        run: node extension/scripts/repository-return-qa.mjs verify artifacts/repository-pane-dom
+
+      - name: Keep the DOM reports, screenshots and video after a failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reader-dom
-          path: artifacts/reader-dom
+          path: |
+            artifacts/reader-dom
+            artifacts/wiki-reader-dom
+            artifacts/reading-pose-dom
+            artifacts/understanding-dom
+            artifacts/repository-pane-dom
           if-no-files-found: ignore

@@ -26,6 +26,8 @@ export function projectPlaybackStudy(
     : undefined
   const model = projectStudy({
     ...input,
+    // Playback's shared moment replaces any earlier exact Wiki history visit.
+    observationId: undefined,
     study,
     selection: { ...input.selection, follow: false, tab: 'live' },
   })

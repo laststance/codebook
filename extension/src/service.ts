@@ -104,6 +104,7 @@ import { historyExclusionReason } from './utils/historyExclusionReason'
 import { historyExclusionState } from './utils/historyExclusionState'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
+import { isStudyRemovalExclusion } from './utils/isStudyRemovalExclusion'
 import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import { namesLineNumber } from './utils/namesLineNumber'
@@ -113,12 +114,60 @@ import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
 import { thrownMessage } from './utils/thrownMessage'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 
 /** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
 const SAVE_LEARNING_SUMMARY_ADVICE =
   "No learning summary is saved for this run yet, so its saved study would have no summary and no sequence. Save one now: call codebook_explain on a committed snapshot of this run with a new key and a complete learningSummary whose final step is observed and cites this resource's terminalReference. The last step of the sequence in codebook://help/studies describes it."
+
+/** What the run resource tells an agent in place of {@link SAVE_LEARNING_SUMMARY_ADVICE} once the run's explanation keys are spent, because {@link StudyService.explain} refuses every new key then; the refusal of a new key begins with the same budget statement. */
+const EXPLANATION_BUDGET_SPENT_ADVICE = `The run's explanation budget (${MAX_EXPLANATIONS} keys) is spent; the saved study will have no learning summary.`
+
+/**
+ * Words why a stopped run whose evidence failed takes no further explanation, for the run resource in place of {@link SAVE_LEARNING_SUMMARY_ADVICE} and for {@link StudyService.explain}'s refusal of a new key: the evidence keeps its first failure, so every later write of it fails, also once the disk has room again.
+ * @param failure - The evidence's failure ({@link Evidence.failure}), which names the failed write.
+ * @returns The sentence that names the failed write, that no key is spent, and what holds of the run.
+ * @example
+ * failedEvidenceAdvice('Error: ENOSPC: no space left on device, write')
+ * // => "No explanation or learning summary can be saved for this run: a write of its evidence failed (Error: ENOSPC: no space left on device, write), …"
+ */
+function failedEvidenceAdvice(failure: string): string {
+  return `No explanation or learning summary can be saved for this run: a write of its evidence failed (${failure}), and every later write of that evidence fails too, also once the cause is fixed. Codebook refuses a new explanation key for this run without spending it. What the run recorded until then holds: its result, its snapshots and the explanations saved before the failure; its saved study will have no learning summary. A new run can save one.`
+}
+
+/**
+ * Chooses what the run resource says under `saveLearningSummary`, for {@link StudyService.state} each time the resource is read.
+ * @param lacksLearningSummary - Whether the released run reached its demonstrated result and no saved explanation carries a learning summary.
+ * @param explanationBudgetSpent - Whether {@link StudyService.explain} accepts no new key for the run.
+ * @param isSavingLearningSummary - Whether an accepted key's explanation that carries a learning summary is still being saved. The budget counts a key when it is reserved, so the last key can be spent while its summary is on its way.
+ * @param evidenceFailure - The failure of the stopped run's evidence, which refuses every further explanation ({@link StudyService.stoppedRunEvidenceFailure}); `undefined` while its evidence writes.
+ * @returns
+ * - `undefined` for a run that lacks no learning summary
+ * - {@link failedEvidenceAdvice} for a stopped run whose evidence failed: explain refuses a new key, so the step is not offered
+ * - {@link SAVE_LEARNING_SUMMARY_ADVICE} while explain still accepts a new key
+ * - `undefined` once it does not, while a learning summary is still being saved: whether the study gets one is not known yet
+ * - {@link EXPLANATION_BUDGET_SPENT_ADVICE} once the budget is spent and no summary is on its way
+ * @example
+ * learningSummaryAdvice(true, false, false, undefined) // => SAVE_LEARNING_SUMMARY_ADVICE
+ * learningSummaryAdvice(true, false, false, 'Error: ENOSPC: no space left on device, write') // => failedEvidenceAdvice of that failure
+ * learningSummaryAdvice(true, true, true, undefined)   // => undefined
+ * learningSummaryAdvice(false, true, false, undefined) // => undefined
+ */
+function learningSummaryAdvice(
+  lacksLearningSummary: boolean,
+  explanationBudgetSpent: boolean,
+  isSavingLearningSummary: boolean,
+  evidenceFailure: string | undefined,
+): string | undefined {
+  if (!lacksLearningSummary) return undefined
+  // A new key would fail at the same failed evidence: the run's own advice replaces the step.
+  if (evidenceFailure !== undefined)
+    return failedEvidenceAdvice(evidenceFailure)
+  if (!explanationBudgetSpent) return SAVE_LEARNING_SUMMARY_ADVICE
+  return isSavingLearningSummary ? undefined : EXPLANATION_BUDGET_SPENT_ADVICE
+}
 
 /** What the run resource tells an agent beside a browser profile folder that the run's cleanup could not remove: the run is released, and nobody is asked to delete anything. */
 const BROWSER_PROFILE_LEFT_ADVICE =
@@ -156,10 +205,13 @@ export type StudyRecord = StudyRecordState &
  * Why the reader must not checkpoint a retained run and why its state reports no saved history.
  * - `awaiting-admission`: the study library has not answered yet whether it can keep this run's study.
  * - `refused-at-admission`: the library was full or its limit setting invalid, so the run never started.
- * - `removed-by-learner`: the learner moved the run's saved study to the system Trash.
+ * - `removed-by-learner`: the learner moved the run's saved study to the system Trash with this window's delete.
+ * - `archive-removed`: the run's saved study left the library without a removal of this window, so its archive is gone: its files were removed by hand (a window without a Trash offers nothing else), or another window removed it.
  */
 export type HistoryExclusion =
-  'awaiting-admission' | 'refused-at-admission' | 'removed-by-learner'
+  'awaiting-admission' | 'refused-at-admission' | StudyRemovalExclusion
+/** The two exclusions that say a run's saved study was removed; each has its own sentence for the agent that reads the run, see {@link historyExclusionReason}. */
+export type StudyRemovalExclusion = 'removed-by-learner' | 'archive-removed'
 interface StudyRecordState {
   id: string
   signature: string
@@ -171,9 +223,16 @@ interface StudyRecordState {
   preparation: Promise<void>
   stopping: boolean
   stopped: boolean
+  /** The evidence's failure when the run's release ended ({@link StudyService.stopRecord}), the one {@link StudyService.state} reads for a stopped run: a write that fails later, such as an explanation saved after the end, is no failure of the run (Cycle 0046 row 699). */
+  evidenceFailureAtStop?: string
   stopPromise?: Promise<void>
   cleanupError?: StudyError
   error?: StudyError
+  /** What the run's error was made of, when a write's raw failure or the release's became its cause ({@link StudyService.writeFailureError}, {@link StudyService.stopRecord}), the runtime's own failed write in a preparation among them ({@link StudyService.preparationError}, row 724): {@link StudyService.excludeHistory} words it again once the study turns out removed, so the raw failure's storage path goes from every reader (Cycle 0046 row 700). */
+  errorSource?:
+    { kind: 'write'; message: string; failure: string } | { kind: 'release' }
+  /** What the run's last release threw as it threw it, before {@link StudyService.releaseFailure} worded it, for {@link StudyService.excludeHistory} (row 700). */
+  releaseError?: unknown
   action?: {
     signature: string
     receipt: { operationId: string; runUri: string; key: string }
@@ -182,7 +241,12 @@ interface StudyRecordState {
   explanations: Map<string, Explanation>
   explanationKeys: Map<
     string,
-    { signature: string; result: Promise<ExplanationReceipt> }
+    {
+      signature: string
+      result: Promise<ExplanationReceipt>
+      /** Set while the key's explanation carries a learning summary and is still being saved: until its save ends, nobody can say whether the study gets a summary. */
+      isSavingLearningSummary?: boolean
+    }
   >
   sourceReveals: Set<Promise<void>>
   /** Per committed snapshot of a moved stop, how far {@link StudyService.explain}'s one check of the paused line has gone: `refused` after the one refusal, `explained` once an explanation was accepted, after which none is checked. */
@@ -237,7 +301,7 @@ export class StudyService {
   readonly instanceId = randomUUID()
   readonly records = new Map<string, StudyRecord>()
   recordings?: RecordingStore
-  /** Whether this window can remove a saved study: what the window itself says at first (a remote window has no Trash), then what its last removal told; written only by {@link recordStudyRemoval}. */
+  /** Whether this window can remove a saved study: what the window itself says at first (a remote window has no Trash), then what the last removal that moved its study or met the Trash's refusal told; written only by {@link recordStudyRemoval}. */
   private removalAvailability: StudyRemovalAvailability
   playbackController?: PlaybackController
   presentationController?: Pick<
@@ -249,6 +313,7 @@ export class StudyService {
     | 'assertPresentationIdle'
     | 'nodeHistoryLearningMaterialSaved'
     | 'replayControlAccepted'
+    | 'markAgentRecordingOpen'
   >
   repository?: RepositoryBookStore
   nodeHistoryStore?: NodeTestHistoryStore
@@ -296,7 +361,7 @@ export class StudyService {
 
   /**
    * Tells whether this window can remove a saved study, so every full-library refusal names a removal only while one can work here; read by the run admission and, through {@link StudyWorkspace}, by the study library and the recording store.
-   * @returns `no-trash` in a window without a Trash, where no removal is started; otherwise `available` until a removal left its study in the library, then `trash-refused` until a later removal moves one.
+   * @returns `no-trash` in a window without a Trash, where no removal is started; otherwise `available` until the Trash refused a move in this session, then `trash-refused` until a later removal moves its study.
    * @example
    * service.studyRemovalAvailability // => 'available'
    */
@@ -305,16 +370,15 @@ export class StudyService {
   }
 
   /**
-   * Records once per removal whether the study left the library; called by {@link StudyWorkspace} when {@link LearningLibrary.removeStudy} has settled.
+   * Records what a removal told about the Trash; called by {@link StudyWorkspace} when {@link LearningLibrary.removeStudy} has settled, only for a removal that moved its study and for one the Trash itself refused (`trashRefused`). A refusal before any move (another window's recording, a held lock, the learner's choice still to come) tells nothing about the Trash and is not recorded.
    * A path the Trash rejected inside a removal that still moved the study does not count against the Trash.
-   * @param hasStudyLeftLibrary - `true` for a removal that ended `moved`, `false` for `nothing-moved` and `partly-moved`.
+   * @param movedToTrash - `true` when the study moved to the Trash; `false` when the Trash refused a move.
    * @example
-   * service.recordStudyRemoval(removal.outcome === 'moved')
+   * if (removal.outcome === 'moved') service.recordStudyRemoval(true)
+   * else if (removal.trashRefused) service.recordStudyRemoval(false)
    */
-  recordStudyRemoval(hasStudyLeftLibrary: boolean): void {
-    this.removalAvailability = hasStudyLeftLibrary
-      ? 'available'
-      : 'trash-refused'
+  recordStudyRemoval(movedToTrash: boolean): void {
+    this.removalAvailability = movedToTrash ? 'available' : 'trash-refused'
   }
 
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */
@@ -512,7 +576,7 @@ export class StudyService {
   /**
    * Reads one exact tracked source without navigating or running the application; the answer of `codebook_source`, which an agent reads before it cites lines or declares a stop.
    * @param input - The instance and the tracked path, with the hash the agent expects when it rereads a cited file.
-   * @returns The exact text with its hash and line count, and `numberedText`: the same lines, each after its one-based number and a tab ({@link numberSourceLines}), so the agent takes a line from the answer instead of counting.
+   * @returns The source's path, full-byte hash and line count, and `numberedText`: its lines, each after its one-based number and a tab ({@link numberSourceLines}), so the agent takes a line from the answer instead of counting. The numbered copy is the answer's only copy of the lines: the tool answers this object in `content` and in `structuredContent`, because some editor chats give their model only one of the two, and an unnumbered copy beside it would double the answer.
    * @throws When the instance is stale, the path is not an eligible tracked file or its hash differs from `expectedHash`.
    * @example
    * ```ts
@@ -525,10 +589,12 @@ export class StudyService {
       input.expectedHash,
     )
     this.repositoryStore(input.instanceId)
+    // The lines are answered once, numbered: the plain text beside them would repeat every line.
+    const { text, ...identity } = result
     return {
       instanceId: this.instanceId,
-      ...result,
-      numberedText: numberSourceLines(result.text),
+      ...identity,
+      numberedText: numberSourceLines(text),
     }
   }
 
@@ -587,8 +653,15 @@ export class StudyService {
         'PREREQUISITE_MISSING',
         'The playback workspace is unavailable.',
       )
+    // An agent's open enters the reader as the agent's: the learner's keyboard stays where Codebook need not move it (row 613).
+    const forgetAgentOpen =
+      input.action === 'open'
+        ? this.presentationController?.markAgentRecordingOpen(input.studyId)
+        : undefined
     try {
       const state = this.playbackController.command(input)
+      // An open the controller answers without a load (the same recording, loading or shown) leaves no mark for a later open.
+      if (state.revision === input.expectedRevision) forgetAgentOpen?.()
       // An accepted seek, play or pause answers a refusal the Learning replay panel still shows; an open is answered when its load is ready.
       if (input.action !== 'open')
         this.presentationController?.replayControlAccepted()
@@ -597,6 +670,7 @@ export class StudyService {
         uri: `codebook://${this.instanceId}/playback`,
       }
     } catch (error) {
+      forgetAgentOpen?.()
       // A closed reader is recovered only by open; reading the playback resource again would not change the answer.
       const readerClosed = !this.playbackController.state().readerOpen
       throw this.playbackRefusal(error, readerClosed, input)
@@ -670,7 +744,8 @@ export class StudyService {
         'PRESENTATION_UNAVAILABLE',
         RETIRED_PRESENTATION_REFUSAL,
       )
-    await this.presentationController.changePresentation(input)
+    // The codebook_presentation tool's request is an agent's: beside a chat view no file it cannot prove gets the keyboard (row 613).
+    await this.presentationController.changePresentation(input, 'agent')
     return this.presentationState(input.instanceId)
   }
 
@@ -692,7 +767,8 @@ export class StudyService {
         'PRESENTATION_UNAVAILABLE',
         'The Study reader is unavailable in this host.',
       )
-    await this.presentationController.returnToCurrent(input)
+    // The codebook_return_current tool's request is an agent's: its Live arrangement gives no file it cannot prove the keyboard beside a chat view, and says once where it is.
+    await this.presentationController.returnToCurrent(input, 'agent')
     return this.presentationState(input.instanceId)
   }
 
@@ -1162,7 +1238,7 @@ export class StudyService {
           record.nodePhase = 'completed'
         }
       } catch (error) {
-        record.error = domainError(error)
+        record.error = studyErrorNamingCause(domainError(error))
         record.nodePhase = 'failed'
         queueMicrotask(() => {
           void this.stopRecord(record).catch(() => undefined)
@@ -1215,7 +1291,7 @@ export class StudyService {
    * A value path sent without its `value:` or `type:` prefix is saved under the one captured key that has it ({@link resolveCapturedFactPaths}). The first explanation of a stop the debugger bound on another line than declared is refused once when its interpretation lacks the paused line's number ({@link namesLineNumber}); that check is a bounded guard on prose and no proof of the place, which is why every explanation of such a stop is saved with Codebook's own {@link Explanation.boundPlace}.
    * @param input - The run, an explanation key, the snapshot URI with its TypeScript hash, the captured fact paths and the interpretation, optionally with a complete learning summary.
    * @returns The explanation's resource URI and the captured keys it was saved under; a repeated key with the same content returns the first receipt.
-   * @throws An `INVALID_REFERENCE` {@link StudyError} for an unknown snapshot, a wrong hash, an uncaptured or ambiguous path, an unverified summary reference, and once for a moved stop whose first interpretation does not name the paused line; `IDEMPOTENCY_CONFLICT` for a key that names other content; `BUSY` during cleanup or a removal; `LIMIT_EXCEEDED` past the explanation limit.
+   * @throws An `INVALID_REFERENCE` {@link StudyError} for an unknown snapshot, a wrong hash, an uncaptured or ambiguous path, an unverified summary reference, and once for a moved stop whose first interpretation does not name the paused line; `IDEMPOTENCY_CONFLICT` for a key that names other content; `BUSY` during cleanup or a removal; `EVIDENCE_UNAVAILABLE` for a new key of a stopped run whose evidence failed ({@link failedEvidenceAdvice}), before the key is reserved; `LIMIT_EXCEEDED` past the explanation limit.
    * @example await service.explain({...run, snapshotUri, sourceHash, valuePaths:['value:price'], interpretation:'Price is 24.', key:'explain-1'})
    */
   explain(input: ExplainInput): Promise<ExplanationReceipt> {
@@ -1270,10 +1346,17 @@ export class StudyService {
         'INVALID_REFERENCE',
         'Source hash or distinct value paths do not match the snapshot.',
       )
+    const evidenceFailure = this.stoppedRunEvidenceFailure(record)
+    // A stopped run's failed evidence fails every later write: the refusal comes before a key is reserved, so the budget is not spent on it.
+    if (evidenceFailure !== undefined)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        failedEvidenceAdvice(evidenceFailure),
+      )
     if (record.explanationKeys.size >= MAX_EXPLANATIONS)
       throw new StudyError(
         'LIMIT_EXCEEDED',
-        `This run allows ${MAX_EXPLANATIONS} explanation intents.`,
+        `The run's explanation budget (${MAX_EXPLANATIONS} keys) is spent; Codebook accepts no new explanation key for this run, and a key it already accepted answers its receipt again.`,
       )
     // Every diagram link is bound to this run's committed source; prose classifications remain agent-authored claims.
     for (const step of learningSummary?.steps ?? []) {
@@ -1374,16 +1457,85 @@ export class StudyService {
           valuePaths,
         }
       } catch (error) {
-        record.error = new StudyError(
-          'EVIDENCE_UNAVAILABLE',
-          'Explanation was not committed.',
-          String(error),
-        )
-        throw record.error
+        throw this.explanationFailure(record, error)
       }
     })
-    record.explanationKeys.set(input.key, { signature, result })
+    const accepted: NonNullable<
+      ReturnType<StudyRecord['explanationKeys']['get']>
+    > = { signature, result, isSavingLearningSummary: Boolean(learningSummary) }
+    record.explanationKeys.set(input.key, accepted)
+    // Saved or failed, the key's explanation is no longer being written.
+    const saveEnded = (): void => {
+      accepted.isSavingLearningSummary = false
+    }
+    void result.then(saveEnded, saveEnded)
     return result
+  }
+
+  /**
+   * Gives the failure of a stopped run's evidence, which refuses every further explanation of the run: the evidence keeps its first failure, so a later write fails at the same failure ({@link Evidence.flush}); read by {@link StudyService.explain} before it reserves a key and by {@link StudyService.state} for the run resource's advice.
+   * @param record - The run.
+   * @returns
+   * - The evidence's failure for a stopped run whose evidence failed, at its stop or after it (an explanation's save after the result)
+   * - `undefined` for a run that has not stopped, has no runtime, or whose evidence writes
+   * @example this.stoppedRunEvidenceFailure(stoppedRecord) // => 'Error: ENOSPC: no space left on device, write' after a learning summary's save failed on a full disk
+   */
+  private stoppedRunEvidenceFailure(record: StudyRecord): string | undefined {
+    return record.stopped ? record.runtime?.evidence.failure : undefined
+  }
+
+  /**
+   * Names and journals an explanation whose save failed, for the agent's `codebook_explain` answer; called by {@link StudyService.explain} when the explanation's evidence write or flush rejected.
+   * A running run fails with the write: its error is the explanation's, and its runtime journals that as `run.failed`, as every other failure path of a run does (Cycle 0046 row 665). A run that already stopped keeps its outcome and terminal reason: an explanation accepted after the end (a learning summary saved after the result) is no part of the run, and a stopped runtime's `fail` journals nothing (`ConfiguredBrowserRun.fail` returns at once while it cleans up), so the failure is journaled as `explanation.failed` instead, past a refusal of the evidence too ({@link Evidence.recordFailure}); a `run.failed` after the end would read as the end of a failed run (row 699). A removed study's write names its removal, not the storage path ({@link StudyService.evidenceFailureCause}).
+   * @param record - The run the explanation belongs to.
+   * @param error - What the save rejected with.
+   * @returns The `EVIDENCE_UNAVAILABLE` error the explanation is refused with, whose message names the cause.
+   * @example
+   * throw this.explanationFailure(stoppedRecord, new Error('ENOSPC: no space left on device, write'))
+   * // the run's journal ends with explanation.failed "Explanation was not committed. Cause: ENOSPC: no space left on device, write"; its outcome is as it was
+   */
+  private explanationFailure(record: StudyRecord, error: unknown): StudyError {
+    const message = 'Explanation was not committed.',
+      failure = this.writeFailureError(record, message, String(error))
+    // A run that ended keeps its outcome; its journal keeps the failure as an event of its own (row 699).
+    if (record.stopped) {
+      record.runtime!.evidence.recordFailure(
+        failure.message,
+        'explanation.failed',
+      )
+      return failure
+    }
+    record.error = failure
+    // A study found removed later words this error by its removal (row 700).
+    record.errorSource = { kind: 'write', message, failure: String(error) }
+    // The run fails with the write: its runtime journals the cause as run.failed, as every other failure path of a run does (Cycle 0046 row 665).
+    record.runtime!.fail(record.error.message)
+    return failure
+  }
+
+  /**
+   * Makes the error of a failed evidence write, the run's evidence failure at the maintenance turn or an explanation's save, whose message names its cause; called by {@link StudyService.maintain}, by {@link StudyService.explanationFailure} and, once the study turns out removed, by {@link StudyService.wordFailuresByRemoval}, so each words the same failure the same way.
+   * The cause is the write's own failure, or the removal's sentence for a run whose saved study was removed ({@link StudyService.evidenceFailureCause}, rows 667 and 700).
+   * @param record - The run whose write failed.
+   * @param message - What failed: `'Evidence buffering or persistence failed.'` or `'Explanation was not committed.'`.
+   * @param failure - The write's raw failure.
+   * @returns An `EVIDENCE_UNAVAILABLE` {@link StudyError} whose message names its cause ({@link studyErrorNamingCause}).
+   * @example
+   * this.writeFailureError(record, 'Evidence buffering or persistence failed.', 'Error: ENOSPC: no space left on device, write').message
+   * // => 'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write'
+   */
+  private writeFailureError(
+    record: StudyRecord,
+    message: string,
+    failure: string,
+  ): StudyError {
+    return studyErrorNamingCause(
+      new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        message,
+        this.evidenceFailureCause(record, failure),
+      ),
+    )
   }
 
   /** Commits editor-agent learning after MCP submits it, binding every sequence link to the selected sealed Node journal.
@@ -1593,28 +1745,56 @@ export class StudyService {
   }
 
   /**
-   * Ends a retained run's history after the learner removed its saved study, so the reader stops checkpointing it and {@link StudyService.state} stops reporting saved history; called by {@link StudyWorkspace} once a removal has moved something to the system Trash.
+   * Ends a retained run's history after its saved study was removed, so the reader stops checkpointing it and {@link StudyService.state} stops reporting saved history; called by {@link StudyWorkspace} once a removal has moved something to the system Trash, and when Retry storage / refresh finds that the study's archive left the library without such a removal.
    * A record this service no longer retains is left alone.
-   * @param record - The run whose study was removed; it is marked `removed-by-learner`, the only exclusion set outside preparation.
+   * @param record - The run whose study was removed; the removal exclusions are the only ones set outside preparation.
+   * @param exclusion - How the study was removed, which decides the sentence an agent reads for the run: by this window's delete unless the caller says that the archive was removed outside it.
    * @example
    * service.excludeHistory(record)
    * service.beginHistory(record, service.state(record).materialSignature) // => undefined
+   * service.excludeHistory(record, 'archive-removed') // the run's reason names the archive, not the Trash
    */
-  excludeHistory(record: StudyRecord): void {
+  excludeHistory(
+    record: StudyRecord,
+    exclusion: StudyRemovalExclusion = 'removed-by-learner',
+  ): void {
     if (this.records.get(record.id) !== record) return
-    record.historyExcluded = 'removed-by-learner'
+    record.historyExcluded = exclusion
+    this.wordFailuresByRemoval(record)
   }
 
   /**
-   * Refuses to read or extend the raw evidence of a run whose saved study the learner removed, because the evidence directory went to the system Trash with it; called by {@link assertEvidenceReadable} and by {@link StudyService.explain}.
+   * Words the run's error and the failure of its release again once its saved study turns out removed, for {@link StudyService.excludeHistory}: a removal by hand or by another window is found only at the learner's next Retry storage or refresh, usually after the run's next evidence write already failed with ENOENT on its gone directory, the maintenance turn made that raw error the run's error, which the run resource, the status resource and every caller read, and the release failed on its final write too. Built again with the exclusion set, the errors name the failed write and the removal ({@link StudyService.writeFailureError}, {@link StudyService.releaseFailure}) as when the exclusion came first (rows 667 and 686), not the internal storage path (Cycle 0046 row 700). The `run.failed` the runtime journaled stays; a removed study's events are no longer served ({@link StudyService.assertEvidenceAvailable}).
+   * @param record - The run whose study was removed.
+   * @example this.wordFailuresByRemoval(record) // record.error.message => "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: …"
+   */
+  private wordFailuresByRemoval(record: StudyRecord): void {
+    const source = record.errorSource
+    // An error a write's raw failure caused is made again, now naming the removal.
+    if (source?.kind === 'write')
+      record.error = this.writeFailureError(
+        record,
+        source.message,
+        source.failure,
+      )
+    // A failed release is worded again, and so is the error it gave a run that ended without one.
+    if (record.releaseError === undefined) return
+    const failure = this.releaseFailure(record, record.releaseError)
+    if (record.cleanupError) record.cleanupError = domainError(failure)
+    if (source?.kind === 'release')
+      record.error = studyErrorNamingCause(domainError(failure))
+  }
+
+  /**
+   * Refuses to read or extend the raw evidence of a run whose saved study was removed: the evidence directory went to the system Trash with it, or is among the files a removal by hand takes; called by {@link assertEvidenceReadable} and by {@link StudyService.explain}.
    * The bare run resource stays readable and names the same reason.
    * @param record - The retained run that is being read or explained.
-   * @throws An `EVIDENCE_UNAVAILABLE` {@link StudyError} with the removal sentence for a `removed-by-learner` run.
+   * @throws An `EVIDENCE_UNAVAILABLE` {@link StudyError} with the sentence of the removal ({@link historyExclusionReason}) for a run whose study was removed either way.
    * @example
    * service.assertEvidenceAvailable(record) // throws after service.excludeHistory(record)
    */
   assertEvidenceAvailable(record: StudyRecord): void {
-    if (record.historyExcluded === 'removed-by-learner')
+    if (isStudyRemovalExclusion(record.historyExcluded))
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
         historyExclusionReason(record.historyExcluded),
@@ -1738,16 +1918,62 @@ export class StudyService {
     }
   }
 
+  /**
+   * Names the evidence failure that is a failure of the run, for {@link StudyService.state}'s terminal reason and outcome.
+   * A write that failed because a removed run's evidence directory went to the Trash is no failure of the run, and its message names the storage path. A write that failed after the run's release ended is none either: the only evidence written then is an explanation accepted after the end (a learning summary saved after the result), whose failure its own answer and its `explanation.failed` event tell ({@link StudyService.explanationFailure}, Cycle 0046 row 699), so a stopped run reads the failure its evidence had when it stopped.
+   * @param record - The run.
+   * @returns
+   * - `undefined` for a removed run's study
+   * - For a stopped run: its evidence's failure at the stop, if any
+   * - Otherwise: its evidence's failure now, if any
+   * @example this.runEvidenceFailure(stoppedRecord) // => undefined after a learning summary's save failed with ENOSPC once the run had stopped
+   */
+  private runEvidenceFailure(record: StudyRecord): string | undefined {
+    if (isStudyRemovalExclusion(record.historyExcluded)) return undefined
+    return record.stopped
+      ? record.evidenceFailureAtStop
+      : record.runtime?.evidence.failure
+  }
+
+  /**
+   * Gives the runtime's own first failure for {@link StudyService.state}'s terminal reason, read when the run has no error of its own and no evidence failure of the run: a runtime that failed itself on a failed evidence write (a snapshot's save into the gone directory of a removed study) gives its raw error, and when the run was stopped before a maintenance turn made that the run's error, nothing words it again once the removal is known ({@link StudyService.wordFailuresByRemoval}). For a removed study such a failure names the internal storage path, so it is worded as a failed evidence write with the removal's sentence ({@link StudyService.writeFailureError}), as the run's error is (Cycle 0046 rows 667, 700 and 707); every other failure stays as the runtime gave it.
+   * @param record - The run.
+   * @param runtime - Its runtime's view read for this state; `undefined` without a runtime.
+   * @returns
+   * - `undefined` when the runtime reported no failure
+   * - For a removed study's failure that names the run's evidence directory: 'Evidence buffering or persistence failed. Cause: ' and the removal's sentence
+   * - Otherwise the runtime's first failure
+   * @example this.runtimeFailureOf(removedRecord, runtime) // => "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: …"
+   */
+  private runtimeFailureOf(
+    record: StudyRecord,
+    runtime: RuntimeView | undefined,
+  ): string | undefined {
+    const failure = runtime?.failures[0]
+    // Only a removed study's failure that names its evidence directory is worded again.
+    if (
+      !runtime ||
+      failure === undefined ||
+      !isStudyRemovalExclusion(record.historyExcluded) ||
+      !failure.includes(runtime.artifactDirectory)
+    )
+      return failure
+    return this.writeFailureError(
+      record,
+      'Evidence buffering or persistence failed.',
+      failure,
+    ).message
+  }
+
   /** Projects bounded current state and actionable next steps without copying the full event log. @example service.state(record).nextActions */
   state(record: StudyRecord) {
     const runtime = record.runtime?.view()
-    // A write that failed because a removed run's evidence directory went to the Trash is no failure of the run, and its message names the storage path.
-    const evidenceFailure =
-      record.historyExcluded === 'removed-by-learner'
-        ? undefined
-        : record.runtime?.evidence.failure
+    const evidenceFailure = this.runEvidenceFailure(record)
     // A runtime failure can quote adapter text of any length; the saved study's reason holds at most MAX_UI_TEXT_CHARS.
-    const runtimeFailure = runtime?.failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
+    const runtimeFailure = this.runtimeFailureOf(record, runtime)?.slice(
+      0,
+      MAX_UI_TEXT_CHARS,
+    )
     const terminalReason =
       record.error?.message.slice(0, MAX_UI_TEXT_CHARS) ??
       evidenceFailure?.slice(0, MAX_UI_TEXT_CHARS) ??
@@ -1862,6 +2088,11 @@ export class StudyService {
       ![...record.explanations.values()].some(
         (explanation) => explanation.learningSummary,
       )
+    // explain refuses every new key once the budget is spent, so the step is no longer offered then.
+    const explanationBudgetSpent =
+      record.explanationKeys.size >= MAX_EXPLANATIONS
+    // explain refuses every new key of a stopped run whose evidence failed, so the step is not offered then either.
+    const stoppedEvidenceFailure = this.stoppedRunEvidenceFailure(record)
     const nextActions = [
       canControl && record.prepared && runtime?.status === 'ready'
         ? runtime.nextAction
@@ -1869,7 +2100,11 @@ export class StudyService {
       participants.server?.resumable ? 'continue-server' : undefined,
       participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined,
-      lacksLearningSummary ? 'save-learning-summary' : undefined,
+      lacksLearningSummary &&
+      !explanationBudgetSpent &&
+      stoppedEvidenceFailure === undefined
+        ? 'save-learning-summary'
+        : undefined,
       holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
     const material = {
@@ -2088,7 +2323,7 @@ export class StudyService {
     const capture = record.recording?.state()
     // The recording a removed study had went to the system Trash with it.
     const recordingRemoved =
-      record.historyExcluded === 'removed-by-learner' &&
+      isStudyRemovalExclusion(record.historyExcluded) &&
       record.recording !== undefined
     const recording = {
       capture,
@@ -2163,10 +2398,15 @@ export class StudyService {
           )
     return {
       ...material,
-      // Present only while nextActions names save-learning-summary; gone once an explanation with a learning summary is saved.
-      saveLearningSummary: lacksLearningSummary
-        ? SAVE_LEARNING_SUMMARY_ADVICE
-        : undefined,
+      // Present while the run lacks a learning summary: the step to save one while explain still accepts a new key, the spent budget once it does not; gone once an explanation with a learning summary is saved.
+      saveLearningSummary: learningSummaryAdvice(
+        lacksLearningSummary,
+        explanationBudgetSpent,
+        [...record.explanationKeys.values()].some(
+          (accepted) => accepted.isSavingLearningSummary,
+        ),
+        stoppedEvidenceFailure,
+      ),
       observedAt:
         observedAtMs === undefined
           ? undefined
@@ -2217,11 +2457,14 @@ export class StudyService {
       if (record.stopped || record.stopping || record.cleanupError) continue
       const evidenceFailure = record.runtime?.evidence.failure
       if (evidenceFailure) {
-        record.error = new StudyError(
-          'EVIDENCE_UNAVAILABLE',
-          'Evidence buffering or persistence failed.',
-          evidenceFailure,
-        )
+        const message = 'Evidence buffering or persistence failed.'
+        record.error = this.writeFailureError(record, message, evidenceFailure)
+        // A study found removed later words this error by its removal (row 700).
+        record.errorSource = {
+          kind: 'write',
+          message,
+          failure: evidenceFailure,
+        }
         record.runtime?.fail(record.error.message)
       }
       this.expireAtDeadline(record)
@@ -2234,14 +2477,46 @@ export class StudyService {
         record.nodePhase === 'failed'
       )
         void this.stopRecord(record).catch((error) => {
-          record.error = domainError(error)
+          this.failByRelease(record, error)
         })
     }
   }
 
   /**
+   * Gives a run that ended without an error of its own its release's failure as its error, for {@link StudyService.maintain} when the release it started threw: a run that failed keeps its own error, with its cause, and the release's failure is its cleanupError (Cycle 0046 row 653). The error notes that the release made it, so {@link StudyService.wordFailuresByRemoval} words it again once the study turns out removed (row 700).
+   * @param record - The run whose release threw.
+   * @param error - What {@link StudyService.stopRecord} threw.
+   * @example this.failByRelease(completedRecord, new Error('owned browser close: timed out')) // record.error.message => 'The study operation failed. Cause: owned browser close: timed out'
+   */
+  private failByRelease(record: StudyRecord, error: unknown): void {
+    if (record.error) return
+    record.error = studyErrorNamingCause(domainError(error))
+    record.errorSource = { kind: 'release' }
+  }
+
+  /**
+   * Names the cause of a run's evidence failure for the run's error, which becomes its terminal reason and the reason its runtime journals as `run.failed`; called by {@link StudyService.maintain} when the run's evidence has failed.
+   * A run whose saved study was removed while it ran (its archive left the library by hand or through another window; this window's delete refuses a run that has not stopped) lost its evidence directory with it: the write's raw error names that internal storage path, which {@link StudyService.state} keeps out of the run resource too, so the removal's own sentence is the cause (Cycle 0046 row 667).
+   * @param record - The run whose evidence failed.
+   * @param failure - The evidence's failure, as {@link Evidence} keeps it.
+   * @returns
+   * - For a run whose saved study was removed: {@link historyExclusionReason} of its removal
+   * - Otherwise: `failure` itself
+   * @example
+   * this.evidenceFailureCause(record, 'Error: ENOSPC: no space left on device, write') // => 'Error: ENOSPC: no space left on device, write'
+   * this.evidenceFailureCause(removedRecord, "Error: ENOENT: no such file or directory, open '…/events.jsonl'")
+   * // => "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window."
+   */
+  private evidenceFailureCause(record: StudyRecord, failure: string): string {
+    return isStudyRemovalExclusion(record.historyExcluded)
+      ? historyExclusionReason(record.historyExcluded)
+      : failure
+  }
+
+  /**
    * Ends a run whose whole-run deadline has passed with the deadline's error, so every reader names the same end; called by {@link StudyService.maintain} at each maintenance turn and by {@link StudyService.nextRunState} while a continuation waits, which must not answer past the run's own deadline.
    * It releases nothing itself: the next maintenance turn stops the run it marked. A run that already ended on its own ({@link StudyService.hasRunEnded}) is left as it is, whichever caller asks.
+   * The reason it journals as `run.failed` is the run's error message, which names its cause whichever path set an earlier error ({@link studyErrorNamingCause}, Cycle 0046 row 653); the deadline's own message is its cause.
    * @param record - The run whose deadline is compared with the clock.
    * @example this.expireAtDeadline(record) // record.error?.message === 'Study wall deadline expired; history only.' once now() >= record.deadlineAt
    */
@@ -2556,6 +2831,7 @@ export class StudyService {
             })
             return historyWrite
           },
+          record.nodePrepared.descriptor.sources,
         )
         if (this.stopping || record.stopping) return
         const firstStop = await record.nodeRun.prepare()
@@ -2624,11 +2900,10 @@ export class StudyService {
       if (record.nodePhase) record.nodePhase = 'failed'
     }
     // Schedule cleanup after preparation settles to avoid awaiting this promise from itself.
+    // A release that fails keeps its own error as cleanupError; the run's error stays the preparation's, with its cause (Cycle 0046 row 653).
     if (record.error)
       queueMicrotask(() => {
-        void this.stopRecord(record).catch((error) => {
-          record.error = domainError(error)
-        })
+        void this.stopRecord(record).catch(() => undefined)
       })
   }
 
@@ -2637,18 +2912,34 @@ export class StudyService {
    * A runtime that ends itself during preparation (a pause it did not declare, such as a learner's breakpoint on a line the page load runs) closes its own transport, and the preparation then rejects with that closure ("CDP disconnected"). The reason the runtime recorded first is the one an agent can act on, so it becomes the message and the cause.
    * @param record - The run whose preparation rejected.
    * @param error - What the preparation rejected with.
-   * @returns The runtime's own first failure as a `RUNTIME_FAILED` {@link StudyError}, or {@link domainError} of `error` when the runtime recorded none or `error` already is a {@link StudyError}.
+   * Whatever the failure, its message names its cause ({@link studyErrorNamingCause}): the message becomes the run's terminal reason and the reason its runtime journals as `run.failed`, and an error that is no {@link StudyError} would otherwise say only "The study operation failed." there, its own words staying in the cause alone (Cycle 0046 row 645).
+   * A runtime that failed itself on an evidence write into the gone directory of a study removed during the preparation (a snapshot's save; `ConfiguredBrowserRun.track` fails the run with the write's raw error) gives a first failure that names the run's evidence directory. The run's error then notes that a write's raw failure made it (`errorSource`), so {@link StudyService.wordFailuresByRemoval} words it again once the removal is known, and a removal already known words it at once: the failed write and the removal's sentence ({@link StudyService.writeFailureError}), not the storage path, as rows 667, 700 and 707 word such an error (Cycle 0046 row 724).
+   * @returns
+   * - The runtime's own first failure as a `RUNTIME_FAILED` {@link StudyError}, when `error` is no {@link StudyError}.
+   * - For that failure naming the run's evidence directory of a study already found removed: the `EVIDENCE_UNAVAILABLE` error of a failed evidence write, with the removal's sentence as its cause.
+   * - Otherwise {@link domainError} of `error`, whose message names its cause where it did not.
    * @example
    * this.preparationError(record, new Error('CDP disconnected')).message
    * // => 'Unexpected or additional server stop invalidated the declared operation'
+   * this.preparationError(record, new Error('The dedicated Application layout could not be confirmed.')).message
+   * // => 'The study operation failed. Cause: The dedicated Application layout could not be confirmed.' (a runtime that recorded no failure)
+   * this.preparationError(removedRecord, new Error('Repository run is unavailable')).message
+   * // => "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: …" (the runtime's first failure "Error: ENOENT: …/snapshot.json.tmp")
    */
   private preparationError(record: StudyRecord, error: unknown): StudyError {
-    const runtimeFailure = record.runtime
-      ?.view()
-      .failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
-    return runtimeFailure && !(error instanceof StudyError)
-      ? new StudyError('RUNTIME_FAILED', runtimeFailure, runtimeFailure)
-      : domainError(error)
+    const runtime = record.runtime?.view(),
+      runtimeFailure = runtime?.failures[0]
+    if (!runtime || !runtimeFailure || error instanceof StudyError)
+      return studyErrorNamingCause(domainError(error))
+    // A failure naming the run's evidence directory is a failed evidence write's raw failure, which a removal of the study words by its own sentence (row 724).
+    if (runtimeFailure.includes(runtime.artifactDirectory)) {
+      const message = 'Evidence buffering or persistence failed.'
+      record.errorSource = { kind: 'write', message, failure: runtimeFailure }
+      if (isStudyRemovalExclusion(record.historyExcluded))
+        return this.writeFailureError(record, message, runtimeFailure)
+    }
+    const reason = runtimeFailure.slice(0, MAX_UI_TEXT_CHARS)
+    return new StudyError('RUNTIME_FAILED', reason, reason)
   }
 
   /**
@@ -2801,18 +3092,46 @@ export class StudyService {
           record.nodeHistoryStatus = 'failed'
         }
       }
+      // What the evidence failed with by the end is the run's; a later write's failure is not (row 699).
+      record.evidenceFailureAtStop = record.runtime?.evidence.failure
       record.stopped = true
       record.cleanupError = undefined
+      record.releaseError = undefined
     })())
     try {
       await attempt
     } catch (error) {
-      record.cleanupError = domainError(error)
+      // The raw failure stays for the wording of a removal found later (row 700).
+      record.releaseError = error
+      const failure = this.releaseFailure(record, error)
+      record.cleanupError = domainError(failure)
       record.stopPromise = undefined
-      throw error
+      throw failure
     } finally {
       record.stopping = false
     }
+  }
+
+  /**
+   * Names why a run's release failed, for its `cleanupError` and for every caller of {@link StudyService.stopRecord} that reports that failure (the stop tool, the error of a run that ended without one at the maintenance turn, an incomplete shutdown); called by {@link StudyService.stopRecord} when the release threw.
+   * A run whose saved study was removed while it ran lost its evidence directory with the archive, so the release's final evidence write fails too, and that write's raw error names the internal storage path, which {@link StudyService.evidenceFailureCause} keeps out of the run's error (row 667): the failed write and the removal's own sentence name it instead (Cycle 0046 row 686). A release that threw while the evidence still wrote failed for its own reason, which stays its cause.
+   * @param record - The run whose release threw.
+   * @param error - What the release threw.
+   * @returns
+   * - For a run whose saved study was removed and whose evidence failed: an error that names the failed evidence write and the removal ({@link historyExclusionReason})
+   * - Otherwise: `error` itself
+   * @example
+   * this.releaseFailure(removedRecord, new Error("Evidence write failed: Error: ENOENT: no such file or directory, open '…/events.jsonl'")).message
+   * // => "Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window."
+   * this.releaseFailure(record, new Error('owned browser close: timed out')).message // => 'owned browser close: timed out'
+   */
+  private releaseFailure(record: StudyRecord, error: unknown): unknown {
+    return isStudyRemovalExclusion(record.historyExcluded) &&
+      record.runtime?.evidence.failure
+      ? new Error(
+          `Evidence write failed: ${historyExclusionReason(record.historyExcluded)}`,
+        )
+      : error
   }
 
   /** Returns the original preparing receipt even after later transitions, allowing safe same-key retries. @example this.receipt(record).runId */

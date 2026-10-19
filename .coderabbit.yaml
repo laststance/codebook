@@ -141,7 +141,7 @@ knowledge_base:
       - 'DEVELOPMENT.md'
       - 'DESIGN.md'
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: 'docs/cycles/0045-natural-request-and-carried-defects.md'
+      - files: 'docs/cycles/0046-carried-defects-of-cycle-0045.md'
         applyTo: '**/*'
       - files: 'docs/designs/codebook.md'
         applyTo: 'extension/src/**'

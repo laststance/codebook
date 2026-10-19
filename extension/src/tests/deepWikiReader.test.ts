@@ -1,18 +1,41 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { constants as openConstants } from 'node:fs'
 import {
+  appendFile,
+  lstat,
   mkdtemp,
   mkdir,
+  open,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import * as fileSystemPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { test } from 'node:test'
+import { promisify } from 'node:util'
 
+import * as constants from '../constants'
+import type * as deepWikiReaderModule from '../deepWikiReader'
 import { readDeepWikiManifest, startDeepWikiReader } from '../deepWikiReader'
+import type * as linkGuardModule from '../utils/assertNoLinkOnWikiPath'
+import type * as linkWalkModule from '../utils/findLinkOnWikiPath'
+import type * as wikiPageWorkerModule from '../wikiPageWorker'
+
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
+import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
+import { fileSystemWhoseRealPathFails } from './utils/fileSystemWhoseRealPathFails'
+import { loadModule } from './utils/loadModule'
+import { writeMinimalWiki } from './utils/writeMinimalWiki'
 
 test('generated Wiki reader serves published pages and answers an explicit same-origin question', async () => {
   // Arrange
@@ -549,4 +572,1114 @@ test('closing the reader while a question is in flight stops the question and en
     await asking
     await rm(projectRoot, { recursive: true, force: true })
   }
+})
+
+// Value: protects=every request of the open Wiki reader and the freshness check of an update in a checkout whose repository carries the Wiki's manifest as a link to a pipe (row 186); fails_when=the reader reads its manifest by name, which follows the link and waits for a writer that never comes; why_new=Cycle 0046 row 186; seam=none (a real named pipe, whose waiting reader the test releases when it ends)
+test(
+  'the reader’s manifest read does not wait on a link to a named pipe at the manifest’s path: it refuses at once and names the file',
+  {
+    timeout: 2_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
+        : false,
+  },
+  async (context) => {
+    // Arrange
+    const projectRoot = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-pipe-')),
+    )
+    const pipePath = join(projectRoot, 'a-pipe-nobody-writes-to')
+    await promisify(execFile)('mkfifo', [pipePath])
+    // A read that waits on the pipe would keep this process alive: a writer that opens and closes ends it, also when the body was stopped at its time bound.
+    context.after(async () => {
+      await open(
+        pipePath,
+        openConstants.O_WRONLY | openConstants.O_NONBLOCK,
+      ).then(
+        (writer) => writer.close(),
+        () => undefined,
+      )
+      await rm(projectRoot, { recursive: true, force: true })
+    })
+    const { outputDirectory, manifestPath } =
+      await writeMinimalWiki(projectRoot)
+    await rm(manifestPath)
+    if (!(await createLinkIfAllowed(pipePath, manifestPath)))
+      return context.skip(LINK_NOT_ALLOWED)
+
+    // Act
+    const refusal = await readDeepWikiManifest(
+      outputDirectory,
+      projectRoot,
+    ).then(
+      () => 'read',
+      (error: Error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      `The Wiki’s manifest (${manifestPath}) is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
+    )
+  },
+)
+
+// Value: protects=the rule that the reader takes its manifest from the Wiki folder alone, on every system; fails_when=the read follows a link, so a manifest that lies outside the Wiki folder decides which files the reader serves; why_new=Cycle 0046 row 186: the pipe case cannot run on Windows; seam=none
+test('the reader’s manifest read does not follow a link to a regular manifest elsewhere, while the same manifest as a file of the Wiki folder is read', async (context) => {
+  // Arrange: a one-page Wiki whose manifest is read once in place, then moved out of the Wiki folder with a link left in its place.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-link-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  const filesOfTheManifestInPlace = [
+    ...(await readDeepWikiManifest(outputDirectory, projectRoot)).files,
+  ]
+  const manifestElsewhere = join(projectRoot, 'moved.json')
+  await rename(manifestPath, manifestElsewhere)
+  if (!(await createLinkIfAllowed(manifestElsewhere, manifestPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+
+  // Act
+  const throughTheLink = await readDeepWikiManifest(
+    outputDirectory,
+    projectRoot,
+  ).then(
+    () => 'read',
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { filesOfTheManifestInPlace, throughTheLink },
+    {
+      filesOfTheManifestInPlace: ['index.html'],
+      throughTheLink: `The Wiki’s manifest (${manifestPath}) is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
+    },
+  )
+})
+
+// Value: protects=the folder outside the project that a cloned repository's `.codebook` link leads to, when the learner opens the Wiki; fails_when=the reader reads the manifest by the Wiki folder's path again and follows the link at its parent, so it serves the files of a folder outside the project; why_new=Cycle 0046 /ship finding F1: the reader's reads checked the manifest's own path and the served files below the folder, never the folders above it; seam=none (a junction on Windows, which needs no right)
+test('the reader refuses a Wiki whose `.codebook` folder in the project is a link to a folder outside it, names the link and opens nothing behind it', async (context) => {
+  // Arrange: a one-page Wiki whose `.codebook` folder is moved out of the project, with a link to it left in its place.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-linked-parent-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const projectRoot = join(directory, 'project')
+  await mkdir(projectRoot)
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  await rename(
+    join(projectRoot, '.codebook'),
+    join(directory, 'codebook-moved-out'),
+  )
+  await symlink(
+    join(directory, 'codebook-moved-out'),
+    join(projectRoot, '.codebook'),
+    'junction',
+  )
+
+  // Act
+  const refusal = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  ).then(
+    async (reader) => {
+      await reader.close()
+      return 'opened'
+    },
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(
+    refusal,
+    `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}). Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then open the Wiki again.`,
+  )
+})
+
+// Value: protects=the folder outside the project that a cloned repository's `.codebook/wiki` link leads to, when the learner opens the Wiki; fails_when=the reader looks only at the folders above the Wiki folder, so a Wiki folder that is itself a link is read and served from outside the project, while the publisher and the update start refuse it; why_new=Cycle 0046 /ship repeat review SC2 (critical; the rest of F1); repeat design review PD7: the refusal is short sentences; seam=none (a junction on Windows, which needs no right)
+test('the reader refuses a Wiki whose folder `.codebook/wiki` in the project is itself a link to a folder outside it, names the folder and opens nothing behind it', async (context) => {
+  // Arrange: a one-page Wiki whose Wiki folder is moved out of the project, with a link to it left in its place.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-linked-folder-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const projectRoot = join(directory, 'project')
+  await mkdir(projectRoot)
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  await rename(outputDirectory, join(directory, 'wiki-moved-out'))
+  await symlink(join(directory, 'wiki-moved-out'), outputDirectory, 'junction')
+
+  // Act
+  const refusal = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  ).then(
+    async (reader) => {
+      await reader.close()
+      return 'opened'
+    },
+    (error: Error) => error.message,
+  )
+
+  // Assert
+  assert.equal(
+    refusal,
+    `The Wiki folder ${outputDirectory} is a link or a file, or leads out of the project. Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then open the Wiki again.`,
+  )
+})
+
+// Value: protects=the reader on Windows, where the file system layer of Node.js calls a junction whose target is a volume a directory, at the Wiki folder or at a folder above it; fails_when=the reader's look trusts lstat and no longer compares the entry's real path with the project, so a Wiki behind such a junction is read and served from outside the project; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch had no test) with SC2's folder-itself case; seam=a file system whose lstat calls a link a directory
+test('the reader’s look refuses a Wiki folder, and a folder above it, that lstat calls a directory although its real path leaves the project', async (context) => {
+  // Arrange: two one-page Wikis, the first with its `.codebook` folder and the second with its Wiki folder moved out of the project and a link left in its place, read by a guard whose lstat answers for a link what stat answers.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-wrong-look-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const wrongLook = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+  })
+  const walk = await loadModule<typeof linkWalkModule>(
+    resolve(__dirname, '../utils/findLinkOnWikiPath.js'),
+    { 'node:fs/promises': wrongLook.fileSystem },
+  )
+  const { assertNoLinkOnWikiPath: assertWhereTheLookIsWrong } =
+    await loadModule<typeof linkGuardModule>(
+      resolve(__dirname, '../utils/assertNoLinkOnWikiPath.js'),
+      { './findLinkOnWikiPath': walk },
+    )
+  const withLinkedParent = join(directory, 'parent')
+  const withLinkedFolder = join(directory, 'folder')
+  await mkdir(withLinkedParent)
+  await mkdir(withLinkedFolder)
+  const parentWiki = await writeMinimalWiki(withLinkedParent)
+  const folderWiki = await writeMinimalWiki(withLinkedFolder)
+  await rename(
+    join(withLinkedParent, '.codebook'),
+    join(directory, 'codebook-moved-out'),
+  )
+  await symlink(
+    join(directory, 'codebook-moved-out'),
+    join(withLinkedParent, '.codebook'),
+    'junction',
+  )
+  await rename(folderWiki.outputDirectory, join(directory, 'wiki-moved-out'))
+  await symlink(
+    join(directory, 'wiki-moved-out'),
+    folderWiki.outputDirectory,
+    'junction',
+  )
+
+  // Act
+  const refusalOf = (outputDirectory: string, projectRoot: string) =>
+    assertWhereTheLookIsWrong(outputDirectory, projectRoot).then(
+      () => 'read',
+      (error: Error) => error.message,
+    )
+  const refusals = [
+    await refusalOf(parentWiki.outputDirectory, withLinkedParent),
+    await refusalOf(folderWiki.outputDirectory, withLinkedFolder),
+  ]
+
+  // Assert
+  assert.deepEqual(refusals, [
+    `The Wiki folder ${parentWiki.outputDirectory} lies behind a link or a file in the project (${join(withLinkedParent, '.codebook')}). Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then open the Wiki again.`,
+    `The Wiki folder ${folderWiki.outputDirectory} is a link or a file, or leads out of the project. Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to your Wiki’s folder, move its files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then open the Wiki again.`,
+  ])
+})
+
+// Value: protects=the learner whose project holds a folder on the Wiki folder's path whose real path the system cannot name (a folder of another user, or a junction on Windows that `realpath` refuses); fails_when=the reader's walk lets the system's error of `realpath` through, so the reader and the open command show that error instead of the refusal of a folder that leaves the project; why_new=Cycle 0046 /ship adversarial review AD17; seam=a file system whose realpath fails for one folder (src/tests/utils/fileSystemWhoseRealPathFails.ts)
+for (const code of ['EACCES', 'EINVAL'] as const)
+  test(`the reader refuses a Wiki whose .codebook folder has a real path the system cannot name (${code}) with the sentence of a folder above the Wiki folder, not the system’s error`, async (context) => {
+    // Arrange: a one-page Wiki read by a guard whose realpath fails for `.codebook`.
+    const projectRoot = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-unnamed-real-path-')),
+    )
+    context.after(() => rm(projectRoot, { recursive: true, force: true }))
+    const { outputDirectory } = await writeMinimalWiki(projectRoot)
+    const walk = await loadModule<typeof linkWalkModule>(
+      resolve(__dirname, '../utils/findLinkOnWikiPath.js'),
+      {
+        'node:fs/promises': fileSystemWhoseRealPathFails(
+          join(projectRoot, '.codebook'),
+          code,
+        ),
+      },
+    )
+    const { assertNoLinkOnWikiPath: assertWhereTheRealPathFails } =
+      await loadModule<typeof linkGuardModule>(
+        resolve(__dirname, '../utils/assertNoLinkOnWikiPath.js'),
+        { './findLinkOnWikiPath': walk },
+      )
+
+    // Act
+    const refusal = await assertWhereTheRealPathFails(
+      outputDirectory,
+      projectRoot,
+    ).then(
+      () => 'read',
+      (error: Error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      `The Wiki folder ${outputDirectory} lies behind a link or a file in the project (${join(projectRoot, '.codebook')}). Codebook reads no Wiki through it. Replace it with a real folder (if it is a link to a folder of yours, move that folder’s files into the new folder), or set codebook.wikiOutputDirectory to a folder outside the project, then open the Wiki again.`,
+    )
+  })
+
+// Value: protects=the reader's origin, whose page may ask the editor's model, against script a page's content carries (an event attribute or a `javascript:` address an agent wrote, also in a Wiki published before the publisher refused them), against a script written straight into a page file of the Wiki folder, and against an asset of the Wiki that is an HTML file with a script of its own; fails_when=the reader serves a page without a Content-Security-Policy, or with one that lets inline script run, or lets a script run by a secret its own tag carries, which a tag left open before it takes over; why_new=Cycle 0046 /ship finding F2 (security, verified): pages were served with no Content-Security-Policy; repeat review SC1 (critical): every script of a page file got the nonce; Codex review CX16: the reader's nonce went to a script tag a page file leaves open before the reader's own; finding AF6: the page's javascript: link is served without its link, as every address the publisher refuses today; seam=none (the reader's real responses)
+test('every page the reader serves lets only script files of its own origin and the shell’s script by its known hash run, and the reader’s own tag carries no secret: a script written into a page file or into an asset that is an HTML file runs nowhere', async (context) => {
+  // Arrange: an overview page file with content that holds an event attribute and a javascript: link, and a script that is not the shell's, written into the file; and an asset that ends in .html with a script of its own.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-policy-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(join(outputDirectory, 'assets'), { recursive: true })
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a href="javascript:run()">Run</a></article><script>\nthemeButton()\n</script></body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'assets/notes.html'),
+    '<!doctype html><body><article></article><script>run()</script></body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['assets/notes.html'],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const clientAddress = `${new URL(reader.url).pathname.replace('index.html', '')}codebook-qa.js`
+  /** The policy and the page of one response, the reader's script address written as CLIENT. */
+  const served = async (path: string) => {
+    const response = await fetch(new URL(path, reader.url))
+    return {
+      policy: response.headers.get('content-security-policy'),
+      page: (await response.text()).replaceAll(clientAddress, 'CLIENT'),
+    }
+  }
+
+  // Act
+  const overview = await served('index.html')
+  const asset = await served('assets/notes.html')
+
+  // Assert
+  assert.deepEqual(
+    { overview, asset },
+    {
+      overview: {
+        policy:
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+        page: '<!doctype html><body><article><img src="x.png" onerror="fetch(\'api/ask\')"><a data-codebook-unlinked="javascript:run()">Run</a></article><script>\nthemeButton()\n</script><script src="CLIENT"></script></body>',
+      },
+      asset: {
+        policy:
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+        page: '<!doctype html><body><article></article><script>run()</script><script src="CLIENT"></script></body>',
+      },
+    },
+  )
+})
+
+/** The policy every page the reader serves carries, the reader's own script's hashes included. */
+const SERVED_PAGE_POLICY =
+  "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'"
+
+// Value: protects=the editor's extension host, where every extension of the window stops while the Wiki reader prepares a page on the host's own thread, against a page in the Wiki folder built to make the HTML parser slow (nothing limits a page's size); fails_when=the reader prepares a page in its request handler again, so the host's event loop stands still for seconds to minutes, or it serves a page whose preparation passed the deadline, or its answer then lacks the status, the sentence, the link to this reader's overview or the page policy; why_new=Cycle 0046 second /ship PERF1 residual: pages on which parse5 itself takes time that grows with the square of the page took 13 s to over a minute for 1 MB; P2D2 the link to the overview; seam=the reader loaded with loadModule and a constants module whose WIKI_PAGE_SERVE_DEADLINE_MS is 2,000 ms; no_claim=the native editor (the test process's event loop stands for the host's)
+test('a page built to make the HTML parser slow is answered within about the deadline with status 503 and a sentence for the learner under the page policy, while the event loop of the host runs on', async (context) => {
+  // Arrange: an overview of 10,000 open elements and 100,000 paragraph ends, which the parser takes about 6 s for on the development host, and a reader whose deadline is 2 s.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    `<!doctype html><body>${'<x>'.repeat(10_000)}${'</p>'.repeat(100_000)}</body>`,
+  )
+  const { startDeepWikiReader: startReaderWithShortDeadline } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        './constants': { ...constants, WIKI_PAGE_SERVE_DEADLINE_MS: 2_000 },
+      },
+      { URL },
+    )
+  const reader = await startReaderWithShortDeadline(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  let ticks = 0
+  const ticker = setInterval(() => {
+    ticks += 1
+  }, 10)
+  context.after(() => clearInterval(ticker))
+
+  // Act: the page, and how long it took while a timer ticked every 10 ms.
+  const started = performance.now()
+  const response = await fetch(reader.url)
+  const answer = {
+    status: response.status,
+    type: response.headers.get('content-type'),
+    policy: response.headers.get('content-security-policy'),
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await response.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
+  }
+  const elapsedMs = performance.now() - started
+  clearInterval(ticker)
+
+  // Assert: the refusal, within the deadline and 2 s for the worker's start; the timer ticked through the wait (on the host's thread the page would have let it tick about never).
+  assert.deepEqual(answer, {
+    status: 503,
+    type: 'text/html; charset=utf-8',
+    policy: SERVED_PAGE_POLICY,
+    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook stopped preparing this page after 2 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+  })
+  assert.ok(elapsedMs < 4_000, `the refusal took ${elapsedMs} ms`)
+  assert.ok(ticks >= 80, `the timer ticked ${ticks} times`)
+})
+
+// Value: protects=the reader's origin and the learner against a page the reader could not prepare: it must never be served as the Wiki folder holds it, with its refused addresses live; fails_when=a worker that throws or exits without the page leaves the request unanswered, answers it with the page as written, or with a JSON error instead of the sentence for the learner and the link to this reader's overview; why_new=Cycle 0046 second /ship PERF1 residual (pages are prepared on a worker thread); P2D2 the sentence that does not blame the page and the link to the overview; seam=the reader loaded with loadModule, with the page-worker module loaded so that its folder (__dirname) holds a worker script that throws
+test('a page whose worker fails is answered with status 503 and a sentence for the learner under the page policy, never with the page as the folder holds it', async (context) => {
+  // Arrange: an overview with a refused link, and a reader whose page worker throws when it starts.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-failed-worker-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    '<!doctype html><body><a href="vscode://file/etc/hosts">hosts</a></body>',
+  )
+  const workerFolder = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-page-worker-'),
+  )
+  context.after(() => rm(workerFolder, { recursive: true, force: true }))
+  await writeFile(
+    join(workerFolder, 'wikiPageWorker.js'),
+    "throw new Error('the page worker failed')",
+  )
+  const failingWorker = await loadModule<typeof wikiPageWorkerModule>(
+    join(__dirname, '..', 'wikiPageWorker.js'),
+    {},
+    { __dirname: workerFolder },
+  )
+  const { startDeepWikiReader: startReaderWithFailingWorker } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { './wikiPageWorker': failingWorker },
+      { URL },
+    )
+  const reader = await startReaderWithFailingWorker(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(reader.url)
+  const answer = {
+    status: response.status,
+    type: response.headers.get('content-type'),
+    policy: response.headers.get('content-security-policy'),
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await response.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(answer, {
+    status: 503,
+    type: 'text/html; charset=utf-8',
+    policy: SERVED_PAGE_POLICY,
+    body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook could not prepare this page for reading. Reload the page; if it is still not shown, generate the Wiki again.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+  })
+})
+
+// Value: protects=the editor's extension host against a page file in the Wiki folder far larger than any page (nothing limits its size): the reader read it whole and made a string of it before the worker refused it, so its full size, gigabytes for a large file, landed in the host's memory; fails_when=the reader opens or reads a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES, prepares it, or answers it otherwise than with the refusal page that says it is too large, or refuses a page within the limit; why_new=P2P2 residual (the heap limit bounds the worker, not the read before it); seam=the reader loaded with loadModule, a constants module whose WIKI_PAGE_FILE_LIMIT_BYTES is 1,000 bytes, a file system module that records which files the reader opens or reads, and a stand-in page-worker module that counts the pages it prepares; no_claim=a file that grows past the limit after its size was looked at (the read stops one byte past the limit)
+test('a page file larger than the reader prepares is answered with 503 and a sentence that says so, without the file being opened, while a page within the limit is read and served', async (context) => {
+  // Arrange: an overview of 2,021 bytes and a page of 33 bytes, a reader that prepares pages of 1,000 bytes at most, a file system that notes the files the reader opens or reads, and a page worker that counts its pages.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-large-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    `<!doctype html><body>${'x'.repeat(2_000)}</body>`,
+  )
+  await writeFile(
+    join(outputDirectory, 'small.html'),
+    '<!doctype html><body>Small</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'small.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  const filesTheReaderRead: string[] = []
+  const recordingFileSystem = {
+    ...fileSystemPromises,
+    open: (...parameters: Parameters<typeof open>) => {
+      filesTheReaderRead.push(basename(String(parameters[0])))
+      return open(...parameters)
+    },
+    readFile: (...parameters: Parameters<typeof readFile>) => {
+      filesTheReaderRead.push(basename(String(parameters[0])))
+      return readFile(...parameters)
+    },
+  }
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithSmallPageLimit } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        './constants': { ...constants, WIKI_PAGE_FILE_LIMIT_BYTES: 1_000 },
+        'node:fs/promises': recordingFileSystem,
+        './wikiPageWorker': countingWorker,
+      },
+      { URL },
+    )
+  const reader = await startReaderWithSmallPageLimit(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const overviewResponse = await fetch(reader.url)
+  const overview = {
+    status: overviewResponse.status,
+    type: overviewResponse.headers.get('content-type'),
+    policy: overviewResponse.headers.get('content-security-policy'),
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await overviewResponse.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
+  }
+  const smallResponse = await fetch(new URL('small.html', reader.url))
+  const small = {
+    status: smallResponse.status,
+    body: await smallResponse.text(),
+  }
+
+  // Assert: the overview's file was never opened, and only the small page was prepared.
+  assert.deepEqual(
+    { overview, small, filesTheReaderRead, preparedPageCount },
+    {
+      overview: {
+        status: 503,
+        type: 'text/html; charset=utf-8',
+        policy: SERVED_PAGE_POLICY,
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+      },
+      small: { status: 200, body: '<p>Prepared page</p>' },
+      filesTheReaderRead: ['small.html'],
+      preparedPageCount: 1,
+    },
+  )
+})
+
+// Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared; why_new=the P2P2 test's no_claim names this growth; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat lets the page grow after the look, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
+test('a page file that grows past the limit after the reader looked at its size is answered with the page that says it is too large, and is not prepared', async (context) => {
+  // Arrange: an overview of 33 bytes that grows by 2,000 bytes right after the reader's look at its size, a reader that prepares pages of 1,000 bytes at most, and a page worker that counts its pages.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-growing-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const growingFileSystem = {
+    ...fileSystemPromises,
+    lstat: async (...parameters: Parameters<typeof lstat>) => {
+      const status = await lstat(...parameters)
+      if (basename(String(parameters[0])) === 'index.html')
+        await appendFile(parameters[0], 'x'.repeat(2_000))
+      return status
+    },
+  }
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithGrowingPage } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      './constants': { ...constants, WIKI_PAGE_FILE_LIMIT_BYTES: 1_000 },
+      'node:fs/promises': growingFileSystem,
+      './wikiPageWorker': countingWorker,
+    },
+    { URL },
+  )
+  const reader = await startReaderWithGrowingPage(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(reader.url)
+  const answer = {
+    status: response.status,
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await response.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { answer, preparedPageCount },
+    {
+      answer: {
+        status: 503,
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Generate the Wiki again to replace the page.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+      },
+      preparedPageCount: 0,
+    },
+  )
+})
+
+// Value: protects=a page file of exactly the reader's limit, which the limit's doc names the largest page read and prepared; fails_when=the size check or the read's bound is off by one, so a page of exactly the limit is refused as too large; why_new=the P2P2 test's pages are 2,021 and 33 bytes, far from the limit; seam=the reader loaded with loadModule, a 1,000-byte limit and a counting page worker; no_claim=the real 8 MB limit (a smaller limit stands in)
+test('a page file of exactly the reader’s limit is read and served', async (context) => {
+  // Arrange: an overview of exactly 1,000 bytes and a reader that prepares pages of 1,000 bytes at most.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-limit-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    `<!doctype html><body>${'x'.repeat(972)}</body>`,
+  )
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithSmallPageLimit } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        './constants': { ...constants, WIKI_PAGE_FILE_LIMIT_BYTES: 1_000 },
+        './wikiPageWorker': countingWorker,
+      },
+      { URL },
+    )
+  const reader = await startReaderWithSmallPageLimit(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(reader.url)
+  const answer = { status: response.status, body: await response.text() }
+
+  // Assert
+  assert.deepEqual(
+    {
+      answer,
+      preparedPageCount,
+      pageBytes: (await lstat(join(outputDirectory, 'index.html'))).size,
+    },
+    {
+      answer: { status: 200, body: '<p>Prepared page</p>' },
+      preparedPageCount: 1,
+      pageBytes: 1_000,
+    },
+  )
+})
+
+// Value: protects=the editor's machine against a Wiki page that names a page of the Wiki many times as an image, media, a style sheet, a font, a track or a script (the page policy lets it load them from the reader's address), so that every such request starts a page worker that may keep a core busy until the deadline; fails_when=the reader prepares a page for a request the browser makes for anything but a page it opens (a Sec-Fetch-Dest other than document or iframe), or it refuses a page the browser opens as a document or in a frame, or one asked for by a client that names no destination; why_new=P2RT3; seam=the reader loaded with loadModule and a stand-in page-worker module that counts the pages it is asked to prepare; no_claim=a browser that sends no Sec-Fetch-Dest (it is served as before)
+test('a Wiki page asked for as an image, media, a style sheet, a font, a track, a script or by a fetch is refused with 403 before any page preparation starts, while a page opened as a document, in a frame or by a client that names no destination is served', async (context) => {
+  // Arrange: the one-page Wiki and a reader whose page worker counts the pages it prepares.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-destination-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithCountingWorker } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { './wikiPageWorker': countingWorker },
+      { URL },
+    )
+  const reader = await startReaderWithCountingWorker(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act: the overview, asked for once with each destination a browser names, and once with none.
+  const answers: Record<string, { status: number; body: string }> = {}
+  for (const destination of [
+    'image',
+    'audio',
+    'video',
+    'style',
+    'font',
+    'track',
+    'script',
+    'empty',
+    'document',
+    'iframe',
+    undefined,
+  ]) {
+    const response = await fetch(
+      reader.url,
+      destination === undefined
+        ? {}
+        : { headers: { 'Sec-Fetch-Dest': destination } },
+    )
+    answers[destination ?? 'none'] = {
+      status: response.status,
+      body: await response.text(),
+    }
+  }
+
+  // Assert: seven refusals and three pages, and only the three pages were prepared.
+  const refusal = {
+    status: 403,
+    body: '{"error":"A Wiki page is served only to be opened as a page."}',
+  }
+  const page = { status: 200, body: '<p>Prepared page</p>' }
+  assert.deepEqual(
+    { answers, preparedPageCount },
+    {
+      answers: {
+        image: refusal,
+        audio: refusal,
+        video: refusal,
+        style: refusal,
+        font: refusal,
+        track: refusal,
+        script: refusal,
+        empty: refusal,
+        document: page,
+        iframe: page,
+        none: page,
+      },
+      preparedPageCount: 3,
+    },
+  )
+})
+
+// Value: protects=the reader's own script and the Wiki's style sheets and images, which a browser asks for as a script, a style and an image; fails_when=the destination refusal of pages also covers files that are no page, so every browser gets 403 for the Q&A script, styles and images; why_new=the P2RT3 test asks for the overview alone; no test sends Sec-Fetch-Dest for a file that is no page; seam=none; no_claim=a real browser's headers (fetch sends the header by hand)
+test('the reader’s own script, a style sheet and an image of the Wiki are served to a browser that asks for them as a script, a style and an image', async (context) => {
+  // Arrange: the one-page Wiki with a style sheet and an image that its manifest names.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-subresource-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
+  await writeFile(join(outputDirectory, 'diagram.png'), 'PNG bytes')
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['wiki.css', 'diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act: each file asked for with the destination a browser names for it.
+  const answers: Record<string, { status: number; type: string | null }> = {}
+  for (const [file, destination] of [
+    ['codebook-qa.js', 'script'],
+    ['wiki.css', 'style'],
+    ['diagram.png', 'image'],
+  ] as const) {
+    const response = await fetch(new URL(file, reader.url), {
+      headers: { 'Sec-Fetch-Dest': destination },
+    })
+    await response.arrayBuffer()
+    answers[file] = {
+      status: response.status,
+      type: response.headers.get('content-type'),
+    }
+  }
+
+  // Assert
+  assert.deepEqual(answers, {
+    'codebook-qa.js': {
+      status: 200,
+      type: 'text/javascript; charset=utf-8',
+    },
+    'wiki.css': { status: 200, type: 'text/css; charset=utf-8' },
+    'diagram.png': { status: 200, type: 'application/octet-stream' },
+  })
+})
+
+// Value: protects=the editor's machine against a crafted page that is reloaded or whose tab is closed: the page's worker must stop with the request instead of keeping a core busy until the deadline; fails_when=the reader no longer aborts the page's preparation when the response closes before it is finished, so the worker is abandoned and runs on; why_new=P2T5; seam=the reader loaded with loadModule and a stand-in page-worker module that keeps the signal it is handed and answers only when that signal aborts; no_claim=the real worker's stop at an abort (the page-worker tests cover it)
+test('a page whose browser tab goes while the page is prepared has its preparation stopped', async (context) => {
+  // Arrange: the one-page Wiki and a reader whose page worker answers only when its request goes.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-page-abort-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let preparationSignal: AbortSignal | undefined
+  let notePreparationStarted = (): void => {}
+  const preparationStarted = new Promise<void>((resolveStarted) => {
+    notePreparationStarted = resolveStarted
+  })
+  const workerAnsweringOnlyAtAbort: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: (_html, _options, limits) =>
+      new Promise((resolvePage) => {
+        preparationSignal = limits.signal
+        limits.signal.addEventListener(
+          'abort',
+          () => resolvePage({ state: 'failed' }),
+          { once: true },
+        )
+        notePreparationStarted()
+      }),
+  }
+  const { startDeepWikiReader: startReaderWithStandInWorker } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { './wikiPageWorker': workerAnsweringOnlyAtAbort },
+      { URL },
+    )
+  const reader = await startReaderWithStandInWorker(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browserTab = new AbortController()
+  const opening = fetch(reader.url, { signal: browserTab.signal }).catch(
+    () => 'request gone',
+  )
+  await preparationStarted
+
+  // Act: the tab goes while the page is prepared.
+  browserTab.abort()
+  await opening
+  const preparationEnd = await Promise.race([
+    new Promise<'stopped'>((resolveStop) => {
+      if (preparationSignal?.aborted) resolveStop('stopped')
+      preparationSignal?.addEventListener('abort', () => resolveStop('stopped'))
+    }),
+    new Promise<'still running'>((resolveWait) =>
+      setTimeout(() => resolveWait('still running'), 2_000),
+    ),
+  ])
+
+  // Assert
+  assert.equal(preparationEnd, 'stopped')
+})
+
+// Value: protects=the editor's machine against a crafted page whose tab closes while the reader still reads the page file; fails_when=the reader starts listening for the response's close only after the file read, so a request gone during the read is prepared until the deadline; why_new=the P2T5 test closes the tab after the preparation started; seam=the reader loaded with loadModule, a file system whose open of the page waits for the test, and a stand-in page worker; no_claim=a real browser's close timing
+test('a page whose browser tab goes while the reader reads its file has its preparation stopped', async (context) => {
+  // Arrange: the one-page Wiki, a file system whose open of the overview waits until the test lets it go on, and a page worker that answers only when its request goes.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-read-abort-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let noteOpenAsked = (): void => {}
+  const openAsked = new Promise<void>((resolveAsked) => {
+    noteOpenAsked = resolveAsked
+  })
+  let letOpenGoOn = (): void => {}
+  const openMayGoOn = new Promise<void>((resolveGoOn) => {
+    letOpenGoOn = resolveGoOn
+  })
+  const heldFileSystem = {
+    ...fileSystemPromises,
+    open: async (...parameters: Parameters<typeof open>) => {
+      if (basename(String(parameters[0])) === 'index.html') {
+        noteOpenAsked()
+        await openMayGoOn
+      }
+      return open(...parameters)
+    },
+  }
+  let preparationSignal: AbortSignal | undefined
+  let notePreparationStarted = (): void => {}
+  const preparationStarted = new Promise<void>((resolveStarted) => {
+    notePreparationStarted = resolveStarted
+  })
+  const workerAnsweringOnlyAtAbort: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: (_html, _options, limits) =>
+      new Promise((resolvePage) => {
+        preparationSignal = limits.signal
+        if (limits.signal.aborted) resolvePage({ state: 'failed' })
+        limits.signal.addEventListener(
+          'abort',
+          () => resolvePage({ state: 'failed' }),
+          { once: true },
+        )
+        notePreparationStarted()
+      }),
+  }
+  const { startDeepWikiReader: startReaderWithHeldOpen } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      'node:fs/promises': heldFileSystem,
+      './wikiPageWorker': workerAnsweringOnlyAtAbort,
+    },
+    { URL },
+  )
+  const reader = await startReaderWithHeldOpen(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browserTab = new AbortController()
+  const opening = fetch(reader.url, { signal: browserTab.signal }).catch(
+    () => 'request gone',
+  )
+  await openAsked
+
+  // Act: the tab goes while the page file is opened, then the read goes on.
+  browserTab.abort()
+  await opening
+  await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+  letOpenGoOn()
+  await preparationStarted
+  const preparationEnd = await Promise.race([
+    new Promise<'stopped'>((resolveStop) => {
+      if (preparationSignal?.aborted) resolveStop('stopped')
+      preparationSignal?.addEventListener('abort', () => resolveStop('stopped'))
+    }),
+    new Promise<'still running'>((resolveWait) =>
+      setTimeout(() => resolveWait('still running'), 2_000),
+    ),
+  ])
+
+  // Assert
+  assert.equal(preparationEnd, 'stopped')
+})
+
+// Value: protects=the reader's origin, whose page may ask the editor's model, against a script file written into the Wiki folder and named by the manifest, which a page file points at with a script tag, plainly or through a tag it leaves open before the reader's own; fails_when=the reader serves a `.js` file of the Wiki folder as JavaScript again, so the policy's `'self'` lets it run, or a response of the reader (a page, an asset, its own script, an answer, a refusal) comes without `nosniff`, so a browser may run a file of another type as script; why_new=Cycle 0046 /ship Codex review CX16: under a nonce, a script tag left open before the reader's own takes over its nonce in a browser that does not refuse such a tag (Chromium refuses it, Firefox and Safari were not tried); seam=none (the reader's real responses)
+test('a script file of the Wiki folder is served as plain text, a page that points at it plainly or through a tag left open before the reader’s own gets no secret to run it, and every response of the reader says nosniff', async (context) => {
+  // Arrange: a script file in the Wiki folder that the manifest names, an overview that points at it, and a page that leaves a script tag open before the reader's own.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-script-file-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(join(outputDirectory, 'assets'), { recursive: true })
+  await writeFile(
+    join(outputDirectory, 'assets/planted.js'),
+    "fetch('api/ask')",
+  )
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    '<!doctype html><body><article><script src="assets/planted.js"></script></article></body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'assets/open-tag.html'),
+    '<!doctype html><body><article></article><script src="planted.js" </body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['assets/planted.js', 'assets/open-tag.html'],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const clientAddress = `${new URL(reader.url).pathname.replace('index.html', '')}codebook-qa.js`
+  /** The type, the nosniff header and the policy of one response, and its page with the reader's script address written as CLIENT. */
+  const served = async (path: string) => {
+    const response = await fetch(new URL(path, reader.url))
+    return {
+      type: response.headers.get('content-type'),
+      sniffing: response.headers.get('x-content-type-options'),
+      policy: response.headers.get('content-security-policy'),
+      body: (await response.text()).replaceAll(clientAddress, 'CLIENT'),
+    }
+  }
+
+  // Act
+  const scriptFile = await served('assets/planted.js')
+  const overview = await served('index.html')
+  const openTag = await served('assets/open-tag.html')
+  const ownScript = await served('codebook-qa.js')
+  const answer = await served('api/update-status')
+  const refusal = await served('assets/not-published.js')
+
+  // Assert: the script file is plain text; the pages carry the policy and the reader's tag without a nonce; every response says nosniff, and the reader's own script alone is JavaScript.
+  assert.deepEqual(
+    {
+      scriptFile,
+      overview,
+      openTag,
+      ownScript: { type: ownScript.type, sniffing: ownScript.sniffing },
+      answer: { type: answer.type, sniffing: answer.sniffing },
+      refusal: { type: refusal.type, sniffing: refusal.sniffing },
+    },
+    {
+      scriptFile: {
+        type: 'text/plain; charset=utf-8',
+        sniffing: 'nosniff',
+        policy: null,
+        body: "fetch('api/ask')",
+      },
+      overview: {
+        type: 'text/html; charset=utf-8',
+        sniffing: 'nosniff',
+        policy:
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+        body: '<!doctype html><body><article><script src="assets/planted.js"></script></article><script src="CLIENT"></script></body>',
+      },
+      openTag: {
+        type: 'text/html; charset=utf-8',
+        sniffing: 'nosniff',
+        policy:
+          "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+        body: '<!doctype html><body><article></article><script src="planted.js" <script src="CLIENT"></script></body>',
+      },
+      ownScript: {
+        type: 'text/javascript; charset=utf-8',
+        sniffing: 'nosniff',
+      },
+      answer: {
+        type: 'application/json; charset=utf-8',
+        sniffing: 'nosniff',
+      },
+      refusal: {
+        type: 'application/json; charset=utf-8',
+        sniffing: 'nosniff',
+      },
+    },
+  )
+})
+
+// Value: protects=the shell's own script (the theme button, the offline note of the question form) on every page the reader serves, of this build and of the Wikis earlier builds published; fails_when=the reader's policy no longer names the hash of the script the bundled shell or the shell of 0.2.29.0 carries, so that script is refused and the page's theme button stops working, or a shell's script changes without its hash in the reader's list; why_new=Cycle 0046 /ship repeat review SC1: the shell's script runs by its hash instead of the nonce (D2 changed the bundled shell's script, so the two shells carry two scripts now); seam=none
+test('the reader’s policy names the hash of the one script the shell of this build carries and of the one the shell of 0.2.29.0 and every shell before it carries', async (context) => {
+  // Arrange: the bundled shell, the shell of 0.2.29.0 kept beside the DOM check, and a reader of a one-page Wiki.
+  const shells = await Promise.all(
+    [
+      join(__dirname, '..', '..', 'skills', 'codebook', 'reader-shell.html'),
+      join(
+        __dirname,
+        '..',
+        '..',
+        'scripts',
+        'fixtures',
+        'reader-shell-0.2.29.0.txt',
+      ),
+    ].map(async (path) =>
+      // A browser reads every CRLF and lone CR of a page as LF before it hashes an inline script, and the publisher writes the shell so; a checkout may hold the files with CRLF.
+      (await readFile(path, 'utf8')).replace(/\r\n?/g, '\n'),
+    ),
+  )
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shells-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act: the hash of each shell's inline scripts, and the policy of a served page.
+  const scriptHashes = shells.map((shell) =>
+    [...shell.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(([, script]) =>
+      createHash('sha256')
+        .update(script ?? '')
+        .digest('base64'),
+    ),
+  )
+  const policy = (await fetch(reader.url)).headers.get(
+    'content-security-policy',
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      scriptHashes,
+      policy,
+    },
+    {
+      scriptHashes: [
+        ['IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='],
+        ['yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s='],
+      ],
+      policy:
+        "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-yZ7XQG21AcjN1eDrvBaukNy20JSJCNwWq5GLQSr8J3s=' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+    },
+  )
 })

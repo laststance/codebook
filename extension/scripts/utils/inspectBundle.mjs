@@ -8,7 +8,7 @@ import { COMPILED_DIRECTORIES } from './packageConstants.mjs'
 /** Inventories actual emitted inputs, bundled dependency notices and native externals before a VSIX can be staged. @example await inspectBundle(metafile, repository, capturedInputs) */
 export async function inspectBundle(metafile, repository, capturedInputs) {
   const outputs = Object.values(metafile.outputs)
-  if (outputs.length < 1 || outputs.length > 2)
+  if (outputs.length < 1 || outputs.length > 3)
     throw new Error('Unexpected JavaScript bundle count.')
   const imports = outputs.flatMap((output) => output.imports)
   const externals = [...new Set(imports.map((value) => value.path))].sort()
@@ -26,6 +26,13 @@ export async function inspectBundle(metafile, repository, capturedInputs) {
       output.imports.some((value) => !isBuiltin(value.path))
     )
       throw new Error('Cursor MCP bridge contains an editor-only import.')
+  // The Wiki page worker runs on a worker thread, where the extension host's vscode module does not exist either.
+  for (const [path, output] of Object.entries(metafile.outputs))
+    if (
+      basename(path) === 'wikiPageWorker.js' &&
+      output.imports.some((value) => !isBuiltin(value.path))
+    )
+      throw new Error('Wiki page worker contains an editor-only import.')
   const root = await realpath(repository),
     packages = new Map(),
     inputs = [],

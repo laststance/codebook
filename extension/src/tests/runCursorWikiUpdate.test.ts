@@ -13,6 +13,7 @@ import {
   runCursorWikiUpdate,
 } from '../utils/runCursorWikiUpdate'
 import { thrownMessage } from '../utils/thrownMessage'
+import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
 import { loadModule } from './utils/loadModule'
 
@@ -218,8 +219,7 @@ setInterval(() => {}, 1000);
     ).catch((error: unknown) => error)
 
     // Assert
-    assert.ok(failure instanceof Error)
-    assert.equal(failure.name, 'WikiUpdateTimedOut')
+    assert.ok(failure instanceof WikiUpdateTimeoutError)
     assert.equal(failure.message, 'Cursor Agent timed out updating the Wiki.')
   } finally {
     if (previousHome === undefined) delete process.env.HOME

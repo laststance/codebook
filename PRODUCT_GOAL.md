@@ -1,11 +1,11 @@
 # Product goal
 
-Goal version: 9\
+Goal version: 10\
 Owner: Raphtalia\
 Initial design approved: 2026-09-18\
-Current product direction: 2026-09-26, D030–D036; synchronized replay, skill-driven DeepWiki, desktop/shortcut contracts and adopted v9 visual target
+Current product direction: 2026-09-26, D030–D036; synchronized replay, skill-driven DeepWiki, desktop/shortcut contracts and adopted v9 visual target; target operating systems added on 2026-10-05
 
-This file owns final outcomes and acceptance. Detailed feature contracts live in the linked specifications; PROJECT_STATE.md owns implementation evidence. Version 7 established separate feature lifecycles. Version 8 records the owner's design-review clarifications: synchronized application/source/native-debugger time travel is the center of learning replay, and LLM Wiki must reproduce DeepWiki itself through the editor agent's generation skill. Version 9 applies D034: ordinary expanded desktop windows at normal zoom are the layout baseline; extremely small windows and extreme zoom are outside mandatory acceptance. These revisions specify outcomes, not implementation.
+This file owns final outcomes and acceptance. Detailed feature contracts live in the linked specifications; PROJECT_STATE.md owns implementation evidence. Version 7 established separate feature lifecycles. Version 8 records the owner's design-review clarifications: synchronized application/source/native-debugger time travel is the center of learning replay, and LLM Wiki must reproduce DeepWiki itself through the editor agent's generation skill. Version 9 applies D034: ordinary expanded desktop windows at normal zoom are the layout baseline; extremely small windows and extreme zoom are outside mandatory acceptance. Version 10 records the owner's direction of 2026-10-05 that the product targets macOS, Windows and Linux (Ubuntu): it adds a constraint and no feature, and the approved v9 image stays the visual target. These revisions specify outcomes, not implementation.
 
 ## Product purpose and feature relationships
 
@@ -107,6 +107,7 @@ The [implementation and validation plan](docs/plans/bundled-codebook-skill.md) t
 - Distinguish observations, source-based reasoning and unknown boundaries in chat, summaries, diagrams and Wiki pages. Source-derived documentation is not evidence of executed behavior.
 - Preserve source/version context and disclose missing, truncated, redacted, partial or stale evidence. Learning and saved replay remain available independently of the original chat's continued availability.
 - Use an ordinary expanded desktop window at normal/default zoom as the layout baseline under D034. OS full-screen is not required; extremely small windows and extreme zoom such as 200% are outside mandatory design/acceptance. Preserve keyboard/theme/focus/contrast/reduced-motion behavior at the supported layout.
+- **Target operating systems (owner direction of 2026-10-05, goal version 10).** Codebook targets macOS, Windows and Linux; on Linux the supported distribution is Ubuntu. Evidence names the system it was made on and is kept separate per system, as it is per editor: a result on one system does not verify another. Native use in an editor for Windows has not run yet and is brought in by a feature cycle of its own; that cycle also proposes how the final acceptance covers the three systems, which this version does not decide.
 - Under D035, every assigned Codebook keyboard shortcut is shown in its UI tooltip, and **?** opens the [keyboard-shortcut list](docs/specs/keyboard-shortcuts.md) in eligible non-editing contexts. Preserve question-mark typing in chat/source/input/IME contexts; list entries and tooltips must match actual bindings in each host and the independent browser Wiki.
 - D036 adopts the corrected [v9 visual specification](DESIGN.md). Implement its hierarchy and accepted interactions using each host's native surfaces. Agents must open the actual PNG, read the full required contracts and record the entry/verification receipts under [AGENTS.md](AGENTS.md) and [IMPLEMENTATION.md](IMPLEMENTATION.md). The three old images are historical references only.
 
@@ -123,7 +124,7 @@ The [implementation and validation plan](docs/plans/bundled-codebook-skill.md) t
 9. Preserve failures and retest affected rows after extension/skill/setup/connection changes. Assess impact and justify any unaffected carry-forward. All final PASS evidence must remain valid for the final fixed distributed VSIX; no consecutive-pass/reset counter applies.
 10. Link current evidence for all active IDs and integrated feature behavior in PROJECT_STATE.md, and separately record Raphtalia's acceptance. Keep Goal Issue #1 open until all conditions hold.
 
-[FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) owns the detailed protocol. D029 preserves the nine required projects and two ordered stages; D030/D032/D033 define the product behavior those stages evaluate. Protect the designated private checkout and private evidence. Historical protocols/cycles preserve the criteria used at the time and do not override version 9. Claude Code CLI review remains owner-skipped and distinct from native editor-chat acceptance.
+[FINAL_REVIEW.md](docs/acceptance/FINAL_REVIEW.md) owns the detailed protocol. D029 preserves the nine required projects and two ordered stages; D030/D032/D033 define the product behavior those stages evaluate. Protect the designated private checkout and private evidence. Historical protocols/cycles preserve the criteria used at the time and do not override version 10. Claude Code CLI review remains owner-skipped and distinct from native editor-chat acceptance.
 
 ## Design authority
 

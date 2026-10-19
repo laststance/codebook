@@ -306,27 +306,27 @@ test('a finished listing still returns its files while an exited member of its g
 
 // Cycle 0044 (0041-F4): red while a release that never saw the group end threw inside `finally`, replacing the finished list, and the folder was removed anyway.
 // Cycle 0045 (C-L2): red while that failed release was dropped without a word to the caller.
-test('a finished listing whose process group cannot be confirmed as ended returns its files and reports the failed release with the folder it left', async (context) => {
-  // Arrange
+// Cycle 0046 (row 15, PL-7): red while a release whose wait for the group's end ran out returned the finished list, so the Node test run started while a member of the listing could still run.
+test('a finished listing whose process group does not end after SIGTERM and SIGKILL is refused like a refused signal, reports the failed release and keeps its folder', async (context) => {
+  // Arrange: the system accepts both signals for the listing's group and keeps answering that the group still exists.
   const vitest = await stubVitest(
     `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
   )
   const reported: VitestListingReleaseFailure[] = []
+  const signalsToGroup: (string | number | undefined)[] = []
   const kill = process.kill.bind(process)
-  context.mock.property(process, 'platform', 'darwin')
-  // macOS keeps answering EPERM for a group whose exited member its parent never reaps.
   context.mock.method(
     process,
     'kill',
     (pid: number, signal?: string | number): true => {
-      if (pid < 0)
-        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
-      return kill(pid, signal)
+      if (pid >= 0) return kill(pid, signal)
+      if (signal !== 0) signalsToGroup.push(signal)
+      return true
     },
   )
   try {
     // Act
-    const outcome = await listVitestTestFiles({
+    const outcome: unknown = await listVitestTestFiles({
       node: process.execPath,
       program: vitest.program,
       workspace: vitest.directory,
@@ -339,23 +339,29 @@ test('a finished listing whose process group cannot be confirmed as ended return
       (error: unknown) => error,
     )
     // Assert
-    assert.deepEqual(outcome, [{ file: '/repo/src/a.test.ts' }])
     const started = await vitest.started()
-    const output = started.argv[2]!.slice('--json='.length)
-    assert.ok(
-      (await stat(dirname(output))).isDirectory(),
-      'the listing folder is kept while the group may still write it',
-    )
+    const directory = dirname(started.argv[2]!.slice('--json='.length))
+    assert.deepEqual(signalsToGroup, ['SIGTERM', 'SIGKILL'])
     assert.equal(reported.length, 1)
-    assert.equal(Number.isInteger(reported[0]!.processGroup), true)
+    const processGroup = reported[0]!.processGroup
+    assert.equal(Number.isInteger(processGroup), true)
     assert.deepEqual(reported, [
       {
-        processGroup: reported[0]!.processGroup,
-        directory: dirname(output),
+        processGroup,
+        directory,
         reason:
           'Error: Timed out waiting for Vitest listing process group exit',
       },
     ])
+    assert.ok(outcome instanceof Error)
+    assert.equal(
+      outcome.message,
+      `Vitest listed the test files, but Codebook could not end the listing's process group ${processGroup} (Error: Timed out waiting for Vitest listing process group exit), so a process of that group may still run. The test was not started, and the listing's folder ${directory} is kept. Start the run again.`,
+    )
+    assert.ok(
+      (await stat(directory)).isDirectory(),
+      'the listing folder is kept while the group may still write it',
+    )
   } finally {
     await removeKeptListingFolder(vitest)
     await rm(vitest.directory, { recursive: true, force: true })

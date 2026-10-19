@@ -1,5 +1,6 @@
 import type {
   ConfiguredDefinition,
+  ConfiguredDescriptor,
   ConfiguredObservation,
   ConfiguredStudy,
 } from './configuredStudySchemas'
@@ -109,7 +110,13 @@ export interface StudyRuntime {
   readonly id: string
   readonly evidence: Pick<
     Evidence,
-    'save' | 'flush' | 'record' | 'failure' | 'directory' | 'elapsedMs'
+    | 'save'
+    | 'flush'
+    | 'record'
+    | 'recordFailure'
+    | 'failure'
+    | 'directory'
+    | 'elapsedMs'
   >
   prepare(): Promise<void>
   view(): RuntimeView
@@ -147,5 +154,7 @@ export interface StudyEnvironment {
   createNodeTestRun?(
     configuration: NodeTestConfiguration,
     record: (type: string, detail?: unknown) => unknown,
+    /** The article's text of every source the selected node cites: the run refuses its start, and ends at a continuation or at a stop, while the editor holds other text for one of them. */
+    citedSources: ConfiguredDescriptor['sources'],
   ): Promise<NodeTestRuntime>
 }

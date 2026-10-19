@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
+import { runInNewContext } from 'node:vm'
 
+import { readerDomCommandOptions } from '../utils/readerDomCommandOptions.mjs'
+import { readerDomFlowText } from '../utils/readerDomFlowText.mjs'
 import { runFlowKeepingCases } from '../utils/runFlowKeepingCases.mjs'
 
 // Read as text and never imported: loading the script starts its server and its browser.
@@ -160,39 +163,89 @@ test('a pane DOM flow that runs to its end answers its cases as collected, and o
   })
 })
 
-test('the pane DOM check runs its flow inside the case keeper and gives that one call its own, longer limit', async () => {
+// Value: protects=the Reader DOM job's time limits: the one browser call that runs every case of the check may take five minutes, any other call thirty seconds; fails_when=the flow's call falls under the limit of a single browser command and is ended in the middle of its cases, or every call may hang for five minutes; why_new=Cycle 0045 review PA-1 (row 38 of Cycle 0046): the limits were checked as a line of the script's text; seam=none
+test('the browser call that runs the whole pane DOM flow may take five minutes, and every other call thirty seconds', () => {
+  // Act
+  const limits = Object.fromEntries(
+    ['open', 'video-start', 'flow', 'video-stop', 'close'].map((label) => [
+      label,
+      readerDomCommandOptions(label),
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(limits, {
+    open: { timeout: 30_000, maxBuffer: 4_194_304 },
+    'video-start': { timeout: 30_000, maxBuffer: 4_194_304 },
+    flow: { timeout: 300_000, maxBuffer: 4_194_304 },
+    'video-stop': { timeout: 30_000, maxBuffer: 4_194_304 },
+    close: { timeout: 30_000, maxBuffer: 4_194_304 },
+  })
+})
+
+// Value: protects=the Reader DOM report when a step of the flow throws inside the browser CLI: the file the CLI loads runs the flow inside the case keeper; fails_when=the file's text calls the flow directly, is no single expression, hands the options over as anything but data, or needs something of Node's module system that the CLI's context does not have; why_new=Cycle 0045 review PA-1 (row 38 of Cycle 0046): the wrapper was checked as a line of the script's text; seam=a new context without Node's globals, which runs the text as the browser CLI's run-code does
+test('the file the browser CLI loads runs the pane DOM flow inside the case keeper, with the options as data and nothing of Node’s module system', async () => {
+  // Arrange: a flow that passes one case from its options and the page, and then throws.
+  const flow = async (page, options, collected) => {
+    collected.cases.push({
+      name: `${options.kind} first paint`,
+      actual: page.title,
+      passed: true,
+    })
+    throw new Error('locator.click: Timeout 5000ms exceeded.')
+  }
+
+  // Act: run-code wraps the file's text in parentheses and calls the function with the page.
+  const flowText = readerDomFlowText(flow, { kind: 'context' })
+  const runInBrowserCli = runInNewContext(`(${flowText})`)
+  const report = await runInBrowserCli({ title: 'Loading study…' })
+
+  // Assert: the report was built in the other context, so its plain data is compared.
+  assert.deepEqual(JSON.parse(JSON.stringify(report)), {
+    cases: [
+      { name: 'context first paint', actual: 'Loading study…', passed: true },
+      {
+        name: 'the flow stopped after the case "context first paint"',
+        actual: 'Error: locator.click: Timeout 5000ms exceeded.',
+        passed: false,
+      },
+    ],
+    errors: [],
+  })
+})
+
+// The script cannot be imported (loading it starts its server and its browser), so that it uses the two utilities above, and that its flow adds to the lists it is handed, is read from its text, whatever its line breaks are.
+test('the pane DOM check takes each call’s limits and the flow file’s text from their utilities, and its flow adds its cases and page errors to the lists the case keeper answers', async () => {
   // Arrange
   const script = await readFile(scriptUrl, 'utf8')
 
   // Act
-  const limits = Object.fromEntries(
-    [...script.matchAll(/^const (COMMAND|FLOW)_TIMEOUT_MS = ([\d_]+)$/gm)].map(
-      ([, name, value]) => [name, Number(value.replaceAll('_', ''))],
+  const wiring = {
+    commandLimits:
+      /execFile\(\s*'playwright-cli',[^)]*?\breaderDomCommandOptions\(\s*label\s*\)/.test(
+        script,
+      ),
+    flowFile: /writeFile\(\s*flowPath,\s*readerDomFlowText\(\s*check,/.test(
+      script,
     ),
-  )
+    flowParameters:
+      /async function check\(\s*page,\s*options,\s*collected,?\s*\)/.test(
+        script,
+      ),
+    collectedErrors: /\{\s*errors\s*\}\s*=\s*collected\b/.test(script),
+    collectedCases: /\{\s*cases\s*\}\s*=\s*collected\b/.test(script),
+    listsOfItsOwn: script.match(/\b(?:cases|errors)\s*=\s*\[\s*\]/g),
+  }
 
   // Assert
-  assert.deepEqual(limits, { COMMAND: 30_000, FLOW: 300_000 })
-  assert.ok(
-    script.includes(
-      "timeout: label === 'flow' ? FLOW_TIMEOUT_MS : COMMAND_TIMEOUT_MS,",
-    ),
-    'the flow call has no limit of its own',
-  )
-  assert.ok(
-    script.includes(
-      '`async (page) => (${runFlowKeepingCases.toString()})(${check.toString()}, page, ${JSON.stringify(',
-    ),
-    'the flow is not run inside runFlowKeepingCases',
-  )
-  assert.ok(
-    script.includes('async function check(page, options, collected) {') &&
-      script.includes('  const { errors } = collected\n') &&
-      script.includes('  const { cases } = collected,\n'),
-    'the flow keeps lists of its own, which are lost when it throws',
-  )
-  // The keeper's text is run outside Node's module system: it may name nothing of its file.
-  assert.doesNotMatch(runFlowKeepingCases.toString(), /\bimport\b|\brequire\b/)
+  assert.deepEqual(wiring, {
+    commandLimits: true,
+    flowFile: true,
+    flowParameters: true,
+    collectedErrors: true,
+    collectedCases: true,
+    listsOfItsOwn: null,
+  })
 })
 
 // Value: protects=the measured case of the Wiki reader's right rail in the Reader DOM check (the unit suites read the shell's style sheet, never its layout); fails_when=the check stops laying out the shell, or lays it out at a width where the rail is no row; why_new=Cycle 0045 local review other-1 #6; seam=none
@@ -235,4 +288,107 @@ test('the pane DOM check lays out the Wiki reader’s shell at a width where its
     ),
     'the shell is no longer laid out at 720 px',
   )
+})
+
+/**
+ * Runs the DOM check's `toggleByKeyboard`, taken from the script's own text, against a hand-written page with one disclosure, so a test can say what the page does at the key press and read what the helper's wait accepts.
+ * @param {string} script - The text of `study-bootstrap-qa.mjs`.
+ * @param {(page: { disclosure: { open: boolean, ontoggle: null | (() => void) }, isWaitMet: () => boolean }) => void | Promise<void>} atPress - What happens in the page from the key press on; it may change the disclosure, fire its toggle event and note whether the helper's wait is met.
+ * @returns {Promise<{ calls: string[], outcome: string }>} The helper's calls of the browser tool in order, and how it ended: `resolved`, or the message it rejected with.
+ */
+async function runToggleByKeyboard(script, atPress) {
+  const helperStart = script.indexOf('const toggleByKeyboard = async ('),
+    helperEnd = script.indexOf('\n  }\n', helperStart)
+  const helperText = script.slice(helperStart, helperEnd + '\n  }'.length)
+  const calls = []
+  const disclosure = { open: false, ontoggle: null }
+  const window = {}
+  let isWaitMet = () => false
+  const page = {
+    // The helper's callbacks are made in the context below, so they read its `document` and `window`.
+    evaluate: async (callback, argument) => {
+      calls.push('evaluate')
+      return callback(argument)
+    },
+    locator: (selector) => ({
+      focus: async () => {
+        calls.push(`focus ${selector}`)
+      },
+    }),
+    keyboard: {
+      press: async (key) => {
+        calls.push(`press ${key}`)
+      },
+    },
+    waitForFunction: async (callback, argument, waitOptions) => {
+      calls.push(
+        `wait ${JSON.stringify(argument)} ${JSON.stringify(waitOptions)}`,
+      )
+      isWaitMet = () => callback(argument)
+      await atPress({ disclosure, isWaitMet })
+      // The browser tool rejects a wait that is not met when its time is over.
+      if (!isWaitMet())
+        throw new Error('page.waitForFunction: Timeout 5000ms exceeded.')
+    },
+  }
+  const toggleByKeyboard = runInNewContext(`${helperText}; toggleByKeyboard`, {
+    page,
+    Error,
+    window,
+    document: { getElementById: () => disclosure },
+  })
+  const outcome = await toggleByKeyboard('study-files').then(
+    () => 'resolved',
+    (error) => error.message,
+  )
+  return { calls, outcome }
+}
+
+// Value: protects=the Reader DOM job when a disclosure does not toggle at its key press: that case fails after five seconds and names the disclosure; fails_when=the flow waits for the toggle event without a bound of its own (a promise of the page awaited through `page.evaluate`, which no limit of the browser tool ends), so one disclosure that stays as it is holds the whole flow until the five-minute limit of its browser call; why_new=Cycle 0046 row 88 (the local CodeRabbit review); seam=the helper's own text from the script, run against a page that records its calls and lets the bounded wait run out
+test('the pane DOM check waits five seconds at most for a disclosure to toggle after its key press, and a disclosure that does not toggle fails with a sentence that names it', async () => {
+  // Arrange: the script, and a page whose disclosure stays closed at the press.
+  const script = await readFile(scriptUrl, 'utf8')
+
+  // Act
+  const { calls, outcome } = await runToggleByKeyboard(script, () => {})
+
+  // Assert
+  assert.deepEqual(calls, [
+    'evaluate',
+    'focus #study-files > summary',
+    'press Enter',
+    'wait {"id":"study-files","wasOpen":false} {"timeout":5000}',
+  ])
+  assert.equal(
+    outcome,
+    'The disclosure #study-files did not toggle within 5000 ms of Enter on its summary (page.waitForFunction: Timeout 5000ms exceeded.)',
+  )
+})
+
+// Value: protects=the cases of the Reader DOM check that count what the pane sends after a disclosure was opened by keyboard; fails_when=the helper takes the next toggle event of the disclosure as the answer to its press, although a render before the press (the pane closes the disclosure for another study) can still owe one, so under load a case reads the pane before it acted on the press and counts its request one step late (one failure in four side-by-side runs); why_new=Cycle 0046 row 178; seam=the helper's own text from the script, run against a page whose disclosure fires an owed toggle event before it opens
+test('the pane DOM check takes a disclosure as toggled only once its open state differs from the one before the key press and a toggle event has reported that state, not at a toggle event a render before the press still owed', async () => {
+  // Arrange: the script, and a page that notes whether the helper's wait is met after each step.
+  const script = await readFile(scriptUrl, 'utf8')
+  const met = {}
+
+  // Act: the event of an earlier close arrives first, then the disclosure opens, then its own event arrives.
+  const { outcome } = await runToggleByKeyboard(
+    script,
+    ({ disclosure, isWaitMet }) => {
+      disclosure.ontoggle()
+      met.afterOwedEvent = isWaitMet()
+      disclosure.open = true
+      met.afterOpeningBeforeItsEvent = isWaitMet()
+      disclosure.ontoggle()
+      met.afterItsEvent = isWaitMet()
+    },
+  )
+
+  // Assert
+  assert.deepEqual(met, {
+    afterOwedEvent: false,
+    afterOpeningBeforeItsEvent: false,
+    afterItsEvent: true,
+  })
+  assert.equal(outcome, 'resolved')
 })

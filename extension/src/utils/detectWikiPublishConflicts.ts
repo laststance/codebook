@@ -1,20 +1,19 @@
-import { readdir } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 
 import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
 
+import { listFolderTreeWithoutFollowing } from './listFolderTreeWithoutFollowing'
 import { listWikiCandidates, type WikiCandidate } from './listWikiCandidates'
 import { readWikiOwnedPaths } from './readWikiOwnedPaths'
 import { systemErrorCode } from './systemErrorCode'
 
-/** Lists regular files below a directory as `/`-separated relative paths; links and special files are skipped like the publisher does. */
-async function listRegularFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, {
-    recursive: true,
-    withFileTypes: true,
-  })
+/** Lists regular files below a directory as `/`-separated relative paths; links and special files are skipped like the publisher does. `undefined` when the directory's own path holds a link or a file, which is never listed through ({@link listFolderTreeWithoutFollowing}). */
+async function listRegularFiles(
+  directory: string,
+): Promise<string[] | undefined> {
+  const entries = await listFolderTreeWithoutFollowing(directory)
   return entries
-    .filter((entry) => entry.isFile())
+    ?.filter((entry) => entry.isFile())
     .map((entry) =>
       relative(directory, join(entry.parentPath, entry.name))
         .split(sep)
@@ -105,7 +104,7 @@ export async function detectWikiPublishConflicts(
     listedCandidates ?? (await listWikiCandidates(outputDirectory))
   ).filter((candidate) => candidate.writtenAtMs >= notBeforeMs)
   if (!candidates.length) return []
-  // An output folder that is being swapped right now cannot be listed; that is no finding this look.
+  // An output folder that is being swapped right now cannot be listed, and one whose path holds a link is not listed; neither is a finding this look.
   const outputFiles = await listRegularFiles(outputDirectory).catch(
     (error: unknown) => {
       if (systemErrorCode(error) === 'ENOENT') return undefined

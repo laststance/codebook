@@ -8,7 +8,12 @@ import type { z } from 'zod'
 import {
   REPOSITORY_FIXED_READING_SECTIONS,
   REPOSITORY_READER_DEBOUNCE_MS,
+  REPOSITORY_READER_READY_TIMEOUT_MS,
   REPOSITORY_SOURCE_SCHEME,
+  REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE,
+  REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE,
+  REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE,
+  REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE,
 } from './constants'
 import { requireWorkspace } from './environment'
 import {
@@ -24,13 +29,24 @@ import { RepositorySourceService } from './repositorySource'
 import {
   repositoryMessageSchema,
   type repositoryActionSchema,
+  type RepositoryReadyRequest,
   type RepositoryViewMessage,
 } from './repositoryView'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { repositoryHtml } from './ui/repositoryHtml'
+import { adoptLateNameOfAcquiredGroup } from './utils/adoptLateNameOfAcquiredGroup'
+import { adoptOwnQuietCopyShow } from './utils/adoptOwnQuietCopyShow'
+import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
 import { citationLearningState } from './utils/citationLearningState'
+import { editorTabInputKinds } from './utils/editorTabInputKinds'
+import { holdsEditorTab } from './utils/holdsEditorTab'
+import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
+import { isLearnersSelectionIn } from './utils/isLearnersSelectionIn'
+import { isStaleGroupNameOfCitation } from './utils/isStaleGroupNameOfCitation'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { showPlainNotice } from './utils/showPlainNotice'
+import { textEditorColumn } from './utils/textEditorColumn'
 
 /** Separates the requested text and tab receipts so native notification order cannot admit another learner target. */
 export interface RepositoryFocusTarget {
@@ -38,6 +54,10 @@ export interface RepositoryFocusTarget {
   matchesGroup(): boolean
   /** Lets citation display acquire its initial caret before the requested selection without changing layout targets. @example target.matchesEditorIdentity?.() */
   matchesEditorIdentity?: () => boolean
+  /** Confirms the requested citation tab before its group activates; used only by {@link RepositoryReader.openSource}'s native focus receipt. @example target.matchesPreparedTab?.() */
+  matchesPreparedTab?: () => boolean
+  /** Says that {@link matchesGroup} holds only through the group the editor still names from before the target took the keyboard, as Cursor names its chat part's group until its tab model is rebuilt (Cycle 0046 row 660); the receipt then follows the editor's later name of the target's own group once. @example target.namesStaleGroup?.() // => true right after the measurement focused the first group beside Cursor's chat part */
+  namesStaleGroup?: () => boolean
 }
 
 /** Hands preparation focus from {@link RepositoryReader.open} to queued native layout work without a synthetic editor. */
@@ -51,6 +71,49 @@ export interface RepositoryLayoutFocus {
   }
 }
 
+/**
+ * Gives back the keyboard a Wiki arrangement's measurement borrowed; {@link StudyWorkspace.arrangeRepository} answers it before any effect, and {@link RepositoryReader.open} asks it once an agent's Wiki is shown (codebook_open_book, row 620).
+ * @returns
+ * - `true` when the keyboard is where the learner had it: nothing borrowed it, the measurement gave it back itself, or a chat tab got it back.
+ * - `false` when it stays in the main editor where the measurement left it.
+ * @example await keyboardReturn() // => true after Cursor's chat tab got its keyboard back
+ */
+export type RepositoryKeyboardReturn = () => Promise<boolean>
+
+/** How {@link RepositoryReader.open} enters an article; each field is `false` when omitted. */
+type RepositoryOpenOptions = {
+  /** Restore the actual Study Return's saved native arrangement. */
+  restoreReadingLayout?: boolean
+  /** Existing-Wiki agent reads and external Return commands keep native input; cold entry still activates its reader. */
+  preserveNativeInput?: boolean
+  /** `true` for codebook_open_book ({@link RepositoryReader.openFromAgent}): a cold entry shows the cited source and the Wiki without the keyboard, which stays where the learner had it (the chat view's input in VS Code); a keyboard its layout's measurement borrowed goes back through the arrangement's {@link RepositoryKeyboardReturn} (Cursor's chat tab), or to the Wiki with a notice told once (row 620). An external Return command's cold entry still activates the Wiki. */
+  forAgent?: boolean
+}
+
+/** The keyboard sentences of an agent's Wiki entry that {@link RepositoryReader} told in this editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}, {@link REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE}): kept with the module, which the extension host loads once, so a reader made after a change of the workspace's folders tells none of them a second time. */
+const toldAgentWikiKeyboardSentences = new Set<string>()
+
+/**
+ * Tells the learner one keyboard sentence of an agent's Wiki entry, at most once in the editor session ({@link toldAgentWikiKeyboardSentences}); called by {@link RepositoryReader}'s keyboard settling after an agent's cold Wiki entry.
+ * @param sentence - One of the entry's keyboard sentences.
+ * @example tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE) // told now; a second call tells nothing
+ */
+function tellAgentWikiKeyboardOnce(sentence: string): void {
+  if (toldAgentWikiKeyboardSentences.has(sentence)) return
+  toldAgentWikiKeyboardSentences.add(sentence)
+  void showPlainNotice(vscode.window, 'information', sentence)
+}
+
+/** The text editor the editor reported as active, or the Study pane that reported the keyboard, when an agent's cold Wiki entry began ({@link RepositoryReader.noteAgentEntryKeyboardEditor}): the place the keyboard was in, or may have been in, before the Wiki was shown (Cycle 0046 rows 694 and 705). */
+interface AgentEntryKeyboardEditor {
+  /** The view column of its group. */
+  column: vscode.ViewColumn
+  /** Whether the learner was known to type in it then ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}, or the Study pane's own report). */
+  learnerTypesThere: boolean
+  /** `'study pane'` for the Study pane's report ({@link RepositoryControls.studyPaneKeyboardColumn}); `'file'` for the active text editor. */
+  place: 'file' | 'study pane'
+}
+
 interface RepositoryControls {
   storage(): Promise<LearningLibrary>
   connect(): Promise<void>
@@ -58,13 +121,17 @@ interface RepositoryControls {
     signal: AbortSignal,
     returnSelection?: RepositorySelection,
     focus?: RepositoryLayoutFocus,
-  ): Promise<void>
+  ): Promise<RepositoryKeyboardReturn | undefined>
   evidence(
     binding: BookObservationBinding,
     recording: boolean,
     signal: AbortSignal,
     origin: RepositorySelection,
   ): Promise<void>
+  /** Says whether the learner is known to type in the active text editor now, by a fresh sign of the learner's own hand there ({@link StudyWorkspace.knowsLearnerTypesInActiveEditor}); asked when an agent's cold Wiki entry begins (row 694). Without it nothing is known. @example this.controls.knowsLearnerTypesInActiveEditor?.() // => true one second after the learner typed in auth.ts; false a minute after the learner's last key there */
+  knowsLearnerTypesInActiveEditor?(): boolean
+  /** Names the column of the Study pane while its document reports that it has the keyboard ({@link StudyWorkspace.studyPaneKeyboardColumn}); asked first whenever an agent's cold Wiki entry begins, before the active text editor, which the editor goes on reporting while the learner works in the pane (rows 705 and 729). Without it no pane is known. @example this.controls.studyPaneKeyboardColumn?.() // => 2 after the learner clicked into the Study pane in the second group; undefined while auth.ts is the active editor */
+  studyPaneKeyboardColumn?(): vscode.ViewColumn | undefined
 }
 
 /** Owns repository reading/navigation while {@link RepositoryBookStore} seals content and {@link LearningLibrary} owns shared choices. @example await reader.open() */
@@ -92,6 +159,28 @@ export class RepositoryReader {
   private statusGeneration = 0
   private refreshTimer?: ReturnType<typeof setTimeout>
   private sourceUri?: vscode.Uri
+  /** The URIs of the cited-source copies this reader showed ({@link openSource}) that are still open: the copies its Wiki's close and its next citation retire, and no other (Cycle 0046 row 662). Each citation has a URI of its own ({@link openSourceDocument}); a URI whose last copy closed is forgotten ({@link forgetClosedCitedSources}, row 677). */
+  private readonly shownCitedSources = new Set<string>()
+  /** The citation's copy an agent's read of the open Wiki shows without the keyboard ({@link showQuietCopy}), for the open that shows it, until that open settles: the native focus changes its show explains ({@link isOwnQuietCopyShowPlace}), and whether the show opened a tab that a refused open must close again ({@link retireCopyOfRefusedOpen}); Cycle 0046 row 696. */
+  private quietCopyShow?: {
+    uri: string
+    generation: number
+    opensTab: boolean
+    shown: boolean
+  }
+  /** A primary file keeps its native input until the learner selects the Wiki; {@link revealDeferredSource} then pays this preview. */
+  private sourceDeferred = false
+  /** A command outside Study defers its original layout until the learner selects Wiki; {@link revealDeferredSource} completes that Return. */
+  private deferredReturn?: RepositorySelection
+  /** The listeners that keep {@link deferredReturn} only until the learner's next change of the focus ({@link watchDeferredReturn}); {@link forgetDeferredReturn} releases them. */
+  private deferredReturnWatch: vscode.Disposable[] = []
+  /** Prevents a focus callback from superseding an {@link open} whose final source checks are still pending. */
+  private openingGeneration?: number
+  private sourcePreviewRequest = 0
+  /** Only the current visible document may acknowledge the model that {@link revealReadyPanel} will activate. */
+  private documentReady = false
+  /** A `ready` reached {@link receiveDocument} while the pane counted as hidden: the editor orders a document's messages and the pane's view-state notifications in no way, so it may be the document the editor shows next, or the hidden document's last one. It never counts; {@link askShownDocumentReady} asks the shown document to say it again. */
+  private readyHeardWhileHidden = false
   private rendered?: {
     revision: number
     selection?: RepositorySelection
@@ -152,7 +241,12 @@ export class RepositoryReader {
         )
           this.scheduleRefresh()
       }),
+      vscode.window.tabGroups.onDidChangeTabs((event) =>
+        this.forgetClosedCitedSources(event.closed),
+      ),
     )
+    // A reader made after a change of the folders or a restart of the extension host retires the copies the reader before it left (row 652).
+    this.retireCopiesOfEarlierReaders()
   }
 
   /** Lazily shares the existing ledger without starting Chrome, a debugger, or a study run. @example service.repository = await reader.storage() */
@@ -184,11 +278,22 @@ export class RepositoryReader {
     }
   }
 
-  /** Opens the exact article revision; only actual Study Return asks {@link StudyWorkspace} to restore its captured native layout. @example await reader.open(selection) */
+  /**
+   * Opens an exact article; {@link openFromAgent} keeps existing native input while learner navigation activates the Wiki.
+   * @param input - The article to open; the learner's saved selection, the current one or the library's first article when omitted.
+   * @param signal - Cancels this navigation.
+   * @param options - How the article is entered ({@link RepositoryOpenOptions}); a plain learner navigation when omitted.
+   * @example await reader.open(selection)
+   * @example await reader.open(selection, undefined, { restoreReadingLayout: true, preserveNativeInput: true })
+   */
   async open(
     input?: RepositorySelection,
     signal?: AbortSignal,
-    restoreReadingLayout = false,
+    {
+      restoreReadingLayout = false,
+      preserveNativeInput = false,
+      forAgent = false,
+    }: RepositoryOpenOptions = {},
   ): Promise<void> {
     signal?.throwIfAborted()
     this.navigation.abort()
@@ -197,6 +302,15 @@ export class RepositoryReader {
       cancel = (): void => navigation.abort(signal?.reason)
     signal?.addEventListener('abort', cancel, { once: true })
     const generation = ++this.generation
+    this.openingGeneration = generation
+    const background = preserveNativeInput && Boolean(this.panel),
+      coldAgentEntry = forAgent && !this.panel,
+      initiatingEditor = vscode.window.activeTextEditor,
+      agentEntryKeyboardEditor =
+        this.noteAgentEntryKeyboardEditor(coldAgentEntry)
+    this.sourceDeferred = false
+    this.forgetDeferredReturn()
+    this.sourcePreviewRequest++
     this.loading = true
     this.error = undefined
     const initialFocus = this.retainNativeFocus()
@@ -206,6 +320,7 @@ export class RepositoryReader {
       | ReturnType<NonNullable<RepositoryLayoutFocus['retainCurrentFocus']>>
       | undefined
     let anchoredSource: { uri: vscode.Uri; assertFocused(): void } | undefined
+    let keyboardReturn: RepositoryKeyboardReturn | undefined
     try {
       const store = await this.storage()
       this.assertCurrent(generation)
@@ -244,22 +359,10 @@ export class RepositoryReader {
         selection && (await store.read(selection.bookId, selection.revision))
       this.assertCurrent(generation)
       initialFocus.assertRetained()
-      // Validate real content before any native effect; an invalid selection cannot become a temporary focus anchor.
-      if (selection && book) {
-        const node = book.revision.document.nodes.find(
-          (value) => value.id === selection.nodeId,
-        )
-        if (
-          !node ||
-          !node.anchors[selection.anchorIndex] ||
-          (selection.location &&
-            selection.location.sectionIndex >=
-              node.sections.length + REPOSITORY_FIXED_READING_SECTIONS)
-        )
-          throw new Error(
-            'The selected article, citation, or section is unavailable in this revision.',
-          )
-      }
+      // Invalid article/citation/section input must fail before any native effect or temporary focus anchor.
+      this.assertRequestedArticle(selection, book)
+      // Disable the old article and its queued focus restoration before native layout acquisition.
+      this.publish()
       const acquireSourceFocus =
         selection && book
           ? async () => {
@@ -288,11 +391,22 @@ export class RepositoryReader {
               this.assertCurrent(generation)
               const editor = vscode.window.activeTextEditor,
                 group = vscode.window.tabGroups.activeTabGroup,
-                nativeInput = group.activeTab?.input
+                nativeInput = vscode.window.tabGroups.all.find(
+                  (candidate) => candidate.viewColumn === vscode.ViewColumn.One,
+                )?.activeTab?.input
+              // The citation's group is the first one, or the group Cursor still names from before the citation took the keyboard there (row 660).
               if (
                 editor !== opened.editor ||
                 editor.viewColumn !== vscode.ViewColumn.One ||
-                group.viewColumn !== vscode.ViewColumn.One ||
+                (group.viewColumn !== vscode.ViewColumn.One &&
+                  !isStaleGroupNameOfCitation(
+                    {
+                      namedBefore: opened.namedColumnBefore,
+                      namedNow: group.viewColumn,
+                      citation: vscode.ViewColumn.One,
+                    },
+                    true,
+                  )) ||
                 !(nativeInput instanceof vscode.TabInputText) ||
                 nativeInput.uri.toString() !== opened.uri.toString()
               )
@@ -307,53 +421,70 @@ export class RepositoryReader {
               return assertFocused
             }
           : undefined
-      await this.controls.arrange(
-        navigation.signal,
-        restoreReadingLayout ? input : undefined,
-        {
-          // Check after native initialization/queueing, before scope work can capture newer learner focus as its own.
-          begin: () => {
-            this.assertCurrent(generation)
-            initialFocus.assertRetained()
-            initialFocus.dispose()
+      // Quiet agent reads keep the owned Wiki's arrangement and the learner's existing native input.
+      if (background && selection && book) {
+        // An external Return cannot arrange source panes over the input it must preserve.
+        this.deferredReturn = restoreReadingLayout ? selection : undefined
+        // The Return waits for the learner's own selection of the Wiki from here on, also during this open's own loading (R6, AD2).
+        this.watchDeferredReturn()
+        anchoredSource = await this.prepareBackgroundSource(
+          selection,
+          book,
+          generation,
+          initialFocus,
+          initiatingEditor,
+        )
+      } else {
+        keyboardReturn = await this.controls.arrange(
+          navigation.signal,
+          restoreReadingLayout ? input : undefined,
+          {
+            // Check after native initialization/queueing, before scope work can capture newer learner focus as its own.
+            begin: () => {
+              this.assertCurrent(generation)
+              initialFocus.assertRetained()
+              initialFocus.dispose()
+            },
+            acquireSourceFocus,
+            retainCurrentFocus: (acquire) => {
+              this.assertCurrent(generation)
+              coldFocus?.assertRetained()
+              coldFocus?.dispose()
+              const retained = this.retainNativeFocus(acquire),
+                receipt = {
+                  assertRetained: (): void => {
+                    this.assertCurrent(generation)
+                    retained.assertRetained()
+                  },
+                  dispose: (): void => {
+                    retained.dispose()
+                    if (coldFocus === receipt) coldFocus = undefined
+                  },
+                }
+              coldFocus = receipt
+              return receipt
+            },
           },
-          acquireSourceFocus,
-          retainCurrentFocus: (acquire) => {
-            this.assertCurrent(generation)
-            coldFocus?.assertRetained()
-            coldFocus?.dispose()
-            const retained = this.retainNativeFocus(acquire),
-              receipt = {
-                assertRetained: (): void => {
-                  this.assertCurrent(generation)
-                  retained.assertRetained()
-                },
-                dispose: (): void => {
-                  retained.dispose()
-                  if (coldFocus === receipt) coldFocus = undefined
-                },
-              }
-            coldFocus = receipt
-            return receipt
-          },
-        },
-      )
+        )
+      }
       this.assertCurrent(generation)
       coldFocus?.assertRetained()
       anchoredSource?.assertFocused()
-      initialFocus.dispose()
-      // Only the cold-layout receipt changes entry order; retained Study and actual Return keep their existing handoff.
-      if (coldFocus && acquireSourceFocus && !anchoredSource)
+      if (!background) initialFocus.dispose()
+      // Only the cold-layout receipt changes entry order; retained Study and actual Return keep their existing handoff. An agent's entry gives the cited source no keyboard (row 620).
+      if (coldFocus && acquireSourceFocus && !anchoredSource && !coldAgentEntry)
         await acquireSourceFocus()
-      // An empty catalog has no later I/O or citation: release immediately before the synchronous Wiki activation.
-      if (!selection || !book) {
+      // An empty catalog has no later I/O or citation, and an agent's entry takes no keyboard for one: release immediately before the Wiki is shown.
+      if (!selection || !book || coldAgentEntry) {
         coldFocus?.assertRetained()
         coldFocus?.dispose()
       }
-      this.ensurePanel(Boolean(anchoredSource))
+      // An agent's cold entry shows the Wiki without taking the keyboard from the learner (codebook_open_book).
+      this.ensurePanel(Boolean(anchoredSource) || coldAgentEntry)
       this.publish()
       if (selection && book) {
         await this.load(selection, book, generation, anchoredSource)
+        await this.payReadyBackgroundPreview(background, initialFocus)
       } else {
         this.book = undefined
         this.selection = undefined
@@ -363,17 +494,49 @@ export class RepositoryReader {
       this.assertCurrent(generation)
       coldFocus?.assertRetained()
       anchoredSource?.assertFocused()
+      // Hand the settled source/layout input directly to the renderer phase's own native focus receipt.
       coldFocus?.dispose()
       sourceFocus?.dispose()
-      this.panel?.reveal(vscode.ViewColumn.Two, false)
+      if (!background) {
+        // Native reveal can recreate a hidden document; keep input ownership until that exact article acknowledges rendering.
+        await this.revealReadyPanel(
+          generation,
+          navigation.signal,
+          undefined,
+          !coldAgentEntry,
+        )
+        if (coldAgentEntry)
+          await this.settleAgentEntryKeyboard(
+            keyboardReturn,
+            this.panel,
+            agentEntryKeyboardEditor,
+          )
+      } else {
+        await this.completeDeferredReturn(signal, initialFocus)
+      }
+      // The citation shown for this article replaces an earlier citation's copy; a citation that waits for the Wiki's selection replaces it once shown (row 652).
+      if (
+        generation === this.generation &&
+        !this.sourceDeferred &&
+        this.sourceUri
+      )
+        this.retireStaleCitedSources(this.sourceUri)
     } catch (error) {
       if (generation === this.generation && !this.disposed) {
         this.error = String(error)
         this.loading = false
+        // A refused agent's read leaves no copy of its own behind (row 696).
+        this.retireCopyOfRefusedOpen(generation)
+        // A refused Return leaves nothing that a later selection of the Wiki would complete (AD1).
+        this.expireDeferredReturn()
         this.publish()
       }
       throw error
     } finally {
+      // A superseded caller cannot clear a newer opening's focus guard.
+      if (this.openingGeneration === generation)
+        this.openingGeneration = undefined
+      this.endQuietCopyShow(generation)
       initialFocus.dispose()
       coldFocus?.dispose()
       sourceFocus?.dispose()
@@ -381,7 +544,274 @@ export class RepositoryReader {
     }
   }
 
-  /** Returns a captured native source receipt only after exact requested navigation succeeds. @example await reader.openFromAgent(input) */
+  /**
+   * Hands intentional {@link open} input to a ready Wiki document, including one recreated after hiding.
+   * @param generation - Rejects a Close or newer navigation instead of activating its old panel.
+   * @param signal - Cancels the current navigation's bounded renderer wait.
+   * @param assertSelectedInput - Retains an already-selected Wiki during deferred citation work without another quiet selection.
+   * @param activate - `false` for an agent's cold entry ({@link open} with `forAgent`): the Wiki is shown and rendered without the keyboard, no activating reveal follows, and the window's focus is not asked for ({@link retainWindowFocus} guards a keyboard handoff only).
+   * @returns Completion of the current article's render acknowledgement and native handoff, not a pixel-paint guarantee.
+   * @throws A renderer timeout, cancellation or newer native-input error; no activating reveal follows a failed wait.
+   * @example await this.revealReadyPanel(generation, navigation.signal)
+   */
+  private async revealReadyPanel(
+    generation: number,
+    signal: AbortSignal,
+    assertSelectedInput?: () => void,
+    activate = true,
+  ): Promise<void> {
+    this.assertCurrent(generation)
+    const panel = this.panel
+    if (!panel) throw new Error('Repository Wiki panel is unavailable.')
+    let quietRevealIssued = false,
+      quietSelectionAccepted = false,
+      quietRevealAcknowledged = false
+    const revision = this.revision,
+      focus = this.retainNativeFocus(undefined, () => {
+        const expected = quietRevealIssued && this.hasNativeWikiFocus()
+        quietSelectionAccepted ||= expected
+        return expected
+      })
+    // Only an activating reveal takes the keyboard, so only it asks for the window's focus: an agent's cold entry shows the Wiki in a window the learner left too, and where the editor misreports its window as unfocused (finding 586, VS Code under WSLg).
+    const windowFocus = activate ? this.retainWindowFocus() : undefined,
+      revealState = panel.onDidChangeViewState(() => {
+        // A quiet display can be visible without keyboard focus; confirm its own native view-state notification.
+        if (quietRevealIssued && panel.visible && this.hasNativeWikiFocus())
+          quietRevealAcknowledged = true
+      }),
+      assertInputRetained = (): void => {
+        assertSelectedInput?.()
+        focus.assertRetained()
+        windowFocus?.assertRetained()
+      }
+    try {
+      assertInputRetained()
+      // Ready visible documents receive updated models without a queued tab selection that could cover newer input.
+      if (this.needsNativeDocumentReveal(panel, Boolean(assertSelectedInput))) {
+        quietRevealIssued = true
+        this.revealPanel(panel, true)
+      }
+      await waitUntil(
+        () => {
+          this.assertCurrent(generation)
+          assertInputRetained()
+          return this.rendered?.revision === revision
+        },
+        'the current Repository Wiki article to render',
+        REPOSITORY_READER_READY_TIMEOUT_MS,
+        signal,
+      )
+      // A renderer acknowledgement cannot authorize activation over a newer learner choice.
+      this.assertCurrent(generation)
+      assertInputRetained()
+      focus.dispose()
+      windowFocus?.dispose()
+      revealState.dispose()
+      // An agent's cold entry leaves the keyboard where the learner had it; the learner selects the Wiki when ready.
+      if (activate)
+        this.activateReadyPanel(
+          panel,
+          quietSelectionAccepted,
+          quietRevealAcknowledged,
+        )
+    } finally {
+      focus.dispose()
+      windowFocus?.dispose()
+      revealState.dispose()
+    }
+  }
+
+  /** Retains window ownership across source acquisition and rendering for {@link revealDeferredCitation} and {@link revealReadyPanel}. @returns A sticky departure assertion and its listener cleanup. @example const focus = this.retainWindowFocus(); focus.assertRetained(); focus.dispose() */
+  private retainWindowFocus() {
+    let departed = !vscode.window.state.focused
+    const listener = vscode.window.onDidChangeWindowState((state) => {
+      // A later window return cannot revive the earlier input handoff.
+      departed ||= !state.focused
+    })
+    return {
+      assertRetained(): void {
+        if (departed || !vscode.window.state.focused)
+          throw new Error(
+            'Native window focus changed while the Repository Wiki loaded; the newer learner focus was preserved.',
+          )
+      },
+      dispose(): void {
+        listener.dispose()
+      },
+    }
+  }
+
+  /** Prevents {@link revealReadyPanel} from reselecting a ready visible document while its updated model is pending. @param panel - The navigation-owned native pane. @param alreadySelected - A deferred citation already owns its visible native selection. @returns Whether a hidden or unready document needs an actual native display. @example this.needsNativeDocumentReveal(panel) */
+  private needsNativeDocumentReveal(
+    panel: vscode.WebviewPanel,
+    alreadySelected = false,
+  ): boolean {
+    return !panel.visible || (!alreadySelected && !this.documentReady)
+  }
+
+  /** Tests whether {@link revealDeferredCitation} must complete the current document's handoff before native activation. @param panel - The same navigation-owned native pane. @param revision - The article whose receipt can permit handoff. @returns True when visibility or the current render receipt is missing. @example this.needsDocumentHandoff(panel, revision) */
+  private needsDocumentHandoff(
+    panel: vscode.WebviewPanel,
+    revision: number,
+  ): boolean {
+    return !panel.visible || this.rendered?.revision !== revision
+  }
+
+  /** Applies the current native column policy for both quiet and activating {@link revealReadyPanel} displays. @param panel - The current navigation's pane, whose latest placement is respected. @param preserveFocus - Keeps input while the document loads; false pays the validated ready handoff. @example this.revealPanel(panel, true) */
+  private revealPanel(
+    panel: vscode.WebviewPanel,
+    preserveFocus: boolean,
+  ): void {
+    panel.reveal(panel.viewColumn ?? vscode.ViewColumn.Two, preserveFocus)
+  }
+
+  /** Commits {@link revealReadyPanel}'s handoff after the own visible-state and selected-tab confirmation. @param panel - The current ready pane. @param selectionAccepted - Whether a quiet reveal changed the native group selection. @param visibleAcknowledged - Whether that display received its native view-state notification. @example this.activateReadyPanel(panel, true, true) */
+  private activateReadyPanel(
+    panel: vscode.WebviewPanel,
+    selectionAccepted: boolean,
+    visibleAcknowledged: boolean,
+  ): void {
+    // Preserving focus does not promise an active panel; it must still be the acknowledged selected Wiki tab.
+    if (
+      selectionAccepted &&
+      (!visibleAcknowledged || !this.hasNativeWikiFocus())
+    )
+      throw new Error(
+        'Native focus changed during repository navigation; the newer learner focus was preserved.',
+      )
+    this.revealPanel(panel, false)
+  }
+
+  /**
+   * Settles the keyboard once an agent's cold Wiki is shown ({@link open} with `forAgent`, codebook_open_book, row 620): the arrangement's {@link RepositoryKeyboardReturn} gives back what its measurement borrowed (Cursor's chat tab); a keyboard it cannot give back goes to the Wiki, no file, and the learner is told once in the editor session ({@link REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE}). A keyboard that stayed where the learner had it is settled by {@link settleCoveredEditorKeyboard}: the Wiki may stand in front of that file now (row 694).
+   * @param keyboardReturn - The arrangement's return, `undefined` when the entry arranged nothing.
+   * @param panel - The Wiki the entry showed.
+   * @param keyboardEditor - The text editor the editor reported as active when the entry began ({@link noteAgentEntryKeyboardEditor}).
+   * @example await this.settleAgentEntryKeyboard(keyboardReturn, this.panel, keyboardEditor) // Cursor: the chat tab has its keyboard again
+   */
+  private async settleAgentEntryKeyboard(
+    keyboardReturn: RepositoryKeyboardReturn | undefined,
+    panel: vscode.WebviewPanel | undefined,
+    keyboardEditor: AgentEntryKeyboardEditor | undefined,
+  ): Promise<void> {
+    if (!panel) return
+    const answer = await this.returnAgentEntryKeyboard(keyboardReturn)
+    // A newer choice of the learner keeps its keyboard and is told nothing.
+    if (answer === 'newer' || this.panel !== panel) return
+    if (answer === 'returned') {
+      this.settleCoveredEditorKeyboard(panel, keyboardEditor)
+      return
+    }
+    this.revealPanel(panel, false)
+    tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_TOOK_AGENT_KEYBOARD_MESSAGE)
+  }
+
+  /**
+   * Asks the arrangement to give back the keyboard its measurement borrowed, for {@link settleAgentEntryKeyboard}.
+   * @param keyboardReturn - The arrangement's return, `undefined` when the entry arranged nothing.
+   * @returns
+   * - `'returned'` when the keyboard is where the learner had it, or back there, and when nothing was arranged
+   * - `'kept'` when it stays where the measurement left it, with no newer choice of the learner's since
+   * - `'newer'` when the learner chose another place meanwhile, or the return failed
+   * @example await this.returnAgentEntryKeyboard(keyboardReturn) // => 'returned' after Cursor's chat tab got its keyboard back
+   */
+  private async returnAgentEntryKeyboard(
+    keyboardReturn: RepositoryKeyboardReturn | undefined,
+  ): Promise<'returned' | 'kept' | 'newer'> {
+    if (!keyboardReturn) return 'returned'
+    const unchanged = this.retainNativeFocus()
+    try {
+      if (await keyboardReturn()) return 'returned'
+      unchanged.assertRetained()
+      return 'kept'
+    } catch {
+      return 'newer'
+    } finally {
+      unchanged.dispose()
+    }
+  }
+
+  /**
+   * Notes where the keyboard is when an agent's cold Wiki entry begins, for {@link settleCoveredEditorKeyboard}; called first by {@link open}, before any effect (Cycle 0046 row 694).
+   * The Study pane, while it is the editor's active pane and its document reports the keyboard ({@link RepositoryControls.studyPaneKeyboardColumn}), is noted first: its report is the learner's sign (row 705), and the editor goes on reporting the last text editor while the learner works in the pane they reached by its tab (rows 659 and 671; row 729). Otherwise the text editor the editor reports as active is noted, with whether the learner is known to type in it ({@link RepositoryControls.knowsLearnerTypesInActiveEditor}); a side of a diff editor, which both editors report with no view column, is noted in its diff's group ({@link textEditorColumn}, row 709).
+   * @param coldAgentEntry - Whether the entry is an agent's into a window without the Wiki.
+   * @returns The pane's or the editor's column and the learner's sign; `undefined` for any other entry, and with neither a Study pane that reports the keyboard nor an active text editor.
+   * @example this.noteAgentEntryKeyboardEditor(true) // => { column: 2, learnerTypesThere: true, place: 'file' } a second after the learner typed in auth.ts in front of the second group
+   */
+  private noteAgentEntryKeyboardEditor(
+    coldAgentEntry: boolean,
+  ): AgentEntryKeyboardEditor | undefined {
+    if (!coldAgentEntry) return undefined
+    // A Study pane that reports the keyboard is where the learner works, whatever text editor the editor still reports (rows 705 and 729).
+    const paneColumn = this.controls.studyPaneKeyboardColumn?.()
+    if (paneColumn !== undefined)
+      return {
+        column: paneColumn,
+        learnerTypesThere: true,
+        place: 'study pane',
+      }
+    // A side of a diff editor has no view column of its own; its diff's group places it (row 709).
+    const column = textEditorColumn(
+      vscode.window.activeTextEditor,
+      vscode.window.tabGroups.all,
+      Reflect.get(vscode, 'TabInputTextDiff'),
+    )
+    return column === undefined
+      ? undefined
+      : {
+          column,
+          learnerTypesThere: Boolean(
+            this.controls.knowsLearnerTypesInActiveEditor?.(),
+          ),
+          place: 'file',
+        }
+  }
+
+  /**
+   * Settles the keyboard of the file an agent's cold Wiki was created in front of, for {@link settleAgentEntryKeyboard} once that keyboard stayed where the learner had it (Cycle 0046 row 694).
+   * The Wiki is created in the second group without the keyboard ({@link ensurePanel}); a webview created in front of the text editor that has the keyboard hides that editor, and the keyboard falls to the page body, where nothing types (C60, both hosts: `auth.ts` in front of column 2 with the keyboard, then BODY to the end). Both editors report the learner's last file as the active text editor also while a view, the terminal or VS Code's chat view has the keyboard (rows 612 and 656), which the Wiki leaves where it is, so only a known sign of the learner's own hand in that file decides: then the Wiki gets the keyboard and the learner is told so ({@link REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE}); otherwise nothing is focused and the learner is told what may have happened ({@link REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE}). A Study pane the Wiki covers while its document reported the keyboard loses it the same way, and its report is the learner's sign: the Wiki gets the keyboard and the pane's sentence is told ({@link REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE}, row 705). Each sentence is told once in the editor session.
+   * @param panel - The Wiki the entry showed.
+   * @param keyboardEditor - The Study pane or the text editor noted when the entry began ({@link noteAgentEntryKeyboardEditor}).
+   * @example this.settleCoveredEditorKeyboard(panel, { column: 2, learnerTypesThere: true, place: 'file' }) // the Wiki has the keyboard, and the learner is told once
+   */
+  private settleCoveredEditorKeyboard(
+    panel: vscode.WebviewPanel,
+    keyboardEditor: AgentEntryKeyboardEditor | undefined,
+  ): void {
+    if (!keyboardEditor || !this.coversEditorColumn(panel, keyboardEditor))
+      return
+    if (keyboardEditor.learnerTypesThere) {
+      this.revealPanel(panel, false)
+      tellAgentWikiKeyboardOnce(
+        keyboardEditor.place === 'study pane'
+          ? REPOSITORY_WIKI_COVERED_STUDY_PANE_MESSAGE
+          : REPOSITORY_WIKI_COVERED_TYPED_FILE_MESSAGE,
+      )
+    } else tellAgentWikiKeyboardOnce(REPOSITORY_WIKI_COVERED_OPEN_FILE_MESSAGE)
+  }
+
+  /**
+   * Says whether the Wiki now stands in front of the group of the text editor or the Study pane that had the keyboard when an agent's entry began, with no text editor active since; asked by {@link settleCoveredEditorKeyboard}.
+   * @param panel - The Wiki the entry showed.
+   * @param keyboardEditor - That text editor's or pane's column.
+   * @returns `true` while the Wiki is that group's front tab and no text editor is active; `false` once the learner brought a text editor to the front, there or elsewhere, and for the Wiki in another group.
+   * @example this.coversEditorColumn(panel, { column: 2, learnerTypesThere: false, place: 'file' }) // => true right after the Wiki was created in front of auth.ts
+   */
+  private coversEditorColumn(
+    panel: vscode.WebviewPanel,
+    keyboardEditor: AgentEntryKeyboardEditor,
+  ): boolean {
+    const front = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === keyboardEditor.column,
+    )?.activeTab
+    return (
+      panel.viewColumn === keyboardEditor.column &&
+      this.isWikiTab(front) &&
+      !vscode.window.activeTextEditor
+    )
+  }
+
+  /** Returns the exact prepared source URI after MCP article navigation; a focused primary file defers its preview until native Wiki selection, and a cold Wiki is shown without the keyboard. @example await reader.openFromAgent(input) */
   async openFromAgent(input: OpenBookInput, signal?: AbortSignal) {
     await this.open(
       {
@@ -391,6 +821,7 @@ export class RepositoryReader {
         anchorIndex: input.anchorIndex ?? 0,
       },
       signal,
+      { preserveNativeInput: true, forAgent: true },
     )
     signal?.throwIfAborted()
     if (
@@ -533,6 +964,10 @@ export class RepositoryReader {
       throw new Error(binding?.reason ?? 'Selected observation is unavailable.')
     if (recording && binding.recording.status !== 'available')
       throw new Error(binding.recording.reason)
+    // Only admitted history navigation cancels a preview; refused evidence keeps even an already-started citation.
+    this.sourcePreviewRequest++
+    this.sourceDeferred = false
+    this.forgetDeferredReturn()
     await this.controls.evidence(
       binding,
       recording,
@@ -542,8 +977,15 @@ export class RepositoryReader {
     this.assertCurrent(generation)
   }
 
-  /** Cancels pending navigation before panel disposal so old successes/errors cannot reopen the reader. @example reader.close() */
+  /**
+   * Cancels pending navigation before panel disposal so old successes/errors cannot reopen the reader; called by Close Repository Wiki and by {@link dispose}.
+   * The Wiki's close also retires the cited-source tabs the reader showed ({@link retireCitedSourceTabs}, row 641); a {@link dispose} for the window's close or a change of its folders leaves the editor's tabs as they are: neither editor restores such a tab in the next window, and the reader made after a folder change retires what is left ({@link retireStaleCitedSources}, row 652).
+   * @example reader.close()
+   */
   close(): void {
+    this.sourceDeferred = false
+    this.forgetDeferredReturn()
+    this.sourcePreviewRequest++
     this.navigation.abort()
     this.generation++
     this.statusGeneration++
@@ -553,20 +995,178 @@ export class RepositoryReader {
     this.panel = undefined
     panel?.dispose()
     this.clearWatchers()
+    if (panel && !this.disposed) this.retireCitedSourceTabs()
   }
-  /** Drains publication and shared learner writes while disposing only this reader's UI ownership. @example await reader.dispose() */
+
+  /**
+   * Closes the read-only cited-source tabs this reader showed once its Wiki closes, so the learner's own front tab of their groups comes back; called by {@link close} (Close Repository Wiki) and when the Wiki's tab is closed by hand ({@link ensurePanel}), Cycle 0046 row 641.
+   * The reader shows a citation in front of the first group without preview (`openSource`), over the learner's own file, also for an agent's open the learner never chose; it serves the Wiki beside it, whose article, refresh and navigation no longer reach it once the Wiki is gone, and the learner's current file stays one Open Current File away. The editor brings the group's most recently active other tab to the front with its view state, the caret and scroll (VS Code 1.140.0 `workbench.desktop.main.js` 705:24141, 988:96536; Cursor 3.23.12 17264:12900, 11678:22600). A tab the learner pinned stays, and so does every cited source of a group that holds nothing else: its close would remove that group under `closeEmptyGroups` (VS Code 1106:79878). Only the copies this reader showed go ({@link shownCitedSources}, row 662): a copy an earlier reader left was settled when this reader was made ({@link retireCopiesOfEarlierReaders}), and one that stayed then, because the learner read in it, stays. A close the editor refuses leaves the tabs as they are.
+   * The closing Wiki's own tab is no other tab of its group: the editor still lists it right after the panel's disposal, which reaches the editor after this call (VS Code 1.140.0 `extensionHostProcess.js` 295:115246; Cursor 3.23.12 203:121183), and it leaves with the Wiki, so a copy the learner moved beside the Wiki is its group's only tab once the Wiki is gone and stays (Cycle 0046 row 687).
+   * @example this.retireCitedSourceTabs() // the learner's login-form.tsx is in front of the first group again
+   */
+  private retireCitedSourceTabs(): void {
+    this.closeCitedSourceTabs(
+      (uri) => !this.shownCitedSources.has(uri),
+      (tab) => this.isWikiTab(tab),
+    )
+  }
+
+  /**
+   * Closes the cited-source copies of this reader's earlier citations once {@link open} or {@link revealDeferredCitation} has shown another, Cycle 0046 row 652: each citation has a copy of its own (its article, revision and citation are in the URI, {@link openSourceDocument}), so every citation followed added a tab until the Wiki closed.
+   * Only the copies this reader showed go ({@link shownCitedSources}, row 662). Besides the rules of {@link retireCitedSourceTabs} (a pinned tab and the only tabs of a group stay), the copy on screen stays, and so does a copy that has the keyboard: the learner reads in it ({@link isReadInByLearner}).
+   * @param shown - The copy of the citation on screen.
+   * @example this.retireStaleCitedSources(opened.uri) // the module.ts copy leaves; the order.ts copy stays in front of the learner's login-form.tsx
+   */
+  private retireStaleCitedSources(shown: vscode.Uri): void {
+    const keyboard = vscode.window.activeTextEditor
+    this.closeCitedSourceTabs(
+      (uri, group) =>
+        !this.shownCitedSources.has(uri) ||
+        uri === shown.toString() ||
+        this.isReadInByLearner(uri, group, keyboard),
+    )
+  }
+
+  /**
+   * Closes, when a reader is made, the cited-source copies a reader before it left in the window, Cycle 0046 row 652; called once by the constructor, when this reader has shown no copy yet, so every copy present is an earlier reader's.
+   * A disposed reader leaves its copies at a change of the workspace's folders and when a change of the first folder or the entry into a workspace restarts the extension host while the window stays (VS Code 1.140.0 `workbench.desktop.main.js` 4406:37553, 5281:6726; Cursor 3.23.12 20081:12211, 20392:3521); the extension makes the next reader at once. A window's close or reload brings no copy back: an editor group saves only the editors that have a serializer (VS Code 705:29495; Cursor 17264:18404), and a content provider's document opens as a resource editor input (VS Code 990:43737; Cursor 17388:51646), `workbench.editors.resourceEditorInput`, for which neither editor registers one (VS Code 705:31939 beside 993:5962; Cursor 11678:61617 beside 17388:58117).
+   * A pinned copy, the only tabs of a group and a copy that has the keyboard stay ({@link isReadInByLearner}); this reader's later closes leave such a copy alone, since it never showed it ({@link retireCitedSourceTabs}, row 662).
+   * @example this.retireCopiesOfEarlierReaders() // the module.ts copy the disposed reader showed leaves; the learner's login-form.tsx is in front again
+   */
+  private retireCopiesOfEarlierReaders(): void {
+    const keyboard = vscode.window.activeTextEditor
+    this.closeCitedSourceTabs((uri, group) =>
+      this.isReadInByLearner(uri, group, keyboard),
+    )
+  }
+
+  /**
+   * Says whether a cited-source copy is the text editor that has the keyboard, which the learner reads in; asked by {@link retireStaleCitedSources} and {@link retireCopiesOfEarlierReaders}, which keep such a copy.
+   * @param uri - The copy's URI.
+   * @param group - The copy's group.
+   * @param keyboard - The active text editor when the retirement began, `undefined` when none is active.
+   * @returns `true` when the active text editor shows that copy in that group; `false` otherwise.
+   * @example this.isReadInByLearner(uri, wikiGroup, vscode.window.activeTextEditor) // => true for the module.ts copy the learner clicked into beside the Wiki
+   */
+  private isReadInByLearner(
+    uri: string,
+    group: vscode.TabGroup,
+    keyboard: vscode.TextEditor | undefined,
+  ): boolean {
+    return (
+      uri === keyboard?.document.uri.toString() &&
+      group.viewColumn === keyboard.viewColumn
+    )
+  }
+
+  /**
+   * Forgets the cited-source copies whose last tab closed, so that {@link retireCitedSourceTabs} and {@link retireStaleCitedSources} retire only the copies this reader showed that are still its own and {@link shownCitedSources} holds no URI of a closed copy; called for every change of the editor's tabs (Cycle 0046 row 677).
+   * A copy the learner closed and brings back is the learner's: Reopen Closed Editor opens the closed editor's resource again, with the same URI (VS Code 1.140.0 `workbench.desktop.main.js` 1598:87610; Cursor 3.23.12 18385:80118), and the reader's content provider gives it its text. A copy the learner drags to another group stays this reader's: the editor opens it in the target group before it closes it in its own (VS Code 1106:78557; Cursor 17501:40995), so it is still open when that close is reported. A copy this reader shows again is its own again ({@link openSource}).
+   * @param closed - The tabs the change closed.
+   * @example this.forgetClosedCitedSources(event.closed) // the module.ts copy the learner closed is no longer this reader's
+   */
+  private forgetClosedCitedSources(closed: readonly vscode.Tab[]): void {
+    for (const tab of closed) {
+      const uri =
+        tab.input instanceof vscode.TabInputText
+          ? tab.input.uri.toString()
+          : undefined
+      // A URI still shown by another tab, such as the copy the learner moved to another group, stays this reader's.
+      if (uri && !this.isOpenInAnyGroup(uri)) this.shownCitedSources.delete(uri)
+    }
+  }
+
+  /**
+   * Says whether any group of the window shows a text tab of a URI; asked by {@link forgetClosedCitedSources} once a tab of that URI closed.
+   * @param uri - The tab's URI, as a string.
+   * @returns `true` while a text tab of the URI is open in any group; `false` once none is.
+   * @example this.isOpenInAnyGroup(copy.toString()) // => true while the module.ts copy the learner moved stands in the Wiki's group
+   */
+  private isOpenInAnyGroup(uri: string): boolean {
+    return vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === uri,
+      ),
+    )
+  }
+
+  /**
+   * Closes the cited-source tabs of every group that {@link retirableCitedSources} picks; called by {@link retireCitedSourceTabs} when the Wiki closes, by {@link retireStaleCitedSources} and by {@link retireCopiesOfEarlierReaders}. A close the editor refuses leaves the tabs as they are.
+   * @param isKept - Says whether a copy stays, by its URI and its group.
+   * @param isLeaving - Says whether a tab leaves its group with this retirement, so it counts as no other tab there (the closing Wiki's own, {@link retireCitedSourceTabs}); none by default.
+   * @example this.closeCitedSourceTabs((uri) => !this.shownCitedSources.has(uri)) // every unpinned copy this reader showed beside another tab leaves
+   */
+  private closeCitedSourceTabs(
+    isKept: (uri: string, group: vscode.TabGroup) => boolean,
+    isLeaving: (tab: vscode.Tab) => boolean = () => false,
+  ): void {
+    const retired = vscode.window.tabGroups.all.flatMap((group) =>
+      this.retirableCitedSources(group, isKept, isLeaving),
+    )
+    if (retired.length)
+      void vscode.window.tabGroups.close(retired, true).then(
+        () => undefined,
+        () => undefined,
+      )
+  }
+
+  /**
+   * Picks the cited-source tabs of one group that {@link closeCitedSourceTabs} closes. Every `codebook-repository-source` tab of the window counts, whichever workspace's reader showed it, unless the caller keeps it: a copy of another workspace is one no reader serves any more ({@link sourceText} refuses its authority), and the callers keep what is not theirs to retire ({@link shownCitedSources}).
+   * @param group - An editor group of the window.
+   * @param isKept - Says whether a copy stays, by its URI and its group.
+   * @param isLeaving - Says whether a tab leaves the group with this retirement, so it is no other tab of the group.
+   * @returns
+   * - The group's unpinned cited-source tabs that are not kept, while the group holds another tab too that is not leaving.
+   * - No tab for a group that holds only such tabs and leaving ones, and for a group without them.
+   * @example this.retirableCitedSources(firstGroup, () => false, () => false) // => [the order.ts citation tab] beside the learner's login-form.tsx
+   */
+  private retirableCitedSources(
+    group: vscode.TabGroup,
+    isKept: (uri: string, group: vscode.TabGroup) => boolean,
+    isLeaving: (tab: vscode.Tab) => boolean,
+  ): vscode.Tab[] {
+    const cited = group.tabs.filter(
+      (tab) =>
+        !tab.isPinned &&
+        tab.input instanceof vscode.TabInputText &&
+        tab.input.uri.scheme === REPOSITORY_SOURCE_SCHEME &&
+        !isKept(tab.input.uri.toString(), group),
+    )
+    const staying = group.tabs.filter((tab) => !isLeaving(tab))
+    // A group the retirement would empty, its leaving tabs gone too, keeps its tabs.
+    return cited.length < staying.length ? cited : []
+  }
+  /**
+   * Drains publication and shared learner writes while disposing only this reader's UI ownership; called when the window closes and when a change of the workspace's folders replaces the reader.
+   * What the reader registered with the editor (its source provider, its Repository Wiki view and its listeners) is released whatever closing and draining did: kept after a failure, it would be shared with the reader made in its place.
+   * @throws What closing the pane or draining the writes threw, after the registrations were released.
+   * @example await reader.dispose()
+   */
   async dispose(): Promise<void> {
     this.disposed = true
-    this.close()
-    await this.initializing?.catch(() => undefined)
-    await this.store?.dispose()
-    await this.store?.library.flush()
-    this.disposables.forEach((value) => value.dispose())
-    this.changes.dispose()
+    try {
+      this.close()
+      await this.initializing?.catch(() => undefined)
+      await this.store?.dispose()
+      await this.store?.library.flush()
+    } finally {
+      this.disposables.forEach((value) => value.dispose())
+      this.changes.dispose()
+    }
   }
   /** Tells the Study workspace whether this reader owns its Repository Wiki panel, so the live pane is never taken for one an earlier extension host left behind. @example reader.panelOpen() // false until an article is opened */
   panelOpen(): boolean {
     return Boolean(this.panel)
+  }
+  /**
+   * Tells the Study workspace whether this reader's Repository Wiki panel is the active editor, so a Wiki tab the editor names while its panel is not active is read as the place of another editor part's chat input, not of the Wiki (Cycle 0046 row 680).
+   * @returns `true` while the panel exists and the editor reports it active; `false` without a panel and while another editor or part is active.
+   * @example reader.panelActive() // => false after Cursor's Focus Agent gave its chat the keyboard while the Wiki's group stays the named one
+   */
+  panelActive(): boolean {
+    return Boolean(this.panel?.active)
   }
   /** Exposes sanitized model/render receipts for native evidence without claiming pixel verification. @example reader.inspect().rendered */
   inspect() {
@@ -607,6 +1207,9 @@ export class RepositoryReader {
     this.assertCurrent(generation)
     source?.assertFocused()
     this.loading = false
+    // Loading receipts cannot authorize keyboard handoff before the usable article is rendered.
+    this.revision++
+    this.rendered = undefined
     this.watchSources()
     this.publish()
     await this.refreshSources(generation)
@@ -669,18 +1272,11 @@ export class RepositoryReader {
     preserveFocus: boolean,
     assertFocus?: () => void,
   ) {
-    this.assertCurrent(generation)
-    const anchor = book.revision.document.nodes.find(
-      (node) => node.id === selection.nodeId,
-    )!.anchors[selection.anchorIndex]!
-    const uri = vscode.Uri.from({
-      scheme: REPOSITORY_SOURCE_SCHEME,
-      authority: this.store!.library.workspaceKey,
-      path: `/${selection.bookId}/${selection.revision}/${selection.nodeId}/${selection.anchorIndex}/${basename(anchor.path)}`,
-      query: `hash=${anchor.hash}`,
-    })
-    const document = await vscode.workspace.openTextDocument(uri)
-    this.assertCurrent(generation)
+    const { uri, document, anchor } = await this.openSourceDocument(
+      selection,
+      book,
+      generation,
+    )
     assertFocus?.()
     const documentVersion = document.version,
       requestedSelection = document.validateRange(
@@ -694,11 +1290,34 @@ export class RepositoryReader {
         editor.viewColumn === vscode.ViewColumn.One
       )
     }
+    /** Confirms the exact primary citation tab during {@link openSource}'s native activation, before its group owns focus. @returns Whether the prepared tab belongs to this citation. @example matchesPreparedTab() */
+    const matchesPreparedTab = (): boolean => {
+      const input = vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === vscode.ViewColumn.One,
+      )?.activeTab?.input
+      return (
+        input instanceof vscode.TabInputText &&
+        input.uri.toString() === uri.toString()
+      )
+    }
+    // Cursor keeps naming the group it named before (its chat part's) while the citation takes the keyboard in the first group: tab opens are no group activation for its tab model (Cursor 3.23.12 `workbench.desktop.main.js` 17269:31013), so that unchanged name is the citation's own group too (row 660).
+    const namedColumnBefore = vscode.window.tabGroups.activeTabGroup.viewColumn
+    /** Tells that the editor still names its group from before while the citation is in front of the first group with the keyboard. */
+    const namesStaleGroup = (): boolean =>
+      isStaleGroupNameOfCitation(
+        {
+          namedBefore: namedColumnBefore,
+          namedNow: vscode.window.tabGroups.activeTabGroup.viewColumn,
+          citation: vscode.ViewColumn.One,
+        },
+        matchesPreparedTab() && matchesEditorIdentity(),
+      )
     // Observe the requested citation before display; a late response cannot adopt later learner input as its baseline.
     const focus = preserveFocus
       ? undefined
       : this.retainNativeFocus({
           matchesEditorIdentity,
+          matchesPreparedTab,
           matchesEditor: () => {
             const editor = vscode.window.activeTextEditor
             return (
@@ -712,9 +1331,11 @@ export class RepositoryReader {
               )
             )
           },
+          namesStaleGroup,
           matchesGroup: () => {
             const group = vscode.window.tabGroups.activeTabGroup,
               input = group.activeTab?.input
+            if (namesStaleGroup()) return true
             return (
               group.viewColumn === vscode.ViewColumn.One &&
               input instanceof vscode.TabInputText &&
@@ -724,23 +1345,528 @@ export class RepositoryReader {
         })
     // Native editors may normalize BOM/CRLF in getText; the provider/hash seal retains original bytes.
     try {
-      const editor = await vscode.window.showTextDocument(document, {
-        viewColumn: vscode.ViewColumn.One,
-        preview: false,
-        preserveFocus,
-        selection: requestedSelection,
-      })
+      const editor = await this.showCitedSourceCopy(uri, () =>
+        vscode.window.showTextDocument(document, {
+          viewColumn: vscode.ViewColumn.One,
+          preview: false,
+          preserveFocus,
+          selection: requestedSelection,
+        }),
+      )
       this.assertCurrent(generation)
       focus?.assertRetained()
-      return { uri, editor, focus }
+      return { uri, editor, focus, namedColumnBefore }
     } catch (error) {
       focus?.dispose()
       throw error
     }
   }
 
-  /** Retains initial or explicitly acquired citation focus for {@link open}; later observed departures irrevocably retire it. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
-  private retainNativeFocus(acquire?: RepositoryFocusTarget) {
+  /**
+   * Shows a citation's copy and notes its URI as one this reader showed ({@link shownCitedSources}); called by {@link openSource} for every display of a citation.
+   * The URI is noted before the display, so a copy the editor shows although a later check refuses the citation is this reader's too (row 662). A show the editor refuses before it opens anything put no copy on screen: the URI is forgotten again unless this reader had shown it before, so a copy of that URI an earlier reader left, which the learner reads in, is not retired with this reader's Wiki (row 683). The extension host can refuse after the editor opened the copy, too: when the editor it got back is no longer the current one, because the learner switched tabs meanwhile ("Could NOT open editor for … because another editor opened in the meantime.", Cursor's server `extensionHostProcess.js` 201:91131, VS Code 1.140.0 295:85754). A copy that was not open before the show and is open now is that display's, and stays this reader's, so its Wiki's close and the next citation retire it (Cycle 0046 row 701).
+   * @param uri - The citation's copy.
+   * @param show - The display, `vscode.window.showTextDocument` with the citation's options.
+   * @returns The editor the display answered.
+   * @throws The display's refusal, once the URI is forgotten again where this display alone noted it and left no copy of its own.
+   * @example const editor = await this.showCitedSourceCopy(uri, () => vscode.window.showTextDocument(document, options))
+   */
+  private async showCitedSourceCopy(
+    uri: vscode.Uri,
+    show: () => Thenable<vscode.TextEditor>,
+  ): Promise<vscode.TextEditor> {
+    const key = uri.toString(),
+      shownBefore = this.shownCitedSources.has(key),
+      openBefore = this.isOpenInAnyGroup(key)
+    this.shownCitedSources.add(key)
+    try {
+      return await show()
+    } catch (error) {
+      // Only a URI this display noted goes, and only while the display left no copy of its own: an earlier display's URI, and a copy the refused display still opened, stay the reader's.
+      if (!shownBefore && (openBefore || !this.isOpenInAnyGroup(key)))
+        this.shownCitedSources.delete(key)
+      throw error
+    }
+  }
+
+  /** Prepares exact immutable bytes for {@link openSource} and quiet {@link openFromAgent} without selecting a native tab. @example const prepared = await this.openSourceDocument(selection, book, generation) */
+  private async openSourceDocument(
+    selection: RepositorySelection,
+    book: NonNullable<RepositoryReader['book']>,
+    generation: number,
+  ) {
+    this.assertCurrent(generation)
+    const { anchor } = this.requestedArticle(selection, book)
+    const uri = vscode.Uri.from({
+      scheme: REPOSITORY_SOURCE_SCHEME,
+      authority: this.store!.library.workspaceKey,
+      path: `/${selection.bookId}/${selection.revision}/${selection.nodeId}/${selection.anchorIndex}/${basename(anchor.path)}`,
+      query: `hash=${anchor.hash}`,
+    })
+    const document = await vscode.workspace.openTextDocument(uri)
+    this.assertCurrent(generation)
+    return { uri, document, anchor }
+  }
+
+  /** Validates retained content for {@link open} before native source/layout effects; empty-library entry has no article to validate. @example this.assertRequestedArticle(selection, book) */
+  private assertRequestedArticle(
+    selection: RepositorySelection | undefined,
+    book: RepositoryReader['book'],
+  ): void {
+    if (!selection || !book) return
+    const { node } = this.requestedArticle(selection, book)
+    this.assertReadingSection(selection, node.sections.length)
+  }
+
+  /** Resolves the required retained node/citation for {@link assertRequestedArticle} and {@link openSourceDocument} before URI or native effects. @example const { anchor } = this.requestedArticle(selection, book) */
+  private requestedArticle(
+    selection: RepositorySelection,
+    book: NonNullable<RepositoryReader['book']>,
+  ) {
+    const node = book.revision.document.nodes.find(
+      (value) => value.id === selection.nodeId,
+    )
+    if (!node)
+      throw new Error(
+        'The selected article, citation, or section is unavailable in this revision.',
+      )
+    const anchor = node.anchors[selection.anchorIndex]
+    if (!anchor)
+      throw new Error(
+        'The selected article, citation, or section is unavailable in this revision.',
+      )
+    return { node, anchor }
+  }
+
+  /** Checks the retained reading section for {@link assertRequestedArticle}; missing location uses the article's normal entry. @example this.assertReadingSection(selection, node.sections.length) */
+  private assertReadingSection(
+    selection: RepositorySelection,
+    sectionCount: number,
+  ): void {
+    if (
+      selection.location &&
+      selection.location.sectionIndex >=
+        sectionCount + REPOSITORY_FIXED_READING_SECTIONS
+    )
+      throw new Error(
+        'The selected article, citation, or section is unavailable in this revision.',
+      )
+  }
+
+  /**
+   * Prepares an existing Wiki's quiet agent source for {@link open}, retaining input or an explicit handoff to that Wiki.
+   * @param initialFocus - The original native input lease; unrelated newer input retires the request.
+   * @param initiatingEditor - The text editor that owned input before source/storage awaits.
+   * @returns Exact copied URI and the guard used throughout reading-state publication.
+   * @example const source = await this.prepareBackgroundSource(selection, book, generation, initialFocus, initiatingEditor)
+   */
+  private async prepareBackgroundSource(
+    selection: RepositorySelection,
+    book: NonNullable<RepositoryReader['book']>,
+    generation: number,
+    initialFocus: ReturnType<RepositoryReader['retainNativeFocus']>,
+    initiatingEditor: vscode.TextEditor | undefined,
+  ) {
+    const assertBackgroundInput = (): void => {
+      // Selecting this Wiki explicitly hands the reading to it; unrelated newer input still retires the request.
+      if (!this.hasNativeWikiFocus()) initialFocus.assertRetained()
+    }
+    const prepared = await this.openSourceDocument(selection, book, generation)
+    assertBackgroundInput()
+    this.sourceDeferred = this.shouldDeferSourcePreview(initiatingEditor)
+    if (!this.sourceDeferred)
+      await this.showQuietCopy(
+        selection,
+        book,
+        generation,
+        prepared.uri,
+        assertBackgroundInput,
+      )
+    return { uri: prepared.uri, assertFocused: assertBackgroundInput }
+  }
+
+  /**
+   * Shows a citation's copy without the keyboard for an agent's read of the open Wiki, for {@link prepareBackgroundSource}, and notes it for the rest of that open ({@link quietCopyShow}): the native focus changes its own show causes are no learner's ({@link isOwnQuietCopyShowPlace}), and a refused open closes the tab its show opened ({@link retireCopyOfRefusedOpen}); Cycle 0046 row 696.
+   * @param selection - The citation to show.
+   * @param book - Its book.
+   * @param generation - The open's generation.
+   * @param uri - The copy's URI ({@link openSourceDocument}).
+   * @param assertBackgroundInput - The open's check of the learner's input before the show.
+   * @example await this.showQuietCopy(selection, book, generation, prepared.uri, assertBackgroundInput) // order.ts in front of the first group, the chat keeps the keyboard
+   */
+  private async showQuietCopy(
+    selection: RepositorySelection,
+    book: NonNullable<RepositoryReader['book']>,
+    generation: number,
+    uri: vscode.Uri,
+    assertBackgroundInput: () => void,
+  ): Promise<void> {
+    const show = {
+      uri: uri.toString(),
+      generation,
+      opensTab: !this.isOpenInAnyGroup(uri.toString()),
+      shown: false,
+    }
+    this.quietCopyShow = show
+    await this.openSource(selection, book, generation, true, () => {
+      assertBackgroundInput()
+      // The show is about to put the copy on screen: from here on a refused open closes it again.
+      show.shown = true
+    })
+  }
+
+  /**
+   * Says whether the editor names a group that the reader's own quiet copy show explains while no text editor is active ({@link showQuietCopy}), for {@link adoptOwnQuietCopyShow} in {@link retainNativeFocus}: the first group with the copy in front, or, beside Cursor's chat part, the group of its chat, whose tab has no input of an editor (Cursor gives its composer tab none, 3.23.12 `workbench.desktop.main.js` 17269:27859), which Cursor's rebuild names after Focus Agent (C60 c60-cu-7d2, row 696). The keyboard was already in that chat: no text editor was active before the show, or the receipt would see its loss. A terminal in the editor area, a notebook, a notebook diff or a custom editor in front of another group has no active text editor either, and is the learner's own choice (row 714): {@link holdsEditorTab} with {@link editorTabInputKinds} tells it from the chat's tab, as row 689's proof does.
+   * @returns `true` during such a show for those groups; `false` without one, while a text editor is active, and for any other group.
+   * @example this.isOwnQuietCopyShowPlace() // => true right after Cursor's rebuild named its chat part's group for the order.ts copy
+   */
+  private isOwnQuietCopyShowPlace(): boolean {
+    const show = this.quietCopyShow
+    if (!show || vscode.window.activeTextEditor) return false
+    const group = vscode.window.tabGroups.activeTabGroup,
+      input = group.activeTab?.input
+    // The copy came to the front of the first group, which the editor names.
+    if (group.viewColumn === vscode.ViewColumn.One)
+      return (
+        input instanceof vscode.TabInputText &&
+        input.uri.toString() === show.uri
+      )
+    // Only the chat's group, whose tabs have no editor's input, is that place; any editor in front of another group is the learner's (row 714), also one the host gives no input (VS Code's Settings, its Keyboard Shortcuts) in a group that holds an editor's tab (AD29), and a merge editor, a multi-file diff or an interactive window alone in a group (Q7).
+    return (
+      group.activeTab !== undefined &&
+      !holdsEditorTab(group, editorTabInputKinds(vscode))
+    )
+  }
+
+  /**
+   * Closes the copy a refused agent's read showed, when its show opened that tab, so the refused open leaves no copy behind (Cycle 0046 row 696); called by {@link open} when an open of its own generation fails. The rules of {@link closeCitedSourceTabs} hold: a pinned copy, a copy the learner reads in ({@link isReadInByLearner}) and a group's only tab stay. A copy that was open before the show stays too, and so does the reader's record of the copy, which forgets its URI once its last tab closed ({@link forgetClosedCitedSources}).
+   * @param generation - The refused open's generation.
+   * @example this.retireCopyOfRefusedOpen(generation) // the order.ts copy the refused read showed leaves the first group
+   */
+  private retireCopyOfRefusedOpen(generation: number): void {
+    const show = this.quietCopyShow
+    if (show?.generation !== generation || !show.shown || !show.opensTab) return
+    const keyboard = vscode.window.activeTextEditor
+    this.closeCitedSourceTabs(
+      (uri, group) =>
+        uri !== show.uri || this.isReadInByLearner(uri, group, keyboard),
+    )
+  }
+
+  /**
+   * Ends the note of an open's quiet copy show once that open settled ({@link quietCopyShow}); called by {@link open}'s end, which leaves a newer open's note as it is.
+   * @param generation - The settled open's generation.
+   * @example this.endQuietCopyShow(generation)
+   */
+  private endQuietCopyShow(generation: number): void {
+    if (this.quietCopyShow?.generation === generation)
+      this.quietCopyShow = undefined
+  }
+
+  /** Keeps a Return layout or focused primary file untouched during {@link prepareBackgroundSource}. @example this.shouldDeferSourcePreview(vscode.window.activeTextEditor) */
+  private shouldDeferSourcePreview(
+    initiatingEditor: vscode.TextEditor | undefined,
+  ): boolean {
+    return Boolean(
+      this.deferredReturn ||
+      (initiatingEditor?.viewColumn === vscode.ViewColumn.One &&
+        !this.hasNativeWikiFocus()),
+    )
+  }
+
+  /** Pays an explicit Wiki handoff received during loading after {@link open} publishes the same ready article; unrelated input keeps its original lease. @example await this.payReadyBackgroundPreview(background, initialFocus) */
+  private async payReadyBackgroundPreview(
+    background: boolean,
+    initialFocus: ReturnType<RepositoryReader['retainNativeFocus']>,
+  ): Promise<void> {
+    if (!background || this.deferredReturn || !this.canRevealDeferredSource())
+      return
+    // A focus event during loading could not pay the preview; pay it only after the same article is ready.
+    initialFocus.dispose()
+    await this.revealDeferredSource()
+  }
+
+  /** Recognizes the actual Wiki main-group tab for {@link revealDeferredSource}; stale text-editor pointers cannot activate a preview. @example if (this.hasNativeWikiFocus()) await this.revealDeferredSource() */
+  private hasNativeWikiFocus(): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup
+    if (!this.panel) return false
+    return (
+      group.viewColumn === this.panel.viewColumn &&
+      this.isWikiTab(group.activeTab)
+    )
+  }
+
+  /** Certifies a native Wiki input for {@link hasNativeWikiFocus}; unrelated or absent tabs cannot authorize preview. @example this.isWikiTab(group.activeTab) */
+  private isWikiTab(tab: vscode.Tab | undefined): boolean {
+    const input = tab?.input
+    return (
+      input instanceof vscode.TabInputWebview &&
+      isCodebookPaneViewType(input.viewType, 'codebook.repositoryWiki')
+    )
+  }
+
+  /** Pays an agent's deferred primary-file preview only after genuine native Wiki selection; newer input or evidence navigation revokes it. @example await this.revealDeferredSource() */
+  private async revealDeferredSource(): Promise<void> {
+    if (!this.canRevealDeferredSource()) return
+    // Only actual Wiki selection resumes a command's saved layout and ordinary reader handoff.
+    if (this.deferredReturn) {
+      // The active opening pays a loading-time handoff after its final checks; a nested open would reject that caller.
+      if (this.openingGeneration === this.generation) return
+      await this.completeDeferredReturn()
+      return
+    }
+    await this.revealDeferredCitation()
+  }
+
+  /** Pays the ordinary source-only preview after {@link revealDeferredSource} rules out a pending Return layout. @example await this.revealDeferredCitation() */
+  private async revealDeferredCitation(): Promise<void> {
+    const generation = this.generation,
+      request = ++this.sourcePreviewRequest,
+      signal = this.navigation.signal,
+      panel = this.panel!,
+      needsDocumentHandoff = this.needsDocumentHandoff(panel, this.revision),
+      focus = this.retainNativeFocus(),
+      windowFocus = this.retainWindowFocus()
+    let departed = false
+    const viewState = panel.onDidChangeViewState(() => {
+        // Switching away and back cannot revive the first selected document's pending handoff.
+        departed ||= !panel.active || !panel.visible
+      }),
+      assertSelectedInput = (): void => {
+        try {
+          focus.assertRetained()
+          windowFocus.assertRetained()
+          this.assertSelectedPreview(request, departed)
+        } catch (error) {
+          departed = true
+          throw error
+        }
+      }
+    try {
+      assertSelectedInput()
+      const opened = await this.openSource(
+        this.selection!,
+        this.book!,
+        generation,
+        true,
+        assertSelectedInput,
+      )
+      assertSelectedInput()
+      // Retire the preview before the ready handoff can emit another native view-state callback.
+      this.commitDeferredPreview(generation, request, opened.uri)
+      if (needsDocumentHandoff)
+        await this.revealReadyPanel(generation, signal, assertSelectedInput)
+      // The citation shown at last replaces an earlier citation's copy, unless a newer request owns the source (row 652).
+      if (
+        generation === this.generation &&
+        request === this.sourcePreviewRequest
+      )
+        this.retireStaleCitedSources(opened.uri)
+    } catch (error) {
+      // A newer native choice cancels automatic preview without reporting a user action as a source failure.
+      if (this.previewRetired(generation, request, departed)) return
+      throw error
+    } finally {
+      focus.dispose()
+      windowFocus.dispose()
+      viewState.dispose()
+    }
+  }
+
+  /** Rejects an obsolete or abandoned native selection during {@link revealDeferredCitation}'s source and renderer waits. @param request - The source preview that originally acquired the selected Wiki. @param departed - Whether that selection was left, even if the learner has since returned. @throws When a newer preview or native input owns the handoff. @example this.assertSelectedPreview(request, false) */
+  private assertSelectedPreview(request: number, departed: boolean): void {
+    if (
+      departed ||
+      request !== this.sourcePreviewRequest ||
+      !this.hasActiveWikiFocus()
+    )
+      throw new Error(
+        'The newer native input was preserved instead of opening an old citation.',
+      )
+  }
+
+  /** Completes a command's original layout from {@link open} or {@link revealDeferredSource} after the learner selects Wiki. @param initialFocus - Releases the finishing background request before its normal Return begins. @example await this.completeDeferredReturn() */
+  private async completeDeferredReturn(
+    signal?: AbortSignal,
+    initialFocus?: ReturnType<RepositoryReader['retainNativeFocus']>,
+  ): Promise<void> {
+    const selection = this.deferredReturn
+    if (!selection || !this.hasActiveWikiFocus()) return
+    initialFocus?.dispose()
+    await this.open(selection, signal, { restoreReadingLayout: true })
+  }
+
+  /**
+   * Keeps a command's deferred Return ({@link deferredReturn}) for the learner's own selection of the Wiki only; called by {@link open} as soon as its background entry (Return to Wiki from the Command Palette) defers the Return, with the learner's input elsewhere, so the watch covers the open's own loading too: a Study close while the Return loads makes the editor select the Wiki, and the open's completion step must not take that for the learner's selection (Cycle 0046 AD2).
+   * The Return and its cited source's preview ({@link sourceDeferred}) expire at the first change of the native focus that does not land on the Wiki (another named group or front tab, or another active text editor; a click on the Wiki is judged by its end, whatever order its reports come in, AD28), and at any tab the editor closes: the editor activates a neighbour of a closed tab or group by itself (a Study close that removes its panes' groups, a neighbouring group's close), and a Wiki it activates so is no selection of the learner's. Without this, such an activation, minutes later, restored the article's layout and could give the cited source the keyboard (Cycle 0046 R6). A selection of the Wiki that changes no other place keeps the Return for {@link revealDeferredSource}.
+   * @example this.watchDeferredReturn() // after the palette's Return to Wiki while the learner types in auth.ts
+   */
+  private watchDeferredReturn(): void {
+    this.forgetDeferredReturnWatch()
+    // Only a deferred Return is watched.
+    if (!this.deferredReturn) return
+    /** Names the place of the native focus: the named group with its front tab, and the active text editor. */
+    const focusPlace = (): { group: string; editor: string } => {
+      const group = vscode.window.tabGroups.activeTabGroup,
+        editor = vscode.window.activeTextEditor
+      return {
+        group: JSON.stringify([
+          group.viewColumn,
+          group.activeTab?.label,
+          group.activeTab?.input,
+        ]),
+        editor: JSON.stringify([
+          editor?.document.uri.toString(),
+          editor?.viewColumn,
+        ]),
+      }
+    }
+    const placeBefore = focusPlace()
+    /**
+     * Says whether the focus moved elsewhere than the Wiki since the Return was deferred: another named group or front tab, or another active text editor.
+     * The learner's click on the Wiki is reported in parts, and the reader judges it by its end, whatever the order of the parts (Cycle 0046 AD28): the extension host hears of the editors and of the tab model on separate channels, and of a group's activation apart from its front tab's.
+     * - A lone report that the text editor is gone, in the group named before, is no move yet: the Wiki's group may be named next.
+     * - The Wiki's own group named while another tab is still in front of the Wiki is no move either, unless a text editor of that group is active: the Wiki's tab may come to the front next; a file of that group the learner chose is a move.
+     * - A report that leaves the place as it was is no move, also in the Wiki's own group: the learner who types in a file in front of the Wiki in its group turns its tab dirty, which the editor reports as a changed tab (Cycle 0046 Q6).
+     */
+    const movedAway = (): boolean => {
+      if (this.hasNativeWikiFocus()) return false
+      const place = focusPlace(),
+        editor = vscode.window.activeTextEditor,
+        wikiColumn = this.panel?.viewColumn
+      // The same group with the same front tab, and the same text editor: the focus did not move.
+      if (
+        place.group === placeBefore.group &&
+        place.editor === placeBefore.editor
+      )
+        return false
+      if (vscode.window.tabGroups.activeTabGroup.viewColumn === wikiColumn)
+        return editor?.viewColumn === wikiColumn
+      if (place.group !== placeBefore.group) return true
+      return place.editor !== placeBefore.editor && editor !== undefined
+    }
+    // Only a change of the focus that lands on the Wiki keeps the Return.
+    const observe = (): void => {
+      if (movedAway()) this.expireDeferredReturn()
+    }
+    this.deferredReturnWatch = [
+      vscode.window.tabGroups.onDidChangeTabs((event) => {
+        // The editor's own activation of a closed tab's neighbour is no choice of the learner's.
+        if (event.closed.length) this.expireDeferredReturn()
+        else observe()
+      }),
+      vscode.window.tabGroups.onDidChangeTabGroups(observe),
+      vscode.window.onDidChangeActiveTextEditor(observe),
+    ]
+  }
+
+  /**
+   * Ends a command's deferred Return with the preview of its cited source ({@link sourceDeferred}), so no later selection of the Wiki completes it; called when {@link watchDeferredReturn} expires it and by {@link open} when the Return's open is refused (Cycle 0046 AD1).
+   * Nothing happens without a deferred Return.
+   * @example this.expireDeferredReturn() // the palette's Return will not restore the article layout any more
+   */
+  private expireDeferredReturn(): void {
+    // Without a deferred Return there is nothing to end, and an agent's deferred citation keeps its own preview.
+    if (!this.deferredReturn) return
+    this.sourceDeferred = false
+    this.forgetDeferredReturn()
+  }
+
+  /**
+   * Drops a command's deferred Return and the watch that keeps it ({@link watchDeferredReturn}); called by {@link open} when it begins, by {@link evidence}, by {@link close} and when the watch expires the Return.
+   * @example this.forgetDeferredReturn()
+   */
+  private forgetDeferredReturn(): void {
+    this.deferredReturn = undefined
+    this.forgetDeferredReturnWatch()
+  }
+
+  /**
+   * Releases the listeners of {@link watchDeferredReturn}; called by {@link forgetDeferredReturn} and before a new watch begins.
+   * @example this.forgetDeferredReturnWatch()
+   */
+  private forgetDeferredReturnWatch(): void {
+    for (const listener of this.deferredReturnWatch.splice(0))
+      listener.dispose()
+  }
+
+  /** Requires both native tab identity and active-panel state before {@link completeDeferredReturn} can move the saved layout. @example this.hasActiveWikiFocus() // false while side chat owns input */
+  private hasActiveWikiFocus(): boolean {
+    return Boolean(this.panel?.active) && this.hasNativeWikiFocus()
+  }
+
+  /** Tests the current preview obligation for {@link revealDeferredSource}; loading or another native input cannot pay it. @example if (this.canRevealDeferredSource()) await this.revealDeferredSource() */
+  private canRevealDeferredSource(): boolean {
+    return this.sourceDeferred && !this.loading && this.hasNativeWikiFocus()
+  }
+
+  /** Keeps superseded/native-departure completion silent for {@link revealDeferredSource}, while real source failures remain observable. @example this.previewRetired(generation, request, departed) */
+  private previewRetired(
+    generation: number,
+    request: number,
+    departed: boolean,
+  ): boolean {
+    return (
+      departed ||
+      generation !== this.generation ||
+      request !== this.sourcePreviewRequest
+    )
+  }
+
+  /** Commits only the same preview after native display for {@link revealDeferredSource}; evidence/newer requests retain their source state. @example this.commitDeferredPreview(generation, request, opened.uri) */
+  private commitDeferredPreview(
+    generation: number,
+    request: number,
+    uri: vscode.Uri,
+  ): void {
+    this.assertCurrent(generation)
+    if (request !== this.sourcePreviewRequest) return
+    this.sourceUri = uri
+    this.sourceDeferred = false
+  }
+
+  /** Confirms the native selected text tab before {@link retainSelectedTextEditor} can retain its identity. @param editor - The actual active editor whose same-group selected tab must match. @returns Whether both native receipts identify this editor. @example this.hasSelectedTextTab(editor) // => true for the currently selected source tab */
+  private hasSelectedTextTab(editor: vscode.TextEditor): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup,
+      input = group.activeTab?.input
+    return (
+      input instanceof vscode.TabInputText &&
+      input.uri.toString() === editor.document.uri.toString() &&
+      editor.viewColumn === group.viewColumn
+    )
+  }
+
+  /** Retains a selected text tab's identity behind Wiki for {@link retainNativeFocus}'s own quiet editor retirement. @returns A predicate requiring the unchanged editor and original text tab in its same native group. @example const retained = this.retainSelectedTextEditor(); retained() // => true while the original source remains behind Wiki */
+  private retainSelectedTextEditor(): () => boolean {
+    const editor = vscode.window.activeTextEditor,
+      group = vscode.window.tabGroups.activeTabGroup
+    if (!editor || !this.hasSelectedTextTab(editor)) return () => false
+    const identity = JSON.stringify([
+        editor.document.version,
+        editor.selections,
+      ]),
+      uri = editor.document.uri.toString(),
+      column = group.viewColumn
+    return () => {
+      const current = vscode.window.tabGroups.activeTabGroup
+      return (
+        current.viewColumn === column &&
+        current.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            tab.input.uri.toString() === uri,
+        ) &&
+        JSON.stringify([editor.document.version, editor.selections]) ===
+          identity
+      )
+    }
+  }
+
+  /** Retains initial or acquired focus for {@link open}; later input irrevocably retires it, while the editor's own late selection of this Wiki's group beside the unchanged text editor is no input ({@link adoptWikiGroupReturn}). @param acquire - The requested citation whose native activation may be observed in stages. @param acceptGroupSelection - Admits once the own quiet Wiki selection and disappearance of its unchanged same-group text editor. @example const retained = this.retainNativeFocus(); retained.assertRetained() */
+  private retainNativeFocus(
+    acquire?: RepositoryFocusTarget,
+    acceptGroupSelection?: () => boolean,
+  ) {
     const snapshot = () => {
       const editor = vscode.window.activeTextEditor,
         group = vscode.window.tabGroups.activeTabGroup
@@ -758,9 +1884,16 @@ export class RepositoryReader {
         ]),
       }
     }
+    // The editor's own selection of this Wiki's group leaves the text editor active; a learner's choice takes its keyboard.
+    const wikiSelectedBesideTextEditor = (): boolean =>
+      Boolean(vscode.window.activeTextEditor) && this.hasNativeWikiFocus()
     const pending = snapshot()
+    let selectedEditorRetained: (() => boolean) | undefined
     let initial = acquire ? undefined : pending,
       changed = false,
+      // The target was acquired under the editor's stale name of another group (row 660).
+      staleNameAccepted = false,
+      groupSelectionAccepted = false,
       editorAcquired = false,
       groupAcquired = false
     let intermediateEditor = acquire?.matchesEditorIdentity?.()
@@ -770,21 +1903,15 @@ export class RepositoryReader {
     const observe = (
       event?: 'active-editor' | vscode.TextEditorSelectionChangeEvent,
     ): void => {
+      // Freeze text-tab ownership on the first observation, before a quiet reveal can hide its editor.
+      selectedEditorRetained ??= acceptGroupSelection
+        ? this.retainSelectedTextEditor()
+        : () => false
       const current = snapshot(),
         activeEditor = vscode.window.activeTextEditor,
         selectionEvent = typeof event === 'object' ? event : undefined
       // Explicit learner selection never proves ownership, even when it happens to match the requested range.
-      if (
-        selectionEvent &&
-        activeEditor &&
-        selectionEvent.textEditor.document.uri.toString() ===
-          activeEditor.document.uri.toString() &&
-        selectionEvent.textEditor.viewColumn === activeEditor.viewColumn &&
-        (selectionEvent.kind ===
-          vscode.TextEditorSelectionChangeKind.Keyboard ||
-          selectionEvent.kind === vscode.TextEditorSelectionChangeKind.Mouse)
-      )
-        changed = true
+      if (isLearnersSelectionIn(selectionEvent, activeEditor)) changed = true
       if (initial === undefined && acquire) {
         const editorMatches = acquire.matchesEditor(),
           groupMatches = acquire.matchesGroup()
@@ -797,9 +1924,12 @@ export class RepositoryReader {
         ) {
           if (
             !activeEditor &&
-            groupMatches &&
+            (groupMatches ||
+              (current.group === pending.group &&
+                acquire.matchesPreparedTab?.())) &&
             intermediateEditor === undefined
           ) {
+            // The owned tab can be ready before the old group releases focus and reports the target group.
             missingEditorObserved = true
             intermediateMatches = true
           } else if (acquire.matchesEditorIdentity()) {
@@ -820,9 +1950,49 @@ export class RepositoryReader {
           (!groupMatches && (groupAcquired || current.group !== pending.group))
         editorAcquired ||= editorMatches
         groupAcquired ||= groupMatches
-        if (editorMatches && groupMatches) initial = current
+        if (editorMatches && groupMatches) {
+          initial = current
+          staleNameAccepted = Boolean(acquire.namesStaleGroup?.())
+        }
         return
       }
+      // A quiet reveal selects its tab before the native editor-loss event; earlier departures remain sticky.
+      if (
+        initial &&
+        current.group !== initial.group &&
+        !groupSelectionAccepted &&
+        acceptGroupSelection?.()
+      ) {
+        initial = { ...initial, group: current.group }
+        groupSelectionAccepted = true
+      }
+      // Only the unchanged selected text tab behind this same-group Wiki can explain its own editor disappearance.
+      if (
+        initial &&
+        groupSelectionAccepted &&
+        !activeEditor &&
+        selectedEditorRetained()
+      )
+        initial = { ...initial, editor: current.editor }
+      // A late return to this Wiki's group beside the untouched text editor is no newer input (row 444); earlier departures stay sticky.
+      initial = adoptWikiGroupReturn(
+        initial,
+        current,
+        wikiSelectedBesideTextEditor(),
+      )
+      // The reader's own quiet copy show for an agent's read changes only the named group: the copy's or, in Cursor, its chat part's (row 696).
+      initial = adoptOwnQuietCopyShow(
+        initial,
+        current,
+        this.isOwnQuietCopyShowPlace(),
+      )
+      // The editor naming the acquired target's own group late, once, after the receipt took its stale name of another group (Cursor names its chat part's group until its tab model is rebuilt), is no newer input either (row 660).
+      ;({ retained: initial, staleNameAccepted } = adoptLateNameOfAcquiredGroup(
+        initial,
+        current,
+        acquire,
+        staleNameAccepted,
+      ))
       changed ||=
         current.editor !== initial?.editor || current.group !== initial?.group
     }
@@ -958,6 +2128,7 @@ export class RepositoryReader {
   /** Installs a single nonce-scoped panel whose obsolete callbacks cannot act after Close. @example this.ensurePanel() */
   private ensurePanel(preserveFocus = false): void {
     if (this.panel) return
+    this.retireRenderedDocument()
     const panel = vscode.window.createWebviewPanel(
       'codebook.repositoryWiki',
       'codebook · Repository Wiki',
@@ -965,6 +2136,21 @@ export class RepositoryReader {
       { enableScripts: true, localResourceRoots: [] },
     )
     this.panel = panel
+    this.readyHeardWhileHidden = false
+    panel.onDidChangeViewState(() => {
+      if (this.panel !== panel) return
+      // A hidden panel loses its document; its last receipt cannot certify the next iframe.
+      this.retireHiddenDocument(panel)
+      this.askShownDocumentReady(panel)
+      // Selecting the Wiki is the learner's explicit permission to replace the primary file with its cited source.
+      if (!panel.active || !panel.visible) return
+      const generation = this.generation
+      void this.revealDeferredSource().catch((error) => {
+        if (this.panel !== panel || this.generation !== generation) return
+        this.error = `Citation preview unavailable: ${String(error)}`
+        this.publish()
+      })
+    })
     panel.webview.onDidReceiveMessage((value) => {
       if (this.panel !== panel) return
       const revision = this.revision,
@@ -997,13 +2183,65 @@ export class RepositoryReader {
       if (this.panel === panel) {
         this.navigation.abort()
         this.panel = undefined
+        this.retireRenderedDocument()
         this.generation++
         this.statusGeneration++
         this.clearWatchers()
         clearTimeout(this.refreshTimer)
+        // The Wiki's tab closed by hand ends the Wiki as Close Repository Wiki does (row 641).
+        this.retireCitedSourceTabs()
       }
     })
     panel.webview.html = repositoryHtml()
+  }
+
+  /** Retires document-local proof on creation, hiding or disposal for {@link ensurePanel}. @example this.retireRenderedDocument() */
+  private retireRenderedDocument(): void {
+    this.documentReady = false
+    this.rendered = undefined
+  }
+
+  /** Invalidates document-local readiness when {@link ensurePanel} observes that native content was hidden. @param panel - The current native panel whose visibility changed. @example this.retireHiddenDocument(panel) */
+  private retireHiddenDocument(panel: vscode.WebviewPanel): void {
+    if (!panel.visible) this.retireRenderedDocument()
+  }
+
+  /**
+   * Asks the document of a pane that is shown again to post `ready` again, when a `ready` reached {@link receiveDocument} while the pane still counted as hidden; called by {@link ensurePanel}'s view-state listener.
+   * The editor orders a document's messages and the pane's view-state notifications in no way, so the shown document's `ready` can come first and be dropped, and every receipt after it would be dropped as not ready. The held `ready` is not taken instead: it may be the hidden document's last one, whose late receipts must not certify the shown document. Only the document now shown can answer the request.
+   * @param panel - The current panel, whose view state changed.
+   * @example this.askShownDocumentReady(panel) // posts { type: 'announce-ready' } once the pane is visible
+   */
+  private askShownDocumentReady(panel: vscode.WebviewPanel): void {
+    if (!panel.visible || !this.readyHeardWhileHidden) return
+    this.readyHeardWhileHidden = false
+    const request: RepositoryReadyRequest = { type: 'announce-ready' }
+    void panel.webview.postMessage(request)
+  }
+
+  /** Accepts passive readiness only for the current visible Wiki document for {@link receive}. @param panel - The already validated current panel. @param message - A ready signal or current-revision model acknowledgement. @example this.receiveDocument(panel, { type: 'ready' }) */
+  private receiveDocument(
+    panel: vscode.WebviewPanel,
+    message: Extract<
+      z.infer<typeof repositoryMessageSchema>,
+      { type: 'ready' | 'rendered' }
+    >,
+  ): void {
+    if (!panel.visible) {
+      // A hidden document's ready does not count; the document shown next is asked for its own (CR5-6).
+      if (message.type === 'ready') this.readyHeardWhileHidden = true
+      return
+    }
+    if (message.type === 'ready') {
+      // A new visible document must render the current model before it receives native input.
+      this.rendered = undefined
+      this.documentReady = true
+      this.readyHeardWhileHidden = false
+      this.publish()
+      return
+    }
+    // A not-yet-ready document cannot authorize a native handoff.
+    if (this.documentReady) this.rendered = message
   }
 
   /** Rejects untyped/stale webview actions before source, navigation, understanding, or evidence work. @example await this.receive(value) */
@@ -1011,20 +2249,18 @@ export class RepositoryReader {
     if (!this.panel) return
     const message = repositoryMessageSchema.parse(value)
     this.assertOwner()
-    if (message.type === 'ready') {
-      this.publish()
+    if (message.type === 'ready' || message.type === 'rendered') {
+      if (message.type === 'rendered' && message.revision !== this.revision)
+        return
+      this.receiveDocument(this.panel, message)
       return
     }
     if (message.revision !== this.revision) {
       // Delayed render/scroll notifications are passive; obsolete controls still fail before any action.
-      if (message.type === 'rendered' || message.type === 'location') return
+      if (message.type === 'location') return
       throw new Error(
         'Article changed; inspect the current view before acting.',
       )
-    }
-    if (message.type === 'rendered') {
-      this.rendered = message
-      return
     }
     if (message.type === 'select') await this.open(message.selection)
     if (message.type === 'location') await this.remember(message.selection)

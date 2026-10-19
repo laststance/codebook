@@ -165,6 +165,31 @@ test('a conflict with no path is not recorded as a conflict', () => {
   )
 })
 
+test('a start refused for a conflict that names no file is recorded as failed with the sentence a finished update has for it', () => {
+  // Arrange
+  const run = new WikiUpdateRun(fixedClock)
+
+  // Act
+  run.refuseStart('vscode', output, {
+    kind: 'conflict',
+    paths: [],
+    cause: 'edited-page',
+  })
+
+  // Assert
+  const status = run.status()
+  assert.equal(status.state, 'failed')
+  assert.equal(
+    status.state === 'failed' ? status.reason : undefined,
+    'The update was blocked, but no blocking file was named.',
+  )
+  assert.equal(
+    status.state === 'failed' ? status.isCodebookSentence : undefined,
+    true,
+  )
+  assert.equal(status.state === 'failed' ? status.site : undefined, 'kept')
+})
+
 test('a late result after a run ended cannot overwrite the newer state', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
@@ -188,11 +213,15 @@ test('an update that finds the Wiki already current records that and starts no r
   const run = new WikiUpdateRun(fixedClock)
 
   // Act
-  run.alreadyCurrent(output, {
-    identity: 'a1b2c3d4e5f6+0f9e8d7c',
-    revision: 'a1b2c3d4e5f6',
-    index: '0f9e8d7c',
-  })
+  run.alreadyCurrent(
+    output,
+    {
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+    },
+    false,
+  )
 
   // Assert
   assert.deepEqual(run.status(), {
@@ -236,7 +265,11 @@ test('an already-current note never replaces a run that is active', () => {
   run.begin('vscode', output, 900_000, false)
 
   // Act
-  run.alreadyCurrent(output)
+  run.alreadyCurrent(
+    output,
+    { identity: 'a1b2c3d4e5f6+0f9e8d7c', index: '0f9e8d7c' },
+    false,
+  )
 
   // Assert
   assert.equal(run.status().state, 'running')
@@ -416,4 +449,53 @@ test('each ending the classifier can return is recorded with its own fields thro
       site: 'kept',
     },
   ])
+})
+
+// Value: protects=the page and the notice of a start that was refused because somebody is still updating the Wiki, and of a run that ended while its chat may still publish; fails_when=the recorded state loses the mark, so both say "The last usable site is kept." under which that somebody publishes; why_new=Cycle 0046 row 341; seam=none
+test('a start refused because somebody is still updating the Wiki, and a run that ended while its chat may still publish, are recorded as failed with the mark that the site may be replaced after', () => {
+  // Arrange
+  const refusedWindow = new WikiUpdateRun(fixedClock)
+  const endedWindow = new WikiUpdateRun(fixedClock)
+  endedWindow.begin('vscode', output, 900_000, false)
+
+  // Act
+  refusedWindow.refuseStart('vscode', output, {
+    kind: 'failed',
+    reason:
+      'Another editor window is starting an update of this Wiki. Wait a moment and try again.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+  })
+  endedWindow.end({
+    state: 'failed',
+    reason: 'The request may still be in the chat.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+    site: 'kept',
+  })
+
+  // Assert
+  assert.deepEqual(refusedWindow.status(), {
+    state: 'failed',
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:00:00.000Z',
+    reason:
+      'Another editor window is starting an update of this Wiki. Wait a moment and try again.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+    site: 'kept',
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  })
+  assert.deepEqual(endedWindow.status(), {
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:00:00.000Z',
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+    state: 'failed',
+    reason: 'The request may still be in the chat.',
+    isCodebookSentence: true,
+    mayBeReplacedLater: true,
+    site: 'kept',
+  })
 })

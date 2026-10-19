@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
@@ -180,9 +180,52 @@ test('a candidate the agent staged in a folder of its own name ends the watched 
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
-      /^Update stopped at \d{1,2}:\d{2}(?:\s?[AP]M)?: it would overwrite your own file in the Wiki folder \(pages\/notes\.html\)\. Nothing was replaced\. Move or rename the file, then press Update LLM Wiki again\.$/,
+      /^Update stopped at \d{1,2}:\d{2}(?:\s?[AP]M)?: it would overwrite your own file in the Wiki folder \(pages\/notes\.html\)\. Nothing was replaced\. Move or rename the file\. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it\.$/,
     )
     assert.equal(await wiki.hashOutput(), hashBefore)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the Wiki and the learner after a VS Code watch ended on a file of theirs while the chat that staged the site still works; fails_when=the press the sentence names sends a second request into a new chat beside the first (the run left no reservation and took the chat's candidate for its own leftover), or the refusal offers no Update anyway, or the chat, which the sentence says can still publish, can no longer do so once the file is out of the way; why_new=Cycle 0046 row 343; seam=none (the real publisher stages and publishes)
+test('after a VS Code watch ended on a learner’s file while the chat still works, the learner moves the file and presses: no second request is sent, the press is answered with the wait for that chat and Update anyway, and the chat can still publish its site', async () => {
+  // Arrange: the chat stages a page where the learner's file is, and the watch ends on it; the chat was not stopped.
+  const wiki = await openPublishedWikiWindow()
+  const notesPath = join(wiki.outputDirectory, 'pages', 'notes.html')
+  await mkdir(dirname(notesPath))
+  await writeFile(notesPath, 'mine')
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+    const stage = await wiki.prepare(
+      join(dirname(wiki.outputDirectory), 'wiki-next'),
+    )
+    await wiki.writeCandidate(stage, {
+      heading: 'Second',
+      extraPages: ['pages/notes.html'],
+    })
+    const atTheConflict = await waitForStatus(wiki.status, hasEnded)
+
+    // Act: the learner moves the file aside and presses, as the sentence says; then the chat, which still works, publishes.
+    await rename(notesPath, join(wiki.projectRoot, 'notes-kept.html'))
+    await wiki.clickUpdate()
+    const pressed = wiki.status()
+    const offeredAtThePress = wiki.offeredActions.at(-1)?.actions
+    const requestsAfterThePress = wiki.chatRequests.length
+    await wiki.publish(stage)
+    const publishedPage = await readFile(notesPath, 'utf8')
+
+    // Assert
+    assert.equal(atTheConflict.state, 'conflict')
+    assert.equal(requestsAfterThePress, 1)
+    assert.equal(pressed.state, 'failed')
+    assert.match(
+      wiki.errors[1] ?? '',
+      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki-next, written \d{1,2}:\d{2}[^)]*\)\. Codebook waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\. Nothing had been replaced by then\.$/,
+    )
+    assert.deepEqual(offeredAtThePress, ['Update anyway', 'Open LLM Wiki'])
+    assert.notEqual(publishedPage, 'mine')
   } finally {
     await wiki.close()
   }
@@ -208,16 +251,129 @@ test('a candidate that exists before the click refuses the start as somebody els
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
-      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Codebook waits for it until [^.]+\. If that chat was stopped, choose Update anyway in the editor’s notification\. The last usable site is kept\.$/,
+      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Codebook waits for it until [^.]+\. If that chat was stopped, choose Update anyway in the editor’s notification\. Nothing had been replaced by then\.$/,
     )
   } finally {
     await wiki.close()
   }
 })
 
-test('a retry after this window’s own run ended starts again although that run’s abandoned candidate is still there, and does not blame it', async () => {
+// Value: protects=the one agent per Wiki that "Update anyway" must keep; fails_when=the button ignores every leftover at the time of its press, so a press in the Notification Center after another chat staged a new candidate starts a second agent beside it; why_new=Cycle 0045 pre-landing review PL-24 (row 32 of Cycle 0046); seam=the learner's press of the notification's button, which the test makes after the new candidate was written
+test('Update anyway pressed after a new candidate was written since the refusal is refused again, names the new candidate and sends no chat request', async () => {
+  // Arrange: a candidate refuses the press; the learner presses Update anyway on that notification later.
+  let pressUpdateAnyway = (): void => {}
+  const laterPress = new Promise<string>((resolvePress) => {
+    pressUpdateAnyway = (): void => resolvePress('Update anyway')
+  })
+  let offersOfUpdateAnyway = 0
+  const wiki = await openPublishedWikiWindow({
+    // Only the first refusal's button is pressed; the second refusal is left alone.
+    chooseAction: (_message, actions) => {
+      if (!actions.includes('Update anyway')) return undefined
+      offersOfUpdateAnyway += 1
+      return offersOfUpdateAnyway === 1 ? laterPress : undefined
+    },
+  })
+  try {
+    const firstStage = await wiki.prepare()
+    await wiki.clickUpdate()
+    const refused = wiki.status()
+    // Another chat prepares its own candidate after the refusal.
+    await agentTakesAMoment()
+    const newStage = await wiki.prepare()
+
+    // Act
+    pressUpdateAnyway()
+    const deadline = Date.now() + 6_000
+    while (wiki.offeredActions.length < 2 && Date.now() < deadline)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+
+    // Assert
+    const refusedAgain = wiki.status()
+    assert.equal(refused.state, 'failed')
+    assert.match(
+      refused.state === 'failed' ? refused.reason : '',
+      new RegExp(`\\(candidate ${basename(firstStage)}, written `),
+    )
+    assert.equal(refusedAgain.state, 'failed')
+    assert.match(
+      refusedAgain.state === 'failed' ? refusedAgain.reason : '',
+      new RegExp(
+        `^An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(newStage)}, written \\d{1,2}:\\d{2}[^)]*\\)\\. Codebook waits for it until \\d{1,2}:\\d{2}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\.$`,
+      ),
+    )
+    assert.deepEqual(
+      wiki.offeredActions.map((offered) => offered.actions),
+      [
+        ['Update anyway', 'Open LLM Wiki'],
+        ['Update anyway', 'Open LLM Wiki'],
+      ],
+    )
+    assert.deepEqual(wiki.chatRequests, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the retry after a run whose chat has stopped and left its candidate behind; fails_when=the start check takes that run's own abandoned candidate for somebody else's work in progress and refuses the retry, or the new run shows the old candidate as its own; why_new=Cycle 0045 (the own leftover), rewritten with Cycle 0046 row 343: its run used to end on a learner's file, after which the chat is not stopped and the retry is held back now; this run ends with the chat's complete reply; seam=the chat's reply, which the test completes after the candidate is staged
+test('a retry after this window’s own run ended with the chat’s reply starts again although that run’s abandoned candidate is still there, and does not blame it', async () => {
+  // Arrange: the chat of the first run stages a candidate, then completes its reply without publishing; a later chat works.
+  let completeTheReply = (): void => {}
+  let replyCount = 0
+  const wiki = await openPublishedWikiWindow({
+    chatReply: () => {
+      replyCount += 1
+      return replyCount === 1
+        ? new Promise((resolveReply) => {
+            completeTheReply = (): void => resolveReply({})
+          })
+        : Promise.resolve({ type: 'confirmation', kind: 'toolInvocation' })
+    },
+  })
+  try {
+    // The press returns once the chat showed a sign: the folder the publisher prepares is one.
+    const press = wiki.clickUpdate()
+    await waitForStatus(wiki.status, () => wiki.chatRequests.length === 1)
+    await agentTakesAMoment()
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, { heading: 'Second' })
+    await press
+    await waitForStatus(
+      wiki.status,
+      (current) => current.state === 'running' && current.candidateStaged,
+    )
+    completeTheReply()
+    const firstRun = await waitForStatus(wiki.status, hasEnded)
+
+    // Act
+    await wiki.runUpdateCommand()
+    await agentTakesAMoment()
+    await agentTakesAMoment()
+
+    // Assert
+    assert.equal(firstRun.state, 'failed')
+    const retry = wiki.status()
+    assert.equal(retry.state, 'running')
+    assert.equal(
+      retry.state === 'running' ? retry.candidateStaged : undefined,
+      false,
+    )
+    assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner whose VS Code chat has stopped after the watch ended on a file of theirs; fails_when=Update anyway on the refused press starts no update, or the new run takes the earlier chat's abandoned candidate for its own, or the chat's candidate (which the watch saw) and the chat's stopped watch are named in two refusals, so one stopped chat needs Update anyway twice; why_new=Cycle 0046 row 343 (the step the sentence names for a start again), second ship P2SM2 (the refusal count); seam=none
+test('after a VS Code watch ended on a learner’s file, Update anyway on the one refusal of the next press starts the update again, and the new run does not take the earlier chat’s candidate for its own', async () => {
   // Arrange: the first run ends as a conflict and leaves its candidate behind.
-  const wiki = await openPublishedWikiWindow()
+  let isOverrideChosen = false
+  const wiki = await openPublishedWikiWindow({
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+  })
   await mkdir(join(wiki.outputDirectory, 'pages'))
   await writeFile(join(wiki.outputDirectory, 'pages', 'notes.html'), 'mine')
   try {
@@ -229,21 +385,97 @@ test('a retry after this window’s own run ended starts again although that run
       extraPages: ['pages/notes.html'],
     })
     const firstRun = await waitForStatus(wiki.status, hasEnded)
+    const offersBefore = wiki.offeredActions.length
 
-    // Act
+    // Act: the press is refused, and Update anyway is chosen on its notification.
+    isOverrideChosen = true
     await wiki.runUpdateCommand()
+    const retry = await waitForStatus(
+      wiki.status,
+      (current) => current.state === 'running',
+    )
     await agentTakesAMoment()
     await agentTakesAMoment()
 
     // Assert
     assert.equal(firstRun.state, 'conflict')
-    const retry = wiki.status()
+    const refusals = wiki.offeredActions
+      .slice(offersBefore)
+      .filter(({ actions }) => actions.includes('Update anyway'))
+      .map(({ message }) => message)
+    assert.equal(refusals.length, 1)
+    assert.match(
+      refusals[0] ?? '',
+      new RegExp(
+        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(stage)}, written `,
+      ),
+    )
+    assert.deepEqual(wiki.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
     assert.equal(retry.state, 'running')
+    const afterAMoment = wiki.status()
     assert.equal(
-      retry.state === 'running' ? retry.candidateStaged : undefined,
+      afterAMoment.state === 'running'
+        ? afterAMoment.candidateStaged
+        : undefined,
       false,
     )
     assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the one agent per Wiki after this window's VS Code watch was stopped before its chat staged anything and a candidate that watch never saw appeared since: two leftovers, each of which may still publish; fails_when=Update anyway on the refusal that names the candidate passes every leftover the check found, so the update starts past this window's own stopped chat, which no notification named; why_new=Cycle 0046 second ship, state-machine review P2SM1 (the SM2 fix had a test for a reservation named first only); seam=none (the real publisher stages the candidate); no_claim=which chat wrote the candidate
+test('Update anyway on a refusal that named a candidate the stopped watch never saw, while this window’s own stopped chat is also in the way, is refused again naming this window’s chat, with no chat request', async () => {
+  // Arrange: this window's VS Code watch stops before its chat staged anything; a candidate the watch never saw appears afterwards.
+  const progress: CancellableProgress[] = []
+  let isOverrideChosen = false
+  const wiki = await openPublishedWikiWindow({
+    cancellable: progress,
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+  })
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForStatus(wiki.status, hasEnded)
+    await agentTakesAMoment()
+    await wiki.prepare()
+    const requestsBefore = wiki.chatRequests.length
+    const refusalsBefore = wiki.offeredActions.length
+
+    // Act: the learner presses Update and chooses Update anyway on the first refusal only.
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    isOverrideChosen = false
+    const deadline = Date.now() + 2_000
+    while (
+      wiki.offeredActions.length < refusalsBefore + 2 &&
+      wiki.status().state !== 'running' &&
+      Date.now() < deadline
+    )
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+
+    // Assert
+    const refusals = wiki.offeredActions
+      .slice(refusalsBefore)
+      .map(({ message }) => message)
+    assert.equal(refusals.length, 2)
+    assert.match(
+      refusals[0] ?? '',
+      /An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written /,
+    )
+    assert.match(
+      refusals[1] ?? '',
+      /The VS Code chat this window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; Codebook stopped watching it at /,
+    )
+    assert.equal(wiki.chatRequests.length, requestsBefore)
+    assert.equal(wiki.status().state, 'failed')
   } finally {
     await wiki.close()
   }
@@ -508,7 +740,7 @@ test(
       assert.equal(wiki.errors.length, 1)
       assert.match(
         wiki.errors[0] ?? '',
-        /^No new site appeared within 15 minutes, so Codebook stopped watching at \d{1,2}:\d{2}(?:\s?[AP]M)?\. Nothing has been replaced\. Check the VS Code chat: it may be waiting for you or have reported a problem\. Press Update LLM Wiki to start again\.$/,
+        /^No new site appeared within 15 minutes, so Codebook stopped watching at \d{1,2}:\d{2}(?:\s?[AP]M)?\. Nothing had been replaced by then\. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working \(it can still publish, and the Wiki page says when it has\)\. If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat\.$/,
       )
       assert.equal(await wiki.hashOutput(), hashBefore)
     } finally {

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -12,8 +13,9 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import { register } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -23,6 +25,20 @@ import {
   recoverWikiPublication,
 } from '../../skills/codebook/publish-wiki.mjs'
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
+
+import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
+import {
+  swapBeforeMaking,
+  swapBeforeReading,
+  swapBeforeWriting,
+} from './utils/swappedFolderFileSystem.mjs'
+import { failRealPathOf } from './utils/unnamedRealPathFileSystem.mjs'
+
+/** The bytes of a PNG asset as a test writes it: the PNG signature and the start of an image header; the publisher reads no more than the signature. */
+const PNG_ASSET_BYTES = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
+  0x48, 0x44, 0x52,
+])
 
 for (const legacy of [false, true]) {
   test(
@@ -203,9 +219,9 @@ test('prepared updates retain exact published metadata and copy only owned asset
     const manifest = JSON.parse(
       await readFile(join(first, 'codebook-wiki.json'), 'utf8'),
     )
-    manifest.assets = ['assets/note.txt']
+    manifest.assets = ['assets/note.png']
     await mkdir(join(first, 'assets'))
-    await writeFile(join(first, 'assets/note.txt'), 'Owned asset')
+    await writeFile(join(first, 'assets/note.png'), PNG_ASSET_BYTES)
     await writeFile(join(first, 'codebook-wiki.json'), JSON.stringify(manifest))
     await publishWiki({
       projectRoot: root,
@@ -225,9 +241,9 @@ test('prepared updates retain exact published metadata and copy only owned asset
     assert.equal(result.stage, next)
     assert.equal(result.legacyAdopted, false)
     assert.deepEqual(await readFile(join(next, 'codebook-wiki.json')), before)
-    assert.equal(
-      await readFile(join(next, 'assets/note.txt'), 'utf8'),
-      'Owned asset',
+    assert.deepEqual(
+      await readFile(join(next, 'assets/note.png')),
+      PNG_ASSET_BYTES,
     )
     await assert.rejects(access(join(next, 'index.html')))
     await assert.rejects(access(join(next, 'manual.txt')))
@@ -256,6 +272,259 @@ test('prepared updates retain exact published metadata and copy only owned asset
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// Value: protects=Wiki updates whose image inventory exceeds process memory; fails_when=preparation reads every asset before the first write or rollback retains past asset Buffers; why_new=row 1054; seam=the existing filesystem seam observes real Buffers in a child with explicit garbage collection, using only twelve 64 KiB images
+test('preparing a Wiki copies each owned image before reading the next and releases past image buffers', async (context) => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-buffers-')),
+  )
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+  const manifest = JSON.parse(
+    await readFile(join(first, 'codebook-wiki.json'), 'utf8'),
+  )
+  manifest.assets = Array.from(
+    { length: 12 },
+    (_unused, index) => `assets/image-${index}.png`,
+  )
+  await mkdir(join(first, 'assets'))
+  // A fixed 768 KiB inventory is enough to distinguish retained buffers from per-file copying.
+  for (const [index, path] of manifest.assets.entries()) {
+    const bytes = Buffer.alloc(64 * 1024, index)
+    PNG_ASSET_BYTES.copy(bytes)
+    await writeFile(join(first, path), bytes)
+  }
+  await writeFile(join(first, 'codebook-wiki.json'), JSON.stringify(manifest))
+  await publishWiki({
+    projectRoot: root,
+    outputDirectory: output,
+    stageDirectory: first,
+  })
+  const before = await readFile(join(output, 'codebook-wiki.json'))
+
+  // Act
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--expose-gc',
+      fileURLToPath(
+        new URL('./utils/prepareWikiBufferProbe.mjs', import.meta.url),
+      ),
+      root,
+      output,
+      next,
+    ],
+    { encoding: 'utf8', timeout: 10_000 },
+  )
+
+  // Assert: no RSS or timing threshold; count the actual image Buffers still reachable at the final write.
+  assert.equal(result.status, 0, result.stderr)
+  const probe = JSON.parse(result.stdout)
+  context.diagnostic(JSON.stringify(probe))
+  assert.equal(probe.readsAtFirstWrite, 1)
+  assert.equal(probe.copiedAssets, 12)
+  assert.ok(
+    probe.liveBuffersAtLastWrite <= 2,
+    `${probe.liveBuffersAtLastWrite} past image buffers remain live`,
+  )
+  assert.deepEqual(await readFile(join(next, 'codebook-wiki.json')), before)
+  for (const [index, path] of manifest.assets.entries()) {
+    const expected = Buffer.alloc(64 * 1024, index)
+    PNG_ASSET_BYTES.copy(expected)
+    assert.deepEqual(await readFile(join(next, path)), expected)
+  }
+})
+
+// Value: protects=the empty candidate left when a prior image cannot be read, and the intact published Wiki; fails_when=lazy copying leaves earlier assets or metadata after a later read error; why_new=row 1054 moves asset reads into the write loop; seam=the existing read seam fails only after stage creation
+test('a failed prior image read leaves the new stage empty and the published Wiki intact', async (context) => {
+  // Arrange
+  const { prepareWikiStage: prepareWithFailedRead } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await candidateWithAnAsset('assets/first.png', PNG_ASSET_BYTES)
+  context.after(() => rm(wiki.root, { recursive: true, force: true }))
+  const manifest = JSON.parse(
+    await readFile(join(wiki.stage, 'codebook-wiki.json'), 'utf8'),
+  )
+  manifest.assets.push('assets/last.png')
+  await writeFile(join(wiki.stage, 'assets/last.png'), PNG_ASSET_BYTES)
+  await writeFile(
+    join(wiki.stage, 'codebook-wiki.json'),
+    JSON.stringify(manifest),
+  )
+  await publishWiki({
+    projectRoot: wiki.root,
+    outputDirectory: wiki.output,
+    stageDirectory: wiki.stage,
+  })
+  const next = join(wiki.root, '.codebook/failed-read')
+  swapBeforeMaking(
+    (path) => path === next,
+    async () => {
+      swapBeforeReading(
+        (path) => path === join(wiki.output, 'assets/last.png'),
+        async () => {
+          throw Object.assign(new Error('Forced image read failure'), {
+            code: 'EIO',
+          })
+        },
+      )
+    },
+  )
+
+  // Act
+  await assert.rejects(
+    prepareWithFailedRead({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: next,
+    }),
+    /Forced image read failure/,
+  )
+
+  // Assert
+  assert.deepEqual(await readdir(next), [])
+  assert.deepEqual(
+    await readFile(join(wiki.output, 'assets/first.png')),
+    PNG_ASSET_BYTES,
+  )
+  assert.deepEqual(
+    await readFile(join(wiki.output, 'assets/last.png')),
+    PNG_ASSET_BYTES,
+  )
+})
+
+// Value: protects=an outside file when a prior asset becomes a symlink between inventory and copying; fails_when=lazy copying follows the link or leaves metadata after refusing it; why_new=row 1054 preserves regular-file reads while moving them into the write loop; seam=the existing mkdir seam replaces only a fixture-owned asset after inventory
+test('a prior image replaced by a link after inventory is refused without copying it or leaving candidate files', async (context) => {
+  // Arrange
+  const { prepareWikiStage: prepareWithLinkedAsset } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await candidateWithAnAsset('assets/first.png', PNG_ASSET_BYTES)
+  context.after(() => rm(wiki.root, { recursive: true, force: true }))
+  await publishWiki({
+    projectRoot: wiki.root,
+    outputDirectory: wiki.output,
+    stageDirectory: wiki.stage,
+  })
+  const next = join(wiki.root, '.codebook/linked-image'),
+    outside = join(wiki.root, 'manual.png')
+  await writeFile(outside, 'Preserve the unowned image')
+  swapBeforeMaking(
+    (path) => path === next,
+    async () => {
+      await rm(join(wiki.output, 'assets/first.png'))
+      await symlink(outside, join(wiki.output, 'assets/first.png'))
+    },
+  )
+
+  // Act
+  await assert.rejects(
+    prepareWithLinkedAsset({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: next,
+    }),
+    /Wiki publication requires a regular file/,
+  )
+
+  // Assert
+  assert.deepEqual(await readdir(next), [])
+  assert.equal(await readFile(outside, 'utf8'), 'Preserve the unowned image')
+})
+
+for (const isHoldRefusal of [true, false]) {
+  // Value: protects=edits and partial writes during image copying while completed owned files are rolled back only for a refused hold; fails_when=digest rollback deletes changed or partial bytes, misses an unchanged completed file, or changes ordinary I/O failure behavior; why_new=row 1054 changes rollback ownership evidence; seam=the existing write seam injects a bounded partial write and the failure
+  test(`a preparation preserves edited and partial image bytes after ${isHoldRefusal ? 'a refused hold and removes its other completed files' : 'a disk error and retains its completed files'}`, async (context) => {
+    // Arrange
+    const { prepareWikiStage: prepareWithFailedWrite } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?swapped-folder',
+    )
+    const wiki = await candidateWithAnAsset('assets/first.png', PNG_ASSET_BYTES)
+    context.after(() => rm(wiki.root, { recursive: true, force: true }))
+    const manifest = JSON.parse(
+      await readFile(join(wiki.stage, 'codebook-wiki.json'), 'utf8'),
+    )
+    manifest.assets.push('assets/second.png', 'assets/last.png')
+    await writeFile(join(wiki.stage, 'assets/second.png'), PNG_ASSET_BYTES)
+    await writeFile(join(wiki.stage, 'assets/last.png'), PNG_ASSET_BYTES)
+    await writeFile(
+      join(wiki.stage, 'codebook-wiki.json'),
+      JSON.stringify(manifest),
+    )
+    await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.stage,
+    })
+    const next = join(wiki.root, '.codebook/failed-images')
+    swapBeforeWriting(
+      (path) => path === join(next, 'assets/last.png'),
+      async () => {
+        await writeFile(
+          join(next, 'assets/first.png'),
+          'Manual edit after copying',
+        )
+        await writeFile(
+          join(next, 'assets/last.png'),
+          Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+          { flag: 'wx' },
+        )
+        throw Object.assign(new Error('Forced image write failure'), {
+          isHoldRefusal,
+        })
+      },
+    )
+
+    // Act
+    await assert.rejects(
+      prepareWithFailedWrite({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: next,
+      }),
+      /Forced image write failure/,
+    )
+
+    // Assert: rollback owns only completed writes whose bytes still match.
+    assert.equal(
+      await readFile(join(next, 'assets/first.png'), 'utf8'),
+      'Manual edit after copying',
+    )
+    assert.deepEqual(
+      await readFile(join(next, 'assets/last.png')),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    )
+    assert.deepEqual(
+      await readdir(next),
+      isHoldRefusal
+        ? ['assets']
+        : ['assets', 'codebook-publication.json', 'codebook-wiki.json'],
+    )
+    if (isHoldRefusal)
+      await assert.rejects(access(join(next, 'assets/second.png')))
+    else
+      assert.deepEqual(
+        await readFile(join(next, 'assets/second.png')),
+        PNG_ASSET_BYTES,
+      )
+    assert.deepEqual(
+      await readFile(join(wiki.output, 'assets/first.png')),
+      PNG_ASSET_BYTES,
+    )
+    assert.deepEqual(
+      await readFile(join(wiki.output, 'assets/last.png')),
+      PNG_ASSET_BYTES,
+    )
+  })
+}
 
 test('an older prepared candidate cannot replace a newer published Wiki', async () => {
   // Arrange
@@ -1204,6 +1473,498 @@ test('reader pages preserve authored content and build escaped chapter, outline 
   }
 })
 
+// Value: protects=the rail entry of a published page that opens the page's first cited source; fails_when=the entry names no file and line, so nothing says where it leads, or prints the path unescaped or without the break points a long path wraps at, or without the break point before the colon, so a line number breaks in two, or puts anything but the label into the link, so the reader of 0.2.29.0 can no longer name its editor there, or no longer ties the file and line to the link as its description; why_new=Cycle 0046 row 28 (design review DR-8), rows 68 and 69; seam=none
+test('the rail entry of a published page is a link that holds the label alone and is described by the file and line of the page’s first source beside it, escaped, with a break point after each slash and before the colon', async () => {
+  // Arrange: a page whose first source is src/utils/a&b.ts at line 12.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-open-target-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const source = Array.from(
+      { length: 12 },
+      (_unused, index) => `export const value${index + 1} = ${index + 1};`,
+    ).join('\n')
+    await mkdir(join(root, 'src/utils'), { recursive: true })
+    await writeFile(join(root, 'src/utils/a&b.ts'), source)
+    manifest.includedSources.push({
+      path: 'src/utils/a&b.ts',
+      sha256: createHash('sha256').update(source).digest('hex'),
+    })
+    manifest.pages[0].sources.unshift({ path: 'src/utils/a&b.ts', line: 12 })
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the link's content is its accessible name, "Open in VS Code", exactly as 0.2.29.0 published it; the target shown beside it has the break points, and the hidden copy after it, "src/utils/a&b.ts:12", is the link's description.
+    const entry = pages
+      .get('index.html')
+      .match(/<p class="open-in-editor">.*?<\/p>/)?.[0]
+    assert.ok(entry)
+    assert.equal(
+      entry.replace(/href="[^"]+"/, 'href="…"'),
+      '<p class="open-in-editor"><a href="…" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span><span class="sr-only" id="codebook-open-target">src/utils/a&amp;b.ts:12</span></p>',
+    )
+    const address = new URL(
+      entry.match(/href="([^"]+)"/)[1].replaceAll('&amp;', '&'),
+    )
+    assert.deepEqual(
+      [address.searchParams.get('path'), address.searchParams.get('line')],
+      ['src/utils/a&b.ts', '12'],
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=what assistive technology is told the rail entry of a published page opens; fails_when=the publisher describes the link by the shown target with its wrap points again, so Chrome describes it as "package.json :31", a path that is not the file's, or leaves the shown target in the accessibility tree beside the description, or the description loses the publisher's id; why_new=Cycle 0046 finding 600 (observed natively in Chrome for Testing on C55: the description "package.json :31"); seam=none, the description is read in Chrome by the Wiki reader DOM check
+test('the rail entry of a published page for package.json line 31 shows the file and line with a break point before the colon, hidden from assistive technology, and is described by package.json:31 as written', async () => {
+  // Arrange: a page whose first source is package.json at line 31.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-open-description-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const source = Array.from(
+      { length: 31 },
+      (_unused, index) => `  "line${index + 1}": ${index + 1},`,
+    ).join('\n')
+    await writeFile(join(root, 'package.json'), source)
+    manifest.includedSources.push({
+      path: 'package.json',
+      sha256: createHash('sha256').update(source).digest('hex'),
+    })
+    manifest.pages[0].sources.unshift({ path: 'package.json', line: 31 })
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert
+    const entry = pages
+      .get('index.html')
+      .match(/<p class="open-in-editor">.*?<\/p>/)?.[0]
+    assert.equal(
+      entry?.replace(/href="[^"]+"/, 'href="…"'),
+      '<p class="open-in-editor"><a href="…" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" aria-hidden="true">package.json<wbr>:31</span><span class="sr-only" id="codebook-open-target">package.json:31</span></p>',
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page whose own content carries an id the reader uses itself (the agent authors a section's id, and "qa-form" or "article-title" are plain names for a section); fails_when=the page is published with that id on two elements, so the reader's script binds the heading instead of its form, the question field loses its label, the answer stays hidden or the rail entry is described by the heading, or the heading is renamed without its outline entry or a link to it, which then leads to the reader's element; why_new=Cycle 0046 row 84; seam=none
+for (const [id, elementsInThePublishedPage] of [
+  ['theme-toggle', 1],
+  ['article-title', 1],
+  ['qa-form', 1],
+  ['qa-input', 1],
+  ['qa-response', 1],
+  ['codebook-open-target', 1],
+  // The reader gives these three ids to elements it adds to a served page, so a published page holds none of them.
+  ['codebook-update-status', 0],
+  ['shortcut-title', 0],
+  ['shortcut-tooltip', 0],
+])
+  test(`a heading that carries the reader’s id ${id} is published under the id page-${id}, with its outline entry and the links to it from its own page and from another page, so the page holds the reader’s id on the reader’s element alone`, async () => {
+    // Arrange: the overview's heading carries the id, its outline names it, and a link of the overview and a link of a second page lead to it.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-ids-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="${id}">Source flow</h2><p><a href="#${id}">To the start of this section</a></p>`
+      manifest.pages[0].outline = [{ id, label: 'Source flow' }]
+      manifest.pages.push({
+        path: 'pages/details.html',
+        title: 'Details',
+        section: 'Guide & concepts',
+        contentHtml: `<h2 id="more">More</h2><p><a href="../index.html#${id}">The source flow</a></p>`,
+        sources: [{ path: 'source.ts', line: 1 }],
+        outline: [{ id: 'more', label: 'More' }],
+      })
+
+      // Act
+      const pages = await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+
+      // Assert
+      const overview = pages.get('index.html')
+      assert.deepEqual(
+        {
+          elementsWithTheReadersId: overview.split(` id="${id}"`).length - 1,
+          isHeadingRenamed: overview.includes(
+            `<h2 id="page-${id}">Source flow</h2>`,
+          ),
+          doesOutlineReachTheHeading: overview.includes(
+            `<ul class="outline"><li><a href="#page-${id}">Source flow</a></li></ul>`,
+          ),
+          doesLinkOfThePageReachTheHeading: overview.includes(
+            `<a href="#page-${id}">To the start of this section</a>`,
+          ),
+          doesLinkOfAnotherPageReachTheHeading: pages
+            .get('pages/details.html')
+            .includes(`<a href="../index.html#page-${id}">The source flow</a>`),
+        },
+        {
+          elementsWithTheReadersId: elementsInThePublishedPage,
+          isHeadingRenamed: true,
+          doesOutlineReachTheHeading: true,
+          doesLinkOfThePageReachTheHeading: true,
+          doesLinkOfAnotherPageReachTheHeading: true,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the content of a page around a renamed id; fails_when=the new id is one the page carries already, or an id list of the page (aria-labelledby) keeps the old id, or a link to a page with a space in its path is missed, or the text of a code example that only mentions the id, a link out of the Wiki or an id the reader does not use is changed; why_new=Cycle 0046 row 84; seam=none
+test('a renamed content id takes a name the page does not carry, its id lists and the links to it follow, and a code example, a link out of the Wiki and every other id stay as authored', async () => {
+  // Arrange: the overview carries qa-form on a heading and page-qa-form on a paragraph; a page with a space in its path carries theme-toggle without quotes.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-ids-around-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="qa-form">The form</h2><p id=\'page-qa-form\'>Its fields.</p>' +
+      '<section aria-labelledby="qa-form  flow"><h3 id="flow">Flow</h3>' +
+      '<a href="#qa-form">Up</a> <a href="pages/my%20page.html#theme-toggle">The theme</a> ' +
+      '<a href="https://example.com/index.html#qa-form">Elsewhere</a>' +
+      '<pre><code>&lt;form id="qa-form"&gt;</code></pre></section>'
+    manifest.pages[0].outline = [
+      { id: 'qa-form', label: 'The form' },
+      { id: 'flow', label: 'Flow' },
+    ]
+    manifest.pages.push({
+      path: 'pages/my page.html',
+      title: 'Theme',
+      section: 'Guide & concepts',
+      contentHtml:
+        '<h2 ID=theme-toggle>The theme</h2><p><a href="../index.html#qa-form">The form</a></p>',
+      sources: [{ path: 'source.ts', line: 1 }],
+      outline: [],
+    })
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the article of each page after its relevant-source disclosure, and the overview's outline.
+    const contentOf = (path) =>
+      /<\/details>(.*)<\/article>/.exec(pages.get(path))?.[1]
+    assert.equal(
+      contentOf('index.html'),
+      '<h2 id="page-qa-form-2">The form</h2><p id=\'page-qa-form\'>Its fields.</p>' +
+        '<section aria-labelledby="page-qa-form-2  flow"><h3 id="flow">Flow</h3>' +
+        '<a href="#page-qa-form-2">Up</a> <a href="pages/my%20page.html#page-theme-toggle">The theme</a> ' +
+        '<a href="https://example.com/index.html#qa-form">Elsewhere</a>' +
+        '<pre><code>&lt;form id="qa-form"&gt;</code></pre></section>',
+    )
+    assert.equal(
+      contentOf('pages/my page.html'),
+      '<h2 ID="page-theme-toggle">The theme</h2><p><a href="../index.html#page-qa-form-2">The form</a></p>',
+    )
+    assert.ok(
+      pages
+        .get('index.html')
+        .includes(
+          '<ul class="outline"><li><a href="#page-qa-form-2">The form</a></li><li><a href="#flow">Flow</a></li></ul>',
+        ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=an attribute the publisher changed whose value the author wrote without quotes; fails_when=the changed value is printed bare again, so a value that holds a space after its character references are read (`qa-form&#32;flow`, `my&#32;page.html#qa-form`) ends at that space in a browser: the id list loses its second id to a stray attribute, and the link leads to another address; why_new=Cycle 0046 row 235; seam=none
+test('a changed attribute value that the author wrote without quotes is printed in double quotes, so a space in it does not end it', async () => {
+  // Arrange: an id list and a link, both bare and both with a space written as a character reference; the heading they name carries an id of the reader.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-bare-value-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id=qa-form>The form</h2><h3 id="flow">Flow</h3>' +
+      '<p aria-labelledby=qa-form&#32;flow><a href=my&#32;page.html#qa-form>There</a> <a href=#qa-form>Up</a></p>'
+    manifest.pages[0].outline = [{ id: 'qa-form', label: 'The form' }]
+    manifest.pages.push({
+      path: 'my page.html',
+      title: 'Another page',
+      section: 'Guide & concepts',
+      contentHtml: '<h2 id="qa-form">A form</h2><p>Explained from source.</p>',
+      sources: [{ path: 'source.ts', line: 1 }],
+      outline: [{ id: 'qa-form', label: 'A form' }],
+    })
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(
+      html.includes(
+        '<h2 id="page-qa-form">The form</h2><h3 id="flow">Flow</h3>' +
+          '<p aria-labelledby="page-qa-form flow"><a href="my page.html#page-qa-form">There</a> <a href="#page-qa-form">Up</a></p>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=links and references to a renamed section as an author may write them; fails_when=the renderer compares an address or an id as raw text again, so a link written with an entity, with a percent-encoded fragment or with a query keeps the old id and no longer reaches its heading, or misses an attribute that follows a closing quote directly, an id written with an entity or one of the newer attributes that refer to an id, or renames an element inside a comment, or resolves an address that starts at the site's root against the page's folder; why_new=Cycle 0046 row 134 (delegated review of the renaming of row 84, verified by running); seam=none
+test('a renamed content id is followed the way a browser reads the page: through entities, a percent-encoded fragment, a query, an attribute directly after a closing quote and every attribute that refers to an id, and not into a comment or an address from the site’s root', async () => {
+  // Arrange: the overview carries qa-form (its id follows a closing quote directly) and qa-input (written with an entity); three other pages carry qa-form too, two of them with a character in their path that an address escapes.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-ids-browser-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 class="title"id="qa-form">The form</h2>' +
+      '<h3 id="qa&#45;input">The field</h3>' +
+      '<!-- <h2 id="theme-toggle">An old section</h2> -->' +
+      '<p><a href="a&amp;b.html#qa-form">One</a> <a href="it&#39;s.html#qa-form">Two</a> ' +
+      '<a href="pages/details.html#qa%2Dform">Three</a> <a href="pages/details.html?from=overview#qa-form">Four</a> ' +
+      '<a href="/index.html#qa-form">Five</a> <a href="#theme-toggle">Six</a></p>' +
+      '<p aria-controls="qa-form" aria-labelledby="qa-form flow" aria-describedby="qa-form">Open</p>' +
+      '<h3 id="flow">Flow</h3>'
+    manifest.pages[0].outline = [
+      { id: 'qa-form', label: 'The form' },
+      { id: 'qa-input', label: 'The field' },
+    ]
+    for (const path of ['a&b.html', "it's.html", 'pages/details.html'])
+      manifest.pages.push({
+        path,
+        title: `Page ${path}`,
+        section: 'Guide & concepts',
+        contentHtml:
+          '<h2 id="qa-form">A form</h2><p><a href="index.html#qa&#45;input">The field</a></p>',
+        sources: [{ path: 'source.ts', line: 1 }],
+        outline: [{ id: 'qa-form', label: 'A form' }],
+      })
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the article of the overview after its relevant-source disclosure, its outline, and a page that links back.
+    const contentOf = (path) =>
+      /<\/details>(.*)<\/article>/.exec(pages.get(path))?.[1]
+    assert.equal(
+      contentOf('index.html'),
+      '<h2 class="title"id="page-qa-form">The form</h2>' +
+        '<h3 id="page-qa-input">The field</h3>' +
+        '<!-- <h2 id="theme-toggle">An old section</h2> -->' +
+        '<p><a href="a&amp;b.html#page-qa-form">One</a> <a href="it&#39;s.html#page-qa-form">Two</a> ' +
+        '<a href="pages/details.html#page-qa-form">Three</a> <a href="pages/details.html?from=overview#page-qa-form">Four</a> ' +
+        '<a href="/index.html#qa-form">Five</a> <a href="#theme-toggle">Six</a></p>' +
+        '<p aria-controls="page-qa-form" aria-labelledby="page-qa-form flow" aria-describedby="page-qa-form">Open</p>' +
+        '<h3 id="flow">Flow</h3>',
+    )
+    assert.ok(
+      pages
+        .get('index.html')
+        .includes(
+          '<ul class="outline"><li><a href="#page-qa-form">The form</a></li><li><a href="#page-qa-input">The field</a></li></ul>',
+        ),
+    )
+    assert.equal(
+      contentOf('a&b.html'),
+      '<h2 id="page-qa-form">A form</h2><p><a href="index.html#page-qa-input">The field</a></p>',
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the outline of a published page, each entry of which must lead to a section; fails_when=the publisher accepts an outline entry whose id no element of the page carries because the id stands in an escaped code example or inside a comment, so the published entry leads nowhere; why_new=Cycle 0046 row 102 (the check looked for the text id="…" anywhere in the page's content); seam=none
+test('an outline entry whose id stands only in an escaped code example or inside a comment is refused: no element of the page carries it', async () => {
+  // Arrange: two stages; in each the outline names "flow", which the page shows once in an escaped example and once in a comment, and no element carries.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-outline-text-')),
+  )
+  try {
+    const shownInAnExample = await readerInput(root)
+    shownInAnExample.pages[0].contentHtml =
+      '<h2 id="source">Source flow</h2><pre><code>&lt;h2 id="flow"&gt;Flow&lt;/h2&gt;</code></pre>'
+    const insideAComment = await readerInput(root)
+    insideAComment.pages[0].contentHtml =
+      '<h2 id="source">Source flow</h2><!-- <h2 id="flow">Flow</h2> -->'
+
+    // Act / Assert
+    for (const manifest of [shownInAnExample, insideAComment])
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message:
+            'Wiki page index.html has an invalid or missing outline anchor.',
+        },
+      )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a page whose anchor is written the way HTML allows without quotes, or with a character reference; fails_when=the publisher refuses such a page although a browser gives the element that id, so the agent must rewrite valid HTML; why_new=Cycle 0046 row 102 (the check accepted quoted ids only); seam=none
+test('an outline entry whose anchor is written without quotes or with a character reference is accepted and leads to it', async () => {
+  // Arrange: the anchor "flow" without quotes, and the anchor "data-flow" with its hyphen as a character reference.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-outline-forms-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id=flow>Source flow</h2><h2 id="data&#45;flow">Data flow</h2>'
+    manifest.pages[0].outline = [
+      { id: 'flow', label: 'Source flow' },
+      { id: 'data-flow', label: 'Data flow' },
+    ]
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the content is printed as authored, and the outline names both anchors.
+    const overview = pages.get('index.html')
+    assert.ok(
+      overview.includes(
+        '<h2 id=flow>Source flow</h2><h2 id="data&#45;flow">Data flow</h2>',
+      ),
+    )
+    assert.ok(
+      overview.includes(
+        '<ul class="outline"><li><a href="#flow">Source flow</a></li><li><a href="#data-flow">Data flow</a></li></ul>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Lists every value a source assigns to the id of an element, in the order the source writes them, so the test below sees each form and not one script's one pattern.
+ *
+ * Read are the code lines alone (comments are taken out first): `<element>.id = <value>`, `setAttribute('id', <value>)` and an `id="<value>"` inside a string of markup.
+ *
+ * @param source - The text of a TypeScript source of the reader.
+ * @returns The assigned values as written: a quoted literal (`'shortcut-title'`), or an expression (`freeStatusRegionId()`, `${targetId}`).
+ * @example
+ * assignedIdsOf("heading.id = 'shortcut-title'\nbox.setAttribute('id', name)") // => ["'shortcut-title'", 'name']
+ */
+function assignedIdsOf(source) {
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  return [
+    ...code.matchAll(
+      /\.id\s*=(?!=)\s*([^\n;]+)|setAttribute\(\s*['"`]id['"`]\s*,\s*([^)\n]+)\)|\bid=\\?["']([^"'\\]+)/g,
+    ),
+  ].map(([, assigned, set, written]) => (assigned ?? set ?? written).trim())
+}
+
+// Value: protects=the list of ids the publisher keeps a page's content apart from; fails_when=the shell's template or one of the reader's sources gives an element an id the publisher does not know, in any form (a property, `setAttribute` or markup in a string), or assigns an id from something other than a literal or one of the three helpers that take a free id, so a page whose content carries that id is published with it twice; why_new=Cycle 0046 rows 84 and 133 (the first form of the test read one pattern per script); seam=none
+test('the publisher keeps a page’s content apart from every id the shell’s template and the reader’s page scripts give an element', async () => {
+  // Arrange: the shell, the publisher, and the sources of the reader that run in a served page or add to it.
+  const textOf = (path) =>
+    readFile(new URL(`../../${path}`, import.meta.url), 'utf8')
+  const shell = await textOf('skills/codebook/reader-shell.html')
+  const renderer = await textOf('skills/codebook/render-wiki.mjs')
+  const constants = await textOf('src/constants.ts')
+  const statusScript = await textOf('src/utils/installWikiUpdateStatus.ts')
+  const entryScript = await textOf('src/utils/rebindDeepWikiEditorLinks.ts')
+
+  // Act: the ids of the template (the publisher reads them from it), every id the reader's sources assign, what the three helpers that take a free id start from, and the ids the publisher names.
+  const idsOfTheTemplate = [...shell.matchAll(/\sid="([^"]+)"/g)].map(
+    ([, id]) => id,
+  )
+  const helpScript = await textOf('src/utils/installShortcutHelp.ts')
+  const idsTheSourcesAssign = {
+    statusScript: assignedIdsOf(statusScript),
+    keyboardHelp: assignedIdsOf(helpScript),
+    questionForm: assignedIdsOf(await textOf('src/deepWikiReader.ts')),
+    entryScript: assignedIdsOf(entryScript),
+  }
+  const idsTheHelpersStartFrom = {
+    freeStatusRegionId:
+      /const freeStatusRegionId = [\s\S]*?let id = '([^']+)'/.exec(
+        statusScript,
+      )?.[1],
+    // The keyboard help's helper numbers the id its element was given, which is one of the two literals below.
+    keepIdFree: /const keepIdFree = [\s\S]*?const wanted = ([\w.]+)/.exec(
+      helpScript,
+    )?.[1],
+    freeOpenTargetIdIn: [
+      /targetId \?\?= (\w+)\(/.exec(entryScript)?.[1],
+      /function freeOpenTargetIdIn\([\s\S]*?let id = (\w+)/.exec(
+        entryScript,
+      )?.[1],
+      /WIKI_OPEN_TARGET_ELEMENT_ID = '([^']+)'/.exec(constants)?.[1],
+    ],
+  }
+  const idsThePublisherNames = /const READER_ELEMENT_IDS = \[([^\]]+)\]/
+    .exec(renderer)?.[1]
+    .split(', ')
+    .map((quoted) => quoted.slice(1, -1))
+
+  // Assert
+  assert.deepEqual(idsOfTheTemplate, [
+    'theme-toggle',
+    'article-title',
+    'qa-form',
+    'qa-input',
+    'qa-response',
+  ])
+  assert.deepEqual(idsTheSourcesAssign, {
+    statusScript: ['freeStatusRegionId()'],
+    keyboardHelp: [
+      "wanted + '-' + count",
+      "'shortcut-title'",
+      "'shortcut-tooltip'",
+    ],
+    questionForm: [],
+    entryScript: ['${targetId}'],
+  })
+  assert.deepEqual(idsTheHelpersStartFrom, {
+    freeStatusRegionId: 'codebook-update-status',
+    keepIdFree: 'element.id',
+    freeOpenTargetIdIn: [
+      'freeOpenTargetIdIn',
+      'WIKI_OPEN_TARGET_ELEMENT_ID',
+      'codebook-open-target',
+    ],
+  })
+  assert.deepEqual(idsThePublisherNames, [
+    'codebook-open-target',
+    'codebook-update-status',
+    'shortcut-title',
+    'shortcut-tooltip',
+  ])
+})
+
 test('a page opened from disk shows the freshness label, the update button and an offline note as one group', async () => {
   // Arrange
   const root = await realpath(
@@ -1421,6 +2182,2065 @@ test('publication rejects an output containing the project even when its folder 
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+// Value: protects=the folder outside the project that a link in a cloned repository leads to (the repository carries `.codebook`, or another folder on the way to the Wiki output, as a link); fails_when=the preparation looks at the output folder alone again, follows the link at its parent and makes its stage and receipt in the folder outside the project; why_new=Cycle 0046 /ship finding F1 (critical, replayed twice): `--prepare` exited 0 and prepared its stage beyond the link; seam=none (the shipped CLI as the agent runs it)
+for (const [linkName, outputSetting] of [
+  ['wiki-link', 'wiki-link/wiki'],
+  ['.codebook', '.codebook/wiki'],
+])
+  test(`the CLI preparation of an output whose parent ${linkName} in the project is a link to a folder outside it is refused, names the link and writes nothing there`, async () => {
+    // Arrange
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-linked-parent-cli-')),
+    )
+    const root = join(directory, 'project'),
+      outside = join(directory, 'outside'),
+      command = fileURLToPath(
+        new URL('../../skills/codebook/publish-wiki.mjs', import.meta.url),
+      )
+    try {
+      await mkdir(root)
+      await mkdir(outside)
+      await symlink(outside, join(root, linkName), 'junction')
+
+      // Act
+      const prepared = spawnSync(
+        process.execPath,
+        [
+          command,
+          '--prepare',
+          '--project',
+          root,
+          '--output',
+          join(root, outputSetting),
+        ],
+        { encoding: 'utf8' },
+      )
+
+      // Assert
+      assert.deepEqual(
+        { status: prepared.status, stderr: prepared.stderr },
+        {
+          status: 1,
+          stderr: `Error: The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, linkName)}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.\n`,
+        },
+      )
+      assert.deepEqual(await readdir(outside), [])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the folder outside the project behind a link at a parent of the Wiki output, when a stage is already there (prepared by a build before this fix, or through the folder's own path); fails_when=the publish resolves the link and moves the stage into an output beyond it; why_new=Cycle 0046 /ship finding F1: the parents of the output were never looked at by any entry point; seam=none
+test('a publish whose output lies behind a link at its parent in the project is refused and moves nothing beyond the link', async () => {
+  // Arrange: a candidate prepared for the folder outside the project, then published through the link in the project.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-linked-parent-publish-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await symlink(outside, join(root, 'wiki-link'), 'junction')
+    const { stage } = await prepareWikiStage({
+      projectRoot: root,
+      outputDirectory: join(outside, 'wiki'),
+    })
+    await writeStage(stage, root, '<h1>Candidate</h1>')
+
+    // Act / Assert
+    await assert.rejects(
+      publishWiki({
+        projectRoot: root,
+        outputDirectory: join(root, 'wiki-link/wiki'),
+        stageDirectory: join(root, 'wiki-link', basename(stage)),
+      }),
+      {
+        message: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, 'wiki-link')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+      },
+    )
+    assert.deepEqual(await readdir(outside), [basename(stage)])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a Wiki in a folder outside the project behind a link at a parent of the output in the project; fails_when=recovery resolves the link and writes its journal, a temporary manifest and a restored manifest beyond it; why_new=Cycle 0046 /ship finding F1: `--recover` shares the unchecked path resolution with `--prepare` and the publish; seam=none
+test('a recovery whose output lies behind a link at its parent in the project is refused and leaves the Wiki beyond the link as it is', async () => {
+  // Arrange: a Wiki published into the folder outside the project, whose manifest was then edited.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-linked-parent-recover-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside'),
+    stage = join(outside, 'first')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await symlink(outside, join(root, 'wiki-link'), 'junction')
+    await writeStage(
+      stage,
+      root,
+      '<h1>Published</h1>',
+      undefined,
+      join(outside, 'wiki'),
+    )
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: join(outside, 'wiki'),
+      stageDirectory: stage,
+    })
+    await writeFile(
+      join(outside, 'wiki/codebook-wiki.json'),
+      '{accidental edit',
+    )
+
+    // Act / Assert
+    await assert.rejects(
+      recoverWikiPublication({
+        projectRoot: root,
+        outputDirectory: join(root, 'wiki-link/wiki'),
+      }),
+      {
+        message: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, 'wiki-link')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+      },
+    )
+    assert.equal(
+      await readFile(join(outside, 'wiki/codebook-wiki.json'), 'utf8'),
+      '{accidental edit',
+    )
+    assert.deepEqual(await readdir(outside), ['wiki'])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+/** The loads of the marked copies of the shipped skill modules, by module and mark, once each has begun. */
+const markedCopies = new Map()
+/**
+ * Loads a copy of a shipped skill module whose `node:fs/promises` is the stand-in of its mark: the one loader hook (`scripts/tests/utils/markedCopyHooks.mjs`), registered once, maps each mark to its stand-in.
+ * - `?wrong-look`: `lstat` calls a link a directory, as the file system layer of Node.js does on Windows for a junction whose target is a volume (`wrongLookFileSystem.mjs`).
+ * - `?swapped-folder`: a test's swap runs just before the `mkdir` of a folder ({@link swapBeforeMaking}), the `writeFile` of a file or its `open` to write ({@link swapBeforeWriting}) or the `readFile` of a file ({@link swapBeforeReading}) that the test names (`swappedFolderFileSystem.mjs`).
+ * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
+ * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
+ * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
+ * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
+ * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids'} mark - The mark of its stand-in.
+ * @returns {Promise<Record<string, Function>>} The copy's exports.
+ * @example
+ * const { prepareWikiStage } = await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
+ */
+function loadMarkedCopy(module, mark) {
+  if (markedCopies.size === 0)
+    register(new URL('./utils/markedCopyHooks.mjs', import.meta.url))
+  const key = `${module}${mark}`
+  if (!markedCopies.has(key))
+    markedCopies.set(
+      key,
+      import(
+        new URL(`../../skills/codebook/${module}${mark}`, import.meta.url).href
+      ),
+    )
+  return markedCopies.get(key)
+}
+
+/**
+ * Publishes a Wiki into a new project's `.codebook/wiki` with the real publisher, optionally prepares a candidate beside it, then moves the Wiki folder out of the project and leaves a link to it in its place: on Windows a junction to another volume, which the publisher copy of {@link loadPublisherWhereTheLookIsWrong} looks at as a directory.
+ * @param {{ prepareNext?: boolean }} options - Whether a candidate `.codebook/next` is prepared before the move.
+ * @returns {Promise<{ directory: string, root: string, output: string, movedOut: string, next: string }>} The temporary folder, the project, the Wiki folder's path in the project, where the Wiki lies now, and the candidate's path.
+ * @example
+ * const wiki = await publishedWikiMovedOutBehindALink({ prepareNext: true })
+ */
+async function publishedWikiMovedOutBehindALink({ prepareNext = false } = {}) {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-junction-output-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next'),
+    movedOut = join(directory, 'wiki-moved-out')
+  await mkdir(root)
+  await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+  await publishWiki({
+    projectRoot: root,
+    outputDirectory: output,
+    stageDirectory: first,
+  })
+  if (prepareNext)
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+  await rename(output, movedOut)
+  await symlink(movedOut, output, 'junction')
+  return { directory, root, output, movedOut, next }
+}
+
+/** The refusal of the Wiki folder itself when it is no folder of its own, for the path it names. */
+const refusalOfWikiFolder = (path) =>
+  `The Wiki folder ${path} is a link, a file or a folder that leads out of the project. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`
+/** The refusal of a stage beside the Wiki folder when it is no folder of its own, for the path it names. */
+const refusalOfStage = (path) =>
+  `The Wiki stage ${path} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`
+// Value: protects=the folder outside the project that a `.codebook` junction to a volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher's walk trusts lstat and no longer compares a folder's real path with the project, so it prepares its stage beyond the junction; why_new=Cycle 0046 /ship repeat testing review TR4 (the real-path branch of requireOwnFolder had no test); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory, by a loader hook (scripts/tests/utils/markedCopyHooks.mjs, `?wrong-look`)
+test('the publisher refuses a folder on the output’s path in the project that lstat calls a directory although its real path leaves the project, names it and writes nothing there', async () => {
+  // Arrange: a copy of the publisher whose lstat answers for a link what stat answers, and a project whose `.codebook` is a link to a folder outside it.
+  const { prepareWikiStage: prepareWhereTheLookIsWrong } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?wrong-look',
+  )
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-wrong-look-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await symlink(outside, join(root, '.codebook'), 'junction')
+
+    // Act / Assert
+    await assert.rejects(
+      prepareWhereTheLookIsWrong({
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+      },
+    )
+    assert.deepEqual(await readdir(outside), [])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that a `.codebook\\wiki` junction to another volume leads to on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the publisher looks at the Wiki folder itself with lstat alone again, so it prepares a candidate from the Wiki behind the junction, publishes through it, or recovers by writing a manifest into it; why_new=Cycle 0046 /ship finding AF3 (the parents, the update start and the reader compare real paths; the publisher's look at the Wiki folder itself did not); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/markedCopyHooks.mjs, `?wrong-look`)
+for (const step of ['--prepare', 'publish', '--recover'])
+  test(`${step} of a Wiki folder in the project that lstat calls a directory although its real path leaves the project is refused with the folder named, and nothing is written there or beside it`, async () => {
+    // Arrange: a published Wiki moved out of the project behind a link at its folder's path, with a candidate prepared before the move for the publish, and an edited manifest behind the link for the recovery.
+    const {
+      prepareWikiStage,
+      publishWiki: publishWhereTheLookIsWrong,
+      recoverWikiPublication,
+    } = await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
+    const wiki = await publishedWikiMovedOutBehindALink({
+      prepareNext: step === 'publish',
+    })
+    try {
+      if (step === '--recover')
+        await writeFile(
+          join(wiki.movedOut, 'codebook-wiki.json'),
+          '{accidental edit',
+        )
+      const beside = (await readdir(join(wiki.root, '.codebook'))).sort()
+      const behind = (await readdir(wiki.movedOut)).sort()
+      const scope = { projectRoot: wiki.root, outputDirectory: wiki.output }
+
+      // Act
+      const refusal = await (
+        step === '--prepare'
+          ? prepareWikiStage(scope)
+          : step === 'publish'
+            ? publishWhereTheLookIsWrong({
+                ...scope,
+                stageDirectory: wiki.next,
+              })
+            : recoverWikiPublication(scope)
+      ).then(
+        () => 'done',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          beside: (await readdir(join(wiki.root, '.codebook'))).sort(),
+          behind: (await readdir(wiki.movedOut)).sort(),
+        },
+        { refusal: refusalOfWikiFolder(wiki.output), beside, behind },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the folder outside the project that a candidate folder beside the Wiki leads to when it is a junction to another volume on Windows; fails_when=the publisher looks at the candidate with lstat alone, so it renders the pages into the folder behind the junction and moves it into the Wiki's place; why_new=Cycle 0046 /ship finding AF3 (the stage beside the output is looked at the same way); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/markedCopyHooks.mjs, `?wrong-look`)
+test('a publish whose candidate beside the Wiki in the project is a folder that lstat calls a directory although its real path leaves the project is refused with the candidate named, and the candidate and the Wiki are left as they are', async () => {
+  // Arrange: a published Wiki with a candidate prepared beside it; the candidate is moved out of the project and a link to it stands in its place.
+  const { publishWiki: publishWhereTheLookIsWrong } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?wrong-look',
+  )
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-junction-stage-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next'),
+    nextMovedOut = join(directory, 'next-moved-out')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+    await rename(next, nextMovedOut)
+    await symlink(nextMovedOut, next, 'junction')
+    const candidateBefore = await readFile(
+      join(nextMovedOut, 'index.html'),
+      'utf8',
+    )
+    const wikiBefore = await readFile(join(output, 'index.html'), 'utf8')
+
+    // Act
+    const refusal = await publishWhereTheLookIsWrong({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        candidate: await readFile(join(nextMovedOut, 'index.html'), 'utf8'),
+        wiki: await readFile(join(output, 'index.html'), 'utf8'),
+        beside: (await readdir(join(root, '.codebook'))).sort(),
+      },
+      {
+        refusal: refusalOfStage(next),
+        candidate: candidateBefore,
+        wiki: wikiBefore,
+        beside: ['next', 'wiki'],
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that the prior Wiki's backup beside the Wiki folder leads to when it is a junction to another volume on Windows, where the file system layer of Node.js calls such a junction a directory; fails_when=the recovery looks at the backup with lstat alone, so it reads the Wiki behind the junction and moves the junction into the Wiki folder's place; why_new=Cycle 0046 /ship Codex review CX18 (the output and the stage are held to the project's own folders, the backup the recovery moves was not); seam=a copy of the shipped publisher whose `node:fs/promises` calls a link a directory (scripts/tests/utils/markedCopyHooks.mjs, `?wrong-look`)
+test('a recovery whose kept prior Wiki beside the Wiki folder is a folder that lstat calls a directory although its real path leaves the project is refused with that folder named, and nothing is moved', async () => {
+  // Arrange: a publish stopped after it moved the prior Wiki aside; the prior Wiki is then moved out of the project and a link to it stands at the backup's path.
+  const { recoverWikiPublication: recoverWhereTheLookIsWrong } =
+    await loadMarkedCopy('publish-wiki.mjs', '?wrong-look')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-junction-backup-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook', 'wiki'),
+    stage = join(root, '.codebook', 'wiki.stage-update'),
+    backup = `${output}.previous-test`,
+    priorMovedOut = join(directory, 'prior-moved-out')
+  try {
+    await mkdir(root)
+    await writeStage(output, root, '<h1>Prior</h1>')
+    await writeStage(stage, root, '<h1>Candidate</h1>')
+    await rename(output, priorMovedOut)
+    await symlink(priorMovedOut, backup, 'junction')
+    await writeFile(
+      `${output}.publish-journal.json`,
+      JSON.stringify({
+        projectRoot: root,
+        output,
+        stage,
+        backup,
+        pid: 99999999,
+      }),
+    )
+
+    // Act
+    const refusal = await recoverWhereTheLookIsWrong({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert: the Wiki folder is still missing, and the backup's link, the journal and the stage stand as before.
+    assert.deepEqual(
+      {
+        refusal,
+        beside: (await readdir(join(root, '.codebook'))).sort(),
+        prior: await readFile(join(priorMovedOut, 'index.html'), 'utf8'),
+      },
+      {
+        refusal: `The prior Wiki kept at ${backup} is a link, a file or a folder that leads out of the project. Nothing was moved. Inspect it, then run --recover again.`,
+        beside: [
+          'wiki.previous-test',
+          'wiki.publish-journal.json',
+          'wiki.stage-update',
+        ],
+        prior: '<h1>Prior</h1>',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner whose project holds `.codebook` with a real path the system cannot name (a folder of another user, or a junction on Windows that `realpath` refuses); fails_when=the publisher lets the system's error of `realpath` through instead of its refusal of a folder that leads out of the project, so the agent and the learner read a system error and no step; why_new=Cycle 0046 /ship adversarial review AD17 (the start check, the reader and the publisher refuse such a folder with the same sentences); seam=a copy of the shipped publisher whose `realpath` fails for one folder (scripts/tests/utils/markedCopyHooks.mjs, `?unnamed-real-path`)
+for (const code of ['EACCES', 'EINVAL'])
+  test(`a preparation whose .codebook has a real path the system cannot name (${code}) is refused with the folder named, as one that leads out of the project, and nothing is written there`, async () => {
+    // Arrange: a project with a real `.codebook`, met by a publisher whose realpath fails for it.
+    const { prepareWikiStage: prepareWhereTheRealPathFails } =
+      await loadMarkedCopy('publish-wiki.mjs', '?unnamed-real-path')
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-unnamed-real-path-')),
+    )
+    try {
+      await mkdir(join(root, '.codebook'))
+      failRealPathOf(join(root, '.codebook'), code)
+
+      // Act
+      const refusal = await prepareWhereTheRealPathFails({
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }).then(
+        () => 'prepared',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { refusal, inCodebook: await readdir(join(root, '.codebook')) },
+        {
+          refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+          inCodebook: [],
+        },
+      )
+    } finally {
+      failRealPathOf(undefined)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the learner whose candidate's real path the system could not name at the moment the preparation took its look at the candidate (a folder moved away and back by another process); fails_when=the look compares later folders with a real path it never got, so it throws a system TypeError instead of answering that the folder does not hold, and the step skips its refusal and leaves the candidate it made; why_new=Cycle 0046 second /ship OCR6-2; seam=a copy of the shipped publisher whose `realpath` fails once for the candidate (scripts/tests/utils/markedCopyHooks.mjs, `?unnamed-real-path`)
+test('a preparation whose candidate’s real path cannot be named once, when the publisher takes its look, is refused with the candidate’s sentence and leaves no candidate', async () => {
+  // Arrange: a Wiki output outside the project, so no look at the path names the candidate first, and a realpath that fails for the candidate's first call alone.
+  const { prepareWikiStage: prepareWhereTheRealPathFailsOnce } =
+    await loadMarkedCopy('publish-wiki.mjs', '?unnamed-real-path')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-candidate-real-path-once-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside'),
+    stage = join(outside, 'next')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    failRealPathOf(stage, 'EACCES', 1)
+
+    // Act
+    const refusal = await prepareWhereTheRealPathFailsOnce({
+      projectRoot: root,
+      outputDirectory: join(outside, 'wiki'),
+      stageDirectory: stage,
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, besideTheWiki: await readdir(outside) },
+      {
+        refusal: `The Wiki stage ${stage} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    failRealPathOf(undefined)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the publisher looked at the path and before it made its stage; fails_when=the preparation trusts its first look at the path and makes the stage, its receipt and the prior Wiki's copy behind the link; why_new=Cycle 0046 /ship Codex review CX17 (the look at the path and the folders made after it were never compared); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` for a link just before the stage is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a preparation whose .codebook is swapped for a link to a folder outside the project just before its stage is made is refused with the folder named, and nothing is left behind the link', async () => {
+  // Arrange: a project whose `.codebook` is a real folder when the publisher looks at the path, and a link to a folder outside it when the stage is made.
+  const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-before-stage-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(join(root, '.codebook'), { recursive: true })
+    await mkdir(outside)
+    swapBeforeMaking(
+      (path) => basename(path).startsWith('wiki.stage-'),
+      async () => {
+        await rm(join(root, '.codebook'), { recursive: true })
+        await symlink(outside, join(root, '.codebook'), 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await prepareWhoseFolderIsSwapped({
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, behindTheLink: await readdir(outside) },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: [],
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that a missing `.codebook` leads to when another process makes it a link after the publisher looked at the path and before the publisher made it; fails_when=the preparation takes the missing folder as the end of its look, makes the parent through the link and then holds the Wiki behind it for an output outside the project, so it prepares there; why_new=Cycle 0046 /ship Codex review CX17 (the path was never looked at again once its missing folders were made); seam=a copy of the shipped publisher whose `node:fs/promises` makes `.codebook` a link just before the publisher makes it (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a preparation whose missing .codebook becomes a link to a folder outside the project just before the publisher makes it is refused with the folder named, and nothing is written behind the link', async () => {
+  // Arrange: a project without `.codebook` when the publisher looks at the path, and with a link of that name when the publisher makes the folder.
+  const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-before-parent-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    swapBeforeMaking(
+      (path) => path === join(root, '.codebook'),
+      () => symlink(outside, join(root, '.codebook'), 'junction'),
+    )
+
+    // Act
+    const refusal = await prepareWhoseFolderIsSwapped({
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, behindTheLink: await readdir(outside) },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: [],
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Publishes a Wiki into a new project's `.codebook/wiki` with the real publisher and prepares a candidate `.codebook/next` beside it, for a test that swaps `.codebook` while a copy of the publisher works on it.
+ * @param {string} [extraPage] - The name of a second page of the candidate, under its `pages` folder.
+ * @returns {Promise<{ directory: string, root: string, output: string, next: string, wikiPage: string, candidatePage: string }>} The temporary folder, the project, the Wiki folder, the candidate, and the text of the Wiki's and the candidate's `index.html`.
+ * @example
+ * const wiki = await publishedWikiWithACandidate()
+ */
+async function publishedWikiWithACandidate(extraPage) {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-during-publish-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  await mkdir(root)
+  await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+  await publishWiki({
+    projectRoot: root,
+    outputDirectory: output,
+    stageDirectory: first,
+  })
+  await writeStage(next, root, '<h1>Next</h1>', extraPage, output)
+  return {
+    directory,
+    root,
+    output,
+    next,
+    wikiPage: await readFile(join(output, 'index.html'), 'utf8'),
+    candidatePage: await readFile(join(next, 'index.html'), 'utf8'),
+  }
+}
+
+// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the publisher looked at the path and before it writes the rendered pages into the candidate; fails_when=the publish trusts its first look at the path, so it renders into the candidate behind the link, writes its journal and its backup there and moves the new Wiki into place there; why_new=Cycle 0046 /ship finding AF7 (CX17 held only the preparation to the look after creation); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the candidate's folder is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose .codebook is swapped for a link to a folder outside the project just before it writes into the candidate is refused with the folder named, and nothing is written behind the link', async () => {
+  // Arrange: a published Wiki with a candidate; just before the publish makes the candidate's folder, `.codebook` is moved out of the project and a link to it stands in its place.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    swapBeforeMaking(
+      (path) => path === wiki.next,
+      async () => {
+        await rename(join(wiki.root, '.codebook'), movedOut)
+        await symlink(movedOut, join(wiki.root, '.codebook'), 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert: behind the link the Wiki and the candidate are as they were, and no journal or backup stands beside them.
+    assert.deepEqual(
+      {
+        refusal,
+        behindTheLink: (await readdir(movedOut)).sort(),
+        wikiPage: await readFile(join(movedOut, 'wiki/index.html'), 'utf8'),
+        // A publish through the link would have moved the candidate into the Wiki's place.
+        candidatePage: await readFile(
+          join(movedOut, 'next/index.html'),
+          'utf8',
+        ).catch(() => 'no candidate'),
+      },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: ['next', 'wiki'],
+        wikiPage: wiki.wikiPage,
+        candidatePage: wiki.candidatePage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a file outside the project that a folder of the candidate leads to once another process swapped that folder for a link after the publisher listed the candidate; fails_when=the publish holds only the Wiki folder's parent and the candidate itself, so it writes a page into the folder behind the link and overwrites the file there; why_new=Cycle 0046 /ship third review W6 (Codex R3A2); seam=a copy of the shipped publisher whose `node:fs/promises` swaps the candidate's `pages` folder for a link just before the publish makes it (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose candidate folder pages is swapped for a link to a folder outside the project before a page is written there is refused with that folder named, and the file behind the link is not overwritten', async () => {
+  // Arrange: a published Wiki with a candidate that holds pages/notes.html; just before the publish makes `pages`, it becomes a link to a folder outside the project whose notes.html is the learner's.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate('notes.html')
+  const outside = join(wiki.directory, 'outside')
+  try {
+    await mkdir(outside)
+    await writeFile(join(outside, 'notes.html'), 'The learner’s own notes')
+    swapBeforeMaking(
+      (path) => path === join(wiki.next, 'pages'),
+      async () => {
+        await rm(join(wiki.next, 'pages'), { recursive: true })
+        await symlink(outside, join(wiki.next, 'pages'), 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        learnersNotes: await readFile(join(outside, 'notes.html'), 'utf8'),
+      },
+      {
+        refusal: `The Wiki stage ${join(wiki.next, 'pages')} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        learnersNotes: 'The learner’s own notes',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a folder outside the project that the candidate's assets folder leads to once another process put a link there while the preparation copied the prior Wiki's assets; fails_when=the preparation checks its candidate once and then makes the assets folder and copies the assets without a hold, so the copies land behind the link, or it leaves the receipt and the manifest it wrote in a candidate it refused; why_new=Cycle 0046 /ship third review W7 (security probed the swap); seam=a copy of the shipped publisher whose `node:fs/promises` puts a link at the candidate's assets folder just before the preparation makes it (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a preparation whose candidate assets folder becomes a link to a folder outside the project just before it copies the prior Wiki’s asset is refused with that folder named, writes nothing behind the link and removes the files it wrote', async () => {
+  // Arrange: a published Wiki with a PNG asset; just before the preparation makes the candidate's assets folder, a link to a folder outside the project stands there.
+  const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await candidateWithAnAsset('assets/flow.png', PNG_ASSET_BYTES)
+  const outside = join(wiki.root, '..', `${basename(wiki.root)}-outside`)
+  const next = join(wiki.root, '.codebook/next2')
+  try {
+    await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.stage,
+    })
+    await mkdir(outside)
+    swapBeforeMaking(
+      (path) => path === join(next, 'assets'),
+      () => symlink(outside, join(next, 'assets'), 'junction'),
+    )
+
+    // Act
+    const refusal = await prepareWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: next,
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert: nothing stands behind the link, and the candidate holds only the link.
+    assert.deepEqual(
+      {
+        refusal,
+        behindTheLink: await readdir(outside),
+        candidate: await readdir(next),
+      },
+      {
+        refusal: `The Wiki stage ${join(next, 'assets')} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        behindTheLink: [],
+        candidate: ['assets'],
+      },
+    )
+  } finally {
+    await rm(wiki.root, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a copy of the Wiki outside the project that the Wiki folder leads to once another process swapped it for a link while a recovery restored an edited manifest; fails_when=the recovery writes its staging file and renames it into the manifest without a hold of the Wiki folder, so the manifest behind the link is replaced, or it leaves the kept edited manifest it wrote after it refused; why_new=Cycle 0046 /ship third review W7 (security probed the swap); seam=a copy of the shipped publisher whose `node:fs/promises` swaps the Wiki folder for a link just before the recovery writes its staging file (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a recovery of an edited manifest whose Wiki folder is swapped for a link to a copy outside the project just before it writes its staging file is refused with the folder named, leaves the copy’s manifest as it was and removes the kept edited manifest it wrote', async () => {
+  // Arrange: a published Wiki whose manifest was edited by hand; just before the recovery writes its staging file, the Wiki folder is moved out of the project and a link to it stands in its place.
+  const { recoverWikiPublication: recoverWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'wiki-moved-out')
+  try {
+    await writeFile(join(wiki.output, 'codebook-wiki.json'), '{edited by hand')
+    swapBeforeWriting(
+      (path) => basename(path).startsWith('.codebook-restore-'),
+      async () => {
+        await rename(wiki.output, movedOut)
+        await symlink(movedOut, wiki.output, 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await recoverWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert: the copy's manifest is the edited one, no staging file stands in it, and no kept edited manifest beside the Wiki folder.
+    assert.deepEqual(
+      {
+        refusal,
+        manifest: await readFile(join(movedOut, 'codebook-wiki.json'), 'utf8'),
+        stagingFiles: (await readdir(movedOut)).filter((name) =>
+          name.startsWith('.codebook-restore-'),
+        ),
+        keptEditedManifests: (
+          await readdir(join(wiki.root, '.codebook'))
+        ).filter((name) => name.includes('.modified-manifest-')),
+      },
+      {
+        refusal: `The Wiki folder ${wiki.output} is a link, a file or a folder that leads out of the project. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        manifest: '{edited by hand',
+        stagingFiles: [],
+        keptEditedManifests: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Swaps a project's `.codebook` for a link to a copy outside the project: moves the folder out and leaves a link in its place, as another process may between two steps of the publisher.
+ * @param {string} root - The project.
+ * @param {string} movedOut - Where the folder goes.
+ * @returns {Promise<void>} Once the link stands.
+ * @example
+ * await swapCodebookOut('/tmp/x/project', '/tmp/x/codebook-moved-out')
+ */
+async function swapCodebookOut(root, movedOut) {
+  await rename(join(root, '.codebook'), movedOut)
+  await symlink(movedOut, join(root, '.codebook'), 'junction')
+}
+
+// Value: protects=a copy outside the project that `.codebook` leads to once it was swapped for a link just before the publish wrote its candidate's manifest; fails_when=the publish moves the Wiki and the candidate without a hold after that write, so the new Wiki is put in place behind the link; why_new=Cycle 0046 /ship third testing review TT28 (the hold before the moves had no test); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the candidate's manifest is written (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose .codebook is swapped for a link just before it writes its candidate’s manifest is refused before it moves anything', async () => {
+  // Arrange
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'codebook-wiki.json'),
+      () => swapCodebookOut(wiki.root, movedOut),
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert: behind the link the Wiki and the candidate still stand, and the Wiki is the one published before.
+    assert.deepEqual(
+      {
+        refusal,
+        behindTheLink: (await readdir(movedOut)).sort(),
+        wikiPage: await readFile(join(movedOut, 'wiki/index.html'), 'utf8'),
+      },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: ['next', 'wiki'],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the candidate's manifest behind a link that `.codebook` became while the publish copied the learner's own file into the candidate; fails_when=the publish writes the candidate's manifest and record without a hold after that copy, so it rewrites them behind the link before a later hold refuses; why_new=Cycle 0046 /ship third testing review TT28 (the hold before the manifest had no test); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the learner's file is copied (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose .codebook is swapped for a link while it copies the learner’s own file is refused before it writes the candidate’s manifest', async () => {
+  // Arrange: the published Wiki holds a file of the learner's, which the publish copies into the candidate.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+    const candidateManifest = await readFile(
+      join(wiki.next, 'codebook-wiki.json'),
+      'utf8',
+    )
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'manual.txt'),
+      () => swapCodebookOut(wiki.root, movedOut),
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert: the candidate's manifest behind the link is the one the preparation wrote.
+    assert.deepEqual(
+      {
+        refusal,
+        candidateManifest: await readFile(
+          join(movedOut, 'next/codebook-wiki.json'),
+          'utf8',
+        ),
+      },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        candidateManifest,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner told "Nothing was written" after a publish whose `.codebook` was swapped for a link while it copied the learner's own file, and the publish run once the link is undone; fails_when=the publish leaves the copy it wrote behind the link when a later hold refuses, so the candidate holds a file its manifest does not list and the next publish is refused for that stray file; why_new=Cycle 0046 second /ship MAINT1 (the preparation's and the recovery's held writes remove what they wrote, the publish's did not); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the learner's file is copied (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose .codebook is swapped for a link while it copies the learner’s own file leaves no copy of it behind the link, and the candidate publishes once the link is undone', async () => {
+  // Arrange: the published Wiki holds a file of the learner's, which the publish copies into the candidate; `.codebook` is swapped out just before that copy.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'manual.txt'),
+      () => swapCodebookOut(wiki.root, movedOut),
+    )
+
+    // Act: the refused publish, then the link undone and the candidate published again.
+    await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).catch(() => undefined)
+    const copyBehindTheLink = await readFile(
+      join(movedOut, 'next/manual.txt'),
+      'utf8',
+    ).catch(() => 'no copy')
+    await rm(join(wiki.root, '.codebook'))
+    await rename(movedOut, join(wiki.root, '.codebook'))
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        copyBehindTheLink,
+        nextPublish,
+        manualFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+      },
+      {
+        copyBehindTheLink: 'no copy',
+        nextPublish: { preservedManualFiles: 1 },
+        manualFile: 'The learner’s own notes',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that `.codebook` leads to after a publish whose `.codebook` was swapped for a link while it wrote its rendered pages: the page it wrote there leaves again, and the candidate publishes once the link is undone; fails_when=the publish's page writes keep no record of what they wrote, so the refusal at the next page leaves the rendered page behind the link although it says "Nothing was written"; why_new=MAINT1's test swaps during the copy of a learner's file, after the pages; the page loop's own removal had no test (second Step 7 audit); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the first page is written (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a swap between a hold and the write that lands no later hold (the race the publisher names)
+test('a publish whose .codebook is swapped for a link while it writes its rendered pages leaves no page behind the link, and the candidate publishes once the link is undone', async () => {
+  // Arrange: a candidate with two pages; `.codebook` is swapped out just before the publish writes the first of them, so that page goes behind the link and the hold before the second page refuses.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate('notes.html')
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'index.html'),
+      () => swapCodebookOut(wiki.root, movedOut),
+    )
+
+    // Act: the refused publish, then the link undone and the candidate published again.
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    const pageBehindTheLink = await readFile(
+      join(movedOut, 'next/index.html'),
+      'utf8',
+    ).catch(() => 'no page')
+    await rm(join(wiki.root, '.codebook'))
+    await rename(movedOut, join(wiki.root, '.codebook'))
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, pageBehindTheLink, nextPublish },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        pageBehindTheLink: 'no page',
+        nextPublish: { publishedFiles: 2 },
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Swaps a folder for a link: moves the folder to `movedOut` and leaves a link to `linkTarget` in its place, as another process may between two writes of the publisher.
+ * @param {string} folder - The folder swapped out.
+ * @param {string} movedOut - Where the folder goes.
+ * @param {string} linkTarget - Where the link in its place leads: the moved folder itself, or another folder such as the published Wiki.
+ * @returns {Promise<void>} Once the link stands.
+ * @example
+ * await swapFolderForLink('/tmp/x/project/.codebook/next', '/tmp/x/candidate-moved-out', '/tmp/x/project/.codebook/wiki')
+ */
+async function swapFolderForLink(folder, movedOut, linkTarget) {
+  await rename(folder, movedOut)
+  await symlink(linkTarget, folder, 'junction')
+}
+
+// Value: protects=the learner's own file in the published Wiki after a publish whose candidate was swapped for a link to the published Wiki once the publish had copied that file into it; fails_when=the refusal removes each file the publish wrote by its path and its bytes alone, so it unlinks the published file of the same name and bytes behind the link and still says "Nothing was written"; why_new=P2SEC2; seam=a copy of the shipped publisher whose `node:fs/promises` swaps the candidate just before the publish next makes its folder after the copy (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a swap between a hold and the write after it (the race the publisher names)
+test('a publish whose candidate is swapped for a link to the published Wiki after it copied the learner’s own file keeps that file in the published Wiki', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; once the publish has copied it, the candidate's folder is moved away and a link to the published Wiki stands in its place.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'candidate-moved-out')
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'manual.txt'),
+      async () =>
+        swapBeforeMaking(
+          (path) => path === wiki.next,
+          () => swapFolderForLink(wiki.next, movedOut, wiki.output),
+        ),
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        publishedWikiFiles: (await readdir(wiki.output)).sort(),
+        manualFile: await readFile(
+          join(wiki.output, 'manual.txt'),
+          'utf8',
+        ).catch(() => 'no file'),
+      },
+      {
+        refusal: `The Wiki stage ${wiki.next} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        publishedWikiFiles: [
+          'codebook-publication.json',
+          'codebook-wiki.json',
+          'index.html',
+          'manual.txt',
+        ],
+        manualFile: 'The learner’s own notes',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the published Wiki's manifest, without which the Wiki cannot be read or updated, after a preparation whose new candidate was swapped for a link to the published Wiki once it had copied that manifest; fails_when=the refusal removes each file the preparation wrote by its path and its bytes alone, so it unlinks the published manifest of the same name and bytes behind the link; why_new=P2SEC2; seam=a copy of the shipped publisher whose `node:fs/promises` swaps the candidate just before the preparation next makes its folder after the copy (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a swap between a hold and the write after it (the race the publisher names)
+test('a preparation whose candidate is swapped for a link to the published Wiki after it copied the manifest keeps the published manifest', async () => {
+  // Arrange: a published Wiki; once a new preparation has copied its manifest, the new candidate's folder is moved away and a link to the published Wiki stands in its place.
+  const { prepareWikiStage: prepareWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const again = join(wiki.root, '.codebook/again'),
+    movedOut = join(wiki.directory, 'candidate-moved-out')
+  const publishedManifest = await readFile(
+    join(wiki.output, 'codebook-wiki.json'),
+    'utf8',
+  )
+  try {
+    swapBeforeWriting(
+      (path) => path === join(again, 'codebook-wiki.json'),
+      async () =>
+        swapBeforeMaking(
+          (path) => path === again,
+          () => swapFolderForLink(again, movedOut, wiki.output),
+        ),
+    )
+
+    // Act
+    const refusal = await prepareWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: again,
+    }).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        manifest: await readFile(
+          join(wiki.output, 'codebook-wiki.json'),
+          'utf8',
+        ).catch(() => 'no manifest'),
+      },
+      {
+        refusal: `The Wiki stage ${again} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        manifest: publishedManifest,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the next publish of a candidate after a publish refused because the learner's files changed while it copied them; fails_when=only a refused hold removes what the publish wrote, so the copy of the learner's file stays in the candidate and the next publish is refused for a file outside its manifest; why_new=P2M1 (P2OCR2-2); seam=a copy of the shipped publisher whose `node:fs/promises` adds a learner's file to the published Wiki just before the publish copies the learner's first file (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=the refusal of a learner's file that conflicts with a new page (its own test below)
+test('a publish refused because the learner added a file while it copied the learner’s files leaves no copy in the candidate, and the candidate publishes when run again', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; just before the publish copies it, the learner adds another.
+  const { publishWiki: publishWhileTheLearnerWrites } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'manual.txt'),
+      () => writeFile(join(wiki.output, 'later.txt'), 'Notes added meanwhile'),
+    )
+
+    // Act: the refused publish, then the candidate published again.
+    const refusal = await publishWhileTheLearnerWrites({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    const copyInTheCandidate = await readFile(
+      join(wiki.next, 'manual.txt'),
+      'utf8',
+    ).catch(() => 'no copy')
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, copyInTheCandidate, nextPublish },
+      {
+        refusal:
+          'Manual Wiki files changed during publication; output was preserved.',
+        copyInTheCandidate: 'no copy',
+        nextPublish: { preservedManualFiles: 2 },
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the next publish of a candidate after a publish refused because a learner's file stands where the candidate adds a page; fails_when=only a refused hold removes what the publish wrote, so its rendered pages and any copy of the learner's other files stay in the candidate and the next publish is refused for such a copy as a file outside its manifest; why_new=P2M1 (P2OCR2-2); seam=none; no_claim=which of the learner's files the publish copied before the conflict, which follows the order the file system lists them in
+test('a publish refused for a learner’s file that conflicts with a new page leaves none of the files it wrote in the candidate, and publishes once the conflict is gone', async () => {
+  // Arrange: the published Wiki holds the learner's a.txt and pages/notes.html, and the candidate adds the page pages/notes.html.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-conflict-copy-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'a.txt'), 'The learner’s own notes')
+    await mkdir(join(output, 'pages'))
+    await writeFile(join(output, 'pages/notes.html'), 'The learner’s own page')
+    await writeStage(next, root, '<h1>Next</h1>', 'notes.html', output)
+
+    // Act: the refused publish, then the learner's page moved away and the candidate published again.
+    const refusal = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    const candidateFiles = (await readdir(next)).sort()
+    await rm(join(output, 'pages/notes.html'))
+    const nextPublish = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert: the candidate keeps its manifest, its record and the empty pages folder the test made; its pages and any copy of a.txt are gone.
+    assert.deepEqual(
+      { refusal, candidateFiles, nextPublish },
+      {
+        refusal:
+          'A manual Wiki file conflicts with the update: pages/notes.html',
+        candidateFiles: [
+          'codebook-publication.json',
+          'codebook-wiki.json',
+          'pages',
+        ],
+        nextPublish: { preservedManualFiles: 1 },
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that `.codebook` leads to once it was swapped for a link while a preview wrote its last rendered page; fails_when=the publish holds the path only before each page write, so the preview answers that it rendered its pages and leaves that page behind the link; why_new=P2OCR2-3; seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the last page is written (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a swap between the last hold and the write that lands no later hold (the race the publisher names)
+test('a preview whose .codebook is swapped for a link while it writes its last page is refused and leaves no page behind the link', async () => {
+  // Arrange: a candidate with one page; `.codebook` is swapped out just before the preview writes it.
+  const { publishWiki: previewWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    swapBeforeWriting(
+      (path) => path === join(wiki.next, 'index.html'),
+      () => swapCodebookOut(wiki.root, movedOut),
+    )
+
+    // Act
+    const preview = await previewWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+      renderOnly: true,
+    }).then(
+      ({ renderedPages }) => ({ renderedPages }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        preview,
+        pageBehindTheLink: await access(join(movedOut, 'next/index.html')).then(
+          () => 'a page',
+          () => 'no page',
+        ),
+      },
+      {
+        preview: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        pageBehindTheLink: 'no page',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the published Wiki after a publish whose candidate's `pages` folder was swapped for a link to a folder outside the project while it wrote its last page; fails_when=the publish holds the page's folder only before the write and then checks the candidate's own folder alone, so it moves a candidate whose `pages` is a link into the Wiki's place; why_new=P2OCR2-3; seam=a copy of the shipped publisher whose `node:fs/promises` swaps the candidate's `pages` folder just before its page is written (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a swap between the last hold and the write that lands no later hold (the race the publisher names)
+test('a publish whose candidate’s pages folder is swapped for a link while it writes the last page is refused before it moves anything', async () => {
+  // Arrange: a candidate whose second and last page lies in its `pages` folder; that folder is moved out of the project and a link to it stands in its place just before the page is written.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate('notes.html')
+  const pagesFolder = join(wiki.next, 'pages'),
+    movedOut = join(wiki.directory, 'pages-moved-out')
+  try {
+    swapBeforeWriting(
+      (path) => path === join(pagesFolder, 'notes.html'),
+      () => swapFolderForLink(pagesFolder, movedOut, movedOut),
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert: the Wiki is the one published before, with no `pages` link in it.
+    assert.deepEqual(
+      {
+        refusal,
+        publishedWikiFiles: (await readdir(wiki.output)).sort(),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        refusal: `The Wiki stage ${pagesFolder} is a link, a file or a folder that leads out of the project. Nothing was written. Remove it, then prepare the Wiki again.`,
+        publishedWikiFiles: [
+          'codebook-publication.json',
+          'codebook-wiki.json',
+          'index.html',
+        ],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Leaves a published Wiki as a publish stopped after it moved the prior Wiki aside: the Wiki folder missing, the prior Wiki kept at `wiki.previous-test`, a candidate beside it and the journal of a process that is gone.
+ * @param {string} root - The project, or the folder that holds the output for an output outside the project.
+ * @param {string} output - The Wiki folder.
+ * @returns {Promise<{ backup: string }>} Where the prior Wiki is kept.
+ * @example
+ * const { backup } = await interruptedSwapOf('/tmp/x/project', '/tmp/x/project/.codebook/wiki')
+ */
+async function interruptedSwapOf(root, output) {
+  const stage = `${output}.stage-update`,
+    backup = `${output}.previous-test`
+  await mkdir(dirname(output), { recursive: true })
+  await writeStage(output, root, '<h1>Prior</h1>')
+  await writeStage(stage, root, '<h1>Candidate</h1>')
+  await rename(output, backup)
+  await writeFile(
+    `${output}.publish-journal.json`,
+    JSON.stringify({ projectRoot: root, output, stage, backup, pid: 99999999 }),
+  )
+  return { backup }
+}
+
+// Value: protects=a copy outside the project that `.codebook` leads to once it was swapped for a link while a recovery claimed an interrupted publish; fails_when=the recovery does not hold the path after its claim, so it goes on and refuses only later with the prior Wiki's own sentence, or not at all; why_new=Cycle 0046 /ship third testing review TT29 (the hold at the start of the recovery's work had no test); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the recovery writes its claim (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a recovery whose .codebook is swapped for a link just before it claims an interrupted publish is refused with the folder’s sentence, and no claim is left behind the link', async () => {
+  // Arrange
+  const { recoverWikiPublication: recoverWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-claim-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    movedOut = join(directory, 'codebook-moved-out')
+  try {
+    await mkdir(root)
+    await interruptedSwapOf(root, output)
+    swapBeforeWriting(
+      (path) => path.includes('.publish-journal.json.recovery-'),
+      () => swapCodebookOut(root, movedOut),
+    )
+
+    // Act
+    const refusal = await recoverWhoseFolderIsSwapped({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { refusal, behindTheLink: (await readdir(movedOut)).sort() },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: [
+          'wiki.previous-test',
+          'wiki.publish-journal.json',
+          'wiki.stage-update',
+        ],
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a copy outside the project that `.codebook` leads to once it was swapped for a link after the recovery checked the kept prior Wiki and before it moved it back; fails_when=the recovery moves the kept Wiki without a hold, so it moves it into the Wiki folder's place behind the link; why_new=Cycle 0046 /ship third testing review TT29 (the hold before the backup's move had no test); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` while the recovery reads the kept Wiki's manifest (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a recovery whose .codebook is swapped for a link while it reads the kept prior Wiki is refused before it moves the kept Wiki back', async () => {
+  // Arrange
+  const { recoverWikiPublication: recoverWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-swapped-backup-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    movedOut = join(directory, 'codebook-moved-out')
+  try {
+    await mkdir(root)
+    const { backup } = await interruptedSwapOf(root, output)
+    swapBeforeReading(
+      (path) => path === join(backup, 'codebook-wiki.json'),
+      () => swapCodebookOut(root, movedOut),
+    )
+
+    // Act
+    const refusal = await recoverWhoseFolderIsSwapped({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert: behind the link the prior Wiki is still kept aside, and no Wiki folder stands.
+    assert.deepEqual(
+      { refusal, behindTheLink: (await readdir(movedOut)).sort() },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: [
+          'wiki.previous-test',
+          'wiki.publish-journal.json',
+          'wiki.stage-update',
+        ],
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a copy outside the project that the candidate itself leads to once it was swapped for a link, while `.codebook` stays the folder the publish resolved; fails_when=the publish holds only the Wiki folder's parent, whose inode and real path stay the same, so it writes the pages into the copy and moves the link into the Wiki's place; why_new=Cycle 0046 /ship third testing review TT30 (the hold of the candidate itself had no test); seam=a copy of the shipped publisher whose `node:fs/promises` swaps the candidate for a link just before its folder is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose candidate is swapped for a link to a copy outside the project just before it writes the pages is refused with the candidate named, and the copy is not written', async () => {
+  // Arrange
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const copy = join(wiki.directory, 'candidate-copy')
+  try {
+    swapBeforeMaking(
+      (path) => path === wiki.next,
+      async () => {
+        await rename(wiki.next, copy)
+        await symlink(copy, wiki.next, 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert: the copy's page is as authored, and the Wiki in the project is the one published before.
+    assert.deepEqual(
+      {
+        refusal,
+        copyPage: await readFile(join(copy, 'index.html'), 'utf8').catch(
+          () => 'no page',
+        ),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        copyPage: wiki.candidatePage,
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who chose an output folder outside the project and whose publish there stopped after it moved the prior Wiki aside; fails_when=the recovery holds the kept prior Wiki to the rule of an output inside the project whatever its place, so an outside Wiki's interrupted publish can never be recovered; why_new=Cycle 0046 /ship third testing review TT31 (CX18's rule for an outside output had no test); seam=none
+test('an interrupted publish of a Wiki outside the project is recovered, the prior Wiki moved back', async () => {
+  // Arrange
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-interrupted-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(directory, 'outside/wiki')
+  try {
+    await mkdir(root)
+    await interruptedSwapOf(root, output)
+
+    // Act
+    const recovered = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      (result) => result.status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recovered,
+        page: await readFile(join(output, 'index.html'), 'utf8').catch(
+          () => 'no page',
+        ),
+      },
+      { recovered: 'previous-restored', page: '<h1>Prior</h1>' },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a folder outside the project in which a refused preparation or publish made a folder of its own before it saw the swap; fails_when=a refused step leaves the folders its mkdir made, or counts them one short, so empty folders stay behind the link; why_new=Cycle 0046 /ship third testing review TT32 (in every swap test before, mkdir made no new folder); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before a folder is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+for (const step of ['--prepare', 'publish'])
+  test(`${step} whose .codebook is swapped for a link just before it makes a new folder removes the folder it made behind the link`, async () => {
+    // Arrange: the preparation of `.codebook/sub/wiki` makes `sub`; the publish of a page under `guide/` makes `guide`. Just before that mkdir, `.codebook` is moved out and a link stands in its place.
+    const { prepareWikiStage: prepareSwapped, publishWiki: publishSwapped } =
+      await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+    const wiki = await publishedWikiWithACandidate()
+    const movedOut = join(wiki.directory, 'codebook-moved-out')
+    const made =
+      step === '--prepare'
+        ? join(wiki.root, '.codebook/sub')
+        : join(wiki.next, 'guide')
+    try {
+      if (step === 'publish') {
+        const manifest = JSON.parse(
+          await readFile(join(wiki.next, 'codebook-wiki.json'), 'utf8'),
+        )
+        manifest.pages.push({
+          ...manifest.pages[0],
+          path: 'guide/intro.html',
+          title: 'Intro',
+        })
+        await writeFile(
+          join(wiki.next, 'codebook-wiki.json'),
+          JSON.stringify(manifest),
+        )
+      }
+      swapBeforeMaking(
+        (path) => path === made,
+        () => swapCodebookOut(wiki.root, movedOut),
+      )
+
+      // Act
+      const refusal = await (
+        step === '--prepare'
+          ? prepareSwapped({
+              projectRoot: wiki.root,
+              outputDirectory: join(wiki.root, '.codebook/sub/wiki'),
+            })
+          : publishSwapped({
+              projectRoot: wiki.root,
+              outputDirectory: wiki.output,
+              stageDirectory: wiki.next,
+            })
+      ).then(
+        () => 'written',
+        (error) => error.message,
+      )
+
+      // Assert: the folder the step made behind the link is gone.
+      const madeBehindTheLink = join(
+        movedOut,
+        relative(join(wiki.root, '.codebook'), made),
+      )
+      assert.deepEqual(
+        {
+          isRefused: refusal !== 'written',
+          isMadeFolderLeft: await access(madeBehindTheLink).then(
+            () => true,
+            () => false,
+          ),
+        },
+        { isRefused: true, isMadeFolderLeft: false },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the Wiki folder's parent the publish resolved, when another process replaces `.codebook` by another folder of the project before the publish writes; fails_when=the publish compares only real paths, so it writes into a folder that is not the one it looked at; why_new=Cycle 0046 /ship finding AF7 (the look after creation holds the parent's device and inode too); seam=a copy of the shipped publisher whose `node:fs/promises` replaces `.codebook` just before the candidate's folder is made (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a publish whose .codebook is replaced by another folder of the project just before it writes into the candidate is refused with the folder named, and the Wiki is not replaced', async () => {
+  // Arrange: just before the publish makes the candidate's folder, `.codebook` is replaced by a new folder that holds the same Wiki and candidate.
+  const { publishWiki: publishWhoseFolderIsSwapped } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const replaced = join(wiki.root, '.codebook-replaced')
+  try {
+    swapBeforeMaking(
+      (path) => path === wiki.next,
+      async () => {
+        await rename(join(wiki.root, '.codebook'), replaced)
+        await mkdir(join(wiki.root, '.codebook'))
+        await rename(join(replaced, 'wiki'), wiki.output)
+        await rename(join(replaced, 'next'), wiki.next)
+      },
+    )
+
+    // Act
+    const refusal = await publishWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        inCodebook: (await readdir(join(wiki.root, '.codebook'))).sort(),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        inCodebook: ['next', 'wiki'],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder outside the project that `.codebook` leads to when another process swaps it for a link after the recovery looked at the path and before it restores an edited manifest; fails_when=the recovery trusts its first look at the path, so it writes its journal, the kept edited manifest and the restored manifest behind the link; why_new=Cycle 0046 /ship finding AF7 (recovery writes beside the Wiki folder and into it too); seam=a copy of the shipped publisher whose `node:fs/promises` swaps `.codebook` just before the recovery writes its journal (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`)
+test('a recovery of an edited manifest whose .codebook is swapped for a link to a folder outside the project just before it writes its journal is refused with the folder named, and nothing is left or restored behind the link', async () => {
+  // Arrange: a published Wiki whose manifest was edited by hand; just before the recovery writes its journal, `.codebook` is moved out of the project and a link to it stands in its place.
+  const { recoverWikiPublication: recoverWhoseFolderIsSwapped } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const movedOut = join(wiki.directory, 'codebook-moved-out')
+  try {
+    await writeFile(join(wiki.output, 'codebook-wiki.json'), '{edited by hand')
+    swapBeforeWriting(
+      (path) => path === `${wiki.output}.publish-journal.json`,
+      async () => {
+        await rename(join(wiki.root, '.codebook'), movedOut)
+        await symlink(movedOut, join(wiki.root, '.codebook'), 'junction')
+      },
+    )
+
+    // Act
+    const refusal = await recoverWhoseFolderIsSwapped({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert: behind the link no journal and no kept manifest stand beside the Wiki, and its edited manifest is as it was.
+    assert.deepEqual(
+      {
+        refusal,
+        behindTheLink: (await readdir(movedOut)).sort(),
+        manifest: await readFile(
+          join(movedOut, 'wiki/codebook-wiki.json'),
+          'utf8',
+        ),
+      },
+      {
+        refusal: `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(wiki.root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+        behindTheLink: ['next', 'wiki'],
+        manifest: '{edited by hand',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder the publisher resolved the Wiki's path in, on NTFS, whose file ids may lie above 2^53; fails_when=the publisher compares device and file ids as JavaScript numbers, which round above 2^53, so a folder that took the place of `.codebook` with an id that differs only in its low bits counts as the same and the preparation or the publish writes into it; why_new=Cycle 0046 /ship third review W8 (row 79's rule); seam=a copy of the shipped publisher whose `stat` gives `.codebook` ids above 2^53 that change in their low bits just before the candidate is made (scripts/tests/utils/markedCopyHooks.mjs, `?large-file-ids`)
+for (const step of ['--prepare', 'publish'])
+  test(`${step} whose .codebook gets another file id above 2^53, which differs from the first only in its low bits, just before it writes into the candidate is refused with the folder named`, async () => {
+    // Arrange: a published Wiki with a candidate for the publish, or a project with `.codebook` alone for the preparation; `.codebook`'s file id changes just before the candidate's folder is made.
+    const {
+      prepareWikiStage: prepareWithLargeIds,
+      publishWiki: publishWithLargeIds,
+    } = await loadMarkedCopy('publish-wiki.mjs', '?large-file-ids')
+    const wiki =
+      step === 'publish' ? await publishedWikiWithACandidate() : undefined
+    const root =
+      wiki?.root ??
+      (await realpath(
+        await mkdtemp(join(tmpdir(), 'codebook-wiki-large-ids-')),
+      ))
+    const next = join(root, '.codebook/next')
+    try {
+      await mkdir(join(root, '.codebook'), { recursive: true })
+      giveLargeFileIds(join(root, '.codebook'), next)
+
+      // Act
+      const refusal = await (
+        step === 'publish'
+          ? publishWithLargeIds({
+              projectRoot: root,
+              outputDirectory: join(root, '.codebook/wiki'),
+              stageDirectory: next,
+            })
+          : prepareWithLargeIds({
+              projectRoot: root,
+              outputDirectory: join(root, '.codebook/wiki'),
+              stageDirectory: next,
+            })
+      ).then(
+        () => 'written',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.equal(
+        refusal,
+        `The Wiki output lies inside the project, but its path passes through a link or an entry that is no folder of the project’s own: ${join(root, '.codebook')}. Nothing was written. Replace it with a real folder, or choose an output folder outside the project.`,
+      )
+    } finally {
+      giveLargeFileIds(undefined)
+      await rm(wiki?.directory ?? root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the learner who chose an output folder outside the project and reaches it through a link of their own; fails_when=the check of the folders on the way to the output refuses a link outside the project too, so a configured output outside it can no longer be prepared; why_new=Cycle 0046 /ship finding F1: the fix refuses links only once the path is inside the project; seam=none
+test('an output outside the project reached through a link outside it is still prepared, in the folder the link leads to', async () => {
+  // Arrange
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-link-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await symlink(outside, join(directory, 'outside-link'), 'junction')
+
+    // Act
+    const prepared = await prepareWikiStage({
+      projectRoot: root,
+      outputDirectory: join(directory, 'outside-link/wiki'),
+    })
+
+    // Assert
+    assert.deepEqual(
+      { output: prepared.output, stageFolder: dirname(prepared.stage) },
+      { output: join(outside, 'wiki'), stageFolder: outside },
+    )
+    assert.deepEqual(await readdir(prepared.stage), [
+      'codebook-publication.json',
+    ])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Prepares a candidate for a new project's `.codebook/wiki` with the real publisher and gives it one asset with the bytes a test asks for, named by its manifest.
+ * @param {string} assetPath - The asset's path in the Wiki, for example `assets/notes.html`.
+ * @param {Buffer | string} assetBytes - What the asset holds.
+ * @returns {Promise<{ root: string, output: string, stage: string, authoredPage: string }>} The project, the Wiki folder, the candidate, and the candidate's `index.html` as authored.
+ * @example
+ * const wiki = await candidateWithAnAsset('assets/flow.png', PNG_ASSET_BYTES)
+ */
+async function candidateWithAnAsset(assetPath, assetBytes) {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-asset-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    stage = join(root, '.codebook/next')
+  await writeStage(stage, root, '<h1>With an asset</h1>', undefined, output)
+  const manifest = JSON.parse(
+    await readFile(join(stage, 'codebook-wiki.json'), 'utf8'),
+  )
+  manifest.assets = [assetPath]
+  await mkdir(dirname(join(stage, assetPath)), { recursive: true })
+  await writeFile(join(stage, assetPath), assetBytes)
+  await writeFile(join(stage, 'codebook-wiki.json'), JSON.stringify(manifest))
+  return {
+    root,
+    output,
+    stage,
+    authoredPage: await readFile(join(stage, 'index.html'), 'utf8'),
+  }
+}
+
+// Value: protects=the learner who opens a published Wiki from disk, where no reader sends a policy, against an asset the agent wrote that runs script, acts on an event attribute or fetches a network path (`//host`, `\\host`) or another address, when its page links to it or it is opened itself; fails_when=the publisher checks only each page's content and publishes any file the manifest lists under `assets`, or trusts an asset's name and not its bytes; why_new=Cycle 0046 /ship finding AF9; third testing review TT27 and OCR review W20: a wrong-bytes row for each format, an AVIF brand after the first box, and a name that every object carries as a property; seam=none (the shipped publisher)
+for (const [kind, assetPath, assetBytes] of [
+  [
+    'an HTML asset',
+    'assets/notes.html',
+    '<!doctype html><img src="\\\\host\\share\\x.png" onerror="run()">',
+  ],
+  [
+    'an SVG asset',
+    'assets/flow.svg',
+    '<svg xmlns="http://www.w3.org/2000/svg"><script>run()</script></svg>',
+  ],
+  ['a script asset', 'assets/run.js', 'run()'],
+  [
+    'an asset named as a PNG image that holds HTML',
+    'assets/fake.png',
+    '<!doctype html><script>run()</script>',
+  ],
+  [
+    'an asset named as a JPEG image that holds text',
+    'assets/photo.jpg',
+    'not a picture',
+  ],
+  [
+    'an asset named as a GIF image whose signature is no GIF version',
+    'assets/anim.gif',
+    Buffer.from('GIF90a\x01\x00\x01\x00', 'latin1'),
+  ],
+  [
+    'an asset named as a WebP image that is a RIFF file of sound',
+    'assets/shot.webp',
+    Buffer.from('RIFF\x24\x00\x00\x00WAVEfmt ', 'latin1'),
+  ],
+  [
+    'an asset named as an AVIF image whose first box names HEIC brands',
+    'assets/shot.avif',
+    Buffer.from('\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic', 'latin1'),
+  ],
+  [
+    'an asset named as an AVIF image whose avif brand stands after its first box',
+    'assets/box.avif',
+    Buffer.from('\x00\x00\x00\x10ftypmif1\x00\x00\x00\x00avif', 'latin1'),
+  ],
+  [
+    'an asset named after a property every object has',
+    'assets/notes.constructor',
+    'any bytes',
+  ],
+])
+  test(`a publish whose manifest lists ${kind} is refused with the sentence that names the asset and the images it may be, before anything is written`, async () => {
+    // Arrange
+    const wiki = await candidateWithAnAsset(assetPath, assetBytes)
+    try {
+      // Act
+      const refusal = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.stage,
+      }).then(
+        () => 'published',
+        (error) => error.message,
+      )
+
+      // Assert: no Wiki folder stands, and the candidate's page is as authored, not rendered.
+      assert.deepEqual(
+        {
+          refusal,
+          beside: (await readdir(join(wiki.root, '.codebook'))).sort(),
+          // A publish would have moved the candidate into the Wiki's place.
+          candidatePage: await readFile(
+            join(wiki.stage, 'index.html'),
+            'utf8',
+          ).catch(() => 'no candidate'),
+        },
+        {
+          refusal: `Wiki asset ${assetPath} is not a PNG, JPEG, GIF, WebP or AVIF image by its name or its first bytes. Nothing was written. Convert it to one of these formats, or delete the file from the stage and its entry from assets, then publish again.`,
+          beside: ['next'],
+          candidatePage: wiki.authoredPage,
+        },
+      )
+    } finally {
+      await rm(wiki.root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the article images an agent lists under `assets`, which the refusal of other assets must not take; fails_when=the publisher refuses a raster image of one of the six formats, by a name in capitals or by bytes the format starts with, a GIF87a image or an AVIF sequence (brand avis); why_new=Cycle 0046 /ship finding AF9 (assets are raster images only); third testing review TT27 and OCR review W20 (GIF87a and avis); seam=none (the shipped publisher)
+for (const [format, assetPath, assetBytes] of [
+  ['PNG', 'assets/flow.png', PNG_ASSET_BYTES],
+  ['JPEG', 'assets/photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00])],
+  ['JPEG', 'assets/photo.JPEG', Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00])],
+  ['GIF', 'assets/anim.gif', Buffer.from('GIF89a\x01\x00\x01\x00', 'latin1')],
+  ['GIF', 'assets/old.gif', Buffer.from('GIF87a\x01\x00\x01\x00', 'latin1')],
+  [
+    'WebP',
+    'assets/shot.webp',
+    Buffer.from('RIFF\x24\x00\x00\x00WEBPVP8 ', 'latin1'),
+  ],
+  [
+    'AVIF',
+    'assets/shot.avif',
+    Buffer.from(
+      '\x00\x00\x00\x1cftypmif1\x00\x00\x00\x00mif1avifmiaf',
+      'latin1',
+    ),
+  ],
+  [
+    'AVIF',
+    'assets/sequence.avif',
+    Buffer.from('\x00\x00\x00\x18ftypavis\x00\x00\x00\x00avismsf1', 'latin1'),
+  ],
+])
+  test(`a publish whose manifest lists a ${format} image ${assetPath} publishes it with its bytes`, async () => {
+    // Arrange
+    const wiki = await candidateWithAnAsset(assetPath, assetBytes)
+    try {
+      // Act
+      const published = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.stage,
+      }).then(
+        (result) => result.output,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          published,
+          // A refused publish leaves no Wiki folder to read the asset from.
+          asset: await readFile(join(wiki.output, assetPath)).catch(
+            () => 'no asset',
+          ),
+        },
+        { published: wiki.output, asset: assetBytes },
+      )
+    } finally {
+      await rm(wiki.root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the learner who chose an output folder outside the project and updates the Wiki there again; fails_when=the publisher holds the Wiki folder itself to the rule of an output inside the project whatever its place, so an existing Wiki outside the project, whose real path of course leaves the project, is refused at the next preparation, publish or recovery; why_new=Cycle 0046 /ship repeat testing review TC5 (the real-path rule of the Wiki folder, AF3, had no test of an output outside the project that already exists); seam=none
+test('a Wiki published into an output folder outside the project is prepared, published and recovered there again, each without a refusal of its path', async () => {
+  // Arrange: a first Wiki published into a folder outside the project.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-again-')),
+  )
+  const root = join(directory, 'project'),
+    outside = join(directory, 'outside')
+  const output = join(outside, 'wiki'),
+    first = join(outside, 'first'),
+    next = join(outside, 'next')
+  try {
+    await mkdir(root)
+    await mkdir(outside)
+    await writeStage(first, root, '<h1>First</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+
+    // Act: the next update, as the editor runs it, then a recovery; each step answers its outcome or its refusal.
+    const prepared = await writeStage(
+      next,
+      root,
+      '<h1>Next</h1>',
+      undefined,
+      output,
+    ).then(
+      () => 'prepared',
+      (error) => error.message,
+    )
+    const published = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      (result) => result.output,
+      (error) => error.message,
+    )
+    const recovered = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      (result) => result.status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        prepared,
+        published,
+        recovered,
+        isNextWikiInPlace: (
+          await readFile(join(output, 'index.html'), 'utf8')
+        ).includes('>Next</h2>'),
+      },
+      {
+        prepared: 'prepared',
+        published: output,
+        recovered: 'published-current',
+        isNextWikiInPlace: true,
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the editor agent that writes a Wiki with the bundled skill, which reads the publisher's rules there before it writes; fails_when=the skill no longer tells the agent that a page's content carries no event attribute and links only to the schemes the publisher accepts, or that the publisher refuses a link on the output's path inside the project, so the agent learns each rule only from a refused publish; why_new=Cycle 0046 /ship follow-up N4 (findings F1 and F2 added the refusals); seam=none
+test('the bundled skill tells the agent the publisher’s refusals of event attributes, of addresses of other schemes and of a link on the output’s path inside the project', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.deepEqual(
+    [
+      skill.includes(
+        'Give the elements of `contentHtml` only the attributes an article needs: `id`, `class`, `href`, `alt`, `title`, `width`, `height`, `colspan`, `rowspan`, `scope`, `headers`, `lang`, `dir`, `role`, `aria-*`, `open`, `start`, `reversed`, `datetime`, `cite`, `data-codebook-diagram`, and `src` on an image; the publisher refuses any other (`style`, `srcset`, `target` …). Do not put an event attribute (`onclick`, `onerror` or any other attribute whose name starts with `on`) on an element of `contentHtml`, and let every `href`, `src` and `cite` name a relative path, a `#fragment`, an `http`, `https` or `mailto` address, or Codebook’s own `vscode://laststance.codebook/…` or `cursor://laststance.codebook/…` address; the publisher refuses anything else.',
+      ),
+      skill.includes(
+        'The output folder and every folder on its path inside the project must be real folders. The publisher refuses a link there (a cloned repository may carry `.codebook` as one) and writes nothing; report the path it names and let the learner replace the link with a folder or choose an output outside the project. Do not work around the refusal.',
+      ),
+    ],
+    [true, true],
+  )
+})
+
+// Value: protects=the editor agent that lists a Wiki's assets with the bundled skill; fails_when=the skill still lets any local file be an asset, so the agent learns that only raster images are accepted from a refused publish; why_new=Cycle 0046 /ship finding AF9 (the publisher accepts only raster images as assets); seam=none
+test('the bundled skill tells the agent that an asset is a PNG, JPEG, GIF, WebP or AVIF image and that the publisher refuses any other', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.deepEqual(
+    [
+      skill.includes(
+        '`assets` lists only the raster images the articles show: PNG, JPEG, GIF, WebP or AVIF files named `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` or `.avif` and holding the bytes of that format. The publisher refuses any other asset (HTML, SVG, scripts, styles or anything else), so do not retain old reader CSS/JS in the stage.',
+      ),
+      skill.includes('local non-diagram article assets'),
+    ],
+    [true, false],
+  )
 })
 
 test('reader source links cannot follow a repository symlink to an outside file', async () => {
@@ -2150,7 +4970,1259 @@ for (const [label, content, error] of [
   })
 }
 
-test('a stray file left in a prepared stage cannot be published as Wiki content', async () => {
+// Value: protects=the rule that a page handed in as an article holds no document, form, script or authored SVG, which the publisher checks on the raw text of the page on purpose; fails_when=the check starts to skip comments or attribute values, so that a place it takes for a comment where a browser reads none could hide a real element from it, or the rule changes unnoticed in the other direction; why_new=Cycle 0046 row 192 (the rule was decided and is stated at the check; this pins it); seam=none
+for (const [place, content, sentence] of [
+  [
+    'a comment that shows a script',
+    '<h2 id="flow">Source flow</h2><!-- <script>track()</script> -->',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <script>.',
+  ],
+  [
+    'an attribute value that shows a form',
+    '<h2 id="flow">Source flow</h2><p title="put it into a <form> element">Where the question goes.</p>',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <form>.',
+  ],
+  [
+    'a comment that shows authored SVG',
+    '<h2 id="flow">Source flow</h2><!-- <svg><text>An old graph</text></svg> -->',
+    'Wiki page index.html must use diagram records and figure slots instead of authored SVG.',
+  ],
+])
+  test(`a page with ${place} is refused like a page that holds the element: the publisher reads the page as raw text`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-raw-text-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = content
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: sentence },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the reader's origin, whose page may ask the editor's model, against markup an agent writes into a page's content when a repository's text steers it; fails_when=the publisher refuses script elements but accepts an event attribute or an address a browser runs as script (or one that a character reference, a tab or a number without its semicolon turns into one), so the published page runs script on the reader's origin or when opened from disk, or accepts an editor address that is not Codebook's own (another extension's URI handler, the editor's file handler), or an address that starts with two slashes or backslashes in any mix, which a page opened from disk on Windows reads as a network path (`file://host/…`), so an image fetches it over SMB without a click and may send the learner's NTLM credentials; why_new=Cycle 0046 /ship finding F2 (security, verified): render-wiki.mjs refused `<script>` and the like but no event attribute and no `javascript:` address; repeat review SC4: any vscode: or cursor: address was accepted; adversarial review AD5: `//host/x`, `\\host\share\x` and `/\host/x` were accepted as relative paths; OCR review W18: `/&sol;host/x`, `/&bsol;host/x` and `/&NewLine;/host/x`, which a browser reads as `//host/x`, passed; seam=none
+for (const [form, content, sentence] of [
+  [
+    'an event attribute on an image',
+    '<h2 id="flow">Source flow</h2><p><img src="flow.png" alt="Flow" onerror="fetch(\'api/ask\')"></p>',
+    'Wiki page index.html must contain article sections, not a document, form or script: its <img> holds the event attribute onerror.',
+  ],
+  [
+    'an event attribute in capitals without quotes',
+    '<h2 id="flow" ONCLICK=run()>Source flow</h2>',
+    'Wiki page index.html must contain article sections, not a document, form or script: its <h2> holds the event attribute onclick.',
+  ],
+  [
+    'a javascript: link',
+    '<h2 id="flow">Source flow</h2><p><a href="javascript:run()">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="javascript:run()".',
+  ],
+  [
+    'a javascript: link in capitals with a tab and a space before it',
+    '<h2 id="flow">Source flow</h2><p><a href=" JAVA&#9;SCRIPT:run()">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href=" JAVA&#9;SCRIPT:run()".',
+  ],
+  [
+    'a link whose colon is a named character reference',
+    '<h2 id="flow">Source flow</h2><p><a href="javascript&colon;run()">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="javascript&colon;run()".',
+  ],
+  [
+    'a link whose colon is a number without its semicolon',
+    '<h2 id="flow">Source flow</h2><p><a href="javascript&#58run()">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="javascript&#58run()".',
+  ],
+  [
+    'a data: address among the candidates of a srcset',
+    '<h2 id="flow">Source flow</h2><p><img src="flow.png" srcset="flow.png 1x, data:image/svg+xml,x 2x" alt="Flow"></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds srcset="flow.png 1x, data:image/svg+xml,x 2x".',
+  ],
+  [
+    'a button that submits the reader’s form to a javascript: address',
+    '<h2 id="flow">Source flow</h2><p><button form="qa-form" formaction="javascript:run()">Ask</button></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <button> holds formaction="javascript:run()".',
+  ],
+  [
+    'an xlink:href to a data: address',
+    '<h2 id="flow">Source flow</h2><p><a xlink:href="data:text/html,x">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds xlink:href="data:text/html,x".',
+  ],
+  [
+    'an image from a file: address',
+    '<h2 id="flow">Source flow</h2><p><img src="file:///etc/hosts" alt="Hosts"></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds src="file:///etc/hosts".',
+  ],
+  [
+    'a vscode: address of the editor’s file handler',
+    '<h2 id="flow">Source flow</h2><p><a href="vscode://file/etc/hosts">Hosts</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="vscode://file/etc/hosts".',
+  ],
+  [
+    'a cursor: address of another extension’s URI handler',
+    '<h2 id="flow">Source flow</h2><p><a href="cursor://other.extension/run?task=1">Run</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="cursor://other.extension/run?task=1".',
+  ],
+  [
+    'an image of a network path written with a named slash',
+    '<h2 id="flow">Source flow</h2><p><img src="/&sol;host/x.png" alt=""></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds src="/&sol;host/x.png".',
+  ],
+  [
+    'an image of a network path written with a named backslash',
+    '<h2 id="flow">Source flow</h2><p><img src="/&bsol;host/x.png" alt=""></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds src="/&bsol;host/x.png".',
+  ],
+  [
+    'a link to a network path with a named line break between its slashes',
+    '<h2 id="flow">Source flow</h2><p><a href="/&NewLine;/host/x">Notes</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="/&NewLine;/host/x".',
+  ],
+  [
+    'a vscode: address whose authority only starts with Codebook’s',
+    '<h2 id="flow">Source flow</h2><p><a href="vscode://laststance.codebook.evil/source">Source</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="vscode://laststance.codebook.evil/source".',
+  ],
+  [
+    'an image whose address is a network share written with two backslashes',
+    '<h2 id="flow">Source flow</h2><p><img src="\\\\attacker.example\\share\\x.png" alt=""></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds src="\\\\attacker.example\\share\\x.png".',
+  ],
+  [
+    'a link whose address starts with two slashes',
+    '<h2 id="flow">Source flow</h2><p><a href="//attacker.example/x">Notes</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href="//attacker.example/x".',
+  ],
+  [
+    'an image whose address starts with a slash and a backslash',
+    '<h2 id="flow">Source flow</h2><p><img src="/\\attacker.example/x.png" alt=""></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <img> holds src="/\\attacker.example/x.png".',
+  ],
+  [
+    'a link whose address starts with a backslash and a slash after a space',
+    '<h2 id="flow">Source flow</h2><p><a href=" \\/attacker.example/x">Notes</a></p>',
+    'Wiki page index.html must link only to a relative path, a #fragment, an http, https or mailto address, or Codebook’s own vscode://laststance.codebook/ or cursor://laststance.codebook/ address: its <a> holds href=" \\/attacker.example/x".',
+  ],
+])
+  test(`a page with ${form} is refused with the sentence that names the element and its attribute`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-scripting-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = content
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: sentence },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+/** The refusal of an attribute an article does not need, for the element and the attribute it names. */
+const refusalOfAttribute = (tag, name) =>
+  `Wiki page index.html must give its elements only the attributes an article needs (id, class, href, alt, title, width, height, colspan, rowspan, scope, headers, lang, dir, role, aria-*, open, start, reversed, datetime, cite and data-codebook-diagram, and src on an image): its <${tag}> holds ${name}.`
+
+// Value: protects=the learner who opens a published page from disk, where no reader sends a policy, against an attribute of the content that fetches or runs something the address rule does not read: a style's `url(//host/…)`, which Windows fetches by SMB, a poster, a background, a ping, the candidates of a srcset, or `src` outside an image; fails_when=the publisher judges only the attributes it knows as addresses and lets every other one through; why_new=Cycle 0046 /ship third review W4 (Codex R3A1, the adversarial step); seam=none (the shipped publisher)
+for (const [form, content, tag, name] of [
+  [
+    'a style that fetches a network path',
+    '<h2 id="flow">Source flow</h2><p style="background:url(//host/x.png)">a</p>',
+    'p',
+    'style',
+  ],
+  [
+    'a poster of another host',
+    '<h2 id="flow">Source flow</h2><video poster="//host/p.png"></video>',
+    'video',
+    'poster',
+  ],
+  [
+    'a background of a table cell',
+    '<h2 id="flow">Source flow</h2><table><tr><td background="//host/x.png">c</td></tr></table>',
+    'td',
+    'background',
+  ],
+  [
+    'a ping on a link',
+    '<h2 id="flow">Source flow</h2><p><a href="#flow" ping="https://host/p">up</a></p>',
+    'a',
+    'ping',
+  ],
+  [
+    'image candidates of a srcset',
+    '<h2 id="flow">Source flow</h2><p><img src="a.png" srcset="b.png 2x" alt=""></p>',
+    'img',
+    'srcset',
+  ],
+  [
+    'a src outside an image',
+    '<h2 id="flow">Source flow</h2><div src="a.png">d</div>',
+    'div',
+    'src',
+  ],
+])
+  test(`a page with ${form} is refused with the sentence that names the element, the attribute and the attributes an article may carry`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-attribute-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = content
+
+      // Act
+      const refusal = await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }).then(
+        () => 'published',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.equal(refusal, refusalOfAttribute(tag, name))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the articles agents write, which the list of attributes an article needs must not refuse; fails_when=the allowlist leaves out an attribute of a table, a list, a quote, a time, an open detail or accessibility, or `src` on an image, so a real article is refused; why_new=Cycle 0046 /ship third review W4 (the allowlist was checked against the 46 pages real chats wrote on the development host); seam=none (the shipped publisher)
+test('a page whose elements carry every attribute an article may carry is published as authored', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-allowed-attributes-')),
+  )
+  const content =
+    '<h2 id="flow" class="lead" lang="en" dir="ltr" title="Flow" role="note" aria-label="The flow">Source flow</h2>' +
+    '<p><img src="flow.png" alt="Flow" width="10" height="10"></p>' +
+    '<table><tr><th scope="col" id="head">h</th></tr><tr><td colspan="1" rowspan="1" headers="head">d</td></tr></table>' +
+    '<details open><summary>More</summary><p>m</p></details>' +
+    '<ol start="3" reversed><li>three</li></ol>' +
+    '<p><time datetime="2026-10-18">today</time></p>' +
+    '<blockquote cite="https://example.com/quote"><p>q</p></blockquote>'
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml = content
+
+    // Act: the article as published, or the refusal.
+    const published = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    }).then(
+      (pages) =>
+        /<\/details>(.*)<\/article>/.exec(pages.get('index.html'))?.[1],
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(published, content)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who opens a published page from disk, where no reader sends a Content-Security-Policy; fails_when=the page carries no policy of its own, so an event attribute or a javascript: address its content holds (a page published before the publisher refused them, or edited by hand) runs, or the policy does not name the hash of the shell's own script, so the theme button and the offline question note stop working; why_new=Cycle 0046 /ship follow-up N5 (finding F2's offline side); seam=none
+test('a published page carries a Content-Security-Policy that lets only the shell’s own script run, by its hash, before anything of its content', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-page-policy-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the policy stands in the head, before the title and the article, and the shell's one script is the one its hash names.
+    const page = pages.get('index.html')
+    const shellScript = /<script>([\s\S]*?)<\/script>/.exec(page)?.[1] ?? ''
+    assert.deepEqual(
+      {
+        head: page.slice(0, page.indexOf('<title>')),
+        scriptHash: createHash('sha256').update(shellScript).digest('base64'),
+        scripts: page.match(/<script\b/g)?.length,
+      },
+      {
+        head: "<!doctype html>\n<html lang=\"en\" data-codebook-reader=\"2\">\n<head>\n<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'\">\n",
+        scriptHash: 'IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=',
+        scripts: 1,
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the theme button and the offline note of every page published from a Windows checkout with core.autocrlf=true, or from a VSIX packaged from one, where the reader shell has CRLF line endings; fails_when=the publisher hashes and writes the shell's script with its CRLF bytes, while a browser's HTML parser reads every CRLF and lone CR as LF before a Content-Security-Policy hashes an inline script, so the page's own policy names a hash that matches nothing and the shell's script is blocked, opened from disk and under the reader alike, and the reader's known hash no longer names it either; why_new=Cycle 0046 /ship Codex structured review CX5 (P2); seam=a copy of the page renderer whose `node:fs/promises` reads the reader shell with CRLF line endings, by the loader hook of scripts/tests/utils/markedCopyHooks.mjs (`?crlf-shell`)
+test('a page rendered from a reader shell with CRLF line endings is written with LF line endings, and its policy names the hash of its script as a browser reads it, the known one', async () => {
+  // Arrange: a copy of the page renderer that reads the shell as a Windows checkout with core.autocrlf=true holds it.
+  const { renderWikiPages: renderFromCrlfShell } = await loadMarkedCopy(
+    'render-wiki.mjs',
+    '?crlf-shell',
+  )
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-crlf-shell-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+
+    // Act
+    const page = (
+      await renderFromCrlfShell(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert: no carriage return anywhere in the page, the policy in the head, and the script the policy names as a browser hashes it.
+    const shellScript = /<script>([\s\S]*?)<\/script>/.exec(page)?.[1] ?? ''
+    assert.deepEqual(
+      {
+        hasCarriageReturn: page.includes('\r'),
+        policy:
+          /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(
+            page,
+          )?.[1],
+        scriptHash: createHash('sha256').update(shellScript).digest('base64'),
+      },
+      {
+        hasCarriageReturn: false,
+        policy:
+          "default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; connect-src 'self'; frame-src 'none'; form-action 'self'; script-src 'self' 'sha256-IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE='; object-src 'none'; base-uri 'none'",
+        scriptHash: 'IQM/39cvrMJGhTu7L3jOcv4X2HfR2w4pg1fpcbs7+lE=',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the links and images an article is written with, which the refusal of script must not take; fails_when=the check refuses a relative path, a fragment, a web, mail or editor address, a Codebook address whose scheme and authority are written in another case (a browser compares them without case), a path with an ampersand that begins no reference, or reads an escaped code example or a comment as markup; why_new=Cycle 0046 /ship finding F2: the new refusal reads start tags and addresses; repeat testing review TC7: no test held the comparison without case; seam=none
+test('a page that links to a relative path, a fragment, a web, mail or editor address, and shows an event attribute and a javascript: link only as escaped text or in a comment, is published as authored', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-addresses-')),
+  )
+  const content =
+    '<h2 id="flow">Source flow</h2>' +
+    '<p><a href="pages/a&amp;b.html#start">A page</a> <a href="#flow">Up</a> <a href="../outside.html">Out</a> ' +
+    '<a href="https://example.com/?a=1&amp;b=2#c">Web</a> <a href="mailto:team@example.com">Mail</a> ' +
+    '<a href="vscode://laststance.codebook/source?root=%2Frepo">VS Code</a> <a href="cursor://laststance.codebook/source?root=%2Frepo">Cursor</a> ' +
+    '<a href="VSCode://LastStance.Codebook/source?path=a.ts">VS Code in another case</a> ' +
+    '<img src="flow.png" alt="Flow"></p>' +
+    '<pre><code>&lt;img onerror="run()"&gt; &lt;a href="javascript:run()"&gt;</code></pre>' +
+    '<!-- <a href="javascript:run()" onclick="run()">old</a> -->'
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml = content
+
+    // Act: the article as published, or the refusal.
+    const published = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    }).then(
+      (pages) =>
+        /<\/details>(.*)<\/article>/.exec(pages.get('index.html'))?.[1],
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(published, content)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a page that uses a custom element whose name starts with the name of an element a page must not hold; fails_when=the check takes the hyphen for the end of the name again, so `<link-card>`, `<main-nav>`, `<template-part>` or `<svg-icon>` is refused as a link, a main, a template or authored SVG; why_new=Cycle 0046 row 207 (the names ended at a word boundary, and a hyphen is one); seam=none
+test('a page with custom elements whose names start with the name of an element a page must not hold is published: a name is matched whole', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-custom-element-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<h2 id="flow">Source flow</h2><link-card>A card</link-card><main-nav>Parts</main-nav><template-part>One part</template-part><svg-icon></svg-icon>'
+    manifest.pages[0].contentHtml = content
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the rule that a page holds no document part, link or authored SVG, however the tag goes on after its name; fails_when=matching a name whole lets through a tag whose name is followed by a slash, a line end or the tag's end; why_new=Cycle 0046 row 207; seam=none
+for (const [element, sentence] of [
+  [
+    '<main>',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <main>.',
+  ],
+  [
+    '<link/>',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <link>.',
+  ],
+  [
+    '<svg\nwidth="10">',
+    'Wiki page index.html must use diagram records and figure slots instead of authored SVG.',
+  ],
+])
+  test(`a page that holds ${JSON.stringify(element)} is still refused: the name is whole there`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-whole-name-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${element}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: sentence },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the agent's way from the refusal to the place in a long page; fails_when=the refusal for an element a page must not hold no longer names the element it found, so the agent has to search the page for two dozen names, or names another than the first one, or copies the page's capitals or the slash of an end tag into the name; why_new=Cycle 0046 row 205 (the sentence named the page alone); seam=none
+test('the refusal for an element a page must not hold names the first one it found, in small letters and without the slash of an end tag', async () => {
+  // Arrange: a page whose first such tag is the end tag of a form in capitals inside a comment, with a template after it; and a page that holds a meta element.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-names-element-')),
+  )
+  try {
+    const endTagInCapitals = await readerInput(root)
+    endTagInCapitals.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><!-- </FORM> --><template></template>'
+    const metaElement = await readerInput(root)
+    metaElement.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><meta charset="utf-8">'
+
+    // Act
+    const refusals = []
+    for (const manifest of [endTagInCapitals, metaElement])
+      refusals.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          () => 'published',
+          (error) => error.message,
+        ),
+      )
+
+    // Assert
+    assert.deepEqual(refusals, [
+      'Wiki page index.html must contain article sections, not a document, form or script: it holds <form>.',
+      'Wiki page index.html must contain article sections, not a document, form or script: it holds <meta>.',
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a page that writes about such elements in an escaped code example, as the bundled skill asks for source code; fails_when=the raw-text check takes escaped text for a tag, so an article about a form or a script can no longer be published; why_new=Cycle 0046 row 192; seam=none
+test('a page that shows a form, a script and authored SVG as escaped text is published with the text as authored', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-escaped-text-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><pre><code>&lt;form&gt;&lt;script&gt;send()&lt;/script&gt;&lt;/form&gt;&lt;svg&gt;&lt;/svg&gt;</code></pre>'
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(
+      html.includes(
+        '<h2 id="flow">Source flow</h2><pre><code>&lt;form&gt;&lt;script&gt;send()&lt;/script&gt;&lt;/form&gt;&lt;svg&gt;&lt;/svg&gt;</code></pre>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page, on whose tags and ids the publisher and a browser must agree: the publisher follows a browser's reading of markup by a pattern, which holds only for markup written plainly; fails_when=a page is published although a `<` of its content begins something a browser reads by other rules (a `<?` or `<!` that is no comment, a CDATA section, a quotation mark that is no attribute's value, a tag or a quoted value that never ends, a bare value with a character a browser takes for an error, an end tag with an attribute, an attribute named twice, an id written with a character reference the publisher does not read), so an id of the reader could stand twice unseen, an outline entry could lead nowhere, or the rest of the page could be taken into an attribute; why_new=Cycle 0046 row 206 (the class of rows 134, 184, 193 and 194, closed by refusing what is not read exactly; it replaces row 193's allowance of a `<` in a bare attribute value); seam=none
+for (const [what, markup, place] of [
+  [
+    'a `<?` that a browser reads as a comment up to the next `>`',
+    '<? <b <h3 id="after">After</h3>',
+    '<? <b <h3 id="after">After</h3>',
+  ],
+  ['a `<!` that is no comment', '<!x <b>', '<!x <b>'],
+  [
+    'a CDATA section',
+    '<math><![CDATA[<h3 id="inside">Inside</h3>]]></math>',
+    '<![CDATA[<h3 id="inside">Inside</h3>]]><',
+  ],
+  [
+    'a quotation mark that is no attribute’s value',
+    '<p a"b>The text says id=fake here" </p>',
+    '<p a"b>The text says id=fake here" </p>',
+  ],
+  [
+    'a quoted attribute value that never ends',
+    '<a href="pages/details.html>More</a>',
+    '<a href="pages/details.html>More</a>',
+  ],
+  [
+    'a bare attribute value that holds a `<`',
+    '<p title=<!-- >A note</p><h3 id="qa-form">The form</h3>',
+    '<p title=<!-- >A note</p><h3 id="qa-form',
+  ],
+  [
+    'a bare attribute value that holds an `=`',
+    '<p title=a=b>A note</p>',
+    '<p title=a=b>A note</p>',
+  ],
+  ['an end tag with an attribute', '<p>A note</p id="note">', '</p id="note">'],
+  [
+    'a tag that never ends',
+    '<p>A note</p><div class="more"',
+    '<div class="more"',
+  ],
+  [
+    'an attribute named twice',
+    '<h3 id="note" id="qa-form">A note</h3>',
+    '<h3 id="note" id="qa-form">A note</h3>',
+  ],
+  [
+    'an id written with a character reference without its semicolon',
+    '<h3 id="qa&#45form">The form</h3>',
+    '<h3 id="qa&#45form">The form</h3>',
+  ],
+  [
+    'an id written with a named character reference the publisher does not read',
+    '<p id="a&lowbar;b">A note</p>',
+    '<p id="a&lowbar;b">A note</p>',
+  ],
+  [
+    'an id that ends with a name of the references without its semicolon',
+    '<p id="read&amp">A note</p>',
+    '<p id="read&amp">A note</p>',
+  ],
+])
+  test(`a page with ${what} is refused with the sentence that names the place and says what to write`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-read-exactly-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${markup}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message: `Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: ${place}`,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the ids the publisher reads in a tag that holds a space character a browser does not separate at; fails_when=the publisher separates a tag's name and attributes at every character JavaScript calls white space, so for `<h2\u00a0id="ghost">` it reads an id where a browser reads a tag named `h2\u00a0id="ghost"` without one, and an outline entry for that id is accepted and leads nowhere; why_new=Cycle 0046 row 234 (the patterns used JavaScript's white space class); seam=none
+test('a tag whose name is followed by a no-break space is refused: a browser separates a tag at tab, line feed, form feed, carriage return and space alone', async () => {
+  // Arrange: a heading whose id follows a no-break space, named by the outline; and the same heading with a form feed there, which a browser does separate at.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-tag-space-')),
+  )
+  try {
+    const withNoBreakSpace = await readerInput(root)
+    withNoBreakSpace.pages[0].contentHtml = '<h2\u00a0id="ghost">A ghost</h2>'
+    withNoBreakSpace.pages[0].outline = [{ id: 'ghost', label: 'A ghost' }]
+    const withFormFeed = await readerInput(root)
+    withFormFeed.pages[0].contentHtml = '<h2\fid="real">A heading</h2>'
+    withFormFeed.pages[0].outline = [{ id: 'real', label: 'A heading' }]
+
+    // Act
+    const outcomes = []
+    for (const manifest of [withNoBreakSpace, withFormFeed])
+      outcomes.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          (pages) =>
+            pages.get('index.html').includes('<a href="#real">A heading</a>'),
+          (error) => error.message,
+        ),
+      )
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      'Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: <h2\u00a0id="ghost">A ghost</h2>',
+      true,
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reader's question form, its rail and its layout on a page whose content leaves an element open or closes one too many; fails_when=the publisher publishes content that is not balanced, so a table left open takes the question form's field and button out of the form and the rail into the article, an end tag too many closes the reader's layout, and a link or an emphasis left open is opened again around everything after the article; why_new=Cycle 0046 row 233 (the publisher read tags and not which elements are open); seam=none
+test('a page whose content leaves a table or an inline element open, or closes a div it did not open, is refused with the tag and what to do', async () => {
+  // Arrange: the three pages of the review, the third with each of its inline elements.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-unbalanced-')),
+  )
+  try {
+    const contents = [
+      '<h2 id="flow">Source flow</h2><table><tr><td>cell</td></tr>',
+      '<h2 id="flow">Source flow</h2><div><p>x</p></div></div><p>After the section.</p>',
+      '<h2 id="flow">Source flow</h2><p>Explained.</p><a href="#flow">A link',
+      '<h2 id="flow">Source flow</h2><p>Explained with <strong>emphasis.</p>',
+      '<h2 id="flow">Source flow</h2><p>Explained with <code>code',
+    ]
+
+    // Act
+    const messages = []
+    for (const contentHtml of contents) {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = contentHtml
+      messages.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          () => 'published',
+          (error) => error.message,
+        ),
+      )
+    }
+
+    // Assert
+    assert.deepEqual(messages, [
+      "Wiki page index.html opens <table> and never closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html has </div> without a <div> it opens; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <a> and never closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <strong> and does not close it before </p>; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <code> and never closes it; close every element inside the page's content, the last opened first.",
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reader's layout on a page whose every start tag has an end tag, but in an order a browser does not keep; fails_when=the publisher counts tags instead of following which element is open, so it publishes elements closed out of order, or an element that a browser closes by force at a list item, a button, a link, a heading or a table inside it, whose own end tag then closes the reader's layout or whose id then stands twice in the page; why_new=Cycle 0046 row 233 (found by comparing the rule with the browser's own parser on generated pages); seam=none
+test('a page whose elements are closed out of order, or which a browser would close by force at a list item, a button, a link, a heading or a table, is refused with the element left open and the tag it is open at', async () => {
+  // Arrange: in each content every start tag has its end tag.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-out-of-order-')),
+  )
+  try {
+    const contents = [
+      '<h2 id="flow">Source flow</h2><p><b><i>x</b></i></p>',
+      '<h2 id="flow">Source flow</h2><ul><li><div>a<li>b</div></ul>',
+      '<h2 id="flow">Source flow</h2><button type="button"><span>a<button type="button">b</button></span></button>',
+      '<h2 id="flow">Source flow</h2><table><tr><table><tr><td>x</td></tr></table></tr></table>',
+      '<h2 id="flow">Source flow</h2><table><tr><td><div>a<tr><td>b</div></table>',
+      '<h2 id="flow">Source flow</h2><math><mrow><mi>x</mi></math>',
+      '<h2 id="flow">Source flow</h2><p><a href="#flow" id="more">More <span>with <a href="#flow">a link inside</a></span></a></p>',
+      '<h2 id="flow">Source flow<h3>A part</h3></h2>',
+    ]
+
+    // Act
+    const messages = []
+    for (const contentHtml of contents) {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = contentHtml
+      messages.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          () => 'published',
+          (error) => error.message,
+        ),
+      )
+    }
+
+    // Assert
+    assert.deepEqual(messages, [
+      "Wiki page index.html opens <i> and does not close it before </b>; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <div> and does not close it before <li>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <button> and does not close it before <button>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <table> and does not close it before <table>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <div> and does not close it before <tr>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <mrow> and does not close it before </math>; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <a> and does not close it before <a>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      "Wiki page index.html opens <h2> and does not close it before <h3>, where a browser closes it; close every element inside the page's content, the last opened first.",
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reader's layout on a page that writes an HTML block in the markup of mathematics; fails_when=the publisher takes everything between <math> and </math> for nested markup, while a browser ends the mathematics at an HTML start tag such as <li> or <div> and reads it in the page around it, where a list item closes a div by force and that div's own end tag then closes the reader's layout; or it takes an element a page names `mi` outside mathematics for the boundary that a text element of mathematics is; why_new=Cycle 0046 row 233 (found while checking the rule against the parsing rules of mathematics); seam=none
+test('an HTML element in the markup of mathematics, where a browser ends the mathematics, is refused; in a text element of mathematics it is published', async () => {
+  // Arrange: a list item in the markup of mathematics; the same nesting with an element named `mi` and no mathematics; and HTML inside `mtext`, with a line break as HTML has it and a paragraph that does not end the one around the mathematics.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-math-')),
+  )
+  try {
+    const contents = [
+      '<h2 id="flow">Source flow</h2><ul><li><div><math><li>x</li></math></div></li></ul>',
+      '<h2 id="flow">Source flow</h2><ul><li><div><mi><li>x</li></mi></div></li></ul>',
+      '<h2 id="flow">Source flow</h2><p>With <math><mrow><mtext>a <b>bold</b> word<br><p>and a paragraph</p></mtext><mi>x</mi></mrow></math></p>',
+    ]
+
+    // Act
+    const outcomes = []
+    for (const contentHtml of contents) {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = contentHtml
+      outcomes.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          (pages) => pages.get('index.html').includes(contentHtml),
+          (error) => error.message,
+        ),
+      )
+    }
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      'Wiki page index.html has <li> inside <math> outside its text; inside mathematics write HTML elements only in <mi>, <mo>, <mn>, <ms> or <mtext>.',
+      "Wiki page index.html opens <div> and does not close it before <li>, where a browser closes it; close every element inside the page's content, the last opened first.",
+      true,
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=an outline entry that names a table part written outside a table; fails_when=the publisher reads `<td id="part">` outside a table as an element with that id, which a browser drops when it builds the page, so the outline entry is accepted and leads nowhere, and the dropped part counts as a boundary that hides an element left open behind it; why_new=Cycle 0046 row 233 (the first line of the limit stated with row 215); seam=none
+test('a table part outside a table is refused: a browser drops its tag, so an outline entry for its id would lead nowhere', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-table-part-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><td id="part">A cell</td>'
+    manifest.pages[0].outline = [{ id: 'part', label: 'A cell' }]
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message:
+          "Wiki page index.html has <td> outside a table; write a table's parts inside a <table>.",
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=pages written the way HTML allows, without the end tags of paragraphs, list items, description terms and details, table parts, options and the parts of a ruby, and with void elements, mathematics and an element of any name; fails_when=the balance rule asks for an end tag HTML lets an author leave out, takes a void element for an open one, or closes inside a table cell or a nested list what belongs to the table or list around it, so the publisher refuses a page a browser builds exactly as written; why_new=Cycle 0046 row 233 (the rule may refuse no page that is balanced); seam=none
+test('a page that leaves out the end tags HTML lets an author leave out is published as written, with void elements, nested lists and tables, and mathematics', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-optional-end-tags-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const contentHtml =
+      '<h2 id="flow">Source flow</h2>' +
+      '<p>one<p>two<ul><li>a<li>b<p>c<ul><li>inner</ul><li>d</ul>' +
+      '<dl><dt>term<dd>detail<dt>second term<dd>second detail</dl>' +
+      '<table><caption>Calls<colgroup><col><col><thead><tr><th>from<th>to<tbody><tr><td>a<td>b<tr><td>c<td><p>d<table><tr><td>inner</table></table>' +
+      '<div><p>with <a href="#flow"><strong>a link</strong> and <code>code</code></a><br><img src="assets/a.png" alt="A"><image src="assets/b.png" alt="B"><hr></div>' +
+      '<blockquote><p>quoted</blockquote><details><summary>More</summary><p>detail</details>' +
+      '<ruby>漢<rp>(<rt>kan<rp>)</ruby><button>Go</button>' +
+      '<datalist id="names"><option>a<option>b</datalist>' +
+      '<constructor>an element of a name JavaScript objects have</constructor>' +
+      '<math><mrow><mi>x</mi><mo>+</mo><mspace width="1em"/><mn>1</mn></mrow></math>' +
+      '<p>the last paragraph'
+    manifest.pages[0].contentHtml = contentHtml
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.equal(html.includes(contentHtml), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=an id that holds an ampersand which begins no character reference, as a section about "R&D" may have; fails_when=the publisher refuses such an id although it and a browser read the same text, and tells the author to write as plain text what is plain text; why_new=Cycle 0046 row 236 (every ampersand before a letter, a digit or `#` was refused); seam=none
+test('an id with an ampersand that begins no character reference is published as authored: before one letter, a digit, another character or the id’s end', async () => {
+  // Arrange: no name of a browser's table of references has one character or begins with a digit, and `&#` begins a number only before a digit.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-ampersand-id-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<h2 id="flow">Source flow</h2><p id="q&a">One</p><p id="R&D">Two</p><p id="a&1b">Three</p>' +
+      '<p id="x&-y">Four</p><p id="a&#b">Five</p><p id="a&#xg">Six</p><p id="end&">Seven</p>'
+    manifest.pages[0].contentHtml = content
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the markup an article is written in, which the rule above must not refuse; fails_when=the publisher refuses a `<` that is text for a browser (before a space, a digit or the page's end), a tag with a slash before its end, a bare attribute value, an attribute directly after a closing quote, an ampersand in an address, an id written with `&amp;` or a numeric reference, a custom element, or mathematics with an id inside, whose id it must read and rename like any other; why_new=Cycle 0046 row 206 (the rule was run over the 104 pages of the real Wikis on this machine first and refused none); seam=none
+test('a page whose every < is text, a comment that ends, an end tag or a plainly written start tag is published as authored, and an id inside mathematics is read like any other', async () => {
+  // Arrange: the forms an article uses, and a mathematics element one of whose parts carries an id of the reader.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-read-exactly-ok-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const authored =
+      '<h2 class="title"id="flow">Source flow</h2><p>When a < b and 1 <2, see <!-- a note --> the list.</p>' +
+      '<p lang=en title=\'it says "a > b"\'>A line<br/>and <img src=pages/a.png alt="A figure" /> a figure.</p>' +
+      '<p id="read&amp;write"><a href="pages/details.html?from=overview&part=2#more">More</a> <code-sample class=ts>let a</code-sample></p>' +
+      '<math><mi id="qa-form">x</mi></math><p>The end <'
+    manifest.pages[0].contentHtml = authored
+    manifest.pages.push({
+      path: 'pages/details.html',
+      title: 'Details',
+      section: 'Guide & concepts',
+      contentHtml: '<h2 id="more">More</h2><p>Explained from source.</p>',
+      sources: [{ path: 'source.ts', line: 1 }],
+      outline: [{ id: 'more', label: 'More' }],
+    })
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert: everything as authored, but for the id of the reader inside the mathematics, which is renamed.
+    assert.ok(
+      html.includes(
+        authored.replace(
+          '<mi id="qa-form">x</mi>',
+          '<mi id="page-qa-form">x</mi>',
+        ),
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reader's own controls and the publisher's reading of a page that holds a select element; fails_when=a select is published: a browser drops or rearranges tags inside it by rules of its own, so an id the publisher reads there may be no element; why_new=Cycle 0046 row 206; seam=none
+test('a page that holds <select> is refused like a page that holds a form or a script', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-select-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><select><option>One</option></select>'
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message:
+          'Wiki page index.html must contain article sections, not a document, form or script: it holds <select>.',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page, whose tags and ids the publisher and a browser must read alike, and the reader's own form, rail and script after the article; fails_when=a page with an element whose content a browser reads as text (or keeps out of the document, as a template's) is published: the publisher reads tags in that content that are none, and one such element that is never closed takes everything after it; why_new=Cycle 0046 row 193; seam=none
+for (const [name, element] of [
+  ['textarea', '<textarea>Notes</textarea>'],
+  ['xmp', '<xmp><b>shown as text</b></xmp>'],
+  ['noembed', '<noembed>No plug-in</noembed>'],
+  ['noframes', '<noframes>No frames</noframes>'],
+  ['plaintext', '<plaintext>'],
+  ['noscript', '<noscript><p>No script</p></noscript>'],
+  ['template', '<template><h3 id="hidden">Not in the page</h3></template>'],
+  ['frame', '<frame src="other.html" id="pane"></frame>'],
+  ['frameset', '<frameset><frame src="other.html"></frameset>'],
+])
+  test(`a page that holds <${name}> is refused like a page that holds a form or a script`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-text-element-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${element}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message: `Wiki page index.html must contain article sections, not a document, form or script: it holds <${name}>.`,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=a page that explains the reader's own markup, for example a section about how diagrams are published; fails_when=the diagram renderer reads the page's text again, so a page that only shows a generated diagram id in an escaped code example or inside a comment is refused as if an element carried it; why_new=Cycle 0046 row 184 (the check looked for the text id="codebook-diagram-…" anywhere in the page's content); seam=none
+test('a page that only shows a generated diagram id in an escaped code example or inside a comment is published', async () => {
+  // Arrange: the diagram "flow" generates the ids codebook-diagram-4-flow, …-title and …-arrow; the page shows two of them as text and none on an element.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-id-shown-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    manifest.pages[0].contentHtml +=
+      '<pre><code>&lt;figure id="codebook-diagram-4-flow"&gt;</code></pre>' +
+      '<!-- <p id="codebook-diagram-4-flow-title">An old note</p> -->'
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert: the figure is generated once, and the example and the comment are printed as authored.
+    assert.equal(
+      html.split(
+        '<figure class="codebook-diagram" id="codebook-diagram-4-flow">',
+      ).length - 1,
+      1,
+    )
+    assert.ok(
+      html.includes(
+        '<pre><code>&lt;figure id="codebook-diagram-4-flow"&gt;</code></pre><!-- <p id="codebook-diagram-4-flow-title">An old note</p> -->',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page with a diagram, whose figure, title and arrow marker are found by their ids; fails_when=an element of the page's content carries one of those ids and the page is published all the same, with the id twice, because the id is written without quotes or with a character reference; why_new=Cycle 0046 row 184 (the check accepted quoted ids only); seam=none
+for (const [form, element] of [
+  ['in quotes', '<p id="codebook-diagram-4-flow">A note</p>'],
+  ['without quotes', '<p id=codebook-diagram-4-flow-title>A note</p>'],
+  [
+    'with a character reference',
+    '<p id="codebook&#45;diagram-4-flow-arrow">A note</p>',
+  ],
+])
+  test(`a page whose element carries a generated diagram id ${form} is refused, because the id would stand twice`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-diagram-id-carried-')),
+    )
+    try {
+      const manifest = await diagramInput(root)
+      manifest.pages[0].contentHtml += element
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: 'Article IDs must not collide with generated diagram IDs.' },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the figure of a diagram, which the learner must see; fails_when=a slot inside a comment that never ends is taken for a slot, so the figure is generated into a comment and the page is published without it; why_new=Cycle 0046 row 184 (the comment check knew closed comments only), and row 194, since which such a page is refused for its comment before any diagram is read; seam=none
+test('a slot inside a comment that never ends is not rendered into the comment: the page is refused for its comment', async () => {
+  // Arrange: the page's only slot stands after the start of a comment that has no end.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-slot-open-comment-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Flow</h2><!-- <figure data-codebook-diagram="flow"></figure>'
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message:
+          'Wiki page index.html has a comment that never ends; close it with -->.',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page's question form, rail and script, which stand after the article; fails_when=a page whose content holds a comment that never ends is published: a browser reads the rest of the article and everything after it as comment, so the page has no question form, no rail and runs no script (observed in the DOM check's browser on the page as published before); why_new=Cycle 0046 row 194; seam=none
+for (const [form, comment] of [
+  ['has no end', '<!-- to do'],
+  ['has a space inside its end', '<!-- to do -- >'],
+  ['has another character inside its end', '<!-- to do --!->'],
+])
+  test(`a page whose comment ${form} is refused with the sentence that says how to close it`, async () => {
+    // Arrange: the comment stands after the page's last paragraph.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-endless-comment-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2><p>Explained from source.</p>${comment}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message:
+            'Wiki page index.html has a comment that never ends; close it with -->.',
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+/** How many times as long as an ordinary refused page of the same size the publisher may take to refuse a crafted one. On the development host (16 CPUs, Node 24) the crafted page took less time than the ordinary one, with or without coverage, while the endless-comment check that ran first took about 6.5 s for it, more than 700 times as long. */
+const CRAFTED_REFUSAL_BOUND_RATIO = 4
+
+/**
+ * The shortest of three times the page renderer takes to refuse a page whose content is `contentHtml`, so a pause of the process in one run does not count; called by the timing test of a crafted page.
+ * @param {string} root - The project of the test, with the source {@link readerInput} writes.
+ * @param {string} contentHtml - The page's content.
+ * @returns {Promise<number>} The time in milliseconds.
+ * @throws When the renderer publishes the page.
+ * @example
+ * await shortestRefusalMs(root, '<p>a</p><? end') // => 5.5
+ */
+async function shortestRefusalMs(root, contentHtml) {
+  const manifest = await readerInput(root)
+  manifest.pages[0].contentHtml = contentHtml
+  const times = []
+  // Three runs, each refused.
+  for (let run = 0; run < 3; run += 1) {
+    const startedMs = performance.now()
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+    )
+    times.push(performance.now() - startedMs)
+  }
+  return Math.min(...times)
+}
+
+// Value: protects=the agent publishing a Wiki, whose page content a repository's text may shape: the publisher must answer it at once, not stall; fails_when=a check that reads start tags by a pattern which also crosses `<` runs before the linear reading, so content of many start tags that never end (`<a "x" ` repeated, about 220 KB) is scanned to its end from every `<` and takes seconds (6.5 s on the development host, plain and under coverage), where an ordinary page of that size is refused in about 6 ms; why_new=Cycle 0046 second /ship OCR2-1; seam=none (the shipped page renderer); no_claim=the time of a page the publisher accepts
+test('a page of about 220 KB of start tags that never end is refused within four times the time of an ordinary refused page of that size', async () => {
+  // Arrange: the crafted content, and an ordinary content of about the same size that a `<?` at its end has refused.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-crafted-refusal-')),
+  )
+  const crafted = '<h2 id="flow">Source flow</h2>' + '<a "x" '.repeat(32_000)
+  const ordinary =
+    '<h2 id="flow">Source flow</h2>' +
+    '<p>Some text with <a href="https://example.com/x">a link</a>.</p>'.repeat(
+      3_500,
+    ) +
+    '<? end'
+  try {
+    // Act
+    const ordinaryMs = await shortestRefusalMs(root, ordinary)
+    const craftedMs = await shortestRefusalMs(root, crafted)
+
+    // Assert
+    assert.ok(
+      craftedMs <= ordinaryMs * CRAFTED_REFUSAL_BOUND_RATIO,
+      `the crafted page took ${craftedMs} ms, the ordinary page ${ordinaryMs} ms`,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the agent told how to mend a refused page: the sentence must name what a browser reads there; fails_when=the endless-comment sentence is given for a `<!--` that stands inside markup a browser reads by other rules (here in what a browser reads as a comment of its own from `<?` to the next `>`), so the agent closes a comment no browser sees and is refused again; why_new=Cycle 0046 second /ship OCR2-1 (the endless-comment sentence now follows the linear reading); seam=none (the shipped page renderer)
+test('a page whose `<!--` without an end stands after a `<?` is refused with the sentence that names the `<?`, not with the sentence about the comment', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-comment-after-unread-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><? a note <!-- to do'
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message:
+          'Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text, with & as &amp;; it starts: <? a note <!-- to do',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a page with comments in every form a browser ends, and the headings after them; fails_when=the publisher takes a comment that ends with "--!>", or the comments "<!-->" and "<!--->", or a "<!--" inside an attribute value for a comment that runs on, so it refuses a page a browser reads whole, or no longer sees the anchors after such a place; why_new=Cycle 0046 row 194 (each form was run in the DOM check's browser); seam=none
+test('a page whose comments end is published in every form a browser takes for the end of a comment, and the anchors after each are read', async () => {
+  // Arrange: a comment that ends with -->, one that ends with --!>, the comments <!--> and <!--->, and a title that only shows the start of a comment; a heading follows each.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-closed-comments-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<!-- one --><h2 id="one">One</h2><!-- two --!><h2 id="two">Two</h2>' +
+      '<!--><h2 id="three">Three</h2><!---><h2 id="four">Four</h2>' +
+      '<p title="<!--">A title that shows the start of a comment.</p><h2 id="five">Five</h2>'
+    manifest.pages[0].contentHtml = content
+    manifest.pages[0].outline = ['one', 'two', 'three', 'four', 'five'].map(
+      (id) => ({ id, label: `Part ${id}` }),
+    )
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+    assert.ok(
+      html.includes(
+        '<ul class="outline"><li><a href="#one">Part one</a></li><li><a href="#two">Part two</a></li><li><a href="#three">Part three</a></li><li><a href="#four">Part four</a></li><li><a href="#five">Part five</a></li></ul>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a page with a diagram that also writes about slots; fails_when=the diagram renderer counts the slot attribute or a slot in the page's text again, so a comment that shows another element with the attribute, or an attribute value that quotes a slot, gets the page refused or gets a figure written into the attribute; why_new=Cycle 0046 row 184 (the slots and the slot attribute were counted in the raw text); seam=none
+test('a comment that shows an element with the slot attribute and an attribute value that quotes a slot are no slots: the page is published with its one figure', async () => {
+  // Arrange: the page's slot, a commented-out element that carries the slot attribute, and a paragraph whose title quotes a slot.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-slot-shown-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    manifest.pages[0].contentHtml +=
+      '<!-- <div data-codebook-diagram="flow">An old graph</div> -->' +
+      `<p title='Write <figure data-codebook-diagram="flow"></figure> here'>How a diagram is placed.</p>`
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.equal(html.split('<figure class="codebook-diagram"').length - 1, 1)
+    assert.ok(
+      html.includes(
+        `</figure><!-- <div data-codebook-diagram="flow">An old graph</div> --><p title='Write <figure data-codebook-diagram="flow"></figure> here'>How a diagram is placed.</p>`,
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the agent or the learner who finds a file in the stage that the manifest does not list, as after dropping an asset's entry while its file stays; fails_when=the refusal names no file and gives no step, so nothing tells which file is meant; why_new=Cycle 0046 /ship third review W11 (PD3-7; the test held only the refusal's words before); seam=none
+test('a stray file left in a prepared stage cannot be published as Wiki content, and the refusal names the file and what to do', async () => {
   // Arrange
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-stray-stage-file-')),
@@ -2169,7 +6241,9 @@ test('a stray file left in a prepared stage cannot be published as Wiki content'
     })
 
     // Assert
-    await assert.rejects(publishing, /outside its published manifest/)
+    await assert.rejects(publishing, {
+      message: `The staged Wiki contains a file outside its published manifest: scratch-notes.md. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.`,
+    })
     await assert.rejects(access(output))
     await assert.rejects(access(output + '.publish-journal.json'))
     assert.equal(

@@ -43,6 +43,8 @@ export type CitationSourceStates = Awaited<
 >
 export type StudyProjectionInput = {
   selection: RetainedStudySelection
+  /** Pins an admitted Wiki history visit to its exact observation; omitted for ordinary newest/following projection. */
+  observationId?: RetainedStudy['observations'][number]['id']
   study?: RetainedStudy
   live?: Pick<LiveStudy, 'instanceId' | 'runId' | 'participants'>
   liveDescriptor?: StudyDescriptor

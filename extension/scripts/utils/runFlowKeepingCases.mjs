@@ -2,7 +2,7 @@
  * Runs the Reader DOM flow and answers the cases it collected, also when a step of the flow throws.
  *
  * Why: the flow runs as one call of the browser CLI. When a step threw (a control that is not there, a wait that passed its limit), the call ended without a result, so the report named no case at all and one missing control read like a failure of the harness.
- * Called by `study-bootstrap-qa.mjs`, which writes this function's text into the file the browser CLI runs; it must therefore stay free of imports and outer variables.
+ * Called through {@link readerDomFlowText}, which writes this function's text into the file the browser CLI runs for each of the five Reader DOM checks; it must therefore stay free of imports and outer variables.
  *
  * @param flow - The flow; it gets the page, its options and the lists it adds its cases and page errors to.
  * @param page - The browser page the CLI hands over.

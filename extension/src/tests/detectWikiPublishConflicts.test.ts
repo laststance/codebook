@@ -5,7 +5,9 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
+  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -298,6 +300,33 @@ test('a learner file two folders deep is named with its /-separated path', async
 
     // Assert
     assert.deepEqual(conflicts, ['pages/guides/setup.html'])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the looks of a running update in a project whose Wiki folder's path came to hold a link; fails_when=the look for the learner's own files lists the folder the link leads to and names files of that folder as files the update would overwrite (row 185); why_new=Cycle 0046 row 185; seam=none (a junction on Windows, which needs no right)
+test('a link at the Wiki folder’s own path is not listed through: a file of the folder it leads to is not named as a learner file the candidate would overwrite', async () => {
+  // Arrange: the Wiki with a learner's file is moved aside, a link to it stands at the Wiki folder's path, and a candidate would own the learner's path.
+  const wiki = await publishedWiki()
+  const movedAside = join(wiki.parent, 'wiki-moved-aside')
+  try {
+    await mkdir(join(wiki.output, 'notes'))
+    await writeFile(join(wiki.output, 'notes', 'mine.md'), 'my own notes')
+    await rename(wiki.output, movedAside)
+    await symlink(movedAside, wiki.output, 'junction')
+
+    // Act
+    const conflicts = await detectWikiPublishConflicts(wiki.output, 1_000, [
+      {
+        name: 'wiki.stage-1',
+        writtenAtMs: 2_000,
+        ownedPaths: ['notes/mine.md'],
+      },
+    ])
+
+    // Assert
+    assert.deepEqual(conflicts, [])
   } finally {
     await wiki.cleanup()
   }

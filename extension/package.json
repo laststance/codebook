@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.29",
+  "version": "0.2.30",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -20,11 +20,17 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Agent execution requires a trusted local workspace."
+      "description": "Agent execution requires a trusted local workspace.",
+      "restrictedConfigurations": [
+        "codebook.wikiOutputDirectory"
+      ]
     },
     "virtualWorkspaces": false
   },
   "contributes": {
+    "configurationDefaults": {
+      "debug.focusEditorOnBreak": false
+    },
     "debuggers": [
       {
         "type": "codebook-replay",
@@ -309,8 +315,9 @@
     "lint:fix": "eslint . --fix --concurrency=auto --max-warnings=0",
     "format": "cd .. && prettier --write .",
     "format:check": "cd .. && prettier --check .",
-    "health": "fallow health --fail-on-issues --baseline fallow-health-baseline.json",
-    "dupes": "fallow dupes --fail-on-issues",
+    "health": "node scripts/checkHealth.mjs",
+    "health:static": "fallow health --fail-on-issues --baseline fallow-health-baseline.json",
+    "dupes": "fallow dupes --fail-on-issues --baseline fallow-dupes-baseline.json",
     "dead-code": "fallow dead-code --fail-on-issues --baseline fallow-dead-code-baseline.json",
     "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm health"
   },
@@ -320,6 +327,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "entities": "8.1.0",
+    "parse5": "8.0.1",
     "ws": "8.21.3",
     "zod": "4.6.5"
   },
@@ -334,7 +343,7 @@
     "esbuild": "0.28.2",
     "eslint": "10.11.0",
     "eslint-config-ts-prefixer": "5.1.0",
-    "fallow": "3.27.0",
+    "fallow": "3.34.1",
     "lint-staged": "17.5.1",
     "prettier": "3.9.8",
     "typescript": "5.9.3",

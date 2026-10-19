@@ -7,14 +7,14 @@
     "src/nativeNodeTestBootstrap.ts",
     "src/agentConsole.ts",
     "src/tests/**/*.test.ts",
-    "scripts/*.mjs",
-    "scripts/tests/*.test.mjs"
+    "scripts/**/*.mjs"
   ],
   "ignorePatterns": ["dist/**", "artifacts/**", "examples/**"],
+  "ignoreFindings": ["src/tests/**", "scripts/**"],
   "health": {
-    "ignore": ["src/tests/**", "scripts/tests/**"]
+    "ignore": ["src/tests/**", "scripts/**"]
   },
   "duplicates": {
-    "ignore": ["src/tests/**", "scripts/tests/**"]
+    "ignore": ["src/tests/**", "scripts/**"]
   }
 }

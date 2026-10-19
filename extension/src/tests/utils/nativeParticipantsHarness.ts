@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path'
 import type { TestContext } from 'node:test'
 
-import type { DebugSession } from 'vscode'
+import type { DebugSession, DebugSessionOptions } from 'vscode'
 
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
@@ -40,6 +40,14 @@ import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 const FIRST_ADAPTER_BREAKPOINT_ID = 12
 /** How far the id of a breakpoint the adapter rebound at its pause lies from the acknowledged one. */
 const REBOUND_ID_OFFSET = 1_000
+/** The script and frame id of the page's stub of the server module, in which js-debug pauses the page at a server stop's breakpoint. */
+const SERVER_MODULE_STUB_ID = 'server-module-stub'
+/** Where the runtime first pauses in that stub: its first position, hit by the debugger's own breakpoint there. */
+const SERVER_MODULE_STUB_START = {
+  lineNumber: 0,
+  columnNumber: 0,
+  hitBreakpoints: ['2:0:0:mode'],
+}
 
 /** The source of a participant's fixture that gives none: the one statement of {@link createCrossRuntimeStudy} on line 1 and an empty line 2, declared with `var` so that the participant's stop on line 1, which requires the binding it declares, stays on its declared line. */
 const FIXTURE_SOURCES: Record<Participant, string> = {
@@ -54,6 +62,8 @@ export async function nativeParticipantsHarness(
   options: {
     duplicateServerSession?: boolean
     distinctServerWorker?: boolean
+    /** Models a background Node worker whose PID/cwd match the main server but whose JavaScript thread owns no declared route. */
+    serverWorkerThread?: boolean
     /** Declares a participant's stops at another column of line 1 than the default 1:1, to model a request the debugger binds elsewhere on the line. */
     declaredColumn?: Partial<Record<Participant, number>>
     /** Replaces a participant's sealed map; the default maps only generated 0:0 to source 1:1. */
@@ -65,6 +75,8 @@ export async function nativeParticipantsHarness(
         {
           /** Replaces the participant's one-statement source; its default ({@link FIXTURE_SOURCES}) already has an empty line 2. */
           source?: string
+          /** The module the participant executes, when a build changed the source's text or order (a statement appended at the module's end); by default the executed module is the source text. */
+          javascript?: string
           /** Last line of the participant's citation instead of line 1. */
           citationEndLine?: number
           /** Line the participant's stops are declared on instead of line 1. */
@@ -144,7 +156,9 @@ export async function nativeParticipantsHarness(
   const commands: { participant: Participant; method: string }[] = [],
     released: string[] = []
   const identities: Participant[] = [],
-    launches: DebugSession['configuration'][] = []
+    launches: DebugSession['configuration'][] = [],
+    // What the run asked of the editor beside each configuration of `launches`, in the same order: `undefined` for a start that named no options.
+    launchOptions: (DebugSessionOptions | undefined)[] = []
   let run: ConfiguredBrowserRun,
     sequence = 0,
     breakpointNumber = 0,
@@ -215,11 +229,31 @@ export async function nativeParticipantsHarness(
   let revokeDuringDom = false,
     afterReadyBeforeInput = false,
     afterReadyAfterInput = true,
-    afterReadCount = 0
+    afterReadCount = 0,
+    afterReadBeforeInputCount = 0
   // The failure a test makes the run's place naming throw, as a sealed map that cannot be read would.
   let pausePlaceFailure: string | undefined
   // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
   let earlyBrowserPause: 'pending' | 'sent' | undefined
+  // How many pauses of the page at a server stop's breakpoint, in its stub of the server module, the adapter has reported and nobody resumed yet; each of the next browser continues resumes only one of them.
+  let stubPausesAwaitingResume = 0
+  // How the browser's adapter answers the run's next resume of such a pause: at once, at once while the page does not go on, only once the test releases it, or with a refusal. That resume uses the answer up, and the one after it is answered at once again.
+  let stubResume: 'answered' | 'unresumed' | 'refused' | Promise<void> =
+    'answered'
+  // The editor breakpoints, by participant session, that the adapter sent `changed` news about: the editor keeps no column of such news for a breakpoint that has none of its own.
+  const breakpointsWithNews: Record<Participant, Set<string>> = {
+    browser: new Set(),
+    server: new Set(),
+  }
+  // Where a participant's adapter verifies its breakpoints by news right after it answered their registration as unverified.
+  const verifiedByNewsAt: Partial<
+    Record<Participant, { line: number; column: number }>
+  > = {}
+  // Where the server's adapter reports its breakpoints verified while the run reads the after conditions before the input, once.
+  let newsDuringDomCheck: { line: number; column: number } | undefined
+  // The adapter's next answer to a break location request, kept back until released.
+  let heldBreakLocationAnswer: Promise<void> | undefined,
+    releaseBreakLocationAnswer = (): void => {}
   // The failure a participant's channel answers the run's next read of its earlier pauses with, once.
   let earlierPauseReadFailure:
     { participant: Participant; message: string } | undefined
@@ -241,7 +275,7 @@ export async function nativeParticipantsHarness(
     return {
       sourcePath,
       source: source.text,
-      javascript: source.text,
+      javascript: options.fixture?.[name]?.javascript ?? source.text,
       sourceMap: JSON.stringify({
         version: 3,
         sources: options.otherOriginal?.[name]
@@ -314,6 +348,33 @@ export async function nativeParticipantsHarness(
             },
           ],
         }
+      // The run resumes the page's pause at a server stop's breakpoint: the adapter resumes it and no declared stop follows.
+      if (command === 'continue' && stubPausesAwaitingResume > 0) {
+        stubPausesAwaitingResume--
+        // What a test configured is for this resume alone: the resume of the next such pause is answered at once again unless the test configures it too.
+        const resumeOfThisPause = stubResume
+        stubResume = 'answered'
+        run.onRequest(sessions[name], {
+          type: 'request',
+          seq: ++sequence,
+          command,
+          arguments: args,
+        })
+        // The adapter refuses the resume, or answers it only after the test let it: the page stays paused meanwhile.
+        if (resumeOfThisPause === 'refused')
+          throw new Error('Thread is not paused')
+        // The adapter answers and the page stays paused: no `continued` and no resume of the runtime follow.
+        if (resumeOfThisPause === 'unresumed') return {}
+        if (resumeOfThisPause !== 'answered') await resumeOfThisPause
+        run.onEvent(sessions[name], {
+          type: 'event',
+          seq: ++sequence,
+          event: 'continued',
+          body: { threadId: 1 },
+        })
+        listeners[name].get('Debugger.resumed')?.({})
+        return {}
+      }
       if (command === 'continue') {
         // No round trip on the browser channel came first, so the earlier pause is read only now, after the continuation exists.
         if (earlyBrowserPause === 'pending') {
@@ -354,13 +415,24 @@ export async function nativeParticipantsHarness(
         held.entered()
         await held.wait
       }
-      return breakpoints.some((current) => current.id === breakpoint.id)
+      const current = breakpoints.find(
+        (candidate) => candidate.id === breakpoint.id,
+      )
+      // As VS Code and Cursor do: a breakpoint at character 0 has no column of its own, and the editor drops the column of the adapter's `changed` news about such a breakpoint.
+      const hasNews =
+          current !== undefined && breakpointsWithNews[name].has(current.id),
+        keepsColumn =
+          current !== undefined &&
+          (current.location.range.start.character > 0 || !hasNews)
+      // An adapter that verifies its breakpoints by news after its reply has verified nothing before that news.
+      const awaitsNews = Boolean(verifiedByNewsAt[name]) && !hasNews
+      return current
         ? {
             id:
               adapterId(breakpoint) + (reboundPauseId ? REBOUND_ID_OFFSET : 0),
-            verified: !unboundPause,
+            verified: !unboundPause && !awaitsNews,
             line: boundAt[name].line,
-            column: boundAt[name].column,
+            ...(keepsColumn ? { column: boundAt[name].column } : {}),
             source: {
               path: foreignBinding
                 ? '/foreign/source.ts'
@@ -377,11 +449,24 @@ export async function nativeParticipantsHarness(
         id: 'server-child',
         parentSession: serverParent,
         configuration: { ...serverParent.configuration },
+        ...(options.serverWorkerThread
+          ? {
+              getDebugProtocolBreakpoint: async (breakpoint: {
+                id: string
+              }) => ({
+                id: adapterId(breakpoint),
+                verified: false,
+                line: boundAt.server.line,
+                column: boundAt.server.column,
+              }),
+            }
+          : {}),
       }
     : undefined
   const sessions: Record<Participant, DebugSession> = {
     browser: session('browser'),
-    server: serverChild ?? serverParent,
+    server:
+      options.serverWorkerThread || !serverChild ? serverParent : serverChild,
   }
   const emitScript = (name: Participant) =>
     listeners[name].get('Debugger.scriptParsed')?.({
@@ -412,6 +497,30 @@ export async function nativeParticipantsHarness(
   const emitPause = (name: Participant): void => {
     emitDeclaredPause(name)
     emitStopped(name)
+  }
+  /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, or on this line when the adapter names no column. The editor stand-in then answers a breakpoint requested at column 1 without a column ({@link breakpointsWithNews}). */
+  const announceVerified = (
+    name: Participant,
+    line: number,
+    column?: number,
+  ): void => {
+    for (const breakpoint of breakpoints) {
+      breakpointsWithNews[name].add(breakpoint.id)
+      run.onEvent(sessions[name], {
+        type: 'event',
+        seq: ++sequence,
+        event: 'breakpoint',
+        body: {
+          reason: 'changed',
+          breakpoint: {
+            id: adapterId(breakpoint),
+            verified: true,
+            line,
+            ...(column === undefined ? {} : { column }),
+          },
+        },
+      })
+    }
   }
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold once the input was sent (or at once, when a test says so). */
   const pageEvaluation = (expression: string | undefined): unknown => {
@@ -449,6 +558,7 @@ export async function nativeParticipantsHarness(
       released.push(`${name} proxy`)
       inputResolve()
       heldResponse?.()
+      releaseBreakLocationAnswer()
       this.onClose?.()
     },
     async request(
@@ -495,12 +605,28 @@ export async function nativeParticipantsHarness(
         earlyBrowserPause = 'sent'
         emitDeclaredPause('browser')
       }
+      // The server module loads while the page is read before the input: the adapter announces the module and verifies its pending breakpoints.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === afterExpression &&
+        newsDuringDomCheck
+      ) {
+        const { line, column } = newsDuringDomCheck
+        newsDuringDomCheck = undefined
+        emitScript('server')
+        announceVerified('server', line, column)
+      }
       if (
         method === 'Runtime.evaluate' &&
         parameters?.expression === afterExpression &&
         run.view().operation?.inputDispatched
       )
         afterReadCount++
+      else if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === afterExpression
+      )
+        afterReadBeforeInputCount++
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
@@ -534,6 +660,12 @@ export async function nativeParticipantsHarness(
           end: parameters.end,
         })
         breakLocationRequests.push({ participant: name, ...range })
+        const held = heldBreakLocationAnswer
+        // A held answer keeps this one request open; later requests are answered at once.
+        if (held) {
+          heldBreakLocationAnswer = undefined
+          await held
+        }
         return answer
       }
       if (method === 'Input.dispatchMouseEvent') {
@@ -578,51 +710,65 @@ export async function nativeParticipantsHarness(
   let serverProxyConnections = 0
   const acknowledge = (sourcePath: string): void => {
     for (const name of ['browser', 'server'] as const) {
-      const selected = breakpoints.filter(
-          (breakpoint) => breakpoint.location.uri.fsPath === sourcePath,
-        ),
-        requestSequence = ++sequence
-      run.onRequest(sessions[name], {
-        type: 'request',
-        seq: requestSequence,
-        command: 'setBreakpoints',
-        arguments: {
-          source: { path: sourcePath },
-          breakpoints: selected.map((breakpoint) =>
-            sourceBreakpointRequest(breakpoint.location.range.start),
+      // Editor breakpoints reach both the real server and its same-PID worker target.
+      const targets = [
+        sessions[name],
+        ...(name === 'server' && options.serverWorkerThread && serverChild
+          ? [serverChild]
+          : []),
+      ]
+      for (const target of targets) {
+        const selected = breakpoints.filter(
+            (breakpoint) => breakpoint.location.uri.fsPath === sourcePath,
           ),
-        },
-      })
-      // A request the adapter never answers leaves the breakpoint without a current receipt.
-      if (
-        selected.some(
-          (breakpoint) =>
-            breakpoint.location.range.start.character + 1 === unansweredColumn,
+          requestSequence = ++sequence
+        run.onRequest(target, {
+          type: 'request',
+          seq: requestSequence,
+          command: 'setBreakpoints',
+          arguments: {
+            source: { path: sourcePath },
+            breakpoints: selected.map((breakpoint) =>
+              sourceBreakpointRequest(breakpoint.location.range.start),
+            ),
+          },
+        })
+        // A request the adapter never answers leaves the breakpoint without a current receipt.
+        if (
+          selected.some(
+            (breakpoint) =>
+              breakpoint.location.range.start.character + 1 ===
+              unansweredColumn,
+          )
         )
-      )
-        continue
-      run.onResponse(sessions[name], {
-        type: 'response',
-        seq: ++sequence,
-        command: 'setBreakpoints',
-        request_seq: requestSequence,
-        success: !failedRegistration,
-        body: {
-          breakpoints: selected.map((breakpoint) => ({
-            id: adapterId(breakpoint),
-            // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
-            ...(acknowledgedAt
-              ? {
-                  verified: true,
-                  ...acknowledgedAt({
-                    line: breakpoint.location.range.start.line + 1,
-                    column: breakpoint.location.range.start.character + 1,
-                  }),
-                }
-              : { verified: false }),
-          })),
-        },
-      })
+          continue
+        run.onResponse(target, {
+          type: 'response',
+          seq: ++sequence,
+          command: 'setBreakpoints',
+          request_seq: requestSequence,
+          success: !failedRegistration,
+          body: {
+            breakpoints: selected.map((breakpoint) => ({
+              id: adapterId(breakpoint),
+              // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
+              ...(acknowledgedAt &&
+              !(options.serverWorkerThread && target === serverChild)
+                ? {
+                    verified: true,
+                    ...acknowledgedAt({
+                      line: breakpoint.location.range.start.line + 1,
+                      column: breakpoint.location.range.start.character + 1,
+                    }),
+                  }
+                : { verified: false }),
+            })),
+          },
+        })
+        // The adapter resolved the breakpoints after it answered: it verifies them by news.
+        const news = verifiedByNewsAt[name]
+        if (news) announceVerified(name, news.line, news.column)
+      }
     }
   }
   const vscode = {
@@ -671,8 +817,10 @@ export async function nativeParticipantsHarness(
       async startDebugging(
         _folder: unknown,
         config: DebugSession['configuration'],
+        startOptions?: DebugSessionOptions,
       ) {
         launches.push(config)
+        launchOptions.push(startOptions)
         Object.assign(serverParent.configuration, config)
         run.addSession(serverParent)
         if (serverChild) run.addSession(serverChild)
@@ -818,6 +966,13 @@ export async function nativeParticipantsHarness(
                     : 1235,
                 processGroup: 1234,
                 workspace: repository.directory,
+                isMainThread:
+                  !options.serverWorkerThread ||
+                  candidate === parentServerProxy,
+                threadId:
+                  options.serverWorkerThread && candidate !== parentServerProxy
+                    ? 1
+                    : 0,
               }
             },
             close: async (): Promise<void> => {
@@ -850,6 +1005,35 @@ export async function nativeParticipantsHarness(
     assertWorkspace() {},
     revealSource: async () => {},
   })
+  // The browser events of a page pause in its stub of the server module, shared by the three helpers that report one, so their payloads stay alike.
+  const emitStubScriptParsed = (): void => {
+    listeners.browser.get('Debugger.scriptParsed')?.({
+      scriptId: SERVER_MODULE_STUB_ID,
+      url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
+      executionContextId: 1,
+    })
+  }
+  const emitStubPaused = (place: {
+    lineNumber: number
+    columnNumber: number
+    hitBreakpoints: string[]
+  }): void => {
+    listeners.browser.get('Debugger.paused')?.(
+      debuggerPausedEvent({
+        callFrameId: SERVER_MODULE_STUB_ID,
+        scriptId: SERVER_MODULE_STUB_ID,
+        ...place,
+      }),
+    )
+  }
+  const emitStubStopped = (hitBreakpointIds: number[]): void => {
+    run.onEvent(sessions.browser, {
+      type: 'event',
+      seq: ++sequence,
+      event: 'stopped',
+      body: { reason: 'breakpoint', threadId: 1, hitBreakpointIds },
+    })
+  }
   return {
     ...repository,
     run,
@@ -858,6 +1042,7 @@ export async function nativeParticipantsHarness(
     released,
     identities,
     launches,
+    launchOptions,
     breakpoints,
     sessions,
     proxies,
@@ -881,6 +1066,10 @@ export async function nativeParticipantsHarness(
     /** How many times the run read the after conditions after the input. */
     afterReads(): number {
       return afterReadCount
+    },
+    /** How many times the run read the after conditions before the input: once per read of the page at the input boundary. */
+    afterReadsBeforeInput(): number {
+      return afterReadBeforeInputCount
     },
     /** Makes naming a paused place throw this failure, as a sealed map that cannot be read would at a deadline. */
     failPausePlace(message: string): void {
@@ -987,6 +1176,83 @@ export async function nativeParticipantsHarness(
         debuggerPausedEvent({ callFrameId: 'adapter-frame', ...place }),
       )
     },
+    /**
+     * Pauses the page at a server stop's breakpoint in its stub of the server module, as js-debug does when the editor sent that breakpoint to the browser session too and the stub's map holds its line: the runtime pause at the stub's first line, then the `stopped` whose breakpoint ids name the server breakpoint's id in the browser session. The run's next browser `continue` resumes only this pause.
+     * @param serverBreakpoint - The server stop's editor breakpoint, whose adapter id the `stopped` names first.
+     * @param otherHitIds - Adapter ids of further breakpoints the same pause hit (a breakpoint of the page's own at the same place), named after the server breakpoint's; none by default.
+     * @example
+     * harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)        // hitBreakpointIds: [12]
+     * harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!, [999]) // hitBreakpointIds: [12, 999]
+     */
+    pauseBrowserAtServerBreakpoint(
+      serverBreakpoint: { id: string },
+      otherHitIds: readonly number[] = [],
+    ): void {
+      stubPausesAwaitingResume++
+      emitStubScriptParsed()
+      emitStubPaused(SERVER_MODULE_STUB_START)
+      emitStubStopped([adapterId(serverBreakpoint), ...otherHitIds])
+    },
+    /**
+     * Pauses the page in its stub of the server module and keeps the adapter's `stopped` back: the runtime's pause is read now, and the `stopped` that names the server breakpoint only when the test calls `stopped`, as an adapter that first resolves which breakpoints were hit reports it.
+     * @example const stub = harness.pauseBrowserInServerStub(harness.breakpoints[0]!); harness.advance(300); stub.stopped()
+     */
+    pauseBrowserInServerStub(serverBreakpoint: { id: string }): {
+      stopped(): void
+    } {
+      stubPausesAwaitingResume++
+      emitStubScriptParsed()
+      emitStubPaused(SERVER_MODULE_STUB_START)
+      return {
+        stopped: (): void => {
+          emitStubStopped([adapterId(serverBreakpoint)])
+        },
+      }
+    },
+    /**
+     * Announces the page's pause at a server stop's breakpoint in the order the two channels were read natively: the adapter's `stopped`, which names the server breakpoint, first, and the runtime's pause only when the test calls `paused`.
+     * @example const stub = harness.announceBrowserStopAtServerBreakpoint(harness.breakpoints[0]!); stub.paused()
+     */
+    announceBrowserStopAtServerBreakpoint(serverBreakpoint: { id: string }): {
+      paused(): void
+      pausedAtBreakpoint(lineNumber: number, columnNumber: number): void
+    } {
+      stubPausesAwaitingResume++
+      emitStubScriptParsed()
+      emitStubStopped([adapterId(serverBreakpoint)])
+      return {
+        paused: (): void => {
+          emitStubPaused(SERVER_MODULE_STUB_START)
+        },
+        /** Sends the runtime's pause at the breakpoint itself, at this zero-based generated place of the stub, as the native journal shows it after the debugger's own pause at the module's first position (`paused`, which the debugger resumes itself): the breakpoint the debugger set in that script by its id. */
+        pausedAtBreakpoint: (
+          lineNumber: number,
+          columnNumber: number,
+        ): void => {
+          emitStubPaused({
+            lineNumber,
+            columnNumber,
+            hitBreakpoints: [`4:${lineNumber}:0:${SERVER_MODULE_STUB_ID}`],
+          })
+        },
+      }
+    },
+    /** Makes the browser's adapter refuse the run's resume of the next page pause at a server stop's breakpoint, as an adapter whose thread is no longer paused does. @example harness.refuseStubResume() */
+    refuseStubResume(): void {
+      stubResume = 'refused'
+    },
+    /** Makes the browser's adapter answer the run's resume of the next page pause at a server stop's breakpoint while the page stays paused: the request succeeds and neither a `continued` nor a resume of the page's runtime follows. @example harness.answerStubResumeWithoutResuming() */
+    answerStubResumeWithoutResuming(): void {
+      stubResume = 'unresumed'
+    },
+    /** Keeps the browser adapter's answer to the run's resume of the next page pause at a server stop's breakpoint back until released, so a test can let time pass while the page is still paused. @example const resume = harness.holdStubResume(); harness.advance(300); resume.release() */
+    holdStubResume(): { release(): void } {
+      let release = (): void => {}
+      stubResume = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return { release }
+    },
     /** Ends the wait for an accepted stop's own pause after one look, as its 3 s bound would. */
     expireSourceBoundWait(): void {
       sourceBoundWaitExpired = true
@@ -1019,27 +1285,35 @@ export async function nativeParticipantsHarness(
     bindAt(name: Participant, line: number, column: number): void {
       boundAt[name] = { line, column }
     },
-    /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, as js-debug reports a pending breakpoint when its module loads. */
+    /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, as js-debug reports a pending breakpoint when its module loads; without a column the adapter names the line only. Afterwards the editor stand-in answers a breakpoint requested at column 1 without a column, as VS Code and Cursor do. */
     announceBreakpointVerified(
+      name: Participant,
+      line: number,
+      column?: number,
+    ): void {
+      announceVerified(name, line, column)
+    },
+    /** Makes a participant's adapter verify its breakpoints by news at this position right after it answered their registration as unverified, as an adapter that resolves a breakpoint after its reply does; until that news the editor stand-in answers the binding as unverified. @example harness.verifyRegistrationsByNews('browser', 1, 3) */
+    verifyRegistrationsByNews(
       name: Participant,
       line: number,
       column: number,
     ): void {
-      for (const breakpoint of breakpoints)
-        run.onEvent(sessions[name], {
-          type: 'event',
-          seq: ++sequence,
-          event: 'breakpoint',
-          body: {
-            reason: 'changed',
-            breakpoint: {
-              id: adapterId(breakpoint),
-              verified: true,
-              line,
-              column,
-            },
-          },
-        })
+      verifiedByNewsAt[name] = { line, column }
+    },
+    /** Makes the server's adapter announce the server module and report its breakpoints verified at this position while the run reads the after conditions before the input, once: the news arrives between the page reads and the last receipt check. @example harness.announceServerBreakpointVerifiedDuringDomCheck(4, 1) */
+    announceServerBreakpointVerifiedDuringDomCheck(
+      line: number,
+      column: number,
+    ): void {
+      newsDuringDomCheck = { line, column }
+    },
+    /** Keeps the adapter's next answer to a break location request back until released (or the connection closes), so a test can act while that judgement is still open; later requests are answered at once. @example const answer = harness.holdBreakLocationAnswer(); answer.release() */
+    holdBreakLocationAnswer(): { release(): void } {
+      heldBreakLocationAnswer = new Promise<void>((resolve) => {
+        releaseBreakLocationAnswer = resolve
+      })
+      return { release: (): void => releaseBreakLocationAnswer() }
     },
     /** Acknowledges later registrations as verified at this position, as an adapter does for a module that is already loaded. */
     acknowledgeRegistrationsAt(line: number, column: number): void {

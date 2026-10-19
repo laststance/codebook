@@ -70,7 +70,7 @@ export async function readRepositoryResource(
         'INVALID_REFERENCE',
         'No cited source with this index in the selected revision.',
       )
-    // The exact bytes stay the content; the numbered copy lets an agent that declares a stop on this revision take its line from Codebook.
+    // An MCP resource read answers the exact bytes; codebook_read_resource answers the numbered copy in their place, so an agent that declares a stop on this revision takes its line from Codebook.
     return {
       uri,
       mimeType: 'text/plain',

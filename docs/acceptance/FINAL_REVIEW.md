@@ -1,6 +1,6 @@
 # Final acceptance: nine required projects in two stages
 
-Authority: PRODUCT_GOAL version 9, D029's nine-project stages and D030's feature separation and D032's synchronized replay and D033's skill-first DeepWiki reproduction, 2026-09-26. This protocol replaces the ten consecutive fresh-reviewer rule, random selection, ten-repository recommendation, reuse and reset-to-zero policies. The [old version 5 protocol](history/FINAL_REVIEW_V5.md) remains historical only. It requires all active capabilities (G01–G07, G10–G12): real-project live explanation, saved learning replay, independent LLM Wiki and separate owner acceptance. G08/G09 and the three-theme selector are retired; distinct feature screens remain.
+Authority: PRODUCT_GOAL version 10, D029's nine-project stages and D030's feature separation and D032's synchronized replay and D033's skill-first DeepWiki reproduction, 2026-09-26. This protocol replaces the ten consecutive fresh-reviewer rule, random selection, ten-repository recommendation, reuse and reset-to-zero policies. The [old version 5 protocol](history/FINAL_REVIEW_V5.md) remains historical only. It requires all active capabilities (G01–G07, G10–G12): real-project live explanation, saved learning replay, independent LLM Wiki and separate owner acceptance. G08/G09 and the three-theme selector are retired; distinct feature screens remain.
 
 ## Required targets and execution forms
 
@@ -20,7 +20,7 @@ The main agent personally completes every required project/host/use-case row fir
 
 Do not rescue the flow with internal manual MCP calls, direct source fixes, developer-only operations, prepared stop/value answer keys or unpublished wiring. Publicly documented debugger configuration is permitted, with its steps and burden recorded. Read-only audit of evidence can verify a performed action; it cannot complete a missing product action. Preserve failures when development repairs are needed, then install a newly identified package and retest normally.
 
-**Stage 2 cannot start until all nine projects, both hosts and every required use case pass Stage 1, and the complete candidate has all active capabilities and integrated feature evidence under version 9.** Development successes do not retrospectively become Stage 1 passes.
+**Stage 2 cannot start until all nine projects, both hosts and every required use case pass Stage 1, and the complete candidate has all active capabilities and integrated feature evidence under version 10.** Development successes do not retrospectively become Stage 1 passes.
 
 ## Stage 2: nine independent junior-developer reviewers
 
@@ -85,4 +85,4 @@ Final closure requires all valid Stage 1 and Stage 2 rows, complete active-capab
 
 ## Current state
 
-NOT STARTED under version 9. The documentation update does not establish synchronized native-debugger replay/time travel, independent Wiki, new UI or demo-removal implementation. Final trial revisions and detailed applicable runtime/use-case mapping remain to be frozen; all nine targets still require both-host practical trials; no Stage 1 or Stage 2 PASS exists. Historical demos, Cycle 0019 preflight and later ordinary-chat development checks remain useful development evidence only. The final candidate and final distribution hash are not frozen. See the matrix and PROJECT_STATE.md for gaps and the active cycle.
+NOT STARTED under version 10 (and not under version 9 before it). How the protocol covers the three target systems of version 10 is not decided yet. The documentation update does not establish synchronized native-debugger replay/time travel, independent Wiki, new UI or demo-removal implementation. Final trial revisions and detailed applicable runtime/use-case mapping remain to be frozen; all nine targets still require both-host practical trials; no Stage 1 or Stage 2 PASS exists. Historical demos, Cycle 0019 preflight and later ordinary-chat development checks remain useful development evidence only. The final candidate and final distribution hash are not frozen. See the matrix and PROJECT_STATE.md for gaps and the active cycle.

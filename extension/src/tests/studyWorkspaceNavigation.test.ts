@@ -2,12 +2,186 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { BookObservationBinding } from '../repositorySchemas'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { bookObservationHash } from '../utils/bookObservationHash'
 
 import {
   workspaceHarness,
   recordedReaderHarness,
+  readerSeams,
+  articleRecordingLayoutHarness,
 } from './studyWorkspaceHarness'
+import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+
+for (const sameHost of [false, true])
+  test(`a Wiki observation link opens its exact earlier same-item pause ${sameHost ? 'beside the active archive' : 'after host restart'} and newer history choices retire that reading point`, async (context) => {
+    // Arrange
+    const harness = await recordedReaderHarness()
+    let reader: ReturnType<typeof harness.createReader> | undefined
+    try {
+      // A later editor host reads sealed history without the original run's active in-memory archive.
+      if (sameHost) reader = harness.reader
+      else {
+        await harness.reader.dispose()
+        reader = harness.createReader()
+      }
+      const library = await reader.learningStorage()
+      const checkpoint = await library.readCheckpoint(harness.studyId),
+        original = checkpoint.study.observations[0]!,
+        observations = [
+          {
+            ...original,
+            id: 'linked-earlier',
+            values: { ...original.values, 'value:linkedMarker': 'earlier' },
+          },
+          {
+            ...original,
+            id: 'linked-middle',
+            values: { ...original.values, 'value:linkedMarker': 'middle' },
+          },
+          {
+            ...original,
+            id: 'linked-latest',
+            values: { ...original.values, 'value:linkedMarker': 'latest' },
+          },
+        ],
+        study = { ...checkpoint.study, observations },
+        observation = observations[0]!,
+        binding: BookObservationBinding = {
+          nodeId: 'module',
+          linkIndex: 1,
+          studyId: study.id,
+          observationId: observation.id,
+          sourceHash: observation.source.hash,
+          itemId: observation.itemId,
+          observationHash: bookObservationHash(observation),
+          elapsedMs: observation.elapsedMs,
+          outcome: study.finalOutcome,
+        }
+      // The existing checkpoint boundary supplies several sealed captures of one configured item.
+      context.mock.method(library, 'readCheckpoint', async () => ({
+        ...checkpoint,
+        study,
+      }))
+
+      // Act
+      await reader.openRepositoryEvidence(binding, false)
+      const selected = reader.inspect().view!
+      await assert.rejects(
+        reader.openRepositoryEvidence(
+          { ...binding, observationId: 'missing-linked-pause' },
+          false,
+        ),
+        /exact saved checkpoint/,
+      )
+      const afterRefusal = reader.inspect().view!
+
+      // Assert
+      assert.equal(selected.model.observation?.id, 'linked-earlier')
+      assert.equal(
+        selected.model.observation?.values['value:linkedMarker'],
+        'earlier',
+      )
+      assert.equal(selected.model.source.line, 1)
+      assert.equal(afterRefusal.model.observation?.id, 'linked-earlier')
+      assert.equal(
+        afterRefusal.model.observation?.values['value:linkedMarker'],
+        'earlier',
+      )
+      assert.equal(selected.model.selection.follow, false)
+      assert.equal(selected.model.continueArguments, undefined)
+      assert.equal(harness.runtimes[0]!.dispatches, 1)
+      assert.equal((await library.readProgress()).decisions.length, 0)
+      if (sameHost) {
+        // An explicit learner selection retires the exact visit and restores the ordinary active-archive choice.
+        await reader.select(binding.itemId)
+        assert.equal(reader.inspect().view?.model.observation?.id, original.id)
+        assert.equal(
+          reader.inspect().view?.model.observation?.values[
+            'value:linkedMarker'
+          ],
+          undefined,
+        )
+      }
+      // Closing retires this visit; ordinary later history projection keeps its default newest capture.
+      await reader.close()
+      if (sameHost) {
+        assert.equal(reader.inspect().view?.model.observation?.id, original.id)
+        assert.equal(
+          reader.inspect().view?.model.observation?.values[
+            'value:linkedMarker'
+          ],
+          undefined,
+        )
+      } else {
+        assert.equal(
+          reader.inspect().view?.model.observation?.id,
+          'linked-latest',
+        )
+        assert.equal(
+          reader.inspect().view?.model.observation?.values[
+            'value:linkedMarker'
+          ],
+          'latest',
+        )
+      }
+      {
+        // A new exact visit after Close is retired independently by the Node-history admission.
+        await reader.openRepositoryEvidence(binding, false)
+        assert.equal(
+          reader.inspect().view?.model.observation?.id,
+          'linked-earlier',
+        )
+        // Admitting an isolated Node journal is a different history choice while browser selection stays unchanged.
+        const header = nodeTestHistoryHeader(library.workspaceKey),
+          writer = await harness.service.nodeHistoryStore!.start(header)
+        // Partial journals are readable history choices; this fixture claims no executed stop or result.
+        await writer.finish(
+          'partial',
+          'Owned test fixture has no execution evidence.',
+        )
+        await readerSeams({ reader }).receive(
+          {
+            type: 'node-history',
+            revision: reader.inspect().view!.revision,
+            studyId: header.studyId,
+          },
+          'context',
+        )
+        assert.equal(
+          reader.inspect().view?.nodeHistory?.header.studyId,
+          header.studyId,
+        )
+        if (sameHost) {
+          assert.equal(
+            reader.inspect().view?.model.observation?.id,
+            original.id,
+          )
+          assert.equal(
+            reader.inspect().view?.model.observation?.values[
+              'value:linkedMarker'
+            ],
+            undefined,
+          )
+        } else {
+          assert.equal(
+            reader.inspect().view?.model.observation?.id,
+            'linked-latest',
+          )
+          assert.equal(
+            reader.inspect().view?.model.observation?.values[
+              'value:linkedMarker'
+            ],
+            'latest',
+          )
+        }
+      }
+    } finally {
+      await reader?.dispose()
+      await harness.close()
+    }
+  })
+
 test('book evidence opens the exact historical observation and retains a restart-safe Return to Wiki target', async () => {
   // Arrange
   const harness = await recordedReaderHarness(),
@@ -306,12 +480,27 @@ for (const recording of [false, true])
         ),
         rejected = assert.rejects(pending, /abort/i)
       await source.started
-      const commands = [...harness.commands]
+      const commands = [...harness.commands],
+        sourceShows = harness.textDocumentShows(),
+        paneReveals = harness.panelReveals()
       cancellation.abort()
       source.release()
       await rejected
+      // Drain the owned recorded continuation before asserting that no late native effect occurred.
+      await harness.controller.settle()
       // Assert
-      assert.equal(harness.groups[0]!.tabs.length, 0)
+      assert.deepEqual(
+        harness.groups
+          .flatMap((group) => group.tabs)
+          .filter(
+            (tab) =>
+              tab.input instanceof harness.editor.TabInputText &&
+              tab.input.uri.scheme === 'codebook-source',
+          ),
+        [],
+      )
+      assert.deepEqual(harness.textDocumentShows(), sourceShows)
+      assert.deepEqual(harness.panelReveals(), paneReveals)
       assert.deepEqual(harness.commands, commands)
       assert.equal(harness.reader.inspect().opened, false)
       assert.equal(harness.runtimes[0]!.dispatches, 1)
@@ -992,7 +1181,12 @@ test('returning from recording to Wiki keeps background study refresh from cover
       anchorIndex: 0,
       location: { sectionIndex: 1, fraction: 0.5, focusId: 'section-1' },
     })
-    harness.controls.returnToRepository = async (): Promise<void> => {
+    let preservedNativeInput: boolean | undefined
+    harness.controls.returnToRepository = async (
+      _selection,
+      preserveNativeInput?: boolean,
+    ): Promise<void> => {
+      preservedNativeInput = preserveNativeInput
       harness.controller.hide()
       harness.groups[0]!.activeTab = undefined
     }
@@ -1003,11 +1197,22 @@ test('returning from recording to Wiki keeps background study refresh from cover
     await harness.reader['refresh']()
     await harness.reader.retire(harness.service)
     // Assert
+    assert.equal(preservedNativeInput, true)
     assert.deepEqual(harness.groups[0]!.tabs, tabs)
     assert.deepEqual(harness.commands, commands)
     assert.equal(harness.groups[0]!.activeTab, undefined)
     assert.equal(harness.controller.state().mode, 'paused')
     assert.equal(harness.runtimes[0]!.dispatches, 1)
+    // A validated in-pane Return remains an explicit handoff to the Wiki.
+    await readerSeams(harness).receive(
+      {
+        type: 'action',
+        action: 'return-wiki',
+        revision: harness.reader.inspect().view!.revision,
+      },
+      'context',
+    )
+    assert.equal(preservedNativeInput, false)
     harness.controller.reveal()
     await harness.controller.settle()
     assert.equal(harness.controller.state().readiness, 'ready')
@@ -1016,6 +1221,120 @@ test('returning from recording to Wiki keeps background study refresh from cover
       100,
     )
   } finally {
+    await harness.close()
+  }
+})
+
+test('a successful recording Summary Return removes its earlier navigation error from the published Summary', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness()
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    readerSeams(harness).stopOwnTimer()
+    let returns = 0
+    harness.controls.returnToRepository = async (): Promise<void> => {
+      returns++
+      if (returns === 1)
+        throw new Error(
+          'Native focus changed during repository navigation; the newer learner focus was preserved.',
+        )
+    }
+    harness.receive({
+      type: 'action',
+      action: 'return-wiki',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.errors.includes(
+            'Error: Native focus changed during repository navigation; the newer learner focus was preserved.',
+          ),
+      'the refused recording Return notice',
+    )
+
+    // Act
+    harness.receive({
+      type: 'action',
+      action: 'return-wiki',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(() => returns === 2, 'the accepted recording Return')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual([...harness.reader.inspect().view!.errors], [])
+    assert.deepEqual([...harness.postedMessages().at(-1)!.errors], [])
+    assert.equal(
+      harness.reader.inspect().view!.model.selection.studyId,
+      harness.studyId,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('a pending recording Return keeps a newer refused connection error when the Wiki handoff completes', async () => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness()
+  let completeReturn!: () => void
+  const returnFinished = new Promise<void>((resolve) => {
+    completeReturn = resolve
+  })
+  let entered = false
+  try {
+    await harness.reader.openRepositoryEvidence(
+      harness.binding,
+      true,
+      undefined,
+      harness.origin,
+    )
+    readerSeams(harness).stopOwnTimer()
+    harness.controls.returnToRepository = async (): Promise<void> => {
+      entered = true
+      await returnFinished
+    }
+    harness.controls.connect = async (): Promise<void> => {
+      throw new Error('The newer agent connection was refused.')
+    }
+    harness.receive({
+      type: 'action',
+      action: 'return-wiki',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(() => entered, 'the pending recording Return')
+
+    // Act
+    harness.receive({
+      type: 'action',
+      action: 'connect',
+      revision: harness.reader.inspect().view!.revision,
+    })
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.errors.includes(
+            'Error: The newer agent connection was refused.',
+          ),
+      'the newer connection refusal',
+    )
+    completeReturn()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual(
+      [...harness.postedMessages().at(-1)!.errors],
+      ['Error: The newer agent connection was refused.'],
+    )
+  } finally {
+    completeReturn()
     await harness.close()
   }
 })

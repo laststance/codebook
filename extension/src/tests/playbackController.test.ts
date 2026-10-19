@@ -575,6 +575,111 @@ test('failed frame reads pause playback and clear misleading pixels without chan
   await player.controller.dispose()
 })
 
+// Regression: 465 — native App visibility must not retire a failed recording load.
+// Found by /qa on 2026-10-11.
+// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md
+// Value: protects=failed-load diagnostics through App cover/return; fails_when=visibility changes failure to idle or retries without explicit Open; why_new=existing hide cases cover pending/ready frames only; seam=none
+test('covering and returning to an unreadable recording keeps its failure until the learner explicitly reloads it', async () => {
+  // Arrange
+  let loadAttempts = 0
+  const player = playbackHarness({
+    load: async () => {
+      loadAttempts++
+      throw new Error('missing saved recording')
+    },
+  })
+  try {
+    player.open()
+    await player.controller.settle()
+    assert.equal(player.controller.state().readiness, 'failed')
+
+    // Act
+    player.controller.hide()
+    const covered = player.controller.state()
+    player.controller.reveal()
+    await player.controller.settle()
+
+    // Assert
+    assert.equal(covered.readiness, 'failed')
+    assert.equal(covered.reason, 'Error: missing saved recording')
+    assert.equal(player.controller.state().readiness, 'failed')
+    assert.equal(
+      player.controller.state().reason,
+      'Error: missing saved recording',
+    )
+    assert.equal(player.displayed(), undefined)
+    assert.deepEqual(player.presented, [])
+    assert.equal(loadAttempts, 1)
+
+    // An explicit reload can recover after the stored recording becomes readable.
+    player.dependencies.load = async () => {
+      loadAttempts++
+      return player.data
+    }
+    player.open()
+    await player.controller.settle()
+    assert.equal(player.controller.state().readiness, 'ready')
+    assert.equal(player.controller.state().reason, undefined)
+    assert.equal(player.controller.state().presentedMs, 0)
+    assert.deepEqual(player.presented, [0])
+    assert.equal(loadAttempts, 2)
+  } finally {
+    await player.controller.dispose()
+  }
+})
+
+// Regression: 465 — returning to App must not replace a failed seek with its cached old moment.
+// Found by /qa on 2026-10-11.
+// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md
+// Value: protects=failed-seek diagnostics when an older bundle survives; fails_when=hide marks it ready or reveal repaints the cached bundle; why_new=the failed-frame case never changes App visibility; seam=none
+test('covering and returning after a recorded frame fails keeps pixels cleared and its error until explicit reload', async () => {
+  // Arrange
+  const player = playbackHarness(),
+    originalFrame = player.dependencies.frame
+  try {
+    player.open()
+    await player.controller.settle()
+    player.seek(100)
+    await player.controller.settle()
+    player.dependencies.frame = async () => {
+      throw new Error('missing recorded frame')
+    }
+    player.seek(200)
+    await player.controller.settle()
+    assert.equal(player.controller.state().readiness, 'failed')
+
+    // Act
+    player.controller.hide()
+    const covered = player.controller.state()
+    player.controller.reveal()
+    await player.controller.settle()
+
+    // Assert
+    assert.equal(covered.readiness, 'failed')
+    assert.equal(covered.reason, 'Error: missing recorded frame')
+    assert.equal(player.controller.state().readiness, 'failed')
+    assert.equal(
+      player.controller.state().reason,
+      'Error: missing recorded frame',
+    )
+    assert.equal(player.displayed(), undefined)
+    assert.equal(player.controller.state().presentedMs, 100)
+    assert.deepEqual(player.presented, [0, 100])
+
+    // Explicit reload restores the last confirmed moment without a runtime action.
+    player.dependencies.frame = originalFrame
+    player.open()
+    await player.controller.settle()
+    assert.equal(player.controller.state().readiness, 'ready')
+    assert.equal(player.controller.state().reason, undefined)
+    assert.equal(player.controller.state().presentedMs, 100)
+    assert.equal(player.displayed(), 100)
+    assert.deepEqual(player.presented, [0, 100, 100])
+  } finally {
+    await player.controller.dispose()
+  }
+})
+
 test('end of recording pauses and saves its endpoint without autoplaying when the same study is reopened', async () => {
   // Arrange
   const player = playbackHarness()

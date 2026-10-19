@@ -6,6 +6,8 @@ import { z } from 'zod'
 
 import type { Cdp } from '../runtimeSupport/cdp'
 
+import { psProgramPath } from './psProgramPath'
+
 const inspectorIdentitySchema = z.strictObject({
   pid: z.number().int().positive(),
   cwd: z.string().min(1),
@@ -38,8 +40,9 @@ export async function verifyNodeTestInspectorOwnership(
   ])
   if (actualWorkspace !== expectedWorkspace)
     throw new Error('Node test Inspector belongs to a different repository.')
+  // ps is started by its absolute path: one of the search path could be the opened repository's own.
   const { stdout } = await promisify(execFile)(
-    'ps',
+    await psProgramPath('The process group check of the Node test Inspector'),
     ['-o', 'pgid=', '-p', String(identity.pid)],
     { signal, timeout: 5_000 },
   )

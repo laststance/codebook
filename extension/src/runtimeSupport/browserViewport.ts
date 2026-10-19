@@ -6,11 +6,13 @@ import { clearTimeout, setTimeout } from 'node:timers'
 import * as vscode from 'vscode'
 
 import { MILLISECONDS_PER_SECOND } from '../constants'
+import { settledWithin } from '../utils/settledWithin'
 
 import type { Cdp } from './cdp'
 import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
+  KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
   STREAM_TELEMETRY_INTERVAL_MS,
   VIEWPORT_HEIGHT_PX,
   VIEWPORT_WIDTH_PX,
@@ -18,6 +20,7 @@ import {
 } from './constants'
 import { FrameDelivery, type ViewFrame } from './frameDelivery'
 import { awaitResponse } from './utils/awaitResponse'
+import { isStackFrameItem } from './utils/isStackFrameItem'
 import { sha256 } from './utils/sha256'
 import { unpaintedApplicationReason } from './utils/unpaintedApplicationReason'
 import { ViewportAckTimeoutError } from './utils/viewportAckTimeoutError'
@@ -27,13 +30,33 @@ import { waitUntil } from './utils/waitUntil'
 export interface ViewportLease {
   panel: vscode.WebviewPanel
   released(): void
+  /**
+   * Refuses unsafe native effects before asking the keyboard owner and again at {@link BrowserViewport.revealPanel}'s final reveal boundary.
+   * @param panel - The actual current renderer, including an admitted replacement from {@link BrowserViewport.rebindPanel}.
+   * @throws When the current panel, group or displayed tab no longer belongs to this presentation.
+   * @example assertCanReveal(panel) // throws before a learner's replacement tab can be hidden
+   */
+  assertCanReveal?(panel: vscode.WebviewPanel): void
+  /**
+   * Asked right before the leased pane is revealed over the active text editor of its group ({@link BrowserViewport.coversActiveTextEditor}): the pane's owner says whether the pane is to come to the front without the keyboard. The owner knows what the viewport cannot read: whether the editor's debugger gave that editor the keyboard at a stop, whether it gave the keyboard back to whoever had it before the pause (a chat), whether the learner selected the frame in the Call Stack view, and whether the learner gave a sign of working in that editor, at a pause or while a session runs. The owner is asked before the reveal and not told after it, because a webview's focus cannot be awaited: it reaches the pane's frame some time after `reveal()` returned, and a focus command run right behind the reveal could be undone by it.
+   * @returns `true` when the pane must not take the keyboard, `false` when it has to take it.
+   */
+  comesWithoutKeyboard?(): Promise<boolean>
+  /** Called right after the leased pane took the keyboard from that editor, so the owner can tell the learner where it is. */
+  tookKeyboardFromEditor?(): void
 }
+/**
+ * Prepares an owned App viewport before {@link HostBrowser.launch} starts its debugger; asynchronous factories retain the run's cancellation signal.
+ * @returns The ready viewport, directly or after native preparation completes.
+ * @example const viewport = await createViewport(runId, record, fail, 'normal', signal)
+ */
 export type BrowserViewportFactory = (
   runId: string,
   record: (type: string, detail?: unknown) => unknown,
   fail: (reason: string) => void,
   scenario: Scenario,
-) => BrowserViewport
+  signal?: AbortSignal,
+) => BrowserViewport | Promise<BrowserViewport>
 export interface ViewportRecordingObserver {
   elapsedMs(): number
   frame(input: {
@@ -47,8 +70,8 @@ export interface ViewportRecordingObserver {
 }
 
 /**
- * Tells {@link BrowserViewport.coversEditorFocusedByPause} whether a tab group shows the text editor that is the editor's active one.
- * @param group - The editor's active tab group.
+ * Tells {@link BrowserViewport.coversActiveTextEditor} whether a tab group shows the text editor that is the editor's active one.
+ * @param group - The group that would be covered by the pane.
  * @returns `true` when the group's active tab is a text editor and the active text editor sits in the group's view column.
  * @example showsActiveTextEditor(vscode.window.tabGroups.activeTabGroup) // => false while the group's active tab is the Application pane
  */
@@ -60,9 +83,9 @@ function showsActiveTextEditor(group: vscode.TabGroup): boolean {
 }
 
 /**
- * Tells {@link BrowserViewport.coversEditorFocusedByPause} whether the editor gives the paused file the keyboard focus at a breakpoint.
- * @returns `true` unless the learner turned `debug.focusEditorOnBreak` off.
- * @example isFocusEditorOnBreakOn() // => true with the editor's default settings
+ * Tells {@link BrowserViewport.showsFocusingPause} whether the editor gives the paused file the keyboard focus at a breakpoint.
+ * @returns Whether the effective `debug.focusEditorOnBreak` preference enables source keyboard focus.
+ * @example isFocusEditorOnBreakOn() // => false with the normal Codebook default
  */
 function isFocusEditorOnBreakOn(): boolean {
   return (
@@ -427,18 +450,20 @@ export class BrowserViewport {
 
   /** Performs an admitted reveal after {@link withRenderer} has excluded native placement. @example await this.revealNow(signal) */
   private async revealNow(signal: AbortSignal): Promise<void> {
-    if (this.closed) throw new Error('Owned viewport is closed')
+    this.throwIfClosed()
     if (this.historical) return
     signal.throwIfAborted()
     this.restorePanelContents()
     this.suspendRenderer()
     // Refresh a visible renderer without reselecting its native tab over the learner's Study focus.
-    if (!this.panel.visible)
-      this.panel.reveal(
-        this.lease ? undefined : vscode.ViewColumn.One,
-        // A leased pane leaves the keyboard focus where it is, except over the file the debugger focused at a pause: hiding that editor would leave the focus nowhere.
-        Boolean(this.lease) && !this.coversEditorFocusedByPause(),
-      )
+    if (!this.panel.visible) {
+      // Already unsafe ownership cannot authorize an asynchronous focus return before final admission refuses it.
+      this.assertLeaseAllowsReveal()
+      const takesKeyboard = this.takesKeyboardAtReveal()
+      // Only an owner that was asked is waited for: every other reveal stays in this turn.
+      if (typeof takesKeyboard === 'boolean') this.revealPanel(takesKeyboard)
+      else await this.revealPanelOnceOwnerAnswered(takesKeyboard, signal)
+    }
     this.requestReadiness()
     await waitUntil(
       () => this.panel.visible && this.epoch,
@@ -449,32 +474,132 @@ export class BrowserViewport {
   }
 
   /**
-   * Says whether revealing the leased pane would hide the text editor that the editor's debugger focused at a pause; called by {@link revealNow}.
-   *
-   * At a breakpoint the editor opens the paused file in the active group and gives it the keyboard focus (`debug.focusEditorOnBreak`,
-   * on by default). When that group is the Application pane's, the pane is covered, and revealing it again while preserving focus
-   * hides the focused editor without focusing anything: the keyboard focus falls to the document body until the learner clicks
-   * (native run of 2026-10-04, after every committed capture). The pane then takes the focus the editor it replaces had.
-   *
-   * Without a paused thread in Run and Debug the focus is preserved: the extension API cannot tell an editor that holds the
-   * keyboard focus from one that is merely the active editor while the learner types in the chat.
-   *
-   * @returns `true` only while a debug session is paused, the window is focused, and the pane's group is the active group showing a text editor that is the active text editor, with `debug.focusEditorOnBreak` not turned off.
-   * @example this.panel.reveal(undefined, Boolean(this.lease) && !this.coversEditorFocusedByPause())
+   * Refuses work on a viewport whose lease was released or whose panel is gone; called by {@link revealNow} before it touches the panel and by {@link revealPanel} after the owner was asked.
+   * @throws "Owned viewport is closed" once {@link close} ran.
+   * @example this.throwIfClosed()
    */
-  private coversEditorFocusedByPause(): boolean {
-    if (vscode.debug.activeStackItem === undefined) return false
-    const group = vscode.window.tabGroups.activeTabGroup
+  private throwIfClosed(): void {
+    if (this.closed) throw new Error('Owned viewport is closed')
+  }
+
+  /**
+   * Decides whether the pane takes the keyboard when {@link revealNow} brings it to the front; called once before each reveal.
+   * A leased pane leaves the keyboard where it is, except over a text editor that has it: hiding that editor would leave the keyboard on no element. Whether the active text editor of the pane's group has it is the owner's to say ({@link ViewportLease.comesWithoutKeyboard}), so the owner is asked whenever the pane would cover that editor ({@link coversActiveTextEditor}), at a pause and while a session runs. Without an owner to ask, the viewport judges by what it can read itself ({@link showsFocusingPause}).
+   * @returns
+   * - `false` at once when the pane covers no active text editor.
+   * - At once what {@link showsFocusingPause} says, when the lease has no owner to ask.
+   * - Otherwise a promise of whether the pane has to take the keyboard by the owner's answer ({@link takesKeyboardByOwnersAnswer}).
+   * @example const takesKeyboard = this.takesKeyboardAtReveal()
+   */
+  private takesKeyboardAtReveal(): boolean | Promise<boolean> {
+    if (!this.coversActiveTextEditor()) return false
+    const asked = this.lease?.comesWithoutKeyboard?.()
+    if (!asked) return this.showsFocusingPause()
+    return this.takesKeyboardByOwnersAnswer(asked)
+  }
+
+  /**
+   * Waits for the owner's answer about the keyboard, for at most {@link KEYBOARD_OWNER_ANSWER_TIMEOUT_MS}; the step of {@link takesKeyboardAtReveal} for a lease whose owner was asked.
+   * @param asked - The owner's pending answer: `true` when the pane is to come without the keyboard.
+   * @returns `false` when the owner answered in time that the pane must not take the keyboard, and `true` when it answered that the pane has to take it. When its answer failed or did not come within the bound, what the viewport reads itself ({@link showsFocusingPause}), `true` at a pause that gave the covered file the keyboard: the reveal then goes on as if the keyboard had been given to nobody, so that one command the editor does not answer cannot hold the reveal and every placement behind it.
+   * @example return this.takesKeyboardByOwnersAnswer(asked)
+   */
+  private async takesKeyboardByOwnersAnswer(
+    asked: Promise<boolean>,
+  ): Promise<boolean> {
+    // An owner that fails or stays silent leaves the viewport's own reading: only a pause that focused the covered file makes the pane take the keyboard.
+    let keepsKeyboard = !this.showsFocusingPause()
+    await settledWithin(
+      asked.then(
+        (keeps) => {
+          keepsKeyboard = keeps
+        },
+        () => undefined,
+      ),
+      KEYBOARD_OWNER_ANSWER_TIMEOUT_MS,
+    )
+    return !keepsKeyboard
+  }
+
+  /**
+   * Brings the pane to the front once its owner answered about the keyboard, unless the reveal was called off meanwhile; the step of {@link revealNow} for a reveal that had to ask.
+   * @param takesKeyboard - What {@link takesKeyboardAtReveal} is waiting for.
+   * @param signal - The reveal's cancellation.
+   * @throws The signal's reason when the reveal was aborted while its owner was asked: the pane then stays as it is, takes no keyboard and tells nothing. "Owned viewport is closed" when the viewport was closed meanwhile.
+   * @example await this.revealPanelOnceOwnerAnswered(takesKeyboard, signal)
+   */
+  private async revealPanelOnceOwnerAnswered(
+    takesKeyboard: Promise<boolean>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const takes = await takesKeyboard
+    signal.throwIfAborted()
+    this.revealPanel(takes)
+  }
+
+  /**
+   * Brings the pane to the front of its group for {@link revealNow}, with or without the keyboard, and tells the lease's owner when the pane took it.
+   * A pane without a lease is the run's own tab in the first group and takes the focus as before.
+   * @param takesKeyboard - What {@link takesKeyboardAtReveal} answered.
+   * @throws "Owned viewport is closed" when the viewport was closed while its owner was asked.
+   * @example this.revealPanel(false) // a leased pane comes to the front and the keyboard stays where it is
+   */
+  private revealPanel(takesKeyboard: boolean): void {
+    this.throwIfClosed()
+    if (!this.lease) {
+      this.panel.reveal(vscode.ViewColumn.One, false)
+      return
+    }
+    // This rejection stays outside the boolean owner's fallback and leaves no await before the native effect.
+    this.assertLeaseAllowsReveal()
+    this.panel.reveal(this.panel.viewColumn, !takesKeyboard)
+    if (takesKeyboard) this.lease.tookKeyboardFromEditor?.()
+  }
+
+  /**
+   * Checks the current lease for {@link revealNow} before asking its keyboard owner and for {@link revealPanel} immediately before the native effect.
+   * @throws The owner's refusal when the current panel or group is no longer safe to reveal.
+   * @example this.assertLeaseAllowsReveal() // refuses before covering a learner's newer tab
+   */
+  private assertLeaseAllowsReveal(): void {
+    this.lease?.assertCanReveal?.(this.panel)
+  }
+
+  /**
+   * Says whether revealing the leased pane would hide the active text editor; called by {@link takesKeyboardAtReveal}.
+   * Cursor can report the paused text editor while its active tab group still names the chat's separate editor part. Resolve the group from the active text editor itself: hiding that editor without asking the owner can leave the keyboard on the document body.
+   * @returns `true` while the window is focused and the pane's group shows the active text editor.
+   * @example if (!this.coversActiveTextEditor()) return false
+   */
+  private coversActiveTextEditor(): boolean {
+    const column = vscode.window.activeTextEditor?.viewColumn
+    // No text editor can lose its keyboard to this reveal while none is active.
+    if (column === undefined) return false
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
+    )
     return (
+      group !== undefined &&
       this.isFocusedPaneGroup(group) &&
-      showsActiveTextEditor(group) &&
-      isFocusEditorOnBreakOn()
+      showsActiveTextEditor(group)
     )
   }
 
   /**
-   * Tells {@link coversEditorFocusedByPause} whether the active editor group is the leased pane's own, in a window that has the focus.
-   * @param group - The editor's active tab group.
+   * Says whether the editor's debugger gave the file of the frame it shows the keyboard, as far as the viewport can read it; the judgment of {@link takesKeyboardAtReveal} for a lease without an owner, and of {@link takesKeyboardByOwnersAnswer} for an owner that does not answer.
+   * The viewport cannot tell an editor that holds the keyboard from one that is merely the active editor while the learner types in a side-view chat (VS Code's, and Cursor's Agent pane in the secondary side bar). At a pause the debugger gave the paused file the keyboard, whoever had it before. A pause is told by a frame only ({@link isStackFrameItem}): once the session runs again the editor reports its thread. What the learner did since (a frame selected in the Call Stack view, a click into a file) only the lease's owner knows.
+   * @returns `true` only while Run and Debug's active stack item is a frame and `debug.focusEditorOnBreak` is not turned off.
+   * @example if (!asked) return this.showsFocusingPause()
+   */
+  private showsFocusingPause(): boolean {
+    return (
+      isStackFrameItem(vscode.debug.activeStackItem) && isFocusEditorOnBreakOn()
+    )
+  }
+
+  /**
+   * Tells {@link coversActiveTextEditor} whether the text editor's group is the leased pane's own, in a window that has the focus.
+   * @param group - The group containing the active text editor.
    * @returns `true` when the window is focused and the group sits in the pane's view column.
    * @example this.isFocusedPaneGroup(vscode.window.tabGroups.activeTabGroup) // => false while another window has the focus
    */

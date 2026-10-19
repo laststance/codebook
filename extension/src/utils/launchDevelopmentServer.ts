@@ -26,6 +26,8 @@ export function launchDevelopmentServer(
 ) {
   const environment: NodeJS.ProcessEnv = {
     NEXT_TELEMETRY_DISABLED: '1',
+    // Next's default100ms child cutoff can kill native lock cleanup before this closer's bounded wait.
+    NEXT_EXIT_TIMEOUT_MS: String(REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS),
     HUSKY: '0',
     CI: 'true',
   }

@@ -7,6 +7,8 @@ import { z } from 'zod'
 import { ACTIVE_TIMEOUT_MS } from './constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
+import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
+import { completeBindingPlace } from './utils/completeBindingPlace'
 
 const requestSourceSchema = z.object({ source: z.object({ path: z.string() }) })
 const requestSchema = requestSourceSchema.extend({
@@ -46,11 +48,20 @@ const registrationResponseSchema = z.object({
 type RegistrationBinding = z.infer<
   typeof registrationResponseSchema
 >['breakpoints'][number]
-/** A verified adapter breakpoint that names its whole position; anything less cannot say where the breakpoint is. {@link ConfiguredBrowserRun} reads a browser binding with it too. */
+/** A verified adapter breakpoint that names its whole position; anything less cannot say where the breakpoint is. An editor's answer may lack the column and is read with {@link verifiedLineSchema}; {@link ConfiguredBrowserRun} names a browser binding it completed by this schema's type. */
 export const verifiedPlaceSchema = z.object({
   verified: z.literal(true),
   line: z.number().int(),
   column: z.number().int(),
+})
+/**
+ * A verified adapter breakpoint as an editor answers it for {@link vscode.DebugSession.getDebugProtocolBreakpoint}: always its line, its column only when the editor kept it.
+ * VS Code and Cursor remove the column from the adapter's `changed` news about a breakpoint that has no column of its own, and a breakpoint the extension API adds at character 0 has none: every stop requested at column 1 is answered without a column once the adapter sent news about it. {@link ConfiguredBrowserRun} reads a binding with this schema and takes the missing column from the adapter's own report ({@link OwnedRepositoryBreakpoint.reportedPlace}).
+ * @example
+ * verifiedLineSchema.safeParse({ id: 0, verified: true, line: 32 }).success // => true
+ */
+export const verifiedLineSchema = verifiedPlaceSchema.extend({
+  column: z.number().int().optional(),
 })
 /**
  * The failure of a registration read whose owned breakpoint is gone from the editor (retired, or removed by the learner); it says nothing about the requested line.
@@ -481,6 +492,18 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Reads the id a session's adapter gave the owned breakpoint, also where its owner refuses the place, so a `stopped` event that names that id is told to belong to this breakpoint; {@link ConfiguredBrowserRun} asks it for the browser session, to which the editor sends a server stop's breakpoint too.
+   * Like {@link movedTo} it never throws.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns The adapter's id of the owned breakpoint, or `undefined` while that session's latest registration is unanswered or was refused.
+   * @example
+   * owned.acknowledgedId(browserSession) // => 12
+   */
+  acknowledgedId(session: vscode.DebugSession): number | undefined {
+    return this.registrations.get(session.id)?.receipt?.breakpointId
+  }
+
+  /**
    * Reads current ACK authority synchronously at the final input boundary; {@link registered} also polls it during setup.
    * @param session - The debug session whose adapter acknowledges the breakpoint.
    * @returns A copy of the adapter's current receipt, or `undefined` while the latest registration request is unanswered.
@@ -562,9 +585,10 @@ export class OwnedRepositoryBreakpoint {
   /**
    * Asks the adapter where it has this breakpoint now and refuses a verified binding away from the declared position, for an owner whose first reply was pending and named no position; {@link OwnedNodeTestRun} calls it before it resumes the test.
    * A binding the adapter does not report, or one that is still unverified, decides nothing: the pause check remains.
+   * Both editors answer a breakpoint requested at column 1 without a column once the adapter sent news about it, so the binding is read as {@link ConfiguredBrowserRun} reads it: a missing column is taken from the adapter's own report ({@link reportedPlace}, {@link completeBindingPlace}), and without one the line decides. A verified binding on the declared line that names no column names no other column either: it refuses nothing here, and the owner's check of its pause at the declared column remains.
    * @param session - The debug session whose adapter holds the breakpoint.
    * @param signal - The caller's cancellation: an adapter that never answers this read must not hold a run that is being stopped.
-   * @throws When the adapter reports the breakpoint verified at another line or column than declared; the text names both positions. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
+   * @throws When the adapter reports the breakpoint verified at another line or column than declared ({@link boundElsewhereRefusalText}); the text names both positions, or the bound line when no column is known. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
    * @example
    * await owned.assertBoundAsDeclared(session, signal) // throws 'Declared breakpoint 20:5 is bound at 20:12; …'
    */
@@ -572,20 +596,41 @@ export class OwnedRepositoryBreakpoint {
     session: vscode.DebugSession,
     signal: AbortSignal,
   ): Promise<void> {
-    const place = verifiedPlaceSchema.safeParse(
+    const answered = verifiedLineSchema.safeParse(
       await awaitResponse(
         session.getDebugProtocolBreakpoint(this.breakpoint),
         'owned breakpoint binding',
         signal,
       ),
-    )
-    if (
-      place.success &&
-      (place.data.line !== this.line || place.data.column !== this.column)
-    )
+    ).data
+    if (!answered) return
+    // The editor may have dropped the column the adapter reported; without any column only the line is known.
+    const bound = completeBindingPlace(
+      answered,
+      this.reportedPlace(session),
+    ) ?? { line: answered.line }
+    if (this.isAwayFromDeclared(bound))
       throw new Error(
-        `Declared breakpoint ${this.line}:${this.column} is bound at ${place.data.line}:${place.data.column}; this stop is captured at its declared position, so declare ${place.data.line}:${place.data.column} or another statement.`,
+        boundElsewhereRefusalText(
+          { line: this.line, column: this.column },
+          bound,
+        ),
       )
+  }
+
+  /**
+   * Tells {@link assertBoundAsDeclared} whether a verified binding names another place than the requested position.
+   * @param bound - The binding's line and, when one is known, its column.
+   * @returns `true` for another line, and for another column on the requested line; `false` for the requested position, and for the requested line without a column, which names no other column.
+   * @example
+   * this.isAwayFromDeclared({ line: 20 }) // => false for an owner requested at 20:1
+   */
+  private isAwayFromDeclared(bound: {
+    line: number
+    column?: number
+  }): boolean {
+    if (bound.line !== this.line) return true
+    return bound.column !== undefined && bound.column !== this.column
   }
 
   /**
@@ -598,6 +643,21 @@ export class OwnedRepositoryBreakpoint {
    */
   verifiedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
     return this.standingRegistration(session)?.verifiedAt
+  }
+
+  /**
+   * Reads where the adapter itself last reported this breakpoint verified, in its registration reply or in a later `breakpoint` event, whether the owner accepts that place or refuses it; {@link ConfiguredBrowserRun} asks it for the column of a binding the editor answered without one.
+   * The tracker reads the adapter's messages before the editor does, so this place keeps the column the editor drops for a breakpoint requested at column 1. Like {@link movedTo} it never throws.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns
+   * - The refused line and column while the adapter's latest report is refused for its place
+   * - Otherwise the verified line and column of the standing acknowledgement
+   * - `undefined` while pending, when no report named a whole position, and when the registration was refused for another reason or is gone
+   * @example
+   * owned.reportedPlace(session) // => { line: 32, column: 11 } for a breakpoint requested at 27:1 that the adapter verified at 32:11
+   */
+  reportedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
+    return this.refusedPlace(session) ?? this.verifiedPlace(session)
   }
 
   /**
@@ -693,9 +753,29 @@ export class OwnedRepositoryBreakpoint {
       registration.refusedAt = verifiedAt
       return
     }
+    this.standAt(registration, receipt, verifiedAt, moved)
+  }
+
+  /**
+   * Makes the acknowledged breakpoint stand at a verified place: the refused place is cleared and the receipt rebuilt, so a place of an earlier reply never outlives the adapter's news; called by {@link takeBreakpointNews} and {@link retakeRefusedPlace}.
+   * @param registration - The session's registration.
+   * @param receipt - The receipt as it stood; its ids are kept.
+   * @param verifiedAt - Where the adapter verified the breakpoint.
+   * @param moved - `{ movedTo }` when that place is on another line than requested, `{}` otherwise ({@link verifiedPlaces}).
+   * @example
+   * this.standAt(registration, receipt, { line: 35, column: 5 }, { movedTo: { line: 35, column: 5 } })
+   */
+  private standAt(
+    registration: {
+      receipt?: RegistrationReceipt
+      refusedAt?: VerifiedPlace
+    } & VerifiedRegistration,
+    receipt: RegistrationReceipt,
+    verifiedAt: VerifiedPlace,
+    moved: { movedTo?: VerifiedPlace },
+  ): void {
     registration.refusedAt = undefined
     registration.verifiedAt = verifiedAt
-    // The receipt is rebuilt so a place of an earlier reply never outlives the adapter's news.
     registration.receipt = {
       sessionId: receipt.sessionId,
       requestSequence: receipt.requestSequence,
@@ -703,6 +783,50 @@ export class OwnedRepositoryBreakpoint {
       status: 'bound',
       ...moved,
     }
+  }
+
+  /**
+   * Gives {@link retakeRefusedPlace} the place news was refused at when the owner's rule accepts it now.
+   * @param refusedAt - Where the adapter's news put the acknowledged breakpoint when the owner refused it; `undefined` when no news was refused.
+   * @returns The place, or `undefined` when nothing was refused or the owner's rule still refuses the place.
+   * @example
+   * this.refusedPlaceNowAccepted({ line: 32, column: 11 }) // => { line: 32, column: 11 } once the rebuilt rule accepts line 32
+   */
+  private refusedPlaceNowAccepted(
+    refusedAt: VerifiedPlace | undefined,
+  ): VerifiedPlace | undefined {
+    return refusedAt &&
+      this.acknowledgesPosition({ verified: true, ...refusedAt })
+      ? refusedAt
+      : undefined
+  }
+
+  /**
+   * Judges the place the adapter's latest news put the acknowledged breakpoint at once more, after its owner's rule changed; {@link ConfiguredBrowserRun} calls it when the debugger's own break locations accept a place the source map alone refused ({@link ConfiguredBrowserRun.registeredStop}).
+   * Only news can be judged again: a registration reply that was refused keeps its failure, because the reply's breakpoint was never taken as the owned one, and its owner requests the breakpoint again instead.
+   * @param session - The debug session whose adapter sent the news.
+   * @returns `true` when the session's acknowledged breakpoint had a refused place that the owner's rule now accepts, and the receipt stands there; `false` otherwise, and nothing changes.
+   * @example
+   * owned.retakeRefusedPlace(session) // => true for news at 32:11 that the rebuilt rule accepts
+   */
+  retakeRefusedPlace(session: vscode.DebugSession): boolean {
+    const acknowledged = this.acknowledgedRegistration(session),
+      refusedAt = this.refusedPlaceNowAccepted(
+        acknowledged?.registration.refusedAt,
+      )
+    // Nothing was refused by news, or the owner's rule still refuses the place.
+    if (!acknowledged || !refusedAt) return false
+    const { verifiedAt, ...moved } = this.verifiedPlaces({
+      verified: true,
+      ...refusedAt,
+    })
+    this.standAt(
+      acknowledged.registration,
+      acknowledged.receipt,
+      verifiedAt ?? refusedAt,
+      moved,
+    )
+    return true
   }
 
   /** Waits for the chosen adapter's ACK without claiming that a lazy module has loaded; runtime preparation calls this before input. @example (await owned.registered(session, signal)).status // 'pending' */

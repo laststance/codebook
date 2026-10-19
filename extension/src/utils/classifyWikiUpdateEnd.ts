@@ -34,6 +34,8 @@ export type WikiUpdateEndFacts = {
   failure: string | undefined
   /** Set when Codebook wrote `failure` itself and ended it with the learner's next step (the chat that did not open); the result then marks its reason, so a reader shows it whole. */
   isFailureCodebookSentence?: boolean
+  /** Set with `failure` when whoever worked on the update was not stopped and can still publish (a VS Code chat that may still hold its request, or one whose watch broke); the failed result then carries `mayBeReplacedLater`, so a reader does not say the site is kept for good. */
+  mayBeReplacedLater?: boolean
 }
 
 /** The remedy for each cause that keeps a new publish from being checked against the source. A retry helps only where the cause can pass by itself. */
@@ -270,12 +272,39 @@ function succeededEnd(
 }
 
 /**
+ * Builds the failed end of a run whose agent or watch reported a failure; called by {@link blockedEnd}.
+ * @param facts - What the host observed when the run stopped; only the two marks of the failure are read.
+ * @param failure - The failure sentence.
+ * @param site - Whether the published site was replaced meanwhile.
+ * @returns `failed` with the reason and the site, marked as a Codebook sentence when the facts say Codebook wrote it, and as an end the site may be replaced after when the facts say somebody can still publish.
+ * @example
+ * failedEnd({ ...facts, isFailureCodebookSentence: true, mayBeReplacedLater: true }, 'The request may still be in the chat.', 'kept')
+ * // => { state: 'failed', reason: 'The request may still be in the chat.', isCodebookSentence: true, mayBeReplacedLater: true, site: 'kept' }
+ */
+function failedEnd(
+  facts: Pick<
+    WikiUpdateEndFacts,
+    'isFailureCodebookSentence' | 'mayBeReplacedLater'
+  >,
+  failure: string,
+  site: WikiUpdateSite,
+): WikiUpdateEnd {
+  return {
+    state: 'failed',
+    reason: failure,
+    ...(facts.isFailureCodebookSentence ? { isCodebookSentence: true } : {}),
+    ...(facts.mayBeReplacedLater ? { mayBeReplacedLater: true } : {}),
+    site,
+  }
+}
+
+/**
  * Ends a run that something stopped from publishing; called by {@link endOfFinishedRun} once no verified publication is there.
  * @param facts - What the host observed when the run stopped.
  * @param site - Whether the published site was replaced meanwhile.
  * @returns
  * - Learner files in the way: `conflict` with cause `learner-file` and a copy of the paths, also when a failure sentence is there
- * - A failure sentence from the agent or a thrown error: `failed` with that reason, marked as a Codebook sentence when the facts say Codebook wrote it
+ * - A failure sentence from the agent or a thrown error: the failed end of {@link failedEnd}, with the marks the facts carry
  * - Otherwise: `undefined`
  * @example
  * blockedEnd({ ...facts, blockingPaths: ['pages/notes.html'] }, 'kept') // => { state: 'conflict', paths: ['pages/notes.html'], cause: 'learner-file', site: 'kept' }
@@ -291,14 +320,9 @@ function blockedEnd(
       cause: 'learner-file',
       site,
     }
-  if (facts.failure !== undefined)
-    return {
-      state: 'failed',
-      reason: facts.failure,
-      ...(facts.isFailureCodebookSentence ? { isCodebookSentence: true } : {}),
-      site,
-    }
-  return undefined
+  return facts.failure === undefined
+    ? undefined
+    : failedEnd(facts, facts.failure, site)
 }
 
 /**
@@ -307,7 +331,7 @@ function blockedEnd(
  * @param site - Whether the published site was replaced meanwhile.
  * @returns
  * - A changed site that is not verified current: `failed` with the reason of {@link describeUnverifiedPublish}
- * - Nothing published: `failed` with `site: 'kept'` and the chat command that shows the agent's own message
+ * - Nothing published: `failed` with `site: 'kept'`; for Cursor with the chat command that shows the agent's own message, for VS Code with where the chat's reply is
  * @example
  * unexplainedEnd({ ...facts, host: 'cursor' }, 'kept')
  * // => { state: 'failed', reason: 'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.', isCodebookSentence: true, site: 'kept' }
@@ -324,10 +348,13 @@ function unexplainedEnd(
       isCodebookSentence: true,
       site,
     }
-  // An agent can end its turn without publishing and without an error.
+  // An agent can end its turn without publishing and without an error. VS Code's chat shows its reply in the Chat view; the Cursor CLI's reply is shown nowhere.
   return {
     state: 'failed',
-    reason: `${agent} finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in ${facts.host === 'cursor' ? 'Cursor chat' : 'the editor chat'} to see its own message.`,
+    reason:
+      facts.host === 'cursor'
+        ? `${agent} finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`
+        : 'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
     isCodebookSentence: true,
     site,
   }

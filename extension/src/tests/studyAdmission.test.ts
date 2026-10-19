@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+
+import { z } from 'zod'
 
 import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
@@ -646,6 +648,7 @@ test('a repeat of a refused start that is rejected while a presentation change i
     assertPresentationIdle: pending,
     nodeHistoryLearningMaterialSaved: pending,
     replayControlAccepted: pending,
+    markAgentRecordingOpen: pending,
   }
   // Act
   let rejection: unknown
@@ -931,7 +934,7 @@ test('in a WSL remote window the first full-library refusal names no removal', a
   )
   assert.equal(
     atMaximum.record.error?.message,
-    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can make room: Saved studies lists the files of a chosen study for removal by hand; an editor agent never deletes files. Existing learning was kept.',
+    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can make room: choose a study in Saved studies and open Remove by hand to list its files, then remove them by hand; an editor agent never deletes files. Existing learning was kept.',
   )
 })
 
@@ -975,5 +978,78 @@ test('publishing a Repository Wiki revision that links a saved study the library
       error.code === 'BOOK_UNAVAILABLE' &&
       error.message ===
         `Linked saved study ${removedStudyId} is no longer in the study library; it was deleted or never saved.`,
+  )
+})
+
+// Value: protects=the learner's next run and Close Study Workspace after a run whose evidence failed for good (a full disk, its buffering limit, its evidence folder removed by hand): the release frees every resource and only the final evidence write fails, so the run is stopped with that failure as its error and terminal reason, and the next start is admitted; fails_when=the configured run's release throws on its final persistence after it released everything (ConfiguredBrowserRun.cleanupOwned), so StudyService.stopRecord never marks the run stopped, every retry fails the same way, codebook_start answers BUSY ("Another run still owns resources.") and Close keeps failing until the server restarts; why_new=R1, Cycle 0046 /ship red-team review; seam=the real ConfiguredBrowserRun behind the real service (configuredRuntimeHarness, startRunWithStorage), its evidence folder removed before the stop, StudyService.stop as codebook_stop calls it, the run resource and StudyService.start
+test('a run whose final evidence write fails after its release freed every resource is stopped with that failure as its error, and the next start is admitted', async (context) => {
+  // Arrange: a prepared run whose evidence folder is removed by hand, so every later write of its evidence fails.
+  const started = await startRunWithStorage(context, 4, 'nothing')
+  const evidenceDirectory = started.record.runtime!.evidence.directory
+  await rm(evidenceDirectory, { recursive: true, force: true })
+
+  // Act: the agent stops the run, then starts the next one.
+  const stopFailure = await started.service.stop(started.receipt).then(
+    () => undefined,
+    (error: unknown) => String(error),
+  )
+  const resource = await readResource(started.service, started.receipt.runUri)
+  let nextStartRefusal: unknown
+  try {
+    const next = started.service.start({
+      instanceId: started.service.instanceId,
+      profile: 'repository-browser',
+      key: 'after-failed-persistence',
+      configuration: started.harness.definition.configuration,
+    })
+    await started.service.record(next).preparation
+  } catch (error) {
+    nextStartRefusal = error
+  }
+
+  // Assert: the terminal reason and the error's cause with the evidence folder's path replaced, which the system's error names.
+  const withoutPath = (text: string): string =>
+    text.replace(evidenceDirectory, '<evidence directory>')
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      state: z.string(),
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.deepEqual(
+    {
+      stopFailure,
+      stopped: started.record.stopped,
+      cleanupError: started.record.cleanupError,
+      state: state.state,
+      terminalReason: withoutPath(state.terminalReason),
+      error: {
+        code: state.error.code,
+        message: state.error.message,
+        cause: withoutPath(state.error.cause),
+      },
+      nextStartRefusal,
+    },
+    {
+      stopFailure: undefined,
+      stopped: true,
+      cleanupError: undefined,
+      state: 'stopped',
+      terminalReason:
+        "Error: ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
+      error: {
+        code: 'RUNTIME_FAILED',
+        message: 'The run failed in its runtime.',
+        cause:
+          "Final evidence persistence failed: Error: Evidence write failed: Error: ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
+      },
+      nextStartRefusal: undefined,
+    },
   )
 })

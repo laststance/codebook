@@ -4,15 +4,18 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 import {
+  GIT_CONFIGURATION_IN_OPENED_FOLDER,
   WIKI_FRESHNESS_HASH_CONCURRENCY,
   WIKI_GIT_OUTPUT_LIMIT_BYTES,
   WIKI_GIT_TIMEOUT_MS,
 } from '../constants'
 
 import type { WikiIncludedSource } from './answerDeepWikiQuestion'
+import { gitExecutablePath } from './gitExecutablePath'
 import { hashFileSha256 } from './hashFileSha256'
 import { isWikiSourceCandidate } from './isWikiSourceCandidate'
 import { mapWithConcurrencyLimit } from './mapWithConcurrencyLimit'
+import { systemErrorCode } from './systemErrorCode'
 
 const runGit = promisify(execFile)
 
@@ -186,8 +189,9 @@ function fullCommitHash(
 }
 
 /**
- * Picks, from the paths Git listed, the source files the Wiki neither indexes nor excludes; called by {@link findAddedSources} with the answers of both listing commands.
- * @param committedListing - Git's NUL-separated answer for the files committed since the generated revision.
+ * Picks, from the paths Git listed, the source files the Wiki neither indexes nor excludes; called by {@link findAddedSources} with the answers of its three listing commands.
+ * @param committedListing - Git's NUL-separated answer for the files the index holds and the generated revision does not (committed or staged since).
+ * @param deletedListing - Git's NUL-separated answer for the files of the index the working tree no longer holds, which are no added source.
  * @param untrackedListing - Git's NUL-separated answer for the untracked files.
  * @param projectRoot - Canonical opened folder, which the listed paths are relative to.
  * @param includedSources - The sources the Wiki indexes.
@@ -195,10 +199,11 @@ function fullCommitHash(
  * @param outputDirectory - Resolved Wiki output folder, whose own files are no added source; `undefined` when the caller named none.
  * @returns The uncovered paths, each once, sorted.
  * @example
- * uncoveredAddedPaths('src/new.ts\0', '', '/repo', [], [], '/repo/.codebook/wiki') // => ['src/new.ts']
+ * uncoveredAddedPaths('src/new.ts\0src/gone.ts\0', 'src/gone.ts\0', '', '/repo', [], [], '/repo/.codebook/wiki') // => ['src/new.ts']
  */
 function uncoveredAddedPaths(
   committedListing: string,
+  deletedListing: string,
   untrackedListing: string,
   projectRoot: string,
   includedSources: WikiIncludedSource[],
@@ -210,9 +215,11 @@ function uncoveredAddedPaths(
     outputDirectory === undefined
       ? ''
       : relative(projectRoot, outputDirectory).split(sep).join('/')
+  const deletedPaths = new Set(deletedListing.split('\0'))
   return [
     ...new Set([
-      ...committedListing.split('\0'),
+      // A file of the index the working tree no longer holds was added and removed again: no source of the folder.
+      ...committedListing.split('\0').filter((path) => !deletedPaths.has(path)),
       ...untrackedListing.split('\0'),
     ]),
   ]
@@ -253,41 +260,50 @@ async function findAddedSources(
     // Git's own words decide "no repository", so they must not be translated.
     env: { ...process.env, LC_ALL: 'C' },
   }
+  // Git is started by its absolute path from PATH alone, never found in the opened folder; no Git found answers as a Git that cannot start.
+  let git: string
+  /** Runs one Git command in the opened folder, with the configuration that keeps the repository's own config from starting a program there. */
+  const gitInFolder = (gitArguments: string[]) =>
+    runGit(
+      git,
+      [...GIT_CONFIGURATION_IN_OPENED_FOLDER, ...gitArguments],
+      options,
+    )
   try {
-    await runGit('git', ['rev-parse', '--show-toplevel'], options)
+    git = await gitExecutablePath()
+    await gitInFolder(['rev-parse', '--show-toplevel'])
   } catch (error) {
     return repositoryFailure(error)
   }
   const revision = fullCommitHash(generatedRevision)
   if (!revision) return { kind: 'unverified', cause: 'no-revision' }
   try {
-    // Both commands run in the opened folder and answer paths relative to it, so a subfolder of a monorepo is checked against its own files.
-    const [committed, untracked] = await Promise.all([
-      runGit(
-        'git',
-        [
-          'diff',
-          '--name-only',
-          '--diff-filter=A',
-          // A file moved in from a place the Wiki does not index is a rename to Git, which the filter would drop: without rename detection it is an added file.
-          '--no-renames',
-          '--relative',
-          '-z',
-          revision,
-          '--',
-        ],
-        options,
-      ),
-      runGit(
-        'git',
-        ['ls-files', '--others', '--exclude-standard', '-z'],
-        options,
-      ),
+    // The commands run in the opened folder and answer paths relative to it, so a subfolder of a monorepo is checked against its own files.
+    const [committed, deleted, untracked] = await Promise.all([
+      // The index against the revision: no file of the working tree is read, so no filter, external diff or textconv driver of the repository's own config or attributes runs.
+      gitInFolder([
+        'diff-index',
+        '--cached',
+        '--name-only',
+        '--diff-filter=A',
+        // A file moved in from a place the Wiki does not index is a rename to Git, which the filter would drop: without rename detection it is an added file.
+        '--no-renames',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--relative',
+        '-z',
+        revision,
+        '--',
+      ]),
+      // What the working tree no longer holds, by a look at each path alone.
+      gitInFolder(['ls-files', '--deleted', '-z']),
+      gitInFolder(['ls-files', '--others', '--exclude-standard', '-z']),
     ])
     return {
       kind: 'checked',
       addedPaths: uncoveredAddedPaths(
         committed.stdout,
+        deleted.stdout,
         untracked.stdout,
         projectRoot,
         includedSources,
@@ -345,32 +361,15 @@ function sourceCheckOfHash(
 }
 
 /**
- * Says whether a thrown value reports a file that is gone; called by {@link sourceCheckOfFailure}.
- * @param error - What resolving or hashing the file threw.
- * @returns Whether it is an object whose `code` is `ENOENT`.
- * @example
- * isMissingFileError({ code: 'ENOENT' }) // => true
- * isMissingFileError({ code: 'EACCES' }) // => false
- */
-function isMissingFileError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === 'ENOENT'
-  )
-}
-
-/**
  * Names what a failed read says about an indexed source; called by {@link checkSource} in {@link inspectDeepWikiFreshness} with what resolving or hashing the file threw.
  * @param error - What was thrown.
- * @returns `changed` for a file that is gone ({@link isMissingFileError}), `unchecked` for a file that is there and cannot be read.
+ * @returns `changed` for a file that is gone (the system error `ENOENT`, read by {@link systemErrorCode}), `unchecked` for a file that is there and cannot be read.
  * @example
- * sourceCheckOfFailure({ code: 'ENOENT' }) // => 'changed'
- * sourceCheckOfFailure({ code: 'EACCES' }) // => 'unchecked'
+ * sourceCheckOfFailure(Object.assign(new Error('no such file'), { code: 'ENOENT' }))     // => 'changed'
+ * sourceCheckOfFailure(Object.assign(new Error('permission denied'), { code: 'EACCES' })) // => 'unchecked'
  */
 function sourceCheckOfFailure(error: unknown): 'changed' | 'unchecked' {
-  return isMissingFileError(error) ? 'changed' : 'unchecked'
+  return systemErrorCode(error) === 'ENOENT' ? 'changed' : 'unchecked'
 }
 
 /**

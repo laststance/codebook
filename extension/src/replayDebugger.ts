@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type * as vscode from 'vscode'
 
 import {
+  NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
   REPLAY_DEBUG_SESSION_NAME,
@@ -29,8 +30,8 @@ export type ReplayInspection = 'inspected' | 'uninspected' | 'no-values'
 /** Why {@link ReplayDebugger} asks the reader to re-evaluate its Run and Debug hint and Node debugger availability. */
 export type ReplayDebuggerChange = 'values-loaded' | 'session-ended'
 
-/** What {@link ReplayDebugger.awaitRetrieval} waits for native Variables to have asked of the presented stop: its inspection frame's scopes, or also the first scope's values. */
-export type ReplayRetrievalStage = 'scopes' | 'values'
+/** What {@link ReplayDebugger.awaitRetrieval} waits for the native client to retrieve: the current stack, its inspection frame's scopes, or the first scope's values. */
+export type ReplayRetrievalStage = 'stack' | 'scopes' | 'values'
 
 /** How one {@link ReplayDebugger} inspection wait ends: with a presentation outcome or with the error that ended it. */
 type InspectionOutcome = { inspection: ReplayInspection } | { error: unknown }
@@ -58,18 +59,31 @@ export class ReplayDebugger {
     label: string
     sourceUri?: string
   }
+  /** The selection ({@link selected}) whose native model needs no more selecting: {@link runNativeInspectionModelSelection} settles it once the host accepted {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for it while it was still the shown selection, and {@link selectNativeInspectionModel} settles it when the host registers no such command. A refusal of the host leaves it unsettled, so the stop's next frame asks again (Cycle 0046 AD25). A later frame of a settled selection does not select it again ({@link hasSettledModelSelection}, asked at the frame's entry and again right before the command, Q1); a new selection is a new object and is selected once. */
+  private modelSelectionSettledFor?: ReplayDebugger['selected']
+  /** The model selection the host still answers ({@link runNativeInspectionModelSelection}): the selection it is for, and whether the host selected the model. A newer frame of the same stop waits for this answer instead of asking again, also when the presentation that asked was superseded or abandoned (Cycle 0046 AD25). */
+  private modelSelectionInFlight?: {
+    selection: ReplayDebugger['selected']
+    answer: Promise<boolean>
+  }
+  /** Positive discovery of {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, kept for this owner by {@link nativeInspectionCommands}, so later stops need no catalog roundtrip; a host that did not register it is asked again at its next new selection. */
+  private registeredNativeFocusCommand = false
   private hasPresented = false
   private lastPresentedSnapshot?: ReplayDebugSnapshot
   /** The last committed moment's values were not loaded and native Run and Debug has requested none since. */
   private valuesUnrequested = false
   /** Pending {@link awaitInspection} and {@link awaitRetrieval} checks, re-run whenever the native client's request was served, values load, a `stopped` event is sent or ownership changes. */
   private readonly inspectionWaiters = new Set<() => void>()
+  /** Default native model resolution is allowed only for an observed launch cohort that began without another active debugger. */
+  private nativeSessionsObservedFromEmptyContext = false
+  /** Other sessions observed by {@link trackNativeSessionOwnership}; they may pause without taking the selected frame. */
+  private readonly competingNativeSessions = new Set<string>()
 
   /**
    * Registers the owned historical debug adapter for {@link StudyWorkspace}.
    * @param editor - VS Code API surface used to start, observe and stop the owned session.
    * @param changed - Runs {@link REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS} after native Run and Debug loaded the selected stop's values, and when the learner ends the owned session, so the reader can drop a stale hint and re-enable Node Inspect.
-   * @param failed - Receives an error the `changed` listener throws, while handling a values-loaded notification or while this owner gives up; the native session never sees it.
+   * @param failed - Receives an error the `changed` listener throws, while handling a values-loaded notification or while this owner gives up, and the host's refusal of a native model selection, which fails no frame (Cycle 0046 AD25); the native session never sees it.
    * @example new ReplayDebugger(vscode, (reason) => this.replayDebuggerChanged(reason), (error) => this.report('replay-debugger', error))
    */
   constructor(
@@ -77,6 +91,11 @@ export class ReplayDebugger {
       typeof vscode,
       'EventEmitter' | 'DebugAdapterInlineImplementation'
     > & {
+      commands?: Pick<typeof vscode.commands, 'getCommands'> & {
+        executeCommand: (
+          ...arguments_: Parameters<typeof vscode.commands.executeCommand>
+        ) => ReturnType<typeof vscode.commands.executeCommand>
+      }
       debug: Pick<
         typeof vscode.debug,
         | 'registerDebugAdapterDescriptorFactory'
@@ -85,11 +104,17 @@ export class ReplayDebugger {
         | 'stopDebugging'
       > &
         // Optional so an editor surface without the focused stack item (a test port) keeps the full grace.
-        Partial<Pick<typeof vscode.debug, 'activeStackItem'>>
+        Partial<
+          Pick<
+            typeof vscode.debug,
+            'activeStackItem' | 'activeDebugSession' | 'onDidStartDebugSession'
+          >
+        >
     },
     private readonly changed: (reason: ReplayDebuggerChange) => void = () => {},
     private readonly failed: (error: unknown) => void = () => {},
   ) {
+    this.trackNativeSessionOwnership()
     this.disposables.push(
       this.editor.debug.registerDebugAdapterDescriptorFactory(
         REPLAY_DEBUG_TYPE,
@@ -152,6 +177,7 @@ export class ReplayDebugger {
     )
     this.disposables.push(
       this.editor.debug.onDidTerminateDebugSession((session) => {
+        this.competingNativeSessions.delete(session.id)
         if (session.id !== this.session?.id) return
         this.forgetEndedSession()
         // Codebook retiring its own session to change stops keeps the learner's Run and Debug layout, so values stay unrequested and the hint stays.
@@ -163,6 +189,22 @@ export class ReplayDebugger {
         this.valuesUnrequested = false
         // The reader's listener and its error channel may both throw; neither may escape into the editor's event loop. When both do, the owner is already detached, which is the signal that remains.
         this.tellReader('session-ended')
+      }),
+    )
+  }
+
+  /** Watches public native starts for {@link selectNativeInspectionModel}; the constructor treats an already active debugger as an unknown cohort and keeps its native choices. @example this.trackNativeSessionOwnership() // competing starts disable default historical selection */
+  private trackNativeSessionOwnership(): void {
+    const started = this.editor.debug.onDidStartDebugSession
+    this.nativeSessionsObservedFromEmptyContext = Boolean(
+      started && !this.editor.debug.activeDebugSession,
+    )
+    if (!started) return
+    this.disposables.push(
+      started((session) => {
+        // The configuration owner distinguishes our own pending launch before its adapter is adopted.
+        if (session.configuration.codebookReplayOwner === this.token) return
+        this.competingNativeSessions.add(session.id)
       }),
     )
   }
@@ -436,21 +478,18 @@ export class ReplayDebugger {
       this.selected = { snapshot, label, sourceUri: sourceDocument?.uri }
     }
     // The editor can dispose the adapter just before it reports termination; a disposed adapter shows nothing, which is not "no values".
-    if (adapter.disposed) {
-      // Only an unavailable owner is replaced by the next explicit reopen.
-      this.giveUp()
-      throw new Error(HISTORICAL_DEBUGGER_CLOSED)
-    }
+    this.assertAdapterAvailable(adapter)
     // The native session shows this stop from now on, so an interrupted wait cannot make retire() restart it.
     this.hasPresented = true
     this.lastPresentedSnapshot = snapshot
     // Gaps and scope-less stops have nothing for Variables to load: commit at once and leave the session-level state alone.
     if (!adapter.hasLoadableValues) return 'no-values'
+    await this.selectNativeInspectionModel(adapter, revision, signal)
     // While Run and Debug requests no values, waiting on every stop would stall playback without ever loading them.
     // A paused frame of another session keeps the Run and Debug focus, so this stop's values are not requested either: the grace would only delay the frame.
     const inspection = adapter.inspectionReady
       ? 'inspected'
-      : this.valuesUnrequested || this.foreignPauseFocused()
+      : this.nativeValuesRemainUnrequested()
         ? 'uninspected'
         : await this.awaitInspection(adapter, revision, signal)
     signal.throwIfAborted()
@@ -466,7 +505,7 @@ export class ReplayDebugger {
    * again in VS Code 1.140); its tree holds no row of the stop until then. The adapter serving `scopes` for the stop's inspection
    * frame is the earliest moment that tree can hold those rows, and serving the first scope's `variables` is the moment they are listed.
    *
-   * @param stage - `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
+   * @param stage - `'stack'` for the current stack receipt, `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
    * @param timeoutMs - Longest wait; a view that shows another session, or a host that never asks, ends it there.
    * @returns
    * - `true` once native Variables retrieved that stage of the presented stop (at once when it already had)
@@ -497,14 +536,196 @@ export class ReplayDebugger {
 
   /**
    * Tells a pending {@link awaitRetrieval} check whether native Variables retrieved the stage it waits for.
-   * @param stage - `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
+   * @param stage - `'stack'` for the current stack receipt, `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
    * @returns The adapter's answer for that stage; `undefined` while no adapter is held.
    * @example this.hasRetrieved('scopes') // => true once the adapter served the stop's scopes
    */
   private hasRetrieved(stage: ReplayRetrievalStage): boolean | undefined {
-    return stage === 'scopes'
-      ? this.adapter?.scopesRetrieved
-      : this.adapter?.inspectionReady
+    const adapter = this.adapter
+    if (!adapter) return undefined
+    return {
+      stack: adapter.stackRetrieved,
+      scopes: adapter.scopesRetrieved,
+      values: adapter.inspectionReady,
+    }[stage]
+  }
+
+  /**
+   * Selects the current owned native model after its real stack receipt without borrowing editor keyboard focus; {@link present} calls it before inspection for every presented frame of a stop with loadable values.
+   * It runs once per selection ({@link modelSelectionSettledFor}): during Play the frames of one stop share their selection, and asking the host for its commands and running {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} again for each frame would repeat a model selection the host already made. A selection whose model was not selected (its stack not fetched within the grace, another debugger beside it, a presentation abandoned before the command ran, the host's refusal of the command) is tried again at its next frame.
+   * The command, once run, is the stop's and not the presentation's ({@link runNativeInspectionModelSelection}, Cycle 0046 AD25): a newer frame of the same stop waits for its answer instead of running it again, and the answer settles the stop's selection also when the presentation that ran it was superseded or abandoned meanwhile. A refusal of the host is a view selection that did not happen: it fails no frame and pauses no Play; it goes to the reader's error channel, and the selection stays unsettled.
+   * @param adapter - Adapter owning this selection.
+   * @param revision - Presentation that must still own the model.
+   * @param signal - Cancels an outdated selection.
+   * @example await this.selectNativeInspectionModel(adapter, revision, signal)
+   */
+  private async selectNativeInspectionModel(
+    adapter: ReplayDebugAdapter,
+    revision: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const selection = this.selected
+    // A later frame of the same stop: its model was selected already, or the host has no command for it.
+    if (this.hasSettledModelSelection(selection)) return
+    const commands = await this.nativeInspectionCommands(signal)
+    signal.throwIfAborted()
+    // Even an unsupported-command answer may arrive after another moment was selected.
+    this.assertInspectionOwnership(adapter, revision)
+    if (!commands) {
+      this.modelSelectionSettledFor = selection
+      return
+    }
+    const stackRetrieved = await untilAborted(
+      this.awaitRetrieval('stack', REPLAY_DEBUG_INSPECTION_GRACE_MS),
+      signal,
+    )
+    signal.throwIfAborted()
+    this.assertInspectionOwnership(adapter, revision)
+    if (!stackRetrieved) return
+    // Null means no explicit session and avoids older Cursor's undefined-parent match; only an unambiguous owned cohort may use the native default resolver.
+    if (!this.canSelectNativeInspectionModel()) return
+    // Asked again after the last await: another frame's answer may have settled the selection, and cleared it from flight, while this frame waited (Cycle 0046 Q1).
+    if (this.hasSettledModelSelection(selection)) return
+    // A selection the host still answers for this stop is this frame's too.
+    const inFlight = this.modelSelectionInFlight
+    const answer =
+      inFlight && inFlight.selection === selection
+        ? inFlight.answer
+        : this.runNativeInspectionModelSelection(commands, selection)
+    await untilAborted(answer, signal)
+    this.assertInspectionOwnership(adapter, revision)
+  }
+
+  /**
+   * Says whether a selection's native model needs no more selecting, for {@link selectNativeInspectionModel} at a frame's entry and again right before it starts {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND}, with no await in between.
+   * @param selection - The selection the frame presents, or none.
+   * @returns `true` when {@link modelSelectionSettledFor} is this selection; `false` for no selection or one not settled yet.
+   * @example this.hasSettledModelSelection(this.selected) // => true once the host accepted the stop's focusProcess
+   */
+  private hasSettledModelSelection(
+    selection: ReplayDebugger['selected'],
+  ): boolean {
+    return (
+      selection !== undefined && this.modelSelectionSettledFor === selection
+    )
+  }
+
+  /**
+   * Runs {@link NATIVE_DEBUG_FOCUS_SESSION_COMMAND} for a selection and settles the selection by the host's answer, whatever becomes of the presentation that asked; called by {@link selectNativeInspectionModel}, which keeps the answer in {@link modelSelectionInFlight} for later frames of the stop.
+   * @param commands - The editor's command port.
+   * @param selection - The selection whose model is selected.
+   * @returns `true` once the host selected the model, which settles the selection while it is still the current one; `false` when the host refused the command, which leaves it unsettled for the next frame and reports the refusal on the reader's error channel.
+   * @throws The bound's timeout when the host did not answer within {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS}, as before: the frame that waits fails within its bound.
+   * @example await this.runNativeInspectionModelSelection(commands, this.selected) // => true
+   */
+  private runNativeInspectionModelSelection(
+    commands: NonNullable<
+      Awaited<ReturnType<ReplayDebugger['nativeInspectionCommands']>>
+    >,
+    selection: ReplayDebugger['selected'],
+  ): Promise<boolean> {
+    // The host's refusal of the command is a view selection that did not happen: no frame fails for it.
+    const command = Promise.resolve(
+      commands.executeCommand(NATIVE_DEBUG_FOCUS_SESSION_COMMAND, null),
+    ).then(
+      () => true,
+      (error: unknown) => {
+        try {
+          this.failed(error)
+        } catch {
+          // The reader's error channel failed as well; the next frame tries the selection again.
+        }
+        return false
+      },
+    )
+    // An unanswered command still ends within its bound and fails the frame that waits for it.
+    const answer = awaitResponse(
+      command,
+      'native historical model selection',
+      undefined,
+      REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+    )
+      .then((selected) => {
+        // A later moment may have been selected meanwhile; only the still current selection is settled.
+        if (selected && this.selected === selection)
+          this.modelSelectionSettledFor = selection
+        return selected
+      })
+      .finally(() => {
+        if (this.modelSelectionInFlight?.answer === answer)
+          this.modelSelectionInFlight = undefined
+      })
+    this.modelSelectionInFlight = { selection, answer }
+    return answer
+  }
+
+  /**
+   * Resolves supported native model commands within the ordinary native-operation bound for {@link selectNativeInspectionModel}.
+   * A positive answer is kept for this owner ({@link registeredNativeFocusCommand}): the command is the workbench's own and stays registered while the editor runs, so later stops ask the host's catalog no more.
+   * @param signal - Cancels an abandoned presentation.
+   * @returns The editor command port only when it registers the native selection entry.
+   * @example await this.nativeInspectionCommands(signal) // => undefined on an unsupported host
+   */
+  private async nativeInspectionCommands(signal: AbortSignal) {
+    const commands = this.editor.commands
+    if (!commands) return undefined
+    // Discovery cannot delay a later stop once this owner found the command.
+    if (this.registeredNativeFocusCommand) return commands
+    const supported = await untilAborted(
+      awaitResponse(
+        commands.getCommands(true),
+        'native historical model command availability',
+        signal,
+        REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
+      ),
+      signal,
+    )
+    if (supported?.includes(NATIVE_DEBUG_FOCUS_SESSION_COMMAND))
+      this.registeredNativeFocusCommand = true
+    return this.registeredNativeFocusCommand ? commands : undefined
+  }
+
+  /** Rejects a lost historical owner before and after the native model request in {@link selectNativeInspectionModel}. @param adapter - Adapter serving the expected moment. @param revision - Expected presentation. @throws The existing closed or superseded presentation error after ownership changes. @example this.assertInspectionOwnership(adapter, revision) */
+  private assertInspectionOwnership(
+    adapter: ReplayDebugAdapter,
+    revision: number,
+  ): void {
+    const ownershipError = this.ownershipError(adapter, revision)
+    if (ownershipError) throw ownershipError
+  }
+
+  /** Rejects a disposed native adapter in {@link present} before a recorded stop can be treated as displayed; only an explicit reopen replaces its expired owner. @param adapter - Adapter selected for presentation. @throws The historical debugger closed error after native disposal. @example this.assertAdapterAvailable(adapter) */
+  private assertAdapterAvailable(adapter: ReplayDebugAdapter): void {
+    if (!adapter.disposed) return
+    this.giveUp()
+    throw new Error(HISTORICAL_DEBUGGER_CLOSED)
+  }
+
+  /** Preserves a foreign native debugger choice after readiness in {@link selectNativeInspectionModel}. @returns Whether the current native session still belongs to this historical owner without a foreign selected frame. @example this.ownsNativeInspectionModel() // => false after the learner selects another session */
+  private ownsNativeInspectionModel(): boolean {
+    return Boolean(
+      this.session &&
+      this.editor.debug.activeDebugSession?.id === this.session.id &&
+      !this.foreignPauseFocused(),
+    )
+  }
+
+  /** Keeps {@link selectNativeInspectionModel} from using an ambiguous default resolver: older Cursor accepts null for an unspecified session, but every host can choose another paused session when more than one is present. @returns Whether current ownership and the observed native cohort both permit default selection. @example this.canSelectNativeInspectionModel() // => false after another native debugger starts */
+  private canSelectNativeInspectionModel(): boolean {
+    return this.ownsNativeInspectionModel() && this.nativeSelectionIsExclusive()
+  }
+
+  /** Checks the public lifecycle cohort for {@link canSelectNativeInspectionModel}; an initially active session is never guessed to be the only one. @returns Whether observation began without another active debugger and no competing native start remains. @example this.nativeSelectionIsExclusive() // => false while a learner session is alive */
+  private nativeSelectionIsExclusive(): boolean {
+    return (
+      this.nativeSessionsObservedFromEmptyContext &&
+      this.competingNativeSessions.size === 0
+    )
+  }
+
+  /** Keeps {@link present} from waiting again while Variables remains unrequested or the learner holds another paused session. @returns Whether the current stop should commit truthfully without an inspection wait. @example this.nativeValuesRemainUnrequested() // => true with a foreign focused pause */
+  private nativeValuesRemainUnrequested(): boolean {
+    return this.valuesUnrequested || this.foreignPauseFocused()
   }
 
   /**

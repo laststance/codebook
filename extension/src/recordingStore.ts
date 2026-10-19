@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, opendir } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
+import { lstat, mkdir, open, opendir, readdir, unlink } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { CROSS_RUNTIME_RECORDING_VERSION } from './constants'
@@ -25,6 +26,7 @@ import {
   CONFIGURED_RECORDING_DIRECTORY,
   RECORDING_HEADER_FILE,
   RECORDING_JOURNAL_FILE,
+  RECORDING_OWNERS_DIRECTORY,
   RECORDING_REASON_LIMIT_CHARS,
   RECORDING_SAMPLE_INTERVAL_MS,
   RECORDING_SEAL_FILE,
@@ -58,14 +60,24 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { currentStorageOwner } from './utils/currentStorageOwner'
+import { describeNoStorageFolder } from './utils/describeNoStorageFolder'
 import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
-import { isProcessGone } from './utils/isProcessGone'
+import { hasOwnWriterRecordFolder } from './utils/hasOwnWriterRecordFolder'
+import {
+  isRecordingWriterLive,
+  type ProcessStartsOfList,
+} from './utils/isRecordingWriterLive'
+import { rememberOwnRecordingSession } from './utils/ownRecordingSessions'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
+import { recordingOfDirectory } from './utils/readRecordingWriterRecord'
+import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import { recordingPhases } from './utils/recordingPhases'
+import { removeWriterRecord } from './utils/removeWriterRecord'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { validateRecordingContext } from './utils/validateRecordingContext'
 import { withStorageLock } from './utils/withStorageLock'
@@ -159,6 +171,8 @@ export class RecordingStore {
     }
     if (this.limits.journalBytes <= RECORDING_TERMINAL_RESERVE_BYTES)
       throw new Error('Recording journal must reserve terminal metadata.')
+    // Every header this store writes names its session: this process tells its own recordings by it.
+    rememberOwnRecordingSession(this.sessionId)
   }
 
   /** Reports the current admission setting without blocking history discovery on bad configuration; called by {@link StudyService.status} and by the service's admission of a run, which refuses an invalid setting before it asks the library. @example store.capacityStatus().limit // 64 */
@@ -226,6 +240,7 @@ export class RecordingStore {
       withStorageLock(this.learningDirectory, async () => {
         await this.initialize(version)
         const identities = await this.identities()
+        await this.dropOwnerRecordsWithoutRecording(identities)
         const limit = savedStudyLimit(this.capacity())
         if (identities.length >= limit)
           throw new Error(
@@ -257,6 +272,7 @@ export class RecordingStore {
           join(directory, RECORDING_JOURNAL_FILE),
           Buffer.alloc(0),
         )
+        await this.recordWriterIdentity(directory, header)
         const writer: RecordingWriter = new RecordingWriter(
           directory,
           header,
@@ -274,6 +290,56 @@ export class RecordingStore {
   }
 
   /**
+   * Keeps the full identity of this editor process (the storage lock's record: machine, boot and process start) for a recording it starts, outside the recording ({@link recordingOwnerRecordPath}), so that the judgement of a recording's writer ({@link isRecordingWriterLive} and {@link recordingWriterState}, and through them the library's list and removal ({@link recordingWriterOf}) and this store's {@link ownerState}) tells this machine after its host name changed, another machine, and a process id that went to another process; called by {@link start} under the storage lock, after the header.
+   * The record lies where 0.2.29.0 never looks: that version refuses a header or a recording folder that holds anything it does not know. It is a help, not a part of the recording: a record that cannot be written (a link or a file at the folder's path, a full disk) leaves the recording to be judged by its header, as one of 0.2.29.0 is.
+   * The record names the recording it is written for, its format's folder and its creation time ({@link recordingOfDirectory}): it is kept by the study id, and is used only for that recording ({@link readRecordingWriterRecord}).
+   * @param directory - The recording's directory.
+   * @param header - The recording's header, which gives its study id and its creation time.
+   * @example await this.recordWriterIdentity(directory, header)
+   */
+  private async recordWriterIdentity(
+    directory: string,
+    header: RecordingHeader,
+  ): Promise<void> {
+    const folder = join(this.learningDirectory, RECORDING_OWNERS_DIRECTORY)
+    try {
+      await mkdir(folder, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
+      // Only a real folder of the storage takes the record; nothing is written through a link or a junction that stands there at this look (one put there after it can only be this user's own: hasOwnWriterRecordFolder).
+      if (!(await hasOwnWriterRecordFolder(this.learningDirectory))) return
+      await atomicPrivateWrite(
+        recordingOwnerRecordPath(this.learningDirectory, header.studyId),
+        {
+          pid: process.pid,
+          ...(await currentStorageOwner()),
+          recording: recordingOfDirectory(directory, header.createdAt),
+        },
+        MAX_RECORDING_HEADER_BYTES,
+      )
+    } catch {
+      // Without the record the recording is judged by its header alone.
+    }
+  }
+
+  /**
+   * Removes the records of writers ({@link recordWriterIdentity}) whose recording is gone: one a removal by hand, a crash between a recording's removal and its record's, or a removal by 0.2.29.0 left behind; called by {@link start} under the storage lock, with the recordings it just listed.
+   * @param identities - The study ids of every recording of every format.
+   * @example await this.dropOwnerRecordsWithoutRecording(['<study id>'])
+   */
+  private async dropOwnerRecordsWithoutRecording(
+    identities: string[],
+  ): Promise<void> {
+    const folder = join(this.learningDirectory, RECORDING_OWNERS_DIRECTORY)
+    // A link, a junction or a file at the folder's path is no folder of records and is not listed.
+    if (!(await hasOwnWriterRecordFolder(this.learningDirectory))) return
+    for (const name of await readdir(folder).catch(() => [])) {
+      // A record is `<study id>.json`; its temporary file adds `.<uuid>.tmp`.
+      const studyId = name.slice(0, name.indexOf('.json'))
+      if (name.includes('.json') && identities.includes(studyId)) continue
+      await unlink(join(folder, name)).catch(() => undefined)
+    }
+  }
+
+  /**
    * Drops the writer this window keeps for a study's recording, so record-and-delete cycles do not accumulate journals and frame hashes; called when the writer has sealed its recording and by {@link StudyWorkspace} once the study was moved to the Trash.
    * @param studyId - The study whose recording is no longer written.
    * @param writer - When given, only this writer is dropped, so a newer recording under the same id keeps its own.
@@ -284,43 +350,58 @@ export class RecordingStore {
     this.active.delete(studyId)
   }
 
-  /** Discovers incomplete headers independently of study archives, with per-entry failure instead of unrelated data substitution. @example await store.list() */
+  /** Discovers incomplete headers independently of study archives, with per-entry failure instead of unrelated data substitution. The recordings are looked at together, in the order of the listing, and their writers' process starts are read once for the whole list ({@link ProcessStartsOfList}). @example await store.list() */
   async list(): Promise<RecordingCatalogEntry[]> {
     await this.initialize()
-    const result: RecordingCatalogEntry[] = []
-    for (const studyId of await this.identities()) {
-      try {
-        const header = await this.header(studyId),
-          seal = await this.seal(studyId, header.version)
-        const writer = this.active.get(studyId)
-        result.push({
-          studyId,
-          profile: header.profile,
-          createdAt: header.createdAt,
-          status: seal
-            ? seal.status === 'complete'
-              ? 'finalized'
-              : 'partial'
-            : this.ownerState(header, writer),
-          endMs: seal?.endMs,
-          lastVerifiedMs: writer?.state().lastWrittenMs ?? header.startedMs,
-          reason:
-            writer?.state().reason ??
-            seal?.reason ??
-            (seal
-              ? undefined
-              : 'Capture has no verified final checkpoint; end time is unknown.'),
-        })
-      } catch (error) {
-        result.push({
-          studyId,
-          status: 'partial',
-          lastVerifiedMs: 0,
-          reason: String(error).slice(0, MAX_UI_TEXT_CHARS),
-        })
+    const starts: ProcessStartsOfList = new Map()
+    return Promise.all(
+      (await this.identities()).map((studyId) =>
+        this.catalogEntryOf(studyId, starts),
+      ),
+    )
+  }
+
+  /**
+   * Gives the catalog entry of one recording, or the entry of its failure; called by {@link list} for every recording, all of them at once.
+   * @param studyId - The recording's study id.
+   * @param starts - The process starts of the list, shared by the judgements of its writers ({@link ownerState}).
+   * @returns The entry with the recording's status, its end and its reason; for a recording that cannot be read, a `partial` entry whose reason is the failure.
+   * @example await this.catalogEntryOf(studyId, new Map()) // => { studyId, status: 'unfinalized', … }
+   */
+  private async catalogEntryOf(
+    studyId: string,
+    starts: ProcessStartsOfList,
+  ): Promise<RecordingCatalogEntry> {
+    try {
+      const header = await this.header(studyId),
+        seal = await this.seal(studyId, header.version)
+      const writer = this.active.get(studyId)
+      return {
+        studyId,
+        profile: header.profile,
+        createdAt: header.createdAt,
+        status: seal
+          ? seal.status === 'complete'
+            ? 'finalized'
+            : 'partial'
+          : await this.ownerState(header, writer, starts),
+        endMs: seal?.endMs,
+        lastVerifiedMs: writer?.state().lastWrittenMs ?? header.startedMs,
+        reason:
+          writer?.state().reason ??
+          seal?.reason ??
+          (seal
+            ? undefined
+            : 'Capture has no verified final checkpoint; end time is unknown.'),
+      }
+    } catch (error) {
+      return {
+        studyId,
+        status: 'partial',
+        lastVerifiedMs: 0,
+        reason: String(error).slice(0, MAX_UI_TEXT_CHARS),
       }
     }
-    return result
   }
 
   /** Verifies journal order, sealed bytes and every referenced PNG once when opening playback. @example const index = await store.read(studyId) */
@@ -428,7 +509,7 @@ export class RecordingStore {
       ? seal.status === 'complete'
         ? 'finalized'
         : 'partial'
-      : this.ownerState(header, this.active.get(studyId))
+      : await this.ownerState(header, this.active.get(studyId))
     return {
       header,
       entries,
@@ -909,15 +990,30 @@ export class RecordingStore {
       : undefined
   }
 
-  /** Keeps uncertain live/PID-reused owners unfinalized; only a local process that {@link isProcessGone} finds absent establishes interruption. @example this.ownerState(header) // 'interrupted' */
-  private ownerState(
+  /**
+   * Gives the status of an unsealed recording for {@link list} and {@link read}: this session's own writer says it; any other recording is `unfinalized` while its writer may still run and `interrupted` once it is gone, by the one rule of {@link isRecordingWriterLive} (the record of the writer's full identity, or for a recording of 0.2.29.0 its header's host name and process id). A writer this computer cannot confirm (`unconfirmed-here`: a process id that a later process or one of another user has) reads `interrupted` here as well; only the removal's dialog treats it apart.
+   * @param header - The recording's header.
+   * @param writer - This session's writer of the recording, if any.
+   * @param starts - The process starts of the caller's list ({@link list}); one for this recording alone when left out ({@link read}).
+   * @returns `recording` or `partial` from this session's writer; otherwise `unfinalized` or `interrupted`.
+   * @example await this.ownerState(header) // => 'interrupted' for a crashed editor whose process id another process has now
+   */
+  private async ownerState(
     header: RecordingHeader,
     writer?: RecordingWriter,
-  ): RecordingIndex['status'] {
+    starts?: ProcessStartsOfList,
+  ): Promise<RecordingIndex['status']> {
     if (writer && header.owner.sessionId === this.sessionId)
       return writer.state().status === 'recording' ? 'recording' : 'partial'
-    if (header.owner.hostname !== hostname()) return 'unfinalized'
-    return isProcessGone(header.owner.pid) ? 'interrupted' : 'unfinalized'
+    // A writer that may still run (of another machine, or a live process that began before the recording) leaves the end unknown; one that is gone interrupted the recording.
+    return (await isRecordingWriterLive(
+      this.path(header.studyId, header.version),
+      header,
+      'counts',
+      starts,
+    ))
+      ? 'unfinalized'
+      : 'interrupted'
   }
 
   /** Selects the highest existing recording directory and pins multi-file reads to that format. @example await this.location(studyId, 2) */
@@ -934,7 +1030,9 @@ export class RecordingStore {
         })
       if (!rootStat) continue
       if (!rootStat.isDirectory())
-        throw new Error('Recording root is not a regular directory.')
+        throw new Error(
+          describeNoStorageFolder('Recording root', root, rootStat),
+        )
       const directory = this.path(studyId, storage.version),
         stat = await lstat(directory).catch((error) => {
           if (error.code === 'ENOENT') return undefined
@@ -952,7 +1050,7 @@ export class RecordingStore {
     )
   }
 
-  /** Coalesces bounded version directories so interrupted reservations share one total capacity. @example await this.identities() */
+  /** Coalesces bounded version directories so interrupted reservations share one total capacity; an entry that is no folder and a folder whose name is no study id are not counted. @example await this.identities() */
   private async identities(): Promise<string[]> {
     const identities = new Set<string>()
     for (const storage of RECORDING_STORAGE_FORMATS) {
@@ -963,15 +1061,30 @@ export class RecordingStore {
         })
       if (!stat) continue
       if (!stat.isDirectory())
-        throw new Error('Recording root is not a regular directory.')
+        throw new Error(
+          describeNoStorageFolder('Recording root', directory, stat),
+        )
       // More recordings than the maximum (one restored from the Trash into a full library) stay listed, so their studies can be deleted.
-      for await (const entry of await opendir(directory)) {
-        if (!entry.isDirectory())
-          throw new Error('Recording library contains a non-directory entry.')
-        identities.add(studyIdSchema.parse(entry.name))
-      }
+      for await (const entry of await opendir(directory))
+        this.addIdentityOf(entry, identities)
     }
     return [...identities]
+  }
+
+  /**
+   * Counts one entry of a recording root as its study's recording; called by {@link identities} for every entry of every root.
+   * Only a folder named like a study id is a recording. Any other entry is nobody's recording: it is skipped, never followed, and stays where it is, so that it breaks neither the start of a recording nor the list.
+   * @param entry - An entry of a recording root.
+   * @param identities - The study ids found so far, which gain this entry's.
+   * @example
+   * this.addIdentityOf(entry, identities) // identities gains '<study id>' for a folder of that name, and nothing for a `.DS_Store`
+   */
+  private addIdentityOf(entry: Dirent, identities: Set<string>): void {
+    // An entry that is no folder (the `.DS_Store` Finder writes when the learner opens the root, a link) is skipped like a name that is no study id.
+    if (!entry.isDirectory()) return
+    const parsedId = studyIdSchema.safeParse(entry.name)
+    // A folder whose name is no study id (a stray `x`) is nobody's recording and is skipped.
+    if (parsedId.success) identities.add(parsedId.data)
   }
 
   /** Creates private storage without following a symlink in the recording root. @example await this.initialize() */
@@ -983,8 +1096,11 @@ export class RecordingStore {
       )!,
       directory = join(this.learningDirectory, storage.directory)
     await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-    if (!(await lstat(directory)).isDirectory())
-      throw new Error('Recording root is not a regular directory.')
+    const standing = await lstat(directory)
+    if (!standing.isDirectory())
+      throw new Error(
+        describeNoStorageFolder('Recording root', directory, standing),
+      )
   }
 }
 
@@ -1174,6 +1290,12 @@ export class RecordingWriter {
           join(this.directory, RECORDING_SEAL_FILE),
           seal,
           MAX_RECORDING_HEADER_BYTES,
+        )
+        // A sealed recording has no writer any more; the record of its writer goes, and one that stays is swept at a later start.
+        await removeWriterRecord(
+          dirname(dirname(this.directory)),
+          this.header.studyId,
+          { directory: this.directory, createdAt: this.header.createdAt },
         )
         this.finalized = true
         this.sealed()

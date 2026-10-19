@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import fsPromises, {
   lstat,
@@ -11,17 +10,29 @@ import fsPromises, {
   rename,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
-import { basename, join, relative } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { isDeepStrictEqual } from 'node:util'
 
+import type * as libraryModule from '../learningLibrary'
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
+import { readProcessStart } from '../utils/readProcessStart'
+import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
+import { recordingWriterOf } from '../utils/recordingWriterOf'
+import type * as lockModule from '../utils/withStorageLock'
+import { withStorageLock } from '../utils/withStorageLock'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
+import { idleChild } from './utils/idleChild'
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { loadModule } from './utils/loadModule'
+import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 /**
  * Creates a private learning directory with a study library and a recording store that share it and one limit, plus a Trash outside it.
@@ -306,6 +317,7 @@ test('a removal whose first move the Trash refuses moves nothing and leaves the 
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause: `Trash refused ${study.id}`,
+    trashRefused: true,
   })
   assert.deepEqual(storage.moved, [])
   assert.deepEqual(await filesBelow(storage.directory), filesBefore)
@@ -330,6 +342,7 @@ test('a removal whose archive move the Trash refuses is reported as partly moved
   assert.deepEqual(first, {
     outcome: 'partly-moved',
     cause: `Trash refused ${study.id}.study.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(
     listedAfterFirst.map((entry) => [entry.id, entry.metadata]),
@@ -562,6 +575,7 @@ test('a removal whose first file move the Trash refuses after the ledger was rew
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause: `Trash refused ${study.id}.study.meta.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(storage.moved, [])
   assert.equal((await readFile(ledgerPath)).equals(ledgerBefore), true)
@@ -591,13 +605,14 @@ test('a removal of a study that has only its archive, refused by the Trash, move
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause: `Trash refused ${study.id}.study.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(storage.moved, [])
   assert.equal((await readFile(ledgerPath)).equals(ledgerBefore), true)
   assert.deepEqual(await storage.library.readStudy(study.id), study)
 })
 
-// Value: protects=a removal that moved no file says that nothing moved and names the write-back that failed, so the reader keeps a study that is whole; fails_when=a failed write-back is swallowed, or it is answered as partly moved although no path is in the Trash; why_new=the write-back is new; seam=the injected mover, which blocks the ledger path before it refuses the move
+// Value: protects=a removal that moved no file says that nothing moved and names the write-back that failed, so the reader keeps a study that is whole, and still says that the Trash refused, so a full library stops offering deletion; fails_when=a failed write-back is swallowed, it is answered as partly moved although no path is in the Trash, or the write-back's branch drops trashRefused (TC4: the regex anchored at the start never saw it); why_new=the write-back is new, and Cycle 0046 testing review TC4; seam=the injected mover, which blocks the ledger path before it refuses the move
 test('a removal that moved nothing and cannot write the ledger back says that nothing moved and names both failures', async (context) => {
   // Arrange: the ledger names the study; the mover puts a directory in the ledger's place and then refuses the archive.
   const storage = await removalStorage(context, 4)
@@ -612,10 +627,16 @@ test('a removal that moved nothing and cannot write the ledger back says that no
   }
   // Act
   const removal = await storage.library.removeStudy(study.id, refusingMover)
-  // Assert
+  // Assert: the outcome and the Trash's refusal exactly, the cause by its start (the system words the write-back's failure).
+  const { cause, ...withoutCause } =
+    'cause' in removal ? removal : { cause: '', ...removal }
+  assert.deepEqual(withoutCause, {
+    outcome: 'nothing-moved',
+    trashRefused: true,
+  })
   assert.match(
-    JSON.stringify(removal),
-    /^\{"outcome":"nothing-moved","cause":"Trash refused the archive; the learner ledger could not be written back: EISDIR/,
+    cause,
+    /^Trash refused the archive; the learner ledger could not be written back: EISDIR/,
   )
   assert.deepEqual(
     (await readdir(storage.directory)).filter((name) => name.endsWith('.tmp')),
@@ -733,6 +754,7 @@ test('a removal that moved nothing leaves a ledger read from a historical file w
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
     cause: `Trash refused ${study.id}.study.meta.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(await storage.library.readProgress(), progressBefore)
   assert.equal(progressBefore.selection?.studyId, study.id)
@@ -855,6 +877,7 @@ test('a removal whose sidecar move the Trash refuses after the evidence moved is
   assert.deepEqual(removal, {
     outcome: 'partly-moved',
     cause: `Trash refused ${study.id}.study.meta.v3.json`,
+    trashRefused: true,
   })
   assert.deepEqual(storage.moved, [
     join('..', 'agent', study.instanceId, study.runId),
@@ -896,6 +919,7 @@ test('a removal whose evidence move the Trash refuses after the recording moved 
   assert.deepEqual(first, {
     outcome: 'partly-moved',
     cause: `Trash refused ${study.runId}`,
+    trashRefused: true,
   })
   assert.deepEqual(movedByFirst, [join('recordings.v2', study.id)])
   assert.deepEqual(evidenceLeftByFirst, ['events.jsonl'])
@@ -945,13 +969,6 @@ async function placeArchive(directory: string): Promise<string> {
   await mkdir(directory, { recursive: true })
   await writeFile(join(directory, `${studyId}.study.v3.json`), '{}')
   return studyId
-}
-
-/** Gives the id of a process that has already exited on this machine, as the editor that left a lock or a connection descriptor behind. @example const pid = exitedProcessId() */
-function exitedProcessId(): number {
-  const exited = spawnSync(process.execPath, ['-e', ''])
-  assert.equal(typeof exited.pid, 'number')
-  return exited.pid
 }
 
 // Value: protects=a library holding more saved studies than its maximum (a study restored from the Trash into a full library) can still be listed, counted and emptied; fails_when=the library refuses every list, usage, admission and save above the maximum (0038-F8), so the learner cannot delete anything; why_new=no test placed more than 256 archives; seam=none
@@ -1100,6 +1117,98 @@ test('a Trash move that rejects after the file already left the library is count
   assert.deepEqual(await storage.library.list(), [])
 })
 
+// Value: protects=a recording folder the Trash took is counted as moved, also when something made the folder again at its path before the editor's call rejected; fails_when=any entry at the path after a rejected move counts as the Trash's refusal, so the removal reports that nothing was deleted although the recording is in the Trash, and the window offers no removal any more (AD10 case c); why_new=Cycle 0046 adversarial review AD10: the entry at the path is compared with the one there before the move; seam=the injected mover, which moves the folder, makes an empty folder at its path and rejects
+test('a Trash move that rejects after the folder left the library and another was made at its path counts the folder as moved, and the removal completes', async (context) => {
+  // Arrange: a saved study with a recording; the Trash takes the recording folder, then an empty folder appears at its path, then the call rejects.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const recordingFolder = join(storage.directory, 'recordings.v2', study.id)
+  const moverThatRejectsAfterThePathWasMadeAgain: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path !== recordingFolder) return
+    await mkdir(path)
+    throw new Error('Trash answered late')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverThatRejectsAfterThePathWasMadeAgain,
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    join('recordings.v2', study.id),
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+  assert.deepEqual(await readdir(recordingFolder), [])
+})
+
+// Value: protects=a removal whose moved folder cannot be looked at afterwards never tells the learner that nothing was deleted; fails_when=a look that fails after a rejected move counts as the path still being there, so the outcome reads "Nothing was deleted" and the Trash's refusal, although the recording is in the Trash (AD10 case b); why_new=Cycle 0046 adversarial review AD10; seam=the injected mover, which moves the recording folder, puts a link that leads to itself where its parent folder was (so the look answers ELOOP, as a folder this user may not read answers EACCES, for root as well) and rejects
+test('a Trash move that rejects for a folder that cannot be looked at afterwards ends as partly moved and says that whether it moved is unknown', async (context) => {
+  // Arrange: a saved study with a recording; the Trash takes the recording folder, then a link that leads to itself stands where the recordings folder was, then the call rejects.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const recordingsRoot = join(storage.directory, 'recordings.v2'),
+    recordingFolder = join(recordingsRoot, study.id)
+  const moverWhoseFolderCannotBeLookedAt: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path !== recordingFolder) return
+    await rm(recordingsRoot, { recursive: true })
+    await symlink('recordings.v2', recordingsRoot)
+    throw new Error('Trash answered late')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverWhoseFolderCannotBeLookedAt,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'partly-moved',
+    cause: `Trash answered late; whether ${recordingFolder} left the library could not be checked: ELOOP: too many symbolic links encountered, lstat '${recordingFolder}'`,
+    moveUnknown: true,
+  })
+  assert.deepEqual(storage.moved, [join('recordings.v2', study.id)])
+  assert.deepEqual(
+    (await storage.library.list()).map((entry) => entry.id),
+    [study.id],
+  )
+})
+
+// Value: protects=a recording folder the Trash took is counted as moved when a file stands where its parent folder was before the editor's call rejected; fails_when=the look's ENOTDIR (nothing can be at a path whose folder is a file) is read as unknown, so the removal stops and says that Codebook could not tell whether the study moved (S7); why_new=Cycle 0046 CodeRabbit review CR2 (S7); seam=the injected mover, which moves the recording folder, puts a file where recordings.v2 was and rejects
+test('a Trash move that rejects after the folder left the library and a file took its parent folder’s place counts the folder as moved, and the removal completes', async (context) => {
+  // Arrange: a saved study with a recording; the Trash takes the recording folder, then a file stands where the recordings folder was, then the call rejects.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const recordingsRoot = join(storage.directory, 'recordings.v2'),
+    recordingFolder = join(recordingsRoot, study.id)
+  const moverWhoseParentBecameAFile: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path !== recordingFolder) return
+    await rm(recordingsRoot, { recursive: true })
+    await writeFile(recordingsRoot, '')
+    throw new Error('Trash answered late')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverWhoseParentBecameAFile,
+  )
+  // Assert
+  assert.deepEqual(
+    { removal, moved: storage.moved },
+    {
+      removal: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
 // Value: protects=moving the last run's evidence leaves no empty instance directory in the agent storage; fails_when=the instance directory stays behind after its only run's evidence went to the Trash (0040-N9-5); why_new=the evidence test asserted only the run directory; seam=the injected mover
 test('moving the evidence of an instance’s only run also removes the instance directory that is left empty, and keeps one that still holds another run', async (context) => {
   // Arrange: two studies; the first instance has one run, the second instance has two.
@@ -1126,32 +1235,6 @@ test('moving the evidence of an instance’s only run also removes the instance 
   // Assert
   assert.deepEqual((await readdir(agent)).sort(), ['shared-instance'])
   assert.deepEqual(await readdir(join(agent, 'shared-instance')), ['other-run'])
-})
-
-// Value: protects=an interrupted reservation's recording directory, which has no study, is not moved by asking to remove that id; fails_when=a removal without an archive moves the recording (the recording would be orphaned from nothing, or a later study's recording lost); why_new=the unknown-id test used an id without any files (0038-T4); seam=the injected mover
-test('a recording directory without a saved study stays in place when that id is asked to be removed, and nothing moves', async (context) => {
-  // Arrange: a recording directory under an id the library holds no archive for.
-  const storage = await removalStorage(context, 4)
-  const study = await saveStudyWithRecording(storage)
-  await rm(join(storage.directory, `${study.id}.study.meta.v3.json`))
-  await rm(join(storage.directory, `${study.id}.study.v3.json`))
-  // Act
-  const removal = await storage.library.removeStudy(
-    study.id,
-    storage.moveToTrash,
-  )
-  // Assert
-  assert.deepEqual(removal, {
-    outcome: 'nothing-moved',
-    cause: 'Study archive is unavailable.',
-  })
-  assert.deepEqual(storage.moved, [])
-  assert.equal(
-    (
-      await lstat(join(storage.directory, 'recordings.v2', study.id))
-    ).isDirectory(),
-    true,
-  )
 })
 
 // Value: protects=only a study identity can name what a removal moves; fails_when=a path-like id reaches the steps (0038-T5); why_new=no negative identity test existed; seam=the injected mover
@@ -1203,14 +1286,14 @@ test('removing a cross-runtime study moves its recordings.v3 directory, its v4 s
   assert.deepEqual(await storage.library.list(), [])
 })
 
-// Value: protects=a storage lock left by an editor that was killed mid-removal does not refuse every later write until it is removed by hand; fails_when=a lock whose process no longer exists on this machine is treated like a live writer's lock (0038-F13); why_new=the lock tests used a lock of a live process; seam=a real exited process
+// Value: protects=a storage lock left by an editor that was killed mid-removal does not refuse every later write until it is removed by hand; fails_when=a lock whose process no longer exists on this machine is treated like a live writer's lock (0038-F13); why_new=the lock tests used a lock of a live process; seam=none (the lock names a process id that no process has)
 test('a storage lock left by an exited editor process on this machine is taken over and the removal completes', async (context) => {
-  // Arrange: the lock file names a process of this machine that has exited.
+  // Arrange: the lock file names a process of this machine that has exited: an id no process can have, because the id of a child that just exited could be given to another process before the lock is judged.
   const storage = await removalStorage(context, 4)
   const study = await saveStudy(storage)
   await writeFile(
     join(storage.directory, 'writer.lock'),
-    JSON.stringify({ pid: exitedProcessId(), hostname: hostname() }),
+    JSON.stringify({ pid: ID_OF_NO_PROCESS, hostname: hostname() }),
   )
   // Act
   const removal = await storage.library.removeStudy(
@@ -1287,4 +1370,826 @@ test('after a removal could not release its storage lock and the lock stayed, a 
   await assert.rejects(save, {
     message: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(storage.directory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
   })
+})
+
+// Value: protects=what a removal by hand left of a saved study stays reachable: it is listed, its files are named, and removing them frees the place its recording takes; fails_when=a study is listed by its archive alone, so after the learner removed only the archive its recording still counts against the limit, no list shows it, and the "full" message points at a study that is not listed (Cycle 0046 row 86); why_new=every removal by hand in the tests removed all files of a study; seam=the file system, on which the test removes the files as the learner does
+test('what is left of a saved study whose archive alone was removed by hand stays listed as an entry that cannot be opened, with its remaining files, and removing them frees its place', async (context) => {
+  // Arrange: a limit of one; the one saved study has a finished recording. The learner removes the archive alone and presses Retry storage / refresh, which forgets absent studies and repairs the catalog.
+  const storage = await removalStorage(context, 1)
+  const study = await saveStudyWithRecording(storage)
+  const archive = join(storage.directory, `${study.id}.study.v3.json`),
+    sidecar = join(storage.directory, `${study.id}.study.meta.v3.json`),
+    recording = join(storage.directory, 'recordings.v2', study.id)
+  await utimes(
+    sidecar,
+    new Date('2026-09-20T00:00:01.000Z'),
+    new Date('2026-09-20T00:00:01.000Z'),
+  )
+  await utimes(
+    recording,
+    new Date('2026-09-20T00:00:02.000Z'),
+    new Date('2026-09-20T00:00:02.000Z'),
+  )
+  const nextRecording = (): Promise<string> => {
+    const runId = randomUUID()
+    return storage.recordings
+      .start(
+        {
+          workspaceKey: study.workspaceKey,
+          studyId: `${study.instanceId}_${runId}`,
+          instanceId: study.instanceId,
+          runId,
+          runtimeId: randomUUID(),
+          profile: study.profile,
+          sourceBuild: {
+            revision: 'removal-test',
+            dirty: false,
+            sourceHash: '1'.repeat(64),
+          },
+        },
+        0,
+      )
+      .then(
+        () => 'admitted',
+        (error: unknown) => String(error),
+      )
+  }
+  // Act
+  await rm(archive)
+  await storage.library.forgetAbsentStudies()
+  await storage.library.reconcile()
+  const listedAfterRetry = await storage.library.list()
+  const filesLeft = await storage.library.studyFiles(study.id)
+  const readOfTheStudy = await storage.library.readStudy(study.id).then(
+    () => 'read',
+    (error: unknown) => String(error),
+  )
+  const recordingWhileListed = await nextRecording()
+  for (const path of filesLeft) await rm(path, { recursive: true })
+  const listedAfterRemoval = await storage.library.list()
+  const recordingAfterRemoval = await nextRecording()
+  // Assert
+  assert.deepEqual(listedAfterRetry, [
+    {
+      id: study.id,
+      savedAt: '2026-09-20T00:00:02.000Z',
+      format: 'archive-missing',
+      metadata: 'unavailable',
+      outcome: 'Archive missing; remaining files kept',
+    },
+  ])
+  assert.deepEqual(filesLeft, [recording, sidecar])
+  assert.equal(readOfTheStudy, 'Error: Study archive is unavailable.')
+  assert.equal(
+    recordingWhileListed,
+    'Error: Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study that has a recording from Saved studies in the Study workspace, before starting another session. Existing recordings were kept.',
+  )
+  assert.deepEqual(listedAfterRemoval, [])
+  assert.equal(recordingAfterRemoval, 'admitted')
+})
+
+// Value: protects=in a window with a Trash the learner can delete what is left of a saved study without its archive, so its recording stops taking a place of the limit; fails_when=a removal refuses every study without an archive, so the listed entry cannot be deleted (Cycle 0046 row 86); why_new=the test this one replaces, "a recording directory without a saved study stays in place when that id is asked to be removed, and nothing moves", stated the opposite for the same files: a finished recording whose archive and catalog sidecar were removed; seam=the injected mover
+test('what is left of a saved study without its archive and its catalog sidecar, a finished recording, is listed and moves to the Trash when the study is deleted', async (context) => {
+  // Arrange: a finished recording whose study lost its archive and its catalog sidecar.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  await rm(join(storage.directory, `${study.id}.study.meta.v3.json`))
+  await rm(join(storage.directory, `${study.id}.study.v3.json`))
+  // Act
+  const listedBefore = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+    outcome: entry.outcome,
+  }))
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(listedBefore, [
+    {
+      id: study.id,
+      format: 'archive-missing',
+      outcome: 'Archive missing; remaining files kept',
+    },
+  ])
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [join('recordings.v2', study.id)])
+  assert.deepEqual(await storage.library.list(), [])
+  assert.deepEqual(await storage.recordings.list(), [])
+})
+
+/**
+ * Names an editor process (another window's, or this test process's own) as the writer of a recording this test process started, in both places a window of this build names it: the header, and the record of the writer's full identity beside the recordings ({@link recordingOwnerRecordPath}).
+ * @param storage - The removal storage of the test.
+ * @param studyId - The recording's study id, a recording of the configured format.
+ * @param owner - The editor process: its id and its host name. Its start is read from the system, so a live process is judged by its own start, and an id of no process has none.
+ * @example await nameWriterOfRecording(storage, studyId, { pid: child.pid!, hostname: hostname() })
+ */
+async function nameWriterOfRecording(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  studyId: string,
+  owner: { pid: number; hostname: string },
+): Promise<void> {
+  const headerPath = join(
+    storage.directory,
+    'recordings.v2',
+    studyId,
+    'header.json',
+  )
+  const header: { owner: Record<string, unknown> } = JSON.parse(
+    await readFile(headerPath, 'utf8'),
+  )
+  await writeFile(
+    headerPath,
+    JSON.stringify({ ...header, owner: { ...header.owner, ...owner } }),
+  )
+  // The writer's own start, or none for an id of no process.
+  await rewriteWriterRecord(storage.directory, studyId, {
+    ...owner,
+    processStart: await readProcessStart(owner.pid).catch(() => undefined),
+  })
+}
+
+// Value: protects=the recording of a run whose study is not saved yet is not taken for what is left of a removed study: it is neither listed as an entry that cannot be opened nor moved by a removal of its id; fails_when=every recording directory without an archive is listed and removable, so a learner (also one in another window) deletes the recording a running editor is writing (0038-T4), or a recording whose writer has ended stays unlisted and keeps its place for good (Cycle 0046 row 86); why_new=the listing of studies without an archive is new; seam=the recording's header, in which the test names an owner process that has ended, and the injected mover
+test('a recording that is still being written for a study that is not saved yet is neither listed nor moved, and one whose writer has ended is listed', async (context) => {
+  // Arrange: two reserved recordings without a saved study. This test process writes the first; the header of the second names an editor process that has ended.
+  const storage = await removalStorage(context, 4)
+  const reserve = async (): Promise<string> => {
+    const instanceId = randomUUID(),
+      runId = randomUUID()
+    await storage.recordings.start(
+      {
+        workspaceKey: storage.workspaceKey,
+        studyId: `${instanceId}_${runId}`,
+        instanceId,
+        runId,
+        runtimeId: randomUUID(),
+        profile: 'repository-browser',
+        sourceBuild: {
+          revision: 'removal-test',
+          dirty: false,
+          sourceHash: '1'.repeat(64),
+        },
+      },
+      0,
+    )
+    return `${instanceId}_${runId}`
+  }
+  const beingWritten = await reserve(),
+    leftByKilledEditor = await reserve()
+  await nameWriterOfRecording(storage, leftByKilledEditor, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+  })
+  // Act
+  const listed = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+  }))
+  const removalOfTheOneBeingWritten = await storage.library.removeStudy(
+    beingWritten,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(listed, [
+    { id: leftByKilledEditor, format: 'archive-missing' },
+  ])
+  assert.deepEqual(removalOfTheOneBeingWritten, {
+    outcome: 'nothing-moved',
+    cause: 'Study archive is unavailable.',
+  })
+  assert.deepEqual(storage.moved, [])
+  assert.equal(
+    (
+      await lstat(join(storage.directory, 'recordings.v2', beingWritten))
+    ).isDirectory(),
+    true,
+  )
+})
+
+/**
+ * Leaves a recording of a saved study in one recording format's folder as a window of 0.2.29.0 leaves it, a header without a record of its writer, naming the writer's process and host and the time the recording was created.
+ * @param storage - The removal storage of the test.
+ * @param studyId - The saved study's id.
+ * @param recordingsRoot - The recording format's folder, `recordings.v2` or `recordings.v3`.
+ * @param writer - The process id and host name the header names, and when the recording was created.
+ * @example await headerOnlyRecording(storage, study.id, 'recordings.v3', { pid: ID_OF_NO_PROCESS, hostname: 'host-one', createdAt: '2026-10-01T08:00:00.000Z' })
+ */
+async function headerOnlyRecording(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  studyId: string,
+  recordingsRoot: 'recordings.v2' | 'recordings.v3',
+  writer: { pid: number; hostname: string; createdAt: string },
+): Promise<void> {
+  const folder = join(storage.directory, recordingsRoot, studyId)
+  await mkdir(folder, { recursive: true })
+  await writeFile(
+    join(folder, 'header.json'),
+    JSON.stringify({
+      owner: {
+        pid: writer.pid,
+        hostname: writer.hostname,
+        sessionId: randomUUID(),
+      },
+      createdAt: writer.createdAt,
+    }),
+  )
+}
+
+// Value: protects=the learner's consent to each recording of a study that the removal moves although its writer may still run elsewhere; fails_when=the refusal names only the first such recording, so the dialog names one host and "Move to Trash Anyway" moves the recordings of every host (AD6, probe p3 E3); why_new=Cycle 0046 adversarial review AD6: no study had two such recordings; seam=two recordings of one study in two recording formats, each a header of another host without a record of its writer, and the injected mover
+test('a study whose recordings name two other hosts is refused with both hosts and both starts, and nothing moves', async (context) => {
+  // Arrange: a saved study with a recording of host-one (recordings.v3, 2026-10-01) and one of host-two (recordings.v2, 2026-10-17); no process here has their process id.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v3', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-one',
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-two',
+    createdAt: '2026-10-17T08:00:00.000Z',
+  })
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(
+    { removal, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them.`,
+        unconfirmedWriter: {
+          directory: join(storage.directory, 'recordings.v3', study.id),
+          host: 'host-one',
+          startedAt: '2026-10-01T08:00:00.000Z',
+          place: 'another-computer',
+        },
+        otherUnconfirmedWriters: [
+          {
+            directory: join(storage.directory, 'recordings.v2', study.id),
+            host: 'host-two',
+            startedAt: '2026-10-17T08:00:00.000Z',
+            place: 'another-computer',
+          },
+        ],
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=the learner's consent to each recording a removal moves although its writer may still run elsewhere, also when a recording appears after their dialog; fails_when="Move to Trash Anyway" judges the writers again in its move and moves a recording of another host that the dialog never named (S2, probe: host-two written while the dialog was open, and both moved); why_new=Cycle 0046 Claude adversarial review #3 (S2): the learner's move names the writers it agreed to; seam=two recordings of one study, each a header of another host without a record, the second written between the refusal and the learner's move, and the injected mover
+test('a learner’s move that names the writers of a dialog keeps the study when a recording of another host appeared since, and names the writers anew', async (context) => {
+  // Arrange: the study has a recording of host-one; the removal is refused with it; then a recording of host-two appears.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v3', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-one',
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  const refusal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  const agreed =
+    refusal.outcome !== 'moved' && refusal.unconfirmedWriter
+      ? [refusal.unconfirmedWriter]
+      : []
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-two',
+    createdAt: '2026-10-17T08:00:00.000Z',
+  })
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    undefined,
+    { move: agreed },
+  )
+  // Assert
+  assert.deepEqual(
+    {
+      agreedHosts: agreed.map((writer) => writer.host),
+      outcome: removal.outcome,
+      named:
+        removal.outcome === 'moved'
+          ? []
+          : [
+              removal.unconfirmedWriter?.host,
+              ...(removal.otherUnconfirmedWriters ?? []).map(
+                (writer) => writer.host,
+              ),
+            ],
+      moved: storage.moved,
+    },
+    {
+      agreedHosts: ['host-one'],
+      outcome: 'nothing-moved',
+      named: ['host-one', 'host-two'],
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=the dialog's title and warning about a study whose recordings have writers in both places, which must warn of the one on another computer; fails_when=the first recording found leads, so a writer of this computer gives the title "in another editor window" and the warning drops "on another computer"; why_new=Cycle 0046 adversarial review AD6: the refusal names several writers in an order; seam=a recording of this host whose header names a live child process begun after it (recordings.v3) and one of another host (recordings.v2), each a header without a record of its writer, and the injected mover
+test('a study whose recordings have a writer on another computer and one of this computer names the one on another computer first', async (context) => {
+  // Arrange: the recordings.v3 recording names a live process of this computer that began after it; the recordings.v2 recording names another host.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const laterProcess = await idleChild(context)
+  await headerOnlyRecording(storage, study.id, 'recordings.v3', {
+    pid: laterProcess.pid!,
+    hostname: hostname(),
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'host-two',
+    createdAt: '2026-10-17T08:00:00.000Z',
+  })
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(
+    removal.outcome === 'moved'
+      ? removal
+      : {
+          unconfirmedWriter: removal.unconfirmedWriter,
+          otherUnconfirmedWriters: removal.otherUnconfirmedWriters,
+        },
+    {
+      unconfirmedWriter: {
+        directory: join(storage.directory, 'recordings.v2', study.id),
+        host: 'host-two',
+        startedAt: '2026-10-17T08:00:00.000Z',
+        place: 'another-computer',
+      },
+      otherUnconfirmedWriters: [
+        {
+          directory: join(storage.directory, 'recordings.v3', study.id),
+          host: hostname(),
+          startedAt: '2026-10-01T08:00:00.000Z',
+          place: 'this-computer',
+        },
+      ],
+    },
+  )
+})
+
+// Value: protects=the recording an editor on another machine is writing into a shared storage folder (a synced or network home), for a study it has not saved yet; fails_when=the owner is judged by its process id on this machine, where no process of that id runs, so a removal of its id moves it away while the other editor writes it, without the learner's choice; why_new=Cycle 0046 /ship review T1: the "another machine" half of the rule that judges a recording's writer (now recordingWriterOf) had no test, and dropping it survived every test. Since AF2 such a recording is listed, so the learner can reach the dialog about it, and the removal waits for their choice; seam=the recording's header, in which the test names an editor of another machine with a process id that no process of this machine has, and the injected mover
+test('a recording whose header names an editor of another machine is listed but not moved without the learner’s choice, although no process of its id runs on this machine', async (context) => {
+  // Arrange: one reserved recording without a saved study, as a window of 0.2.29.0 makes it (a header, and no record of its writer beside the recordings); its header names an editor on another machine, with a process id no process here has.
+  const storage = await removalStorage(context, 4)
+  const instanceId = randomUUID(),
+    runId = randomUUID()
+  const ofAnotherMachine = `${instanceId}_${runId}`
+  await storage.recordings.start(
+    {
+      workspaceKey: storage.workspaceKey,
+      studyId: ofAnotherMachine,
+      instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: 'repository-browser',
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  const headerPath = join(
+    storage.directory,
+    'recordings.v2',
+    ofAnotherMachine,
+    'header.json',
+  )
+  const header: {
+    owner: { pid: number; hostname: string }
+    createdAt: string
+  } = JSON.parse(await readFile(headerPath, 'utf8'))
+  await writeFile(
+    headerPath,
+    JSON.stringify({
+      ...header,
+      owner: {
+        ...header.owner,
+        pid: ID_OF_NO_PROCESS,
+        hostname: 'another-machine',
+      },
+    }),
+  )
+  await rm(recordingOwnerRecordPath(storage.directory, ofAnotherMachine))
+
+  // Act
+  const listed = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+  }))
+  const removal = await storage.library.removeStudy(
+    ofAnotherMachine,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed,
+      removal,
+      moved: storage.moved,
+      isRecordingInPlace: await lstat(
+        join(storage.directory, 'recordings.v2', ofAnotherMachine),
+      ).then(
+        (entry) => entry.isDirectory(),
+        () => false,
+      ),
+    },
+    {
+      listed: [{ id: ofAnotherMachine, format: 'archive-missing' }],
+      removal: {
+        outcome: 'nothing-moved',
+        cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it.`,
+        unconfirmedWriter: {
+          directory: join(storage.directory, 'recordings.v2', ofAnotherMachine),
+          host: 'another-machine',
+          startedAt: header.createdAt,
+          place: 'another-computer',
+        },
+      },
+      moved: [],
+      isRecordingInPlace: true,
+    },
+  )
+})
+
+/**
+ * Starts the recording of a saved study as a run of the given window does, and leaves it unsealed, as a run that still writes it leaves it.
+ * @param storage - The removal storage of the test.
+ * @param study - The saved study whose run is recorded.
+ * @param owner - The editor process the header and the record of the writer name ({@link nameWriterOfRecording}): its id and its host name.
+ * @returns The recording's directory.
+ * @example await recordingStillWrittenBy(storage, study, { pid: child.pid!, hostname: hostname() })
+ */
+async function recordingStillWrittenBy(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  study: Awaited<ReturnType<typeof saveStudy>>,
+  owner: { pid: number; hostname: string },
+): Promise<string> {
+  await storage.recordings.start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId: study.runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  await nameWriterOfRecording(storage, study.id, owner)
+  return join(storage.directory, 'recordings.v2', study.id)
+}
+
+// Value: protects=a saved study whose run another editor window is still recording; fails_when=a removal in this window moves that window's recording (and the study's other files) while it writes it, so its next journal append fails with ENOENT and its next save writes the archive again: the removed study comes back without its recording; why_new=Cycle 0046 /ship review R9: the guard of a recording that may still be written applied only to a study without an archive; seam=the recording's header, which names a live child process of the test as the other window's editor, and the injected mover
+test('a saved study whose recording another live editor window is still writing is not moved: the removal says so and every file stays', async (context) => {
+  // Arrange: a saved study with an archive; another window, a live process of this machine, is still recording its run.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const otherWindow = await idleChild(context)
+  const recording = await recordingStillWrittenBy(storage, study, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  const filesBefore = await filesBelow(storage.directory)
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal,
+      moved: storage.moved,
+      isRecordingInPlace: await lstat(recording).then(
+        (entry) => entry.isDirectory(),
+        () => false,
+      ),
+      isEveryFileUnchanged: isDeepStrictEqual(
+        await filesBelow(storage.directory),
+        filesBefore,
+      ),
+    },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      moved: [],
+      isRecordingInPlace: true,
+      isEveryFileUnchanged: true,
+    },
+  )
+})
+
+// Value: protects=a removal in the window whose own run recorded the study, after that run stopped (the window refuses to remove a study whose run has not stopped), also when its recording was never sealed; fails_when=this window's own process counts as another window that still records, so a study whose seal failed can never be removed until the editor restarts; why_new=Cycle 0046 /ship review R9: the new refusal must not hold for this window's own recordings; seam=none, the recording as this window's store starts it
+test('a saved study whose unsealed recording this window’s own process started is moved with its recording', async (context) => {
+  // Arrange: a saved study with an archive whose recording this test process started and never sealed.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await recordingStillWrittenBy(storage, study, {
+    pid: process.pid,
+    hostname: hostname(),
+  })
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { removal, moved: storage.moved },
+    {
+      removal: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
+// Value: protects=another editor window's writes to the shared storage (a recording's start, an archive's save, a playback position) while this window removes a study whose recording that window still writes; fails_when=the removal judges the recordings' writers under the storage lock, where a judgement can ask the system for a process's start (a PowerShell of up to 3 s on Windows), so the other window's write in that time meets the lock and is refused at once; why_new=Cycle 0046 repeat review P2: R9's judgement ran under the lock; seam=the judgement of the loaded library, which looks at the lock file and lets another window (its own copy of the storage lock, with a queue of its own) write while it judges
+test('a removal judges the writers of the study’s recordings before it takes the storage lock, so a write of another window meanwhile is not refused', async (context) => {
+  // Arrange: a saved study whose recording another live window still writes; while this window judges that writer, the other window writes to the storage.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const otherWindow = await idleChild(context)
+  await recordingStillWrittenBy(storage, study, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  const { withStorageLock: lockOfTheOtherWindow } = await loadModule<
+    typeof lockModule
+  >(resolve(__dirname, '../utils/withStorageLock.js'), {}, { Error })
+  const whileJudging: { isLockHeld: boolean; writeOfTheOtherWindow: string }[] =
+    []
+  // The judgement (one for the study's one recording) first notes whether the lock is held and lets the other window write.
+  const noteTheLockAndWriteMeanwhile = async (): Promise<void> => {
+    whileJudging.push({
+      isLockHeld: await lstat(join(storage.directory, 'writer.lock')).then(
+        () => true,
+        () => false,
+      ),
+      writeOfTheOtherWindow: await lockOfTheOtherWindow(
+        storage.directory,
+        async () => 'written',
+      ).catch((error: Error) => error.message),
+    })
+  }
+  const { LearningLibrary: ObservedLibrary } = await loadModule<
+    typeof libraryModule
+  >(
+    resolve(__dirname, '../learningLibrary.js'),
+    {
+      './utils/recordingWriterOf': {
+        recordingWriterOf: async (
+          ...judging: Parameters<typeof recordingWriterOf>
+        ): ReturnType<typeof recordingWriterOf> => {
+          await noteTheLockAndWriteMeanwhile()
+          return recordingWriterOf(...judging)
+        },
+      },
+    },
+    { Error },
+  )
+  const library = new ObservedLibrary(
+    storage.directory,
+    storage.workspaceKey,
+    () => 4,
+  )
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, whileJudging, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      whileJudging: [{ isLockHeld: false, writeOfTheOtherWindow: 'written' }],
+      moved: [],
+    },
+  )
+})
+
+/**
+ * Loads the study library with a storage lock that runs a step of the test right before the library takes it: after a removal judged the writers of the study's recordings, before its look under the lock, as another window's start can fall between the two.
+ * @param storage - The removal storage of the test.
+ * @param stepBeforeTheLock - What changes on disk between the judgement and the lock.
+ * @returns A library on the test's learning directory.
+ * @example const library = await libraryWithStepBeforeTheLock(storage, () => writeFile(sealPath, '{}'))
+ */
+async function libraryWithStepBeforeTheLock(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  stepBeforeTheLock: () => Promise<void>,
+): Promise<LearningLibrary> {
+  const { LearningLibrary: ObservedLibrary } = await loadModule<
+    typeof libraryModule
+  >(
+    resolve(__dirname, '../learningLibrary.js'),
+    {
+      './utils/withStorageLock': {
+        withStorageLock: async (
+          ...locking: Parameters<typeof withStorageLock>
+        ): ReturnType<typeof withStorageLock> => {
+          await stepBeforeTheLock()
+          return withStorageLock(...locking)
+        },
+      },
+    },
+    { Error },
+  )
+  return new ObservedLibrary(storage.directory, storage.workspaceKey, () => 4)
+}
+
+// Value: protects=a study whose recording another window had only begun (its folder made, its header not yet written) when this window judged the writers before its lock; fails_when=the removal reuses the verdict 'finished' of the folder without a header under the lock, so it moves the recording the other window has just started; why_new=Cycle 0046 Codex review CX12: under the lock only the seal was looked at again; seam=the storage lock of the loaded library, right before which the test writes the header
+test('a header written between the removal’s judgement and its lock keeps the study: nothing moves, and the removal says another window records it', async (context) => {
+  // Arrange: a saved study whose recording folder another window has just made, without its header yet.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const folder = join(storage.directory, 'recordings.v2', study.id)
+  await mkdir(folder, { recursive: true })
+  const library = await libraryWithStepBeforeTheLock(storage, () =>
+    writeFile(
+      join(folder, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: process.pid,
+          hostname: hostname(),
+          sessionId: randomUUID(),
+        },
+        createdAt: new Date().toISOString(),
+      }),
+    ),
+  )
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=a study whose recording another computer with this host name writes, when that computer's writer record appears between this window's judgement and its lock (the instant after its header was written); fails_when=the look under the lock does not compare whether a writer record is there, so the verdict 'gone' of the header alone (this host name, no process of its id here) is reused and the recording is moved with no refusal and no dialog (TT33, CX12); why_new=Cycle 0046 third testing review TT33: no test made a record appear between the judgement and the lock; seam=the storage lock of the loaded library, right before which the test writes the record that names the recording and machine-b
+test('a writer record written between the removal’s judgement and its lock keeps the study: nothing moves, and the removal says another window records it', async (context) => {
+  // Arrange: a saved study whose recording has its header alone, of this host name and a process id of no process; its record appears right before the removal's lock.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  const recordPath = recordingOwnerRecordPath(storage.directory, study.id)
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    await mkdir(dirname(recordPath), { recursive: true })
+    await writeFile(
+      recordPath,
+      JSON.stringify({
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        machineId: 'machine-b',
+        recording: {
+          folder: 'recordings.v2',
+          createdAt: '2026-10-01T08:00:00.000Z',
+        },
+      }),
+    )
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=a study whose recording another window of this machine sealed between this window's judgement and its lock; fails_when=the removal reuses the verdict of a live writer found before the lock, so it refuses a study whose run has just ended, or a look under the lock that skips the seal keeps refusing it; why_new=Cycle 0046 testing review TC1: no test changed the disk between the judgement and the lock; seam=the storage lock of the loaded library, right before which the test writes the recording's seal
+test('a recording sealed between the removal’s judgement and its lock moves with the study', async (context) => {
+  // Arrange: a saved study whose recording a live window of this machine writes; that window seals it right before the removal's lock.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const otherWindow = await idleChild(context)
+  const recording = await recordingStillWrittenBy(storage, study, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  const library = await libraryWithStepBeforeTheLock(storage, () =>
+    writeFile(join(recording, 'sealed.json'), '{}'),
+  )
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
+// Value: protects=a recording a window of this machine starts for a saved study between this window's judgement and its lock; fails_when=a recording the removal never judged counts as finished under the lock, so the removal moves the recording that window has just begun to write; why_new=Cycle 0046 testing review TC1; seam=the storage lock of the loaded library, right before which a recording store of this machine starts the study's recording
+test('a recording started between the removal’s judgement and its lock keeps the study: nothing moves, and the removal says another window records it', async (context) => {
+  // Arrange: a saved study without a recording; a window of this machine starts one right before the removal's lock.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    await storage.recordings.start(
+      {
+        workspaceKey: study.workspaceKey,
+        studyId: study.id,
+        instanceId: study.instanceId,
+        runId: study.runId,
+        runtimeId: randomUUID(),
+        profile: study.profile,
+        sourceBuild: {
+          revision: 'removal-test',
+          dirty: false,
+          sourceHash: '1'.repeat(64),
+        },
+      },
+      0,
+    )
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+      },
+      moved: [],
+    },
+  )
 })

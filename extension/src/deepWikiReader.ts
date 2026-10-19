@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { readFile, realpath } from 'node:fs/promises'
+import { lstat, open, readFile, realpath } from 'node:fs/promises'
 import {
   createServer,
   type IncomingMessage,
@@ -15,8 +15,17 @@ import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_LOOPBACK_HOSTS,
   WIKI_MANIFEST_FILE,
+  WIKI_MISSING_PAGE_PATH_LIMIT_CHARS,
+  WIKI_MISSING_PAGE_TEXT_DELAY_MS,
+  WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
+  WIKI_PAGE_FILE_LIMIT_BYTES,
+  WIKI_PAGE_NAVIGATION_DESTINATIONS,
+  WIKI_PAGE_SERVE_DEADLINE_MS,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
+  WIKI_QUESTION_STATUS_STYLE,
+  WIKI_REFUSED_STEP_ADVICE,
+  WIKI_SHELL_SCRIPT_HASHES,
   WIKI_SOURCE_CHANGE_DEBOUNCE_MS,
   WIKI_UPDATE_IDLE_POLL_MS,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
@@ -31,6 +40,7 @@ import type {
   WikiAnswer,
   WikiIncludedSource,
 } from './utils/answerDeepWikiQuestion'
+import { assertNoLinkOnWikiPath } from './utils/assertNoLinkOnWikiPath'
 import { describeWikiUpdate } from './utils/describeWikiUpdate'
 import {
   inspectDeepWikiFreshness,
@@ -42,10 +52,14 @@ import {
   type WikiUpdateStatusAnswer,
 } from './utils/installWikiUpdateStatus'
 import { isWikiSourceCandidate } from './utils/isWikiSourceCandidate'
+import { labelQuestionField } from './utils/labelQuestionField'
+import { readUpToLimit } from './utils/readUpToLimit'
+import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
-import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
+import { wikiPageRefusalHtml } from './utils/wikiPageRefusalHtml'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
+import { servedWikiPageOffThread } from './wikiPageWorker'
 
 /** A started Wiki reader: where the browser opens it, how it is told where the editor forwards it and that a project file changed, and how it is closed. */
 export type DeepWikiReader = {
@@ -81,13 +95,35 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)} });
-  var form = document.querySelector('#qa-form, [data-codebook-question]');
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)}, outsideOutputApprovalsNote: ${JSON.stringify(WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE)}, refusedStepAdvice: ${JSON.stringify(WIKI_REFUSED_STEP_ADVICE)}, missingPageTextDelayMs: ${WIKI_MISSING_PAGE_TEXT_DELAY_MS}, missingPagePathLimitChars: ${WIKI_MISSING_PAGE_PATH_LIMIT_CHARS} });
+  // The shell's form by its element and its id together: a page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article, which stands before the form.
+  var form = document.querySelector('form#qa-form, [data-codebook-question]');
   if (!form) return;
+  // On such a page the label of the question field may name that heading instead; a field nothing names gets the label's words itself.
+  var field = form.querySelector('textarea, input[name="question"]');
+  if (field) (${labelQuestionField.toString()})(field);
   var status = document.querySelector('[data-codebook-status]');
   if (status) { status.textContent = '● Connected to Codebook reader'; status.classList.remove('unavailable'); }
   var submit = form.querySelector('button[type="submit"]');
   if (submit) submit.textContent = 'Ask Codebook';
+  // The question's progress is told by a status line that is in the page, drawn and empty, before its first text: the answer's own status region waits in a disclosure that stays hidden until the first question, and a region shown together with its first text is not announced. A page published before the shell carried the line gets one here, in front of the answer's disclosure.
+  var questionStatus = form.querySelector('[data-codebook-question-status]');
+  if (!questionStatus) {
+    questionStatus = document.createElement('p');
+    questionStatus.className = 'qa-status';
+    questionStatus.setAttribute('role', 'status');
+    questionStatus.setAttribute('aria-live', 'polite');
+    questionStatus.setAttribute('data-codebook-question-status', '');
+    var answerRegion = form.querySelector('.qa-answer, [data-codebook-answer]');
+    var answerDisclosure = answerRegion && answerRegion.closest('details');
+    var answerPlace = answerDisclosure && form.contains(answerDisclosure) ? answerDisclosure : answerRegion;
+    if (answerPlace) answerPlace.parentNode.insertBefore(questionStatus, answerPlace); else form.append(questionStatus);
+    var questionStatusStyle = document.createElement('style');
+    questionStatusStyle.textContent = ${JSON.stringify(WIKI_QUESTION_STATUS_STYLE)};
+    document.head.append(questionStatusStyle);
+  }
+  // Only the latest question writes the status line and the answer when its reply comes.
+  var questionsAsked = 0;
   form.addEventListener('submit', async function (event) {
     event.preventDefault(); event.stopImmediatePropagation();
     var input = form.querySelector('textarea, input[name="question"]');
@@ -95,22 +131,41 @@ const qaClient = `(function () {
     if (!input || !output) return;
     var question = input.value.trim();
     if (!question) return;
-    output.style.display = 'block'; output.textContent = 'Asking the editor model…';
+    // The answer's disclosure is opened here too: the page's own script opens the element with the disclosure's id, which on such a page may be a heading of the article.
+    var disclosure = output.closest('details');
+    if (disclosure) { disclosure.hidden = false; disclosure.open = true; }
+    // The answer's region is shown and emptied now, so the answer written after the request changes a region already in the page; the progress goes to the status line, which was there before it.
+    output.style.display = 'block'; output.textContent = '';
+    var asked = ++questionsAsked;
+    questionStatus.textContent = 'Asking the editor model…';
+    // A hand-off or a failure can come back within the frame that showed the answer's region, which would enter the page together with that text: the sentence is the status line's, which was in the page before it, and the answer's empty disclosure leaves again. A newer question keeps its own progress and disclosure.
+    var tell = function (sentence) {
+      if (asked !== questionsAsked) return;
+      questionStatus.textContent = sentence;
+      if (disclosure) disclosure.hidden = true;
+    };
     try {
       var response = await fetch(prefix + '${WIKI_QUESTION_ROUTE}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
       var result = await response.json();
       if (!response.ok) throw new Error(result.error || 'The editor model could not answer.');
-      if (result.handoff) { output.textContent = result.handoff; return; }
+      if (result.handoff) { tell(result.handoff); return; }
+      // An earlier question's answer that comes after a newer question was asked writes nothing: the region shows, and announces, the newer question's answer alone.
+      if (asked !== questionsAsked) return;
+      questionStatus.textContent = '';
       output.textContent = result.answer;
       if (result.sourceChanged) { var stale = document.createElement('p'); stale.textContent = 'Some indexed source changed. Update LLM Wiki before relying on this answer.'; output.appendChild(stale); }
       var list = document.createElement('ul');
       result.citations.forEach(function (citation) { var item = document.createElement('li'); var link = document.createElement('a'); link.href = citation.uri; link.textContent = citation.path + ':' + citation.line; item.appendChild(link); list.appendChild(item); });
       output.appendChild(list);
-    } catch (error) { output.textContent = String(error); }
+    } catch (error) { tell(String(error)); }
   }, true);
 })();`
 
-/** Validates the generated output owner before the reader serves files or accepts repository questions. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
+/** The fetch directives of every page the reader serves: a page fetches its images (and `data:` images), media, styles, fonts and requests from the reader's own address alone, opens no frame and submits a form only to that address. An address of another host (`//host`, `http://other`) or a frame that the filter left therefore fetches nothing under the reader; the reader's own features (the question route, the update panel, the theme, the keyboard help, inline styles and the Wiki's images) all stay on its address. */
+const SERVED_PAGE_FETCH_DIRECTIVES =
+  "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-src 'none'; form-action 'self'"
+
+/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}), and only when there is none at the Wiki folder or on its path in the project (a link, a file, or a folder whose real path leaves the project; {@link assertNoLinkOnWikiPath}), which the publisher refuses too. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @throws When the Wiki folder or a folder on its path in the project is a link, a file, or a folder whose real path leaves the project, and when the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
 export async function readDeepWikiManifest(
   outputDirectory: string,
   projectRoot: string,
@@ -120,9 +175,13 @@ export async function readDeepWikiManifest(
   revision?: string
   excludedPaths: string[]
 }> {
-  const manifest: unknown = JSON.parse(
-    await readFile(join(outputDirectory, WIKI_MANIFEST_FILE), 'utf8'),
+  await assertNoLinkOnWikiPath(outputDirectory, projectRoot)
+  // The manifest is read as a file of the Wiki folder, never through a link and never past its bound.
+  const manifestBytes = await readWikiFileToOpen(
+    join(outputDirectory, WIKI_MANIFEST_FILE),
+    'manifest',
   )
+  const manifest: unknown = JSON.parse(manifestBytes.toString('utf8'))
   if (
     typeof manifest !== 'object' ||
     manifest === null ||
@@ -292,6 +351,7 @@ export async function startDeepWikiReader(
     response: ServerResponse,
   ): Promise<void> {
     response.setHeader('Referrer-Policy', 'no-referrer')
+    // Every response says nosniff, its pages, its answers and the reader's own script included: a browser then runs as script only a response typed as JavaScript, and the reader's own script is the one.
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Cache-Control', 'no-store')
     const url = new URL(request.url ?? '/', origin)
@@ -391,6 +451,21 @@ export async function startDeepWikiReader(
       sendGetOnly(response)
       return
     }
+    // A page is prepared only for a browser that opens it: one asked for as an image, a style sheet or another part of a page would start a page worker for nothing, many at a time from one page. A client that names no destination is no browser and is served.
+    const destination = request.headers['sec-fetch-dest']
+    if (
+      relativePath.endsWith('.html') &&
+      destination !== undefined &&
+      !(
+        typeof destination === 'string' &&
+        WIKI_PAGE_NAVIGATION_DESTINATIONS.includes(destination)
+      )
+    ) {
+      sendJson(response, 403, {
+        error: 'A Wiki page is served only to be opened as a page.',
+      })
+      return
+    }
     if (relativePath === 'codebook-qa.js') {
       response.setHeader('Content-Type', 'text/javascript; charset=utf-8')
       response.end(qaClient)
@@ -427,28 +502,75 @@ export async function startDeepWikiReader(
     const publication = relativePath.endsWith('.html')
       ? await readWikiPublicationIdentity(outputDirectory)
       : undefined
-    const content = await readFile(filePath)
     if (relativePath.endsWith('.html')) {
-      const html = content.toString('utf8')
+      // A script runs only from a file of this origin, where the reader's own is the one served as script, or as the shell's own, by its hash; never one the page's content or a hand-written file carries. Everything else the page fetches, frames or submits stays on this origin.
       response.setHeader('Content-Type', 'text/html; charset=utf-8')
+      response.setHeader(
+        'Content-Security-Policy',
+        `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
+      )
+      // A page file larger than any page costs the editor's process nothing of its size: its size is looked at on the resolved path before it is opened, and the read stops one byte past the limit, also when the file grew since.
+      let content: Buffer | undefined
+      if ((await lstat(filePath)).size <= WIKI_PAGE_FILE_LIMIT_BYTES) {
+        const pageFile = await open(filePath, 'r')
+        try {
+          content = await readUpToLimit(
+            pageFile,
+            (await pageFile.stat()).size,
+            WIKI_PAGE_FILE_LIMIT_BYTES,
+          )
+        } finally {
+          await pageFile.close()
+        }
+      }
+      if (!content) {
+        response.statusCode = 503
+        response.end(
+          wikiPageRefusalHtml('too-large', WIKI_PAGE_SERVE_DEADLINE_MS, prefix),
+        )
+        return
+      }
+      // The page is prepared on a worker thread under a deadline, so a page built to make the parser slow stops no extension of the window.
+      const preparation = new AbortController()
+      // A request that went while the reader read the files above is closed already, and its page is not prepared; one that goes later stops the preparation when its response closes. Both are looked at in one step, so no close falls between them.
+      if (response.destroyed) preparation.abort()
+      else
+        response.on('close', () => {
+          if (!response.writableFinished) preparation.abort()
+        })
+      const served = await servedWikiPageOffThread(
+        content.toString('utf8'),
+        {
+          editorScheme,
+          clientAddress: `${prefix}codebook-qa.js`,
+          publication,
+        },
+        {
+          deadlineMs: WIKI_PAGE_SERVE_DEADLINE_MS,
+          signal: preparation.signal,
+        },
+      )
+      if (served.state === 'served') {
+        response.end(served.html)
+        return
+      }
+      // A page the worker did not prepare is never served as the folder holds it.
+      response.statusCode = 503
       response.end(
-        rebindDeepWikiEditorLinks(html, editorScheme).replace(
-          '</body>',
-          // The page carries the publication it was served from, so it can tell when newer pages are on disk.
-          `<script src="${prefix}codebook-qa.js"${publication ? ` data-codebook-publication="${publication}"` : ''}></script></body>`,
-        ),
+        wikiPageRefusalHtml(served.state, WIKI_PAGE_SERVE_DEADLINE_MS, prefix),
       )
       return
     }
+    // No file of the Wiki folder is served as script: under `nosniff` a browser runs no script of another type, so a `.js` file there is plain text, and the reader's own script stays the one script file of this origin.
     response.setHeader(
       'Content-Type',
       relativePath.endsWith('.css')
         ? 'text/css; charset=utf-8'
         : relativePath.endsWith('.js')
-          ? 'text/javascript; charset=utf-8'
+          ? 'text/plain; charset=utf-8'
           : 'application/octet-stream',
     )
-    response.end(content)
+    response.end(await readFile(filePath))
   }
   try {
     await new Promise<void>((resolve, reject) => {

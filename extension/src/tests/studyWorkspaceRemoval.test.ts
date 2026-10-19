@@ -7,11 +7,13 @@ import fsPromises, {
   realpath,
   rename,
   rm,
+  symlink,
   unlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { hostname } from 'node:os'
+import { basename, dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
@@ -19,8 +21,11 @@ import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { RecordingStore } from '../recordingStore'
+import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { readProcessStart } from '../utils/readProcessStart'
+import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
 
 import {
@@ -30,6 +35,9 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { idleChild } from './utils/idleChild'
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { rewriteWriterRecord } from './utils/rewriteWriterRecord'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 
@@ -764,6 +772,77 @@ test('an unknown entry, a Node test history and the study of a run that has not 
   }
 })
 
+// Value: protects=the learner who was told to leave Recording before deleting a study and did so: the sentence is gone, and the delete button, which can be used again, stands without it; fails_when=the refusal's line is retired only by another entry or a new run, so "Choose Overview or Live to leave Recording before deleting this study." stays under the button after the learner chose Overview or Live; why_new=Cycle 0046 row 218; seam=the Study pane's tab messages
+for (const tab of ['overview', 'live'] as const)
+  test(`after a delete request was refused because Recording is open, choosing ${tab === 'overview' ? 'Overview' : 'Live'} retires that line`, async () => {
+    // Arrange: a saved recorded run whose recording is open, and a delete request that is refused for it.
+    const harness = await recordedReaderHarness()
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await waitUntil(
+        () => harness.controller.state().readiness === 'ready',
+        'the opened recording',
+        2_000,
+      )
+      await requestRemoval(harness, harness.studyId)
+      const refusal = structuredClone(
+        harness.reader.inspect().view!.studyRemoval,
+      )
+      // Act: the learner leaves Recording.
+      await readerSeams(harness).receive(
+        {
+          type: 'tab',
+          revision: harness.reader.inspect().view!.revision,
+          tab,
+        },
+        'context',
+      )
+      // Assert
+      const view = harness.reader.inspect().view!
+      assert.deepEqual(refusal, {
+        status: 'refused',
+        studyId: harness.studyId,
+        text: 'Choose Overview or Live to leave Recording before deleting this study.',
+      })
+      assert.equal(view.contentTab, tab)
+      assert.equal(view.studyRemoval, undefined)
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the line of a removal's outcome staying while the learner only moves between Overview and Live: nothing it says has become untrue; fails_when=every tab change retires it, so a refusal the learner has just read is gone at the next look at Live; why_new=Cycle 0046 row 218 (the rule's edge: only leaving Recording retires the line); seam=the Study pane's tab messages
+test('a refused delete request’s line stays when the learner changes between Overview and Live without having been in Recording', async () => {
+  // Arrange: an open Study workspace on Overview, and a delete request for a saved Node test history, which is refused.
+  const harness = await workspaceHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const tabTo = (tab: 'overview' | 'live'): Promise<void> =>
+      readerSeams(harness).receive(
+        { type: 'tab', revision: harness.reader.inspect().view!.revision, tab },
+        'context',
+      )
+    await tabTo('overview')
+    await requestRemoval(harness, nodeHistory.studyId)
+    // Act
+    await tabTo('live')
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(view.contentTab, 'live')
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'refused',
+      studyId: nodeHistory.studyId,
+      text: 'Node test histories cannot be deleted here yet.',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=while Recording is open no study is removed, also when Recording opens while the dialog waits for its answer; fails_when=a recording that is being played loses its files, or the answer is applied to a reader that changed meanwhile; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('a removal is refused while Recording is open, also when Recording opens while the confirmation is waiting', async () => {
   // Arrange: a saved recorded run; its recording is open.
@@ -870,6 +949,49 @@ test('a second delete request while the confirmation is waiting opens no second 
     assert.equal(dialogsWhileWaiting, 1)
     assert.deepEqual(harness.trashMoves, [])
     assert.equal(harness.reader.inspect().view!.studyRemoval, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=two delete requests that reach the reader in the same turn (two panes, or a double click whose messages the host delivers together) opening one dialog for the first study, whose state carries the first request's number; fails_when=the second request passes the one-removal check while the first still checks for a Trash, so two dialogs open and the second request's number replaces the first one's in the shared removal state; why_new=Cycle 0046 row 31 (PL-23 of Cycle 0045: the first `await` came before the removal state was reserved); seam=the editor's dialog, stubbed at the vscode boundary
+test('two delete requests started in the same turn open one dialog for the first study and the second is refused while the first holds the removal', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const first = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      second = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    const cancels: (() => void)[] = []
+    harness.answerWarningDialogs(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          cancels.push((): void => resolve(undefined))
+        }),
+    )
+
+    // Act: both requests start before either of them awaits anything.
+    const firstRemoval = requestRemoval(harness, first.id, 1)
+    const secondRemoval = requestRemoval(harness, second.id, 2)
+    await waitUntil(
+      () => harness.warningDialogs.length >= 1,
+      'the confirmation dialog',
+      1_000,
+    )
+    // A request that is not taken returns within the turn; one that was taken would open its own dialog.
+    await new Promise((resolve) => setImmediate(resolve))
+    const dialogsWhileWaiting = harness.warningDialogs.length
+    const whileWaiting = harness.reader.inspect().view!.studyRemoval
+    for (const cancel of cancels) cancel()
+    await Promise.all([firstRemoval, secondRemoval])
+
+    // Assert
+    assert.equal(dialogsWhileWaiting, 1)
+    assert.deepEqual(structuredClone(whileWaiting), {
+      status: 'confirming',
+      studyId: first.id,
+      request: 1,
+    })
+    assert.deepEqual(harness.trashMoves, [])
   } finally {
     await harness.close()
   }
@@ -1165,6 +1287,48 @@ test('a study the Trash took only partly stays listed and shown, and deleting it
   }
 })
 
+// Value: protects=the learner is told that it is unknown whether the study moved when the removal could not look at a path after the Trash rejected it, and can delete it again; fails_when=the pane says "Nothing was deleted" for a recording that is in the Trash, or shows the line of a partly moved study as if what moved were known (AD10 case b); why_new=Cycle 0046 adversarial review AD10; seam=the editor's Trash, stubbed at the vscode boundary: before it rejects the study's recording folder, the test moves that folder away and puts a link that leads to itself where the recordings folder was, so the look afterwards answers ELOOP
+test('a study whose recording folder could not be looked at after the Trash rejected it shows that Codebook could not tell whether it moved, and deleting it again finishes the removal', async () => {
+  // Arrange: a saved study with an empty recording folder; the Trash takes the folder, then a link that leads to itself stands where the recordings folder was, then the call rejects.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    const directory = harness.reader.inspect().libraryDirectory!
+    const recordingsRoot = join(directory, 'recordings.v2'),
+      recordingFolder = join(recordingsRoot, shown.id)
+    await mkdir(recordingFolder, { recursive: true })
+    await chooseStudy(harness, shown.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    harness.beforeTrashMoves(async (path) => {
+      if (path !== recordingFolder) return
+      await rename(path, join(harness.directory, 'moved-recording'))
+      await rm(recordingsRoot, { recursive: true })
+      await symlink('recordings.v2', recordingsRoot)
+    })
+    harness.rejectTrashMoves((path) => path === recordingFolder)
+    // Act
+    await requestRemoval(harness, shown.id)
+    const afterUnknownMove = harness.reader.inspect().view!
+    harness.beforeTrashMoves(async () => {})
+    harness.rejectTrashMoves(() => false)
+    await requestRemoval(harness, shown.id)
+    const afterSecondRemoval = harness.reader.inspect().view!
+    // Assert
+    assert.deepEqual(structuredClone(afterUnknownMove.studyRemoval), {
+      status: 'failed',
+      studyId: shown.id,
+      text: `Codebook could not tell whether the saved study was moved to the ${TRASH}; delete it again to finish. Trash refused ${shown.id}; whether ${recordingFolder} left the library could not be checked: ELOOP: too many symbolic links encountered, lstat '${recordingFolder}'`,
+    })
+    assert.equal(afterSecondRemoval.studyRemoval?.status, 'moved')
+    assert.deepEqual(
+      structuredClone(afterSecondRemoval.studies.map((entry) => entry.id)),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a checkpoint whose capture was in flight when the removal was confirmed does not bring the study back; fails_when=only the write queues are drained, which never held that capture; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('a checkpoint that was capturing a study when its removal was confirmed writes nothing for it afterwards', async () => {
   // Arrange: a recorded, stopped and saved run with a captured image; the learner confirms while the next capture reads it.
@@ -1363,6 +1527,122 @@ test('a playback position save queued before a removal settles before the first 
     )
     assert.equal((await readdir(directory)).includes('playback.v1.json'), false)
   } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the playback position of a study whose removal waits for the dialog about a recording on another computer: a position save the learner causes while that dialog is open lands before the first move, and none is left behind; fails_when=the move after "Move to Trash Anyway" does not wait for the writes this window accepted while the dialog was open, so the position save runs against files on their way to the Trash (TT8, PD4); why_new=Cycle 0046 third testing review TT8: no test accepted a write while the second dialog waited; seam=the store's position save, held by the test, a recordings.v1 header of another host beside the study's own recordings.v2 recording, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a playback position save queued while the dialog about a recording on another computer is open settles before the first move after Move to Trash Anyway', async (context) => {
+  // Arrange: a saved recorded run, with a recording of the same study that names old-laptop.local in an older format's folder; position saves are held until the test lets them go.
+  const harness = await recordedReaderHarness()
+  let releasePositionSave = (): void => {}
+  try {
+    const ofAnotherComputer = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v1',
+      harness.studyId,
+    )
+    await mkdir(ofAnotherComputer, { recursive: true })
+    await writeFile(
+      join(ofAnotherComputer, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: 'old-laptop.local',
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-01T08:00:00.000Z',
+      }),
+    )
+    const order: string[] = []
+    const savePreference = RecordingStore.prototype.savePreference
+    let positionSaveStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+        positionSaveStarted = resolve
+      }),
+      positionSaveHeld = new Promise<void>((resolve) => {
+        releasePositionSave = resolve
+      })
+    context.mock.method(
+      RecordingStore.prototype,
+      'savePreference',
+      async function (
+        this: RecordingStore,
+        preference: Parameters<RecordingStore['savePreference']>[0],
+      ) {
+        positionSaveStarted()
+        await positionSaveHeld
+        await savePreference.call(this, preference)
+        order.push('position saved')
+      },
+    )
+    harness.rejectTrashMoves((path) => {
+      order.push(`moved ${basename(path)}`)
+      return false
+    })
+    // While the second dialog is open the learner opens Recording and leaves it, which queues a position save.
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button !== `Move to ${TRASH} Anyway`) return button
+      await harness.reader.openRecording(harness.studyId)
+      await waitUntil(
+        () => harness.controller.state().readiness === 'ready',
+        'the recording opened during the dialog',
+        2_000,
+      )
+      await readerSeams(harness).receive(
+        {
+          type: 'tab',
+          revision: harness.reader.inspect().view!.revision,
+          tab: 'overview',
+        },
+        'context',
+      )
+      await started
+      return button
+    })
+
+    // Act: the learner chooses Move to Trash Anyway while the position save is held, then the save is let go.
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () =>
+        harness.warningDialogs.length === 2 &&
+        ['moving', 'moved', 'failed'].includes(
+          harness.reader.inspect().view!.studyRemoval?.status ?? '',
+        ),
+      'the removal after Move to Trash Anyway',
+      4_000,
+    )
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve)
+    })
+    const movesWhileSaveHeld = order.filter((step) =>
+      step.startsWith('moved'),
+    ).length
+    releasePositionSave()
+    await removal
+
+    // Assert
+    const firstMove = order.indexOf(`moved ${harness.studyId}`)
+    assert.deepEqual(
+      {
+        movesWhileSaveHeld,
+        studyRemoval: harness.reader.inspect().view!.studyRemoval?.status,
+        savedBeforeTheFirstMove: order
+          .slice(0, firstMove)
+          .includes('position saved'),
+        savedAfterIt: order.slice(firstMove).includes('position saved'),
+      },
+      {
+        movesWhileSaveHeld: 0,
+        studyRemoval: 'moved',
+        savedBeforeTheFirstMove: true,
+        savedAfterIt: false,
+      },
+    )
+  } finally {
+    // A save still held would keep the window from closing.
+    releasePositionSave()
     context.mock.restoreAll()
     await harness.close()
   }
@@ -2507,12 +2787,9 @@ test('the browser-replay refusal of a Node test history offers no Retry storage 
       1_000,
     )
 
-    // Assert: the Recording's own layout notice is the other line, itself not retryable; leaving Recording by the tab retires it too.
-    assert.deepEqual(refused.errors, [
-      'Error: The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.',
-      refusal,
-    ])
-    assert.equal(refused.unretryableErrorCount, 2)
+    // Assert: the measured recording layout is confirmed; only the refused Node-history choice needs a notice.
+    assert.deepEqual(refused.errors, [refusal])
+    assert.equal(refused.unretryableErrorCount, 1)
     const view = harness.reader.inspect().view!
     assert.deepEqual(structuredClone(view.errors), [])
     assert.equal(view.unretryableErrorCount, 0)
@@ -2734,6 +3011,88 @@ test('a saved study chosen in the bottom panel while the Study workspace is clos
       { webview: 'moments', openRequest: 1 },
     ])
     assert.equal((await library.readProgress()).selection?.studyId, chosen.id)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the first Saved study choice in an already visible bottom panel after Close; fails_when=Close advances the reader revision without publishing it, so the visible control sends the old revision and the first choice is refused; why_new=Cycle 0046 task 392, native Cursor revision 10 remained in the visible pane after the closed reader advanced to 11; seam=existing bottom-panel message boundary, no repeated view resolution
+test('the first Saved study choice after closing the workspace opens in the already visible bottom panel', async () => {
+  // Arrange: keep the existing view resolved through Close, as a learner does.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    await harness.resolveRestoredObservedMoments()
+    harness.playbackPanel.visible = true
+    await harness.reader.close()
+    const displayed = harness.playbackPanelMessages.at(-1)!
+
+    // Act: copy the authority actually displayed, without refreshing the view.
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: displayed.revision,
+      studyId: chosen.id,
+      openRequest: 1,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the first choice after Close to finish',
+      1_000,
+    )
+
+    // Assert: the first request selects the study instead of a stale-view error.
+    const panel = harness.playbackPanelMessages.at(-1)!
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.equal(panel.model.selection.studyId, chosen.id)
+    assert.equal(panel.loading, false)
+    assert.deepEqual([...panel.errors], [])
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'moments', openRequest: 1 },
+    ])
+    const library = await harness.reader.learningStorage()
+    assert.equal((await library.readProgress()).selection?.studyId, chosen.id)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the first Saved study choice after the editor cancels Close; fails_when=the rejected close leaves the visible pane's old revision while the reader accepts only the new one; why_new=task 392's close lifetime changes before native tab closing can fail; seam=existing native tab-close cancellation
+test('the first Saved study choice after a canceled workspace close opens without refreshing the bottom panel', async () => {
+  // Arrange: the same visible view survives a native close cancellation.
+  const harness = await workspaceHarness()
+  try {
+    const shown = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      chosen = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, shown.id)
+    await harness.resolveRestoredObservedMoments()
+    harness.playbackPanel.visible = true
+    harness.rejectNextTabClose()
+    await assert.rejects(harness.reader.close(), { message: 'Canceled' })
+    const displayed = harness.playbackPanelMessages.at(-1)!
+
+    // Act: use that view's authority on its first choice after cancellation.
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: displayed.revision,
+      studyId: chosen.id,
+      openRequest: 1,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the first choice after canceled Close to finish',
+      1_000,
+    )
+
+    // Assert: the canceled close does not require a failed choice to refresh.
+    const panel = harness.playbackPanelMessages.at(-1)!
+    assert.equal(panel.model.selection.studyId, chosen.id)
+    assert.equal(panel.loading, false)
+    assert.deepEqual([...panel.errors], [])
+    assert.deepEqual(harness.openRequestReplies(), [
+      { webview: 'moments', openRequest: 1 },
+    ])
   } finally {
     await harness.close()
   }
@@ -3030,6 +3389,86 @@ test('a removal is refused while a recording is still opening, also when the ope
       text: 'Choose Overview or Live to leave Recording before deleting this study.',
     })
     assert.deepEqual(harness.trashMoves, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a study whose recording is on its way to the screen while the dialog about a recording of another computer is open is never moved underneath it; fails_when="Move to Trash Anyway" moves the study without the refusals the first dialog's answer is checked against, so the files the Recording load reads go to the Trash (S3); why_new=Cycle 0046 CodeRabbit review CR1 (S3): the second dialog's answer was not checked again; seam=the reader's replay-debugger preparation, held by the test, a recordings.v3 header of another host beside the study's sealed recording, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a recording opened while the dialog about a recording of another computer is open refuses the removal after Move to Trash Anyway, and nothing moves', async () => {
+  // Arrange: a saved recorded run, with a recording of the same study that names old-laptop.local beside its own; the load of a recording is held before Recording becomes active.
+  const harness = await recordedReaderHarness()
+  try {
+    const ofAnotherComputer = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v3',
+      harness.studyId,
+    )
+    await mkdir(ofAnotherComputer, { recursive: true })
+    await writeFile(
+      join(ofAnotherComputer, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: 'old-laptop.local',
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-01T08:00:00.000Z',
+      }),
+    )
+    const prepareDebugger = readerSeams(harness).debuggerReplacement
+    let releaseLoad = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      releaseLoad = resolve
+    })
+    readerSeams(harness).debuggerReplacement = async (
+      signal,
+    ): Promise<void> => {
+      await held
+      await prepareDebugger(signal)
+    }
+    let moveAnyway!: () => void
+    harness.answerWarningDialogs(([button]) =>
+      button === `Move to ${TRASH} Anyway`
+        ? new Promise<string | undefined>((resolve) => {
+            moveAnyway = (): void => resolve(button)
+          })
+        : Promise.resolve(button),
+    )
+
+    // Act: the learner opens Recording while the second dialog waits, then chooses Move to Trash Anyway.
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () => harness.warningDialogs.length === 2,
+      'the dialog about the recording of another computer',
+      1_000,
+    )
+    await harness.reader.openRecording(harness.studyId)
+    moveAnyway()
+    await removal
+    const afterAnswer = structuredClone(
+      harness.reader.inspect().view!.studyRemoval,
+    )
+    releaseLoad()
+    // The held load ends either way; which recording it shows is not this test's.
+    await waitUntil(
+      () => harness.controller.state().readiness !== 'loading',
+      'the end of the load started during the dialog',
+      2_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { afterAnswer, moved: harness.trashMoves },
+      {
+        afterAnswer: {
+          status: 'refused',
+          studyId: harness.studyId,
+          text: 'Choose Overview or Live to leave Recording before deleting this study.',
+        },
+        moved: [],
+      },
+    )
   } finally {
     await harness.close()
   }
@@ -3867,6 +4306,50 @@ test('a removal leaves the raw evidence in place and says so while another Codeb
   }
 })
 
+// Value: protects=deleting a saved study of a window of a build up to 0.2.28 that crashed also takes its raw evidence out of the agent storage; fails_when=a connection descriptor that names a process and no machine holds the evidence back for good, although its process has ended (Cycle 0046 row 10, PL-2); why_new=the removal tests wrote descriptors without a process id only; seam=the editor's dialog and Trash, stubbed at the vscode boundary, and a process id that no process has
+test('a removal also moves the raw evidence of a crashed window whose connection descriptor names an ended process and no machine', async () => {
+  // Arrange: the study's run belongs to another instance; that window crashed and left its descriptor, written by a build up to 0.2.28, in the agent storage.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const evidenceDirectory = evidenceDirectoryOf(harness, study)
+    await mkdir(evidenceDirectory, { recursive: true })
+    await writeFile(
+      join(
+        harness.directory,
+        'storage',
+        'agent',
+        `${study.instanceId}.connection.json`,
+      ),
+      JSON.stringify({ pid: ID_OF_NO_PROCESS }),
+    )
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    // Act
+    await requestRemoval(harness, study.id)
+    // Assert
+    assert.deepEqual(
+      harness.trashMoves.map((move) => move.path),
+      [
+        evidenceDirectory,
+        join(
+          harness.reader.inspect().libraryDirectory!,
+          `${study.id}.study.meta.v3.json`,
+        ),
+        join(
+          harness.reader.inspect().libraryDirectory!,
+          `${study.id}.study.v3.json`,
+        ),
+      ],
+    )
+    assert.equal(
+      harness.reader.inspect().view!.studyRemoval?.text,
+      `Saved study moved to the ${TRASH}. The library now holds 0 of 64 saved studies.`,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the evidence of this window's own stopped run goes with its study although this window's connection descriptor exists, and the run then refuses to serve it; fails_when=the descriptor check also holds back this window's own runs, or the run keeps serving a directory that is gone; why_new=the descriptor check and the evidence refusal are new; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('the evidence of this window’s own stopped run moves with its study, and the run then answers that its evidence is unavailable', async () => {
   // Arrange: a recorded, stopped and saved run of this window; its evidence and this window's descriptor are in the agent storage.
@@ -4105,6 +4588,79 @@ test('after the Trash refused a removal, a run refused on the full library names
   }
 })
 
+// Value: protects=the remedy a full library names after a removal that another window's recording stopped before any move; fails_when=that refusal counts as a refusal of the Trash, so the next full library says "this editor could not move a saved study to the Trash in this session" and offers no deletion, although the Trash was never asked; why_new=Cycle 0046 review AF1: every outcome but a move counted as the Trash's refusal; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('after a removal refused because another window of this machine still records the study, a run refused on the full library still offers to delete a saved study', async (context: TestContext) => {
+  // Arrange: a library full at one study, whose recording another live window of this machine still writes.
+  const harness = await workspaceHarness()
+  try {
+    harness.setSavedStudyCapacity(1)
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const otherWindow = await idleChild(context)
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: otherWindow.pid!, hostname: hostname() },
+      'with-record',
+    )
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    await requestRemoval(harness, study.id)
+
+    // Act
+    const refused = await startRun(harness)
+
+    // Assert
+    assert.deepEqual(
+      {
+        removal: harness.reader.inspect().view!.studyRemoval?.status,
+        moved: harness.trashMoves,
+        refusal: refused.record.error?.message,
+      },
+      { removal: 'failed', moved: [], refusal: FULL_LIBRARY_REFUSAL },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the remedy a full library names after a removal of a study of which nothing was left by then; fails_when="Study archive is unavailable." counts as a refusal of the Trash, so the next full library offers no deletion, although the Trash was never asked; why_new=Cycle 0046 review AF1; seam=the library directory, from which the test removes one study's files by hand after the list showed it, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('after a removal refused because nothing was left of the study, a run refused on the full library still offers to delete a saved study', async () => {
+  // Arrange: two saved studies and a limit of one; the first one's files are removed by hand after the list showed it.
+  const harness = await workspaceHarness()
+  try {
+    const gone = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    harness.setSavedStudyCapacity(1)
+    const directory = harness.reader.inspect().libraryDirectory!
+    await rm(join(directory, `${gone.id}.study.v3.json`))
+    await rm(join(directory, `${gone.id}.study.meta.v3.json`))
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    await requestRemoval(harness, gone.id)
+
+    // Act
+    const refused = await startRun(harness)
+
+    // Assert
+    assert.deepEqual(
+      {
+        removal: structuredClone(harness.reader.inspect().view!.studyRemoval),
+        moved: harness.trashMoves,
+        refusal: refused.record.error?.message,
+      },
+      {
+        removal: {
+          status: 'failed',
+          studyId: gone.id,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Study archive is unavailable.`,
+        },
+        moved: [],
+        refusal: FULL_LIBRARY_REFUSAL,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a study a newer Codebook saved is shown with the sentence that says what to do, is no storage failure, and is not half deleted by a Codebook that does not know its files; fails_when=its note counts as an error Retry storage should answer, or a delete request opens the Trash dialog for it (RT-1, DX-15, PC-4.1); why_new=the reader never listed a newer format; seam=the library directory, into which the test writes a file as a newer Codebook would name it
 test('a saved study in a newer format is listed with its note, adds no storage error and is refused when the learner asks to delete it', async () => {
   // Arrange: one saved study, saved again in format 5 by a newer Codebook.
@@ -4323,7 +4879,7 @@ test('after the listed files of a study were removed by hand, a refresh lists th
     assert.deepEqual(answer, {
       status: 'refused',
       studyId: earlier.id,
-      text: "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh.",
+      text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
       files: [
         join(directory, `${earlier.id}.study.meta.v3.json`),
         join(directory, `${earlier.id}.study.v3.json`),
@@ -4348,6 +4904,1549 @@ test('after the listed files of a study were removed by hand, a refresh lists th
     assert.equal(refusalLineAfterRefresh, undefined)
     assert.equal(admitted.record.error, undefined)
     assert.equal(admitted.record.prepared, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=in a window without a Trash the learner who removed only some of a study's listed files and pressed Retry storage / refresh is shown the files that are left; fails_when=the reader keeps the list it made before the removal for a study the library still holds, so "Remove by hand" goes on showing paths that are gone, Copy paths copies them, and the pane never asks again because the reader still names files for that study; why_new=Cycle 0046 row 73 (the kept list was dropped only for a study that left the library); seam=the editor's remote name, and the file system, on which the test removes two of the three listed paths
+test('in a window without a Trash, after two of a study’s three listed files were removed by hand, Retry storage / refresh forgets the list and the next request lists the one file that is left', async () => {
+  // Arrange: a WSL remote window with a study an older Codebook saved (it cannot be opened, and Retry writes no catalog file for it again) and the raw evidence of its run; a request has listed its three paths.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const directory = harness.reader.inspect().libraryDirectory!,
+      run = { instanceId: randomUUID(), runId: randomUUID() },
+      studyId = `${run.instanceId}_${run.runId}`,
+      evidenceDirectory = evidenceDirectoryOf(harness, run),
+      catalogFile = join(directory, `${studyId}.study.meta.v2.json`),
+      archive = join(directory, `${studyId}.study.v2.json`)
+    await mkdir(evidenceDirectory, { recursive: true })
+    await writeFile(catalogFile, '{}')
+    await writeFile(archive, '{}')
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    await requestRemoval(harness, studyId, 1)
+    const listedBeforeRemoval = structuredClone(
+      harness.reader.inspect().view!.studyFiles,
+    )
+    // Act: the learner removes the first two listed paths and presses Retry storage / refresh; the pane, whose open disclosure is named no files any more, asks again.
+    await rm(evidenceDirectory, { recursive: true })
+    await rm(catalogFile)
+    await harness.reader.action('retry')
+    const afterRetry = structuredClone({
+      isStillListed: harness.reader
+        .inspect()
+        .view!.studies.some((entry) => entry.id === studyId),
+      studyFiles: harness.reader.inspect().view!.studyFiles,
+      hasRemovalAnswer:
+        harness.reader.inspect().view!.studyRemoval !== undefined,
+    })
+    await requestRemoval(harness, studyId, 2)
+    // Assert
+    assert.deepEqual(listedBeforeRemoval, {
+      [studyId]: [evidenceDirectory, catalogFile, archive],
+    })
+    assert.deepEqual(afterRetry, {
+      isStillListed: true,
+      studyFiles: {},
+      hasRemovalAnswer: false,
+    })
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.studyFiles), { [studyId]: [archive] })
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'refused',
+      studyId,
+      text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
+      files: [archive],
+      request: 2,
+    })
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner of a window without a Trash who removed a study's archive first and pressed Retry storage / refresh: the study is no longer shown or selected, no storage line appears, and what is left of it stays listed with its files so it can be removed; fails_when=the reader takes the entry the library now lists for the rest (`archive-missing`) for the study itself, keeps it selected and reports "Error: Study archive is unavailable." twice until the rest is removed; why_new=Cycle 0046 row 181 (measured by the library's fixer after row 86 listed such rests); seam=the editor's remote name, and the file system, on which the test removes the archive alone
+test('in a window without a Trash, after the archive alone of the chosen study was removed by hand, Retry storage / refresh selects no study and shows no storage line, and what is left stays listed with its files until it is removed too', async () => {
+  // Arrange: a WSL remote window with two saved studies; the older one is chosen and its two files are listed.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      other = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await chooseStudy(harness, study.id)
+    const library = await harness.reader.learningStorage(),
+      directory = harness.reader.inspect().libraryDirectory!,
+      catalogFile = join(directory, `${study.id}.study.meta.v3.json`)
+    await requestRemoval(harness, study.id, 1)
+    /** Reads what the reader shows of the study: its entry, whether it is selected in the reader and in the ledger, the storage lines and its listed files. */
+    const shown = async () => {
+      const view = harness.reader.inspect().view!
+      const entry = view.studies.find((listed) => listed.id === study.id)
+      return structuredClone({
+        entry: entry && [entry.format, entry.metadata, entry.outcome],
+        isSelected: view.model.selection.studyId === study.id,
+        isSelectedInLedger:
+          (await library.readProgress()).selection?.studyId === study.id,
+        errorLines: readerSeams(harness).errorLines(),
+        files: view.studyFiles?.[study.id],
+      })
+    }
+    const listedWhole = await shown()
+    // Act: the learner removes the archive alone and presses Retry storage / refresh; the pane asks for the files again; the learner removes what is left and presses Retry again.
+    await rm(join(directory, `${study.id}.study.v3.json`))
+    await harness.reader.action('retry')
+    const afterArchiveRemoved = await shown()
+    await requestRemoval(harness, study.id, 2)
+    const restListed = await shown()
+    await rm(catalogFile)
+    await harness.reader.action('retry')
+    const afterRestRemoved = await shown()
+    // Assert
+    assert.deepEqual(listedWhole, {
+      entry: ['v3', 'validated', 'demonstrated'],
+      isSelected: true,
+      isSelectedInLedger: true,
+      errorLines: [],
+      files: [catalogFile, join(directory, `${study.id}.study.v3.json`)],
+    })
+    assert.deepEqual(afterArchiveRemoved, {
+      entry: [
+        'archive-missing',
+        'unavailable',
+        'Archive missing; remaining files kept',
+      ],
+      isSelected: false,
+      isSelectedInLedger: false,
+      errorLines: [],
+      files: undefined,
+    })
+    assert.deepEqual(restListed, {
+      entry: [
+        'archive-missing',
+        'unavailable',
+        'Archive missing; remaining files kept',
+      ],
+      isSelected: false,
+      isSelectedInLedger: false,
+      errorLines: [],
+      files: [catalogFile],
+    })
+    assert.deepEqual(afterRestRemoved, {
+      entry: undefined,
+      isSelected: false,
+      isSelectedInLedger: false,
+      errorLines: [],
+      files: undefined,
+    })
+    assert.equal(
+      harness.reader
+        .inspect()
+        .view!.studies.some((listed) => listed.id === other.id),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a reader that starts on a library whose newest entry, or whose saved selection, is what is left of a study without its archive: it opens on the newest study it can read, without a storage line; fails_when=the reader tries to read the rest, shows no study and reports "Error: Study archive is unavailable."; why_new=Cycle 0046 row 181; seam=a second reader over the same library, as after a restart of the editor
+for (const [situation, isRestSelected] of [
+  ['its newest entry', false],
+  ['its saved selection', true],
+] as const)
+  test(`a reader that starts with what is left of a study without its archive as ${situation} shows the newest study it can read, without a storage line`, async () => {
+    // Arrange: two saved studies; the newer one lost its archive by hand, and the ledger names it or no study.
+    const harness = await workspaceHarness()
+    try {
+      const readable = await saveEarlierStudy(
+          harness,
+          '2026-09-20T00:00:01.000Z',
+        ),
+        rest = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+      if (isRestSelected) await chooseStudy(harness, rest.id)
+      const library = await harness.reader.learningStorage()
+      const selectedInLedger = (await library.readProgress()).selection?.studyId
+      await rm(
+        join(
+          harness.reader.inspect().libraryDirectory!,
+          `${rest.id}.study.v3.json`,
+        ),
+      )
+      const restarted = harness.createReader()
+      try {
+        // Act
+        await restarted.learningStorage()
+        // Assert
+        const view = restarted.inspect().view!
+        assert.equal(selectedInLedger, isRestSelected ? rest.id : undefined)
+        assert.deepEqual(
+          structuredClone(view.studies).map((entry) => [
+            entry.id,
+            entry.format,
+          ]),
+          [
+            [rest.id, 'archive-missing'],
+            [readable.id, 'v3'],
+          ],
+        )
+        assert.equal(view.model.selection.studyId, readable.id)
+        assert.deepEqual(structuredClone(view.errors), [])
+      } finally {
+        await restarted.dispose()
+      }
+    } finally {
+      await harness.close()
+    }
+  })
+
+/**
+ * Records one run of this window on a disk that refuses every study save and leaves it running, so a test chooses how the run is stopped.
+ * @param context - The test whose mocks the caller restores.
+ * @param harness - A harness with a deterministic clock, whose service records the run.
+ * @returns The run, the id of its study, and `makeDiskWritable`, after which every study save reaches the disk.
+ * @example
+ * const unsaved = await recordRunOnRefusingDisk(context, harness)
+ * await harness.reader.action('stop') // its last checkpoint is the save that fails
+ */
+async function recordRunOnRefusingDisk(context: TestContext, harness: Harness) {
+  const saveStudy = LearningLibrary.prototype.saveStudy
+  let isDiskWritable = false
+  context.mock.method(
+    LearningLibrary.prototype,
+    'saveStudy',
+    function (
+      this: LearningLibrary,
+      study: Parameters<LearningLibrary['saveStudy']>[0],
+    ) {
+      return isDiskWritable
+        ? saveStudy.call(this, study)
+        : Promise.reject(new Error('disk is read-only'))
+    },
+  )
+  // A run records only for a build whose source is identified.
+  harness.service.environment.build.sourceHash = sha256('recorded-build')
+  harness.acknowledgeContext()
+  harness.service.start({
+    instanceId: harness.service.instanceId,
+    profile: PROFILE_ID,
+    configuration: harness.configuration,
+    key: randomUUID(),
+  })
+  const record = [...harness.service.records.values()][0]!
+  await record.preparation
+  record.recording!.frame({
+    bytes: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+      'base64',
+    ),
+    elapsedMs: 20,
+    kind: 'stream',
+  })
+  harness.clock(100)
+  await harness.reader.action('click').catch(() => undefined)
+  harness.clock(200)
+  return {
+    record,
+    studyId: `${harness.service.instanceId}_${record.id}`,
+    makeDiskWritable(): void {
+      isDiskWritable = true
+    },
+  }
+}
+
+/**
+ * Records one run of this window on a disk that refuses every study save ({@link recordRunOnRefusingDisk}), stops it with the Stop command and lets the reader list the library, so the reader is left with the run's archive unsaved ("History not saved: …") and the library with the run's recording alone.
+ * @param context - The test whose mocks the caller restores.
+ * @param harness - A harness with a deterministic clock, whose service records the run.
+ * @returns The run, the id of its study, and `makeDiskWritable`, after which every study save reaches the disk.
+ * @example
+ * const unsaved = await stopRunOnRefusingDisk(context, harness)
+ * unsaved.makeDiskWritable()
+ * await harness.reader.action('retry') // writes the archive of unsaved.studyId
+ */
+async function stopRunOnRefusingDisk(context: TestContext, harness: Harness) {
+  const unsaved = await recordRunOnRefusingDisk(context, harness)
+  // Stop ends the run; its own checkpoint is the save that fails. What Stop itself answers is stated by the tests of Stop, not here.
+  await harness.reader.action('stop').catch(() => undefined)
+  await readerSeams(harness).refresh()
+  return unsaved
+}
+
+// Value: protects=Retry storage / refresh saving the study of a stopped run whose archive could not be written: the button the learner is told to press writes the archive, and the run answers its history and evidence; fails_when=the reader takes the entry the library lists for the run's finished recording (it has no archive yet) for a study whose files were removed by hand, forgets the study with its pending archive and excludes the run, so the press discards the study and an agent reads that its files were removed by hand, or Retry writes the selection before the archive, so "Study archive is unavailable." is left by the press that saved the study; why_new=Cycle 0046 row 248 (row 181 counted every entry without an archive as removed), rows 266 and 280 (no line is left); seam=the library's study save, which fails until the disk is writable again
+test('after the archive of a stopped run could not be saved, Retry storage / refresh writes it, lists the study and lets an agent read the run’s history and evidence; the study is not taken for one whose files were removed by hand', async (context) => {
+  // Arrange: a recorded run of this window whose every archive save fails; it is stopped, and the library lists what exists of it: its recording.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const { record, studyId, makeDiskWritable } = await stopRunOnRefusingDisk(
+        context,
+        harness,
+      ),
+      library = await harness.reader.learningStorage(),
+      archive = join(
+        harness.reader.inspect().libraryDirectory!,
+        `${studyId}.study.v3.json`,
+      )
+    const beforeRetry = structuredClone({
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      errorLines: readerSeams(harness).errorLines(),
+      history: harness.service.state(record).historyOutcome.status,
+    })
+    // Act: the learner presses Retry storage / refresh while the disk still refuses, which lists the library again, and once more when the disk is writable; an agent reads the run and its events.
+    await harness.reader.action('retry')
+    const historyAfterFailedRetry =
+      harness.service.state(record).historyOutcome.status
+    makeDiskWritable()
+    await harness.reader.action('retry')
+    const run = await readResource(
+      harness.service,
+      harness.service.uri(record.id),
+    )
+    const events = await readResource(
+      harness.service,
+      harness.service.uri(record.id, 'events/0'),
+    ).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError ? [error.code, error.message] : error,
+    )
+    // Assert
+    assert.deepEqual(beforeRetry, {
+      listed: [[studyId, 'archive-missing']],
+      // One line: Stop tells the failure of its own checkpoint in the archive's line (row 280).
+      errorLines: ['Error: History not saved: Error: disk is read-only'],
+      history: 'failed',
+    })
+    assert.equal(historyAfterFailedRetry, 'failed')
+    assert.deepEqual(
+      (await library.list()).map((entry) => [
+        entry.id,
+        entry.format,
+        entry.metadata,
+      ]),
+      [[studyId, 'v3', 'validated']],
+    )
+    assert.equal((await readFile(archive)).length > 0, true)
+    assert.ok('text' in run)
+    assert.equal(JSON.parse(run.text).historyOutcome.status, 'saved')
+    assert.equal(events, 'answered')
+    // No line at all is left by the Retry that saved the study: neither "Study archive is unavailable." for the selection (row 266) nor a control line of Stop (row 280).
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the one press on Retry storage / refresh that saves the study of a stopped run the reader shows: the pane is left without any line; fails_when=Retry writes the reader's selection before the archive the selection names, so the selection fails with "Study archive is unavailable." and the pane shows that line for the study the same press saved, until Retry is pressed once more, or Stop tells the failure of its checkpoint a second time as a control line, which no Retry retires; why_new=Cycle 0046 row 266 (seen in the test of row 248, older than that row) and row 280 (no line at all); seam=the library's study save, which fails until the disk is writable again
+test('after the archive of a stopped run could not be saved, the one press on Retry storage / refresh that writes it leaves no storage line, not “Study archive is unavailable.” for the study it just saved', async (context) => {
+  // Arrange: a stopped run of this window whose archive could not be saved; the reader follows that run, so its selection names the unsaved study.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const unsaved = await stopRunOnRefusingDisk(context, harness),
+      library = await harness.reader.learningStorage()
+    const beforeRetry = structuredClone({
+      isUnsavedStudySelected:
+        harness.reader.inspect().view!.model.selection.studyId ===
+        unsaved.studyId,
+      errorLines: readerSeams(harness).errorLines(),
+    })
+    unsaved.makeDiskWritable()
+    // Act: the learner presses Retry storage / refresh once.
+    await harness.reader.action('retry')
+    // Assert
+    assert.deepEqual(beforeRetry, {
+      isUnsavedStudySelected: true,
+      // One line: Stop tells the failure of its own checkpoint in the archive's line (row 280).
+      errorLines: ['Error: History not saved: Error: disk is read-only'],
+    })
+    assert.deepEqual(
+      (await library.list()).map((entry) => [entry.id, entry.format]),
+      [[unsaved.studyId, 'v3']],
+    )
+    const view = harness.reader.inspect().view!
+    // No line at all is left (rows 266 and 280).
+    assert.deepEqual(structuredClone(view.errors), [])
+    assert.equal(view.unretryableErrorCount, 0)
+    // The same press wrote the selection that names the study.
+    assert.equal(
+      (await library.readProgress()).selection?.studyId,
+      unsaved.studyId,
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who stops a run while the library cannot be written reading one line about it, the one Retry storage / refresh answers, and no line once Retry saved the study; fails_when=the failure of Stop's own checkpoint is thrown on as a refused control, so Stop fails although the run stopped, and the pane shows "Error: disk is read-only" beside "History not saved: …" and keeps it, without a Retry button, after the Retry that saved the study; why_new=Cycle 0046 row 280 (seen in the tests of rows 248 and 266); seam=the library's study save, which fails until the disk is writable again
+test('a Stop whose last checkpoint cannot be written stops the run without failing and tells it once, in the line “History not saved: …” that Retry storage / refresh answers, and the Retry that saves the study leaves no line', async (context) => {
+  // Arrange: a run recorded on a disk that refuses every study save.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const unsaved = await recordRunOnRefusingDisk(context, harness)
+    // Act: the learner runs Stop, and presses Retry storage / refresh once the disk is writable.
+    const stop = await harness.reader.action('stop').then(
+      () => 'stopped',
+      (error: unknown) => String(error),
+    )
+    const afterStop = structuredClone({
+      isStopped: unsaved.record.stopped,
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    unsaved.makeDiskWritable()
+    await harness.reader.action('retry')
+    // Assert
+    assert.equal(stop, 'stopped')
+    assert.deepEqual(afterStop, {
+      isStopped: true,
+      errors: ['Error: History not saved: Error: disk is read-only'],
+      // Retry storage / refresh is offered beside the one line.
+      unretryableErrorCount: 0,
+    })
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.equal(
+      harness.service.state(unsaved.record).historyOutcome.status,
+      'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a Stop whose last checkpoint fails before anything is written (a capture that changed under it): the run is stopped, the Stop command does not fail, and the learner reads a line that Retry storage / refresh answers; fails_when=that failure is left to a control line alone, "Error: Final study changed during checkpoint; history was not certified.", which offers no Retry and stays until the next choice, or Stop rejects although the run stopped; why_new=Cycle 0046 row 280 (the failures of Stop's checkpoint that write no archive line of their own); seam=the reader's checkpoint step, replaced so that the forced checkpoint of Stop fails as a capture does
+test('a Stop whose last checkpoint fails before anything is written stops the run without failing and tells it in the line “History not saved: …” that Retry storage / refresh answers, not in a control line', async () => {
+  // Arrange: a running run whose forced checkpoint fails the way a capture that changed under it does.
+  const harness = await workspaceHarness()
+  try {
+    const { record } = await startRun(harness)
+    const checkpoint = readerSeams(harness).checkpointStep
+    let isCaptureChanging = true
+    readerSeams(harness).checkpointStep = async (
+      service,
+      run,
+      force,
+    ): Promise<void> => {
+      // Only the forced checkpoint of Stop fails; the ones after it are the reader's own.
+      if (force && isCaptureChanging) {
+        isCaptureChanging = false
+        throw new Error(
+          'Final study changed during checkpoint; history was not certified.',
+        )
+      }
+      return checkpoint(service, run, force)
+    }
+    // Act: the learner runs Stop, and then presses Retry storage / refresh.
+    const stop = await harness.reader.action('stop').then(
+      () => 'stopped',
+      (error: unknown) => String(error),
+    )
+    const afterStop = structuredClone({
+      isStopped: record.stopped,
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    await harness.reader.action('retry')
+    // Assert
+    assert.equal(stop, 'stopped')
+    assert.deepEqual(afterStop, {
+      isStopped: true,
+      errors: [
+        'Error: History not saved: Error: Final study changed during checkpoint; history was not certified.',
+      ],
+      // Retry storage / refresh is offered beside the one line.
+      unretryableErrorCount: 0,
+    })
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.equal(harness.service.state(record).historyOutcome.status, 'saved')
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Makes every save of a study fail on the reader's library while `refusesEveryStudy` is set, and afterwards the saves of the studies named in `refusedStudyIds`; every other save reaches the disk.
+ * @param context - The test whose mocks the caller restores.
+ * @returns The switch and the set a test changes as the disk recovers.
+ * @example
+ * const disk = refuseStudySaves(context)
+ * disk.refusesEveryStudy = false
+ * disk.refusedStudyIds.add(firstStudyId) // only that study still cannot be saved
+ */
+function refuseStudySaves(context: TestContext) {
+  const saveStudy = LearningLibrary.prototype.saveStudy
+  const disk = { refusesEveryStudy: true, refusedStudyIds: new Set<string>() }
+  context.mock.method(
+    LearningLibrary.prototype,
+    'saveStudy',
+    function (
+      this: LearningLibrary,
+      study: Parameters<LearningLibrary['saveStudy']>[0],
+    ) {
+      return disk.refusesEveryStudy || disk.refusedStudyIds.has(study.id)
+        ? Promise.reject(new Error('disk is read-only'))
+        : saveStudy.call(this, study)
+    },
+  )
+  return disk
+}
+
+// Value: protects=the line "History not saved: …" and the Retry button beside it while a study still waits to be saved, also when another study is saved meanwhile; fails_when=the successful save of one study retires the archive line although the archive of another study still waits, so the pane offers no Retry while a study is unsaved; why_new=Cycle 0046 row 300 (read in the code while working on row 278); seam=the library's study save, which refuses the first study only once the disk writes again, and the reader's own refresh, which saves the second run
+test('the line “History not saved: …” of a study that still waits stays, with Retry storage / refresh beside it, when another study is saved meanwhile, and is gone once Retry wrote the waiting one', async (context) => {
+  // Arrange: the study of a first, stopped run could not be saved. The disk writes again, but not that study, and a second run of the same server has started.
+  const disk = refuseStudySaves(context)
+  const harness = await workspaceHarness()
+  try {
+    const first = await startRun(harness)
+    await harness.reader.action('stop')
+    disk.refusesEveryStudy = false
+    disk.refusedStudyIds.add(`${harness.service.instanceId}_${first.record.id}`)
+    const second = await startRun(harness)
+    // Act: the reader's refresh saves the second run's study; then the disk writes every study and the learner presses Retry storage / refresh.
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.service.state(second.record).historyOutcome.status === 'saved',
+      'the save of the second run',
+      1_000,
+    )
+    const afterOtherSave = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    disk.refusedStudyIds.clear()
+    await harness.reader.action('retry')
+    // Assert
+    assert.deepEqual(afterOtherSave, {
+      queued: 1,
+      errors: ['Error: History not saved: Error: disk is read-only'],
+      // Retry storage / refresh is still offered.
+      unretryableErrorCount: 0,
+    })
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.equal(
+      harness.service.state(first.record).historyOutcome.status,
+      'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the line and the Retry button while one of two studies whose saves failed is still unsaved after a Retry that wrote the other; fails_when=the Retry that wrote one study leaves no line although the other still waits; why_new=Cycle 0046 row 300 (the row's own order of events; it holds without the row's change as well, because Retry tries every waiting archive in turn and tells the failure of the second again); seam=the library's study save, which refuses one study by its id
+test('a Retry storage / refresh that writes one of two studies whose saves failed leaves the line and Retry for the other, and the Retry that writes that one leaves no line', async (context) => {
+  // Arrange: the studies of two stopped runs of one server could not be saved.
+  const disk = refuseStudySaves(context)
+  const harness = await workspaceHarness()
+  try {
+    const first = await startRun(harness)
+    await harness.reader.action('stop')
+    const second = await startRun(harness)
+    await harness.reader.action('stop')
+    const queuedBeforeRetry = readerSeams(harness).queuedStudyWrites()
+    // Act: the disk writes the first study only, and the learner presses Retry storage / refresh; then it writes both, and the learner presses again.
+    disk.refusesEveryStudy = false
+    disk.refusedStudyIds.add(
+      `${harness.service.instanceId}_${second.record.id}`,
+    )
+    await harness.reader.action('retry')
+    const afterFirstRetry = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      histories: [first.record, second.record].map(
+        (record) => harness.service.state(record).historyOutcome.status,
+      ),
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    disk.refusedStudyIds.clear()
+    await harness.reader.action('retry')
+    // Assert
+    assert.equal(queuedBeforeRetry, 2)
+    assert.deepEqual(afterFirstRetry, {
+      queued: 1,
+      histories: ['saved', 'failed'],
+      // The line of the Retry whose second write failed, and the line of the selection, which names the second study and cannot be written before its archive exists. Retry storage / refresh answers both.
+      errors: [
+        'Error: disk is read-only',
+        'Error: Study archive is unavailable.',
+      ],
+      unretryableErrorCount: 0,
+    })
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.equal(
+      harness.service.state(second.record).historyOutcome.status,
+      'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+/**
+ * Leaves a reader with the archive of a stopped run that could not be saved and whose server has ended, listed in Saved studies as what exists of it, and starts the learner's confirmed removal of that study with the Trash holding its first move and refusing every move.
+ * Only the reader's waiting archive can still save such a study: no service holds its run any more, so Retry storage / refresh has no run to capture again.
+ * @param context - The test whose mocks the caller restores.
+ * @param harness - A harness with a deterministic clock.
+ * @returns The unsaved run ({@link stopRunOnRefusingDisk}), the removal in progress, and `refuseTheMove`, which lets the held move go on to its refusal.
+ * @example
+ * const held = await removeUnsavedStudyOnRefusingTrash(context, harness)
+ * held.refuseTheMove()
+ * await held.removal // => the removal failed and nothing was deleted
+ */
+async function removeUnsavedStudyOnRefusingTrash(
+  context: TestContext,
+  harness: Harness,
+) {
+  const unsaved = await stopRunOnRefusingDisk(context, harness)
+  await harness.reader.retire(harness.service).catch(() => undefined)
+  // A Retry storage / refresh on the disk that still refuses lists what exists of the study.
+  await harness.reader.action('retry')
+  harness.answerWarningDialogs(async ([confirm]) => confirm)
+  harness.rejectTrashMoves(() => true)
+  const heldMove = harness.holdTrashMove()
+  const removal = requestRemoval(harness, unsaved.studyId)
+  await heldMove.started
+  return { unsaved, removal, refuseTheMove: heldMove.release }
+}
+
+// Value: protects=the line "History not saved: …" and Retry storage / refresh for a study whose archive still waits when the learner presses Retry while that study is on its way to the Trash and the Trash then refuses the move; fails_when=the Retry ends during the move, skips the archive that is held back and retires the line, and nothing brings the line back when the move fails, so a study is unsaved without a line and without Retry; why_new=Cycle 0046 row 313 (read in the code while working on row 300; this is the row's own order of events, and it holds without a change: the Retry waits for the move, which holds the library's storage lock, and then tries the archive itself); seam=the fake editor's Trash, which holds and then refuses the move, and the library's study save, which fails until the disk is writable again
+test('a Retry storage / refresh pressed while a study whose archive still waits is on its way to the Trash does not retire the line during the move, and when the Trash refuses the move the line and Retry are there for the archive that still waits', async (context) => {
+  // Arrange: the learner deletes the study of a stopped run whose archive could not be saved and whose server has ended; the Trash holds the move.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const { unsaved, removal, refuseTheMove } =
+      await removeUnsavedStudyOnRefusingTrash(context, harness)
+    // Act: the learner presses Retry storage / refresh during the move; the Trash refuses the move; the disk writes again and the learner presses Retry once more.
+    let hasRetryEnded = false
+    const retry = harness.reader.action('retry').finally(() => {
+      hasRetryEnded = true
+    })
+    // A Retry that does not wait for the move has ended long before this.
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    const duringTheMove = structuredClone({
+      hasRetryEnded,
+      removal: harness.reader.inspect().view!.studyRemoval?.status,
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+    })
+    refuseTheMove()
+    await removal
+    await retry
+    const afterTheRefusedMove = structuredClone({
+      removal: harness.reader.inspect().view!.studyRemoval?.status,
+      queued: readerSeams(harness).queuedStudyWrites(),
+      selected: harness.reader.inspect().view!.model.selection.studyId,
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    unsaved.makeDiskWritable()
+    await harness.reader.action('retry')
+    // Assert
+    assert.deepEqual(duringTheMove, {
+      hasRetryEnded: false,
+      removal: 'moving',
+      queued: 1,
+      // The archive's line of the Retry before the removal, and the line of the selection, which names the unsaved study.
+      errors: [
+        'Error: disk is read-only',
+        'Error: Study archive is unavailable.',
+      ],
+    })
+    assert.deepEqual(afterTheRefusedMove, {
+      removal: 'failed',
+      queued: 1,
+      // The study stays selected: its archive waits in this reader, whose server has ended, so it is not one whose files were removed by hand (row 357).
+      selected: unsaved.studyId,
+      // The Retry tried the archive once the move had ended: its line, with Retry storage / refresh beside it, and the selection's line as before the press, because the selected study still has no archive.
+      errors: [
+        'Error: disk is read-only',
+        'Error: Study archive is unavailable.',
+      ],
+      unretryableErrorCount: 0,
+    })
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+    assert.equal(
+      harness.reader.inspect().view!.model.selection.studyId,
+      unsaved.studyId,
+    )
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.deepEqual(
+      (await (await harness.reader.learningStorage()).list()).map((entry) => [
+        entry.id,
+        entry.format,
+      ]),
+      [[unsaved.studyId, 'v3']],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the line "History not saved: …" and Retry storage / refresh for an archive a removal held back, when that removal moved nothing: the reader tries the archive by itself, and a write that still fails is told again, also when the line was retired while the files were moving; fails_when=a removal that moved nothing leaves the archive it held back unwritten and untold, so a study is unsaved without a line and without Retry until something else writes it; why_new=Cycle 0046 row 313 (what brings the line back by itself when the move fails); seam=the fake editor's Trash, which holds and then refuses the move, the reader's archive line dropped during the move as the Retry action's last step drops it, and the library's study save, which fails
+test('a removal that moved nothing tries the archive it held back by itself, and when that write still fails the line “History not saved: …” and Retry storage / refresh are there again, also when the line was retired during the move', async (context) => {
+  // Arrange: the learner deletes the study of a stopped run whose archive could not be saved and whose server has ended; the Trash holds the move, and the archive's line is retired meanwhile.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const { removal, refuseTheMove } = await removeUnsavedStudyOnRefusingTrash(
+      context,
+      harness,
+    )
+    readerSeams(harness).dropErrorOfKind('archive')
+    const hadArchiveLineDuringTheMove =
+      readerSeams(harness).hasErrorOfKind('archive')
+    // Act: the Trash refuses the move.
+    refuseTheMove()
+    await removal
+    await waitUntil(
+      () => readerSeams(harness).hasErrorOfKind('archive'),
+      'the line of the archive that was held back',
+      1_000,
+    ).catch(() => undefined)
+    // Assert
+    assert.equal(hadArchiveLineDuringTheMove, false)
+    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'failed')
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 1)
+    const view = harness.reader.inspect().view!
+    // The archive's line, written again by the reader itself. (The selection's line of before is gone: a removal that moved nothing reads the ledger again, and it could be read.)
+    assert.deepEqual(structuredClone(view.errors), [
+      'Error: History not saved: Error: disk is read-only',
+    ])
+    assert.equal(view.unretryableErrorCount, 0)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the study of a stopped run whose archive could not be saved when a new reader is attached to the same service: Retry storage / refresh in the new reader saves the study, and it opens; fails_when=the new reader no longer captures the run again from the service, so the archive that waits in the disposed reader is the only copy of the study, or the new reader takes the run's recording without an archive for a study removed by hand; either way the press writes nothing and the study can no longer be saved; why_new=Cycle 0046 row 267 (named while working on row 248, not stated by a test until now; the extension stops its service before it replaces its reader after a change of the workspace's folders, so the product attaches no second reader to a living service today, and this states what holds if it ever does); seam=the workspace harness's createReader (a second reader from the same loaded module, attached to the same service) and the library's study save, which fails until the disk is writable again
+test('after the archive of a stopped run could not be saved, a reader made again over the same service writes it at Retry storage / refresh without the archive the disposed reader held, and the study opens with the run’s history saved', async (context) => {
+  // Arrange: a stopped run whose archive waits in the reader that could not save it; that reader is disposed and a new one is attached to the same service.
+  const harness = await workspaceHarness(true, true)
+  let replacement: ReturnType<typeof harness.createReader> | undefined
+  try {
+    const unsaved = await stopRunOnRefusingDisk(context, harness)
+    const queuedInDisposedReader = readerSeams(harness).queuedStudyWrites()
+    await harness.reader.dispose()
+    replacement = harness.createReader()
+    const successor = { reader: replacement }
+    await successor.reader.attach(harness.service)
+    const library = await successor.reader.learningStorage()
+    const beforeRetry = structuredClone({
+      queued: readerSeams(successor).queuedStudyWrites(),
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      errorLines: readerSeams(successor).errorLines(),
+      history: harness.service.state(unsaved.record).historyOutcome.status,
+    })
+    unsaved.makeDiskWritable()
+    // Act: the learner presses Retry storage / refresh in the new reader and chooses the study in Saved studies; an agent reads the run.
+    await successor.reader.action('retry')
+    const afterRetry = structuredClone({
+      listed: (await library.list()).map((entry) => [
+        entry.id,
+        entry.format,
+        entry.metadata,
+      ]),
+      errorLines: readerSeams(successor).errorLines(),
+    })
+    const run = await readResource(
+      harness.service,
+      harness.service.uri(unsaved.record.id),
+    )
+    await successor.reader.open()
+    await readerSeams(successor).receive(
+      {
+        type: 'history',
+        revision: successor.reader.inspect().view!.revision,
+        studyId: unsaved.studyId,
+      },
+      'context',
+    )
+    await waitUntil(
+      () =>
+        successor.reader.inspect().view!.model.selection.studyId ===
+          unsaved.studyId && !successor.reader.inspect().view!.loading,
+      'the chosen saved study',
+      1_000,
+    )
+    // Assert
+    assert.equal(queuedInDisposedReader, 1)
+    assert.deepEqual(beforeRetry, {
+      queued: 0,
+      listed: [[unsaved.studyId, 'archive-missing']],
+      errorLines: [],
+      history: 'failed',
+    })
+    assert.deepEqual(afterRetry, {
+      listed: [[unsaved.studyId, 'v3', 'validated']],
+      errorLines: [],
+    })
+    assert.ok('text' in run)
+    assert.equal(JSON.parse(run.text).historyOutcome.status, 'saved')
+    // The chosen study is shown: the captured source of the run's stop is rendered, without a line.
+    assert.deepEqual(
+      structuredClone(successor.reader.inspect().view!.errors),
+      [],
+    )
+    assert.equal(
+      successor.reader.inspect().rendered?.snapshotUri,
+      `codebook://${harness.service.instanceId}/runs/${unsaved.record.id}/snapshots/browser-session%3A1`,
+    )
+  } finally {
+    context.mock.restoreAll()
+    await replacement?.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the study of a stopped run whose archive could not be saved before its server ended, when the workspace's folders then change: the reader made in place of the disposed one shows "History not saved: …" again, and one press on Retry storage / refresh saves the study, which opens; fails_when=the archive that waits is disposed with its reader, or the new reader does not take what was handed over, so the press writes nothing, the study stays without its archive for good and no line says so; why_new=Cycle 0046 row 278 (probe P2 of row 267, turned into this test); seam=the hand-over as the extension's handling of a changed workspace folder makes it (releaseUnsavedStudies, dispose, a new reader from the workspace harness's createReader with what was released) and the library's study save, which fails until the disk is writable again
+for (const [situation, isWriteStillRunning, lineOfNewReader] of [
+  [
+    'whose save had failed',
+    false,
+    'Error: History not saved: Error: disk is read-only',
+  ],
+  [
+    'whose write was still running',
+    true,
+    "Error: History not saved: a study of an earlier run was still being written when the workspace's folders changed. Press Retry storage / refresh to write it.",
+  ],
+] as const)
+  test(`after the server of a stopped run ${situation} has ended and the workspace’s folders changed, the reader made again shows “History not saved: …” for it, writes its archive at Retry storage / refresh, and the study opens`, async (context) => {
+    // Arrange: a stopped run whose archive could not be saved; its server stops while the disk still refuses, so the reader holds the archive of a run that no service holds any more.
+    const harness = await workspaceHarness(true, true)
+    let replacement: ReturnType<typeof harness.createReader> | undefined
+    try {
+      const unsaved = await stopRunOnRefusingDisk(context, harness)
+      const retirement = await harness.reader.retire(harness.service).then(
+        () => 'retired',
+        (error: unknown) => String(error),
+      )
+      // A write that had not ended when the readers were replaced left no reason on the run.
+      if (isWriteStillRunning)
+        unsaved.record.historyReceipt = {
+          revision: unsaved.record.historyReceipt!.revision,
+          signature: unsaved.record.historyReceipt!.signature,
+          status: 'pending',
+        }
+      // Act: the workspace's folders change: the extension takes what the reader could not save, disposes it and makes a new reader with it. The disk is writable again, and the learner presses Retry storage / refresh and chooses the study.
+      const handedOver = harness.reader.releaseUnsavedStudies()
+      await harness.reader.dispose()
+      replacement = harness.createReader(undefined, handedOver)
+      const successor = { reader: replacement },
+        library = await successor.reader.learningStorage()
+      const beforeRetry = structuredClone({
+        queued: readerSeams(successor).queuedStudyWrites(),
+        listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+        errors: successor.reader.inspect().view!.errors,
+        unretryableErrorCount:
+          successor.reader.inspect().view!.unretryableErrorCount,
+      })
+      unsaved.makeDiskWritable()
+      await successor.reader.action('retry')
+      const afterRetry = structuredClone({
+        queued: readerSeams(successor).queuedStudyWrites(),
+        listed: (await library.list()).map((entry) => [
+          entry.id,
+          entry.format,
+          entry.metadata,
+        ]),
+        errors: successor.reader.inspect().view!.errors,
+      })
+      await successor.reader.open()
+      await readerSeams(successor).receive(
+        {
+          type: 'history',
+          revision: successor.reader.inspect().view!.revision,
+          studyId: unsaved.studyId,
+        },
+        'context',
+      )
+      await waitUntil(
+        () =>
+          successor.reader.inspect().view!.model.selection.studyId ===
+            unsaved.studyId && !successor.reader.inspect().view!.loading,
+        'the chosen saved study',
+        1_000,
+        // A study that was not saved is never shown: the assertions below then say what the new reader held.
+      ).catch(() => undefined)
+      // Assert
+      assert.equal(
+        retirement,
+        'Error: Runtime released; final reader history was not saved: Error: disk is read-only',
+      )
+      assert.deepEqual(
+        structuredClone(handedOver.map((entry) => entry.archive.id)),
+        [unsaved.studyId],
+      )
+      assert.deepEqual(beforeRetry, {
+        queued: 1,
+        listed: [[unsaved.studyId, 'archive-missing']],
+        errors: [lineOfNewReader],
+        // Retry storage / refresh is offered beside the line.
+        unretryableErrorCount: 0,
+      })
+      assert.deepEqual(afterRetry, {
+        queued: 0,
+        listed: [[unsaved.studyId, 'v3', 'validated']],
+        errors: [],
+      })
+      // The chosen study is shown: the captured source of the run's stop is rendered, without a line.
+      assert.deepEqual(
+        structuredClone(successor.reader.inspect().view!.errors),
+        [],
+      )
+      assert.equal(
+        successor.reader.inspect().rendered?.snapshotUri,
+        `codebook://${harness.service.instanceId}/runs/${unsaved.record.id}/snapshots/browser-session%3A1`,
+      )
+    } finally {
+      context.mock.restoreAll()
+      await replacement?.dispose()
+      await harness.close()
+    }
+  })
+
+// Value: protects=a study archive of another workspace's library that reaches a reader in a hand-over: it is never written into this library, where it would be a study without its recording and take a place, it shows no line that Retry could not answer here, and it is not dropped: the next hand-over carries it on; fails_when=the new reader queues everything it is handed, so Retry tries to write a study of another workspace into this library, or the reader forgets what is not its own; why_new=Cycle 0046 row 278 (the reader takes those whose workspace key is its library's); seam=the hand-over (releaseUnsavedStudies and the workspace harness's createReader) with the archive's workspace key changed to another project's
+test('a study archive of another workspace’s library that a disposed reader hands over is not written into this library and shows no line, and the reader hands it on again when it is replaced', async (context) => {
+  // Arrange: a stopped run whose archive could not be saved and whose server ended; the archive that waits names another workspace's library.
+  const harness = await workspaceHarness(true, true)
+  let replacement: ReturnType<typeof harness.createReader> | undefined
+  try {
+    const unsaved = await stopRunOnRefusingDisk(context, harness)
+    await harness.reader.retire(harness.service).catch(() => undefined)
+    const otherWorkspaceKey = sha256('another project')
+    const ofAnotherLibrary = harness.reader
+      .releaseUnsavedStudies()
+      .map((entry) => ({
+        ...entry,
+        archive: { ...entry.archive, workspaceKey: otherWorkspaceKey },
+      }))
+    await harness.reader.dispose()
+    // Act: a new reader is made with it, the disk is writable, and the learner presses Retry storage / refresh; then that reader is replaced in turn.
+    replacement = harness.createReader(undefined, ofAnotherLibrary)
+    const successor = { reader: replacement },
+      library = await successor.reader.learningStorage()
+    unsaved.makeDiskWritable()
+    await successor.reader.action('retry')
+    const afterRetry = structuredClone({
+      queued: readerSeams(successor).queuedStudyWrites(),
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      errors: successor.reader.inspect().view!.errors,
+    })
+    const handedOn = successor.reader.releaseUnsavedStudies()
+    // Assert
+    assert.deepEqual(afterRetry, {
+      queued: 0,
+      // Only the run's recording, which was made in this library, is listed: no archive was written.
+      listed: [[unsaved.studyId, 'archive-missing']],
+      errors: [],
+    })
+    assert.deepEqual(
+      structuredClone(
+        handedOn.map((entry) => [entry.archive.id, entry.archive.workspaceKey]),
+      ),
+      [[unsaved.studyId, otherWorkspaceKey]],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await replacement?.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the selected study of a run whose last save failed and whose archive on disk was then lost, when the workspace's folders change before Retry storage / refresh: the reader made in place of the disposed one holds the study's archive, so it keeps the study selected and shown, and the press writes the archive and leaves it selected; fails_when=that reader, which holds no run of the study, takes the entry without an archive for a study removed by hand although the archive waits in it: it opens on no study, and the press drops the selection while it writes the study back; why_new=Cycle 0046 row 357 (the local CodeRabbit CLI's third run); seam=the hand-over (releaseUnsavedStudies and the workspace harness's createReader), the library's study save, which refuses from a point the test chooses, and the file system, on which the test removes the archive
+test('after the last save of the selected study failed, its archive on disk was lost and the workspace’s folders changed, the reader made again keeps the study selected with the archive it was handed, and Retry storage / refresh writes it and leaves it selected', async (context) => {
+  // Arrange: a recorded run that was stopped and saved, whose study is the ledger's selection. From then on the disk refuses every study save, and a press on Retry storage / refresh leaves the study's archive waiting in the reader.
+  const harness = await recordedReaderHarness()
+  let replacement: ReturnType<typeof harness.createReader> | undefined
+  try {
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    let isDiskWritable = true
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      function (
+        this: LearningLibrary,
+        study: Parameters<LearningLibrary['saveStudy']>[0],
+      ) {
+        return isDiskWritable
+          ? saveStudy.call(this, study)
+          : Promise.reject(new Error('disk is read-only'))
+      },
+    )
+    const studyId = harness.studyId,
+      firstLibrary = await harness.reader.learningStorage()
+    // The learner chooses the study in Saved studies, which writes the selection.
+    await harness.reader.open()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId,
+      },
+      'context',
+    )
+    await waitUntil(
+      async () =>
+        (await firstLibrary.readProgress()).selection?.studyId === studyId,
+      'the selection of the chosen study in the ledger',
+      1_000,
+    )
+    const savedBeforeTheDiskRefused = structuredClone({
+      listed: (await firstLibrary.list()).map((entry) => [
+        entry.id,
+        entry.format,
+      ]),
+      ledgerSelection: (await firstLibrary.readProgress()).selection?.studyId,
+    })
+    isDiskWritable = false
+    await harness.reader.action('retry')
+    await harness.reader.retire(harness.service).catch(() => undefined)
+    // The archive on disk is lost (removed by hand); the study's catalog file is left.
+    await rm(
+      join(
+        harness.reader.inspect().libraryDirectory!,
+        `${studyId}.study.v3.json`,
+      ),
+    )
+    // Act: the workspace's folders change: the extension takes what the reader could not save, disposes it and makes a new reader with it. Then the disk is writable again and the learner presses Retry storage / refresh.
+    const handedOver = harness.reader.releaseUnsavedStudies()
+    await harness.reader.dispose()
+    replacement = harness.createReader(undefined, handedOver)
+    const successor = { reader: replacement },
+      library = await successor.reader.learningStorage()
+    await successor.reader.open()
+    const beforeRetry = structuredClone({
+      queued: readerSeams(successor).queuedStudyWrites(),
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      selected: successor.reader.inspect().view!.model.selection.studyId,
+      shown: successor.reader.inspect().rendered?.snapshotUri,
+      errors: successor.reader.inspect().view!.errors,
+    })
+    isDiskWritable = true
+    await successor.reader.action('retry')
+    const afterRetry = structuredClone({
+      queued: readerSeams(successor).queuedStudyWrites(),
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      selected: successor.reader.inspect().view!.model.selection.studyId,
+      ledgerSelection: (await library.readProgress()).selection?.studyId,
+      shown: successor.reader.inspect().rendered?.snapshotUri,
+      errors: successor.reader.inspect().view!.errors,
+    })
+    // Assert
+    const capturedSourceOfTheStop = `codebook://${harness.service.instanceId}/runs/${harness.record.id}/snapshots/browser-session%3A1`
+    assert.deepEqual(savedBeforeTheDiskRefused, {
+      listed: [[studyId, 'v3']],
+      ledgerSelection: studyId,
+    })
+    assert.deepEqual(
+      structuredClone(handedOver.map((entry) => entry.archive.id)),
+      [studyId],
+    )
+    assert.deepEqual(beforeRetry, {
+      queued: 1,
+      listed: [[studyId, 'archive-missing']],
+      selected: studyId,
+      // The study is shown from the archive that waits: the captured source of the run's stop is rendered.
+      shown: capturedSourceOfTheStop,
+      errors: ['Error: History not saved: Error: disk is read-only'],
+    })
+    assert.deepEqual(afterRetry, {
+      queued: 0,
+      listed: [[studyId, 'v3']],
+      selected: studyId,
+      ledgerSelection: studyId,
+      shown: capturedSourceOfTheStop,
+      errors: [],
+    })
+  } finally {
+    context.mock.restoreAll()
+    await replacement?.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=a removal by hand that took the archive of a study of this window's own stopped run: Retry storage / refresh does not write the archive again, so the learner can remove what is left; fails_when=the reader still takes the run's study for listed, and the forced checkpoint of Retry captures the run again and writes a new archive beside the rest; why_new=Cycle 0046 row 181 (read from the code by the library's fixer, not measured there); seam=the file system, on which the test removes the archive
+test('after the archive of the study of this window’s own stopped run was removed by hand, Retry storage / refresh does not write that archive again and lists what is left', async () => {
+  // Arrange: a recorded run of this window that was stopped and saved.
+  const harness = await recordedReaderHarness()
+  try {
+    const library = await harness.reader.learningStorage(),
+      directory = harness.reader.inspect().libraryDirectory!,
+      archive = join(directory, `${harness.studyId}.study.v3.json`)
+    const filesBefore = (await readdir(directory))
+      .filter((name) => name.includes('.study.'))
+      .sort()
+    // Act: the learner removes the archive alone and presses Retry storage / refresh, twice.
+    await rm(archive)
+    await harness.reader.action('retry')
+    await harness.reader.action('retry')
+    // Assert
+    assert.deepEqual(filesBefore, [
+      `${harness.studyId}.study.meta.v3.json`,
+      `${harness.studyId}.study.v3.json`,
+    ])
+    assert.deepEqual(
+      (await readdir(directory))
+        .filter((name) => name.includes('.study.'))
+        .sort(),
+      [`${harness.studyId}.study.meta.v3.json`],
+    )
+    assert.deepEqual(
+      (await library.list()).map((entry) => [entry.id, entry.format]),
+      [[harness.studyId, 'archive-missing']],
+    )
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent that reads a run of this window after the learner removed the study's files by hand: the run and its evidence answer with what Codebook found; fails_when=the reader forgets such a run as "removed by the learner", so the run resource and every evidence read say "The learner moved this saved study to the Trash.", which names a Trash the study never went to and a window without a Trash does not have; why_new=Cycle 0046 row 201; seam=the file system, on which the test removes the archive, and the resources an agent reads
+test('after the archive of the study of this window’s own stopped run was removed by hand and Retry storage / refresh was pressed, an agent that reads the run or its evidence is told that the archive is no longer in the library, not that the study went to the Trash', async () => {
+  // Arrange: a recorded run of this window that was stopped and saved.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.learningStorage()
+    const service = harness.service,
+      runUri = service.uri(harness.record.id),
+      eventsUri = service.uri(harness.record.id, 'events/0')
+    const eventsBefore = await readResource(service, eventsUri)
+    // Act: the learner removes the archive and presses Retry storage / refresh; the agent reads the run and its events.
+    await rm(
+      join(
+        harness.reader.inspect().libraryDirectory!,
+        `${harness.studyId}.study.v3.json`,
+      ),
+    )
+    await harness.reader.action('retry')
+    const run = await readResource(service, runUri)
+    const eventsAfter = await readResource(service, eventsUri).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError ? [error.code, error.message] : error,
+    )
+    // Assert
+    assert.ok('text' in eventsBefore)
+    assert.ok('text' in run)
+    const { status, reason } = JSON.parse(run.text).historyOutcome
+    assert.deepEqual(
+      [status, reason],
+      [
+        'unavailable',
+        "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      ],
+    )
+    assert.deepEqual(eventsAfter, [
+      'EVIDENCE_UNAVAILABLE',
+      "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Writes one saved study an older Codebook left into the reader's library: an archive in a historical format, which the library lists without reading it and Retry writes nothing for.
+ * @param directory - The reader's library directory.
+ * @returns The study's id and its archive's path.
+ * @example const older = await writeHistoricalStudy(directory) // listed after the next Retry storage / refresh
+ */
+async function writeHistoricalStudy(
+  directory: string,
+): Promise<{ id: string; archive: string }> {
+  const id = `${randomUUID()}_${randomUUID()}`,
+    archive = join(directory, `${id}.study.v2.json`)
+  await writeFile(archive, '{}')
+  return { id, archive }
+}
+
+// Value: protects=two panes of a window without a Trash that ask for the files of their studies at the same moment (each open "Remove by hand" asks again after Retry storage / refresh) both getting their answer; fails_when=the reader drops the request that arrives while the other is being answered, so the pane that sent it waits for an answer that never comes and stays at "Listing this study's files…" with no button; why_new=Cycle 0046 row 168 (delegated review, finding 4c); seam=two delete requests received in one tick, as the Study pane and the bottom-panel view send them
+test('in a window without a Trash two panes that ask for the files of two studies at the same moment are both answered, each with the number it gave its request', async () => {
+  // Arrange: a WSL remote window with two saved studies an older Codebook left, and the Study workspace open.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const directory = harness.reader.inspect().libraryDirectory!
+    const first = await writeHistoricalStudy(directory),
+      second = await writeHistoricalStudy(directory)
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const revision = harness.reader.inspect().view!.revision,
+      publishedBefore = harness.postedMessages().length
+    /** Sends one pane's request for a study's files under the shown revision. */
+    const ask = (
+      pane: 'context' | 'moments',
+      studyId: string,
+      removalRequest: number,
+    ): Promise<void> =>
+      readerSeams(harness).receive(
+        { type: 'delete-study', revision, studyId, removalRequest },
+        pane,
+      )
+    // Act: both panes ask before either request is answered.
+    await Promise.all([
+      ask('context', first.id, 1),
+      ask('moments', second.id, 2),
+    ])
+    // Assert: every answer the Study pane received, in order, and the lists the reader keeps for both.
+    const answers = harness
+      .postedMessages()
+      .slice(publishedBefore)
+      .flatMap((message) =>
+        message.studyRemoval
+          ? [
+              {
+                request: message.studyRemoval.request,
+                files: message.studyRemoval.files,
+                revision: message.revision,
+              },
+            ]
+          : [],
+      )
+    assert.deepEqual(structuredClone(answers), [
+      { request: 1, files: [first.archive], revision },
+      { request: 2, files: [second.archive], revision },
+    ])
+    assert.deepEqual(
+      structuredClone(harness.reader.inspect().view!.studyFiles),
+      { [first.id]: [first.archive], [second.id]: [second.archive] },
+    )
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner of a window without a Trash seeing no error line for a request the pane sent by itself: an open "Remove by hand" asks for its study's files again after Retry storage / refresh, and such a request can reach the reader after it rendered again; fails_when=the reader refuses it like a control the learner pressed on a view that has changed, and the pane shows "Error: The displayed study changed. Inspect the current view before acting." for nothing the learner did; why_new=Cycle 0046 row 202; seam=the Study pane's webview, through which the message and its refusal travel as in the editor
+test('in a window without a Trash a request for a study’s files that the pane sent by itself is answered although the reader has rendered since, without an error line, and the same request made by the learner on the old view keeps its sentence', async () => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left; the Study workspace is open and has rendered again since the pane read its revision.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const revisionThePaneRead = harness.reader.inspect().view!.revision
+    await harness.reader.action('retry')
+    const revisionNow = harness.reader.inspect().view!.revision
+    /** Sends the pane's request under the revision it read, and waits until the reader has answered it or told a line. */
+    const askUnderOldRevision = async (
+      removalRequest: number,
+      mark: { unprompted?: true },
+    ) => {
+      harness.receive({
+        type: 'delete-study',
+        revision: revisionThePaneRead,
+        studyId: study.id,
+        removalRequest,
+        ...mark,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.studyRemoval?.request ===
+            removalRequest || readerSeams(harness).errorLines().length > 0,
+        'the answer to the files request or a line',
+        2_000,
+      )
+      return structuredClone({
+        answeredRequest: harness.reader.inspect().view!.studyRemoval?.request,
+        files: harness.reader.inspect().view!.studyFiles?.[study.id],
+        errorLines: readerSeams(harness).errorLines(),
+      })
+    }
+    // Act: the pane's own request, then the same request as the learner makes it by opening the disclosure.
+    const sentByThePane = await askUnderOldRevision(1, { unprompted: true })
+    const madeByTheLearner = await askUnderOldRevision(2, {})
+    // Assert
+    assert.equal(revisionNow, revisionThePaneRead + 1)
+    assert.deepEqual(sentByThePane, {
+      answeredRequest: 1,
+      files: [study.archive],
+      errorLines: [],
+    })
+    assert.deepEqual(madeByTheLearner, {
+      answeredRequest: 1,
+      files: [study.archive],
+      errorLines: [
+        'Error: The displayed study changed. Inspect the current view before acting.',
+      ],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an open "Remove by hand" in a window without a Trash getting its files while a presentation changes, without an error line, and the change itself ending as it would have; fails_when=the reader refuses the pane's own request like a control pressed during the change, so the pane shows "Error: A presentation change or reader close is pending. …" for nothing the learner did and stays at "Listing this study's files…" until another message makes it ask again; or the answer disturbs the change; why_new=Cycle 0046 row 219 (row 202's branch stood ahead of that check untested); seam=a presentation change the harness holds half-way, and the Study pane's webview
+test('in a window without a Trash a request for a study’s files that the pane sent by itself is answered while a presentation changes, without an error line and without touching the change, and the same request made by the learner then keeps its sentence', async () => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left; the Study workspace is open and a presentation change is held half-way.
+  const harness = await workspaceHarness(false, false, 'wsl')
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const held = harness.holdPresentationMessage()
+    release = held.release
+    const before = harness.reader.presentationState()
+    const change = harness.reader.changePresentation({
+      presentationId: before.presentationId,
+      expectedRevision: before.presentationControlRevision,
+      mode: 'living-book',
+      action: 'select',
+    })
+    await held.started
+    /** Sends the pane's request during the change and waits until the reader has answered it or told a line. */
+    const askDuringTheChange = async (
+      removalRequest: number,
+      mark: { unprompted?: true },
+    ) => {
+      harness.receive({
+        type: 'delete-study',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: study.id,
+        removalRequest,
+        ...mark,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.studyRemoval?.request ===
+            removalRequest || readerSeams(harness).errorLines().length > 0,
+        'the answer to the files request or a line',
+        2_000,
+      )
+      return structuredClone({
+        answeredRequest: harness.reader.inspect().view!.studyRemoval?.request,
+        files: harness.reader.inspect().view!.studyFiles?.[study.id],
+        errorLines: readerSeams(harness).errorLines(),
+        presentation: harness.reader.presentationState().state,
+      })
+    }
+    // Act: the pane's own request, then the same request as the learner makes it; then the change is let go.
+    const sentByThePane = await askDuringTheChange(1, { unprompted: true })
+    const madeByTheLearner = await askDuringTheChange(2, {})
+    held.release()
+    const changed = await change
+    // Assert
+    assert.deepEqual(sentByThePane, {
+      answeredRequest: 1,
+      files: [study.archive],
+      errorLines: [],
+      presentation: 'applying',
+    })
+    assert.deepEqual(madeByTheLearner, {
+      answeredRequest: 1,
+      files: [study.archive],
+      errorLines: [
+        'Error: A presentation change or reader close is pending. Read its state before another control.',
+      ],
+      presentation: 'applying',
+    })
+    assert.deepEqual([changed.mode, changed.state], ['living-book', 'open'])
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study in a window with a Trash: no message can start its removal past the reader's checks by calling itself a request of the pane; fails_when=the reader answers every delete request marked `unprompted` whatever it shows, so a marked message under an old revision opens the removal dialog for a study the learner may no longer see; why_new=Cycle 0046 row 202 (the mark is honoured in a window without a Trash only); seam=the Study pane's webview and the editor's dialog, recorded by the harness
+test('in a window with a Trash a delete request marked as sent by the pane keeps every check: under an old revision it is refused with its sentence, and no dialog opens', async () => {
+  // Arrange: a window with a Trash, one saved study, and a Study workspace that has rendered again since the pane read its revision.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    const revisionThePaneRead = harness.reader.inspect().view!.revision
+    await harness.reader.action('retry')
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    // Act
+    harness.receive({
+      type: 'delete-study',
+      revision: revisionThePaneRead,
+      studyId: study.id,
+      removalRequest: 1,
+      unprompted: true,
+    })
+    await waitUntil(
+      () =>
+        readerSeams(harness).errorLines().length > 0 ||
+        harness.warningDialogs.length > 0,
+      'the refusal of the marked request or a dialog',
+      2_000,
+    )
+    // Assert
+    assert.deepEqual(readerSeams(harness).errorLines(), [
+      'Error: The displayed study changed. Inspect the current view before acting.',
+    ])
+    assert.equal(harness.warningDialogs.length, 0)
+    assert.deepEqual(harness.trashMoves, [])
+    assert.equal(harness.reader.inspect().view!.studyRemoval, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner of a window without a Trash who opens "Remove by hand" for a study whose files cannot be listed: the disclosure says so with its reason and offers Retry storage / refresh; fails_when=the listing's failure is thrown, becomes a control line, and no answer with the request's number is published, so the pane stays at "Listing this study's files…" with no button and asks nothing again; why_new=Cycle 0046 row 251; seam=the library's listing of a study's files, which rejects once, and the Study pane's webview
+test('in a window without a Trash a request for a study’s files whose listing fails is answered with a refusal that carries the request’s number and the reason, without an error line, and the next request lists the files', async (context) => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left; the listing of a study's files rejects once.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const studyFiles = LearningLibrary.prototype.studyFiles
+    let isListingRefused = true
+    context.mock.method(
+      LearningLibrary.prototype,
+      'studyFiles',
+      function (
+        this: LearningLibrary,
+        ...listed: Parameters<LearningLibrary['studyFiles']>
+      ) {
+        if (!isListingRefused) return studyFiles.apply(this, listed)
+        isListingRefused = false
+        return Promise.reject(
+          new Error(
+            "EACCES: permission denied, lstat '/library/recordings.v2'",
+          ),
+        )
+      },
+    )
+    /** Sends the pane's request and waits until the reader has answered it or told a line. */
+    const ask = async (removalRequest: number) => {
+      harness.receive({
+        type: 'delete-study',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: study.id,
+        removalRequest,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.studyRemoval?.request ===
+            removalRequest || readerSeams(harness).errorLines().length > 0,
+        'the answer to the files request or a line',
+        2_000,
+      )
+      return structuredClone({
+        answer: harness.reader.inspect().view!.studyRemoval,
+        errorLines: readerSeams(harness).errorLines(),
+      })
+    }
+    // Act: the request whose listing fails, and the next one.
+    const whileListingFails = await ask(1)
+    const afterwards = await ask(2)
+    // Assert
+    assert.deepEqual(whileListingFails, {
+      answer: {
+        status: 'refused',
+        studyId: study.id,
+        text: "Codebook could not list this study's files. Press Retry storage / refresh to try again. EACCES: permission denied, lstat '/library/recordings.v2'",
+        request: 1,
+      },
+      errorLines: [],
+    })
+    assert.deepEqual(afterwards, {
+      answer: {
+        status: 'refused',
+        studyId: study.id,
+        text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
+        files: [study.archive],
+        request: 2,
+      },
+      errorLines: [],
+    })
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=what the Study pane's DOM check takes for granted about the reader in a window without a Trash: an answer to a request for a study's files, a refusal as well, and the message that ends Retry storage / refresh while the Study workspace is closed all carry the revision the pane asked under; fails_when=the reader gives such a message a new revision, so the DOM cases of "Remove by hand", which publish them under the asking revision, no longer show what a learner gets (they passed on a fixture that gave every message a new revision, while the pane stayed at "Listing this study's files…" in the product); why_new=Cycle 0046 row 168 (delegated review, findings 4 and 5); seam=the bottom-panel view's requests with the Study workspace closed
+test('in a window without a Trash the reader answers a request for a study’s files, a refusal as well, and ends Retry storage / refresh with the Study workspace closed, all under the revision the request was sent with', async () => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left and a saved Node test history; the Study workspace is not open.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const view = () => harness.reader.inspect().view!
+    const revisionAsked = view().revision
+    /** Sends the bottom panel's request for a study's files and reads what the reader answers. */
+    const answerTo = async (studyId: string, removalRequest: number) => {
+      await readerSeams(harness).receive(
+        {
+          type: 'delete-study',
+          revision: revisionAsked,
+          studyId,
+          removalRequest,
+        },
+        'moments',
+      )
+      return structuredClone({
+        revision: view().revision,
+        answer: view().studyRemoval,
+      })
+    }
+    // Act: a request the reader refuses, one it lists files for, and Retry storage / refresh.
+    const refused = await answerTo(nodeHistory.studyId, 1)
+    const listed = await answerTo(study.id, 2)
+    await harness.reader.action('retry')
+    const afterRetry = structuredClone({
+      revision: view().revision,
+      answer: view().studyRemoval,
+      studyFiles: view().studyFiles,
+    })
+    // Assert
+    assert.deepEqual(refused, {
+      revision: revisionAsked,
+      answer: {
+        status: 'refused',
+        studyId: nodeHistory.studyId,
+        text: 'Codebook cannot list the files of a Node test history for removal by hand yet.',
+        request: 1,
+      },
+    })
+    assert.deepEqual(listed, {
+      revision: revisionAsked,
+      answer: {
+        status: 'refused',
+        studyId: study.id,
+        text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
+        files: [study.archive],
+        request: 2,
+      },
+    })
+    assert.deepEqual(afterRetry, {
+      revision: revisionAsked,
+      answer: undefined,
+      studyFiles: {},
+    })
   } finally {
     await harness.close()
   }
@@ -4426,6 +6525,160 @@ test('in a window without a Trash, the files listed for one study stay listed an
     assert.deepEqual(harness.clipboardTexts, [
       `${join(directory, `${first.id}.study.meta.v3.json`)}\n${join(directory, `${first.id}.study.v3.json`)}`,
     ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who pressed Copy paths is told that the paths are on the clipboard, by the host that wrote them; fails_when=the reader copies and answers nothing, so the pane has no sign that the copy worked (or confirms it without knowing), or the answer goes to another pane; why_new=Cycle 0046 row 27, DR-6 (the copy only wrote the clipboard); seam=the Study pane's webview and the editor's clipboard, recorded by the harness
+test('in a window without a Trash, Copy paths writes the listed files one path a line and then answers the asking pane with their number', async () => {
+  // Arrange: a WSL remote window with one saved study whose files a request has listed.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    await requestRemoval(harness, study.id)
+    const directory = harness.reader.inspect().libraryDirectory!
+    // Act: the Study pane's webview sends the copy request.
+    harness.receive({
+      type: 'copy-study-files',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: study.id,
+    })
+    await waitUntil(
+      () => harness.studyFilesCopyAnswers().length > 0,
+      'the answer to Copy paths',
+      2_000,
+    )
+    // Assert
+    assert.deepEqual(harness.clipboardTexts, [
+      `${join(directory, `${study.id}.study.meta.v3.json`)}\n${join(directory, `${study.id}.study.v3.json`)}`,
+    ])
+    assert.deepEqual(harness.studyFilesCopyAnswers(), [
+      {
+        webview: 'context',
+        answer: {
+          type: 'study-files-copied',
+          studyId: study.id,
+          status: 'copied',
+          count: 2,
+        },
+      },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner is not told "Copied" when the clipboard took nothing; fails_when=the reader answers before the write settled or swallows its rejection, so the pane confirms a copy that did not happen; why_new=Cycle 0046 row 27, DR-6; seam=the editor's clipboard, which refuses every write
+test('in a window without a Trash, Copy paths answers the asking pane with a failure when the clipboard refuses the write', async () => {
+  // Arrange: a WSL remote window with one saved study whose files are listed, and a clipboard that refuses.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    await requestRemoval(harness, study.id)
+    harness.rejectClipboardWrites()
+    // Act
+    harness.receive({
+      type: 'copy-study-files',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: study.id,
+    })
+    await waitUntil(
+      () => harness.studyFilesCopyAnswers().length > 0,
+      'the answer to Copy paths',
+      2_000,
+    )
+    // Assert
+    assert.deepEqual(harness.clipboardTexts, [])
+    assert.deepEqual(harness.studyFilesCopyAnswers(), [
+      {
+        webview: 'context',
+        answer: {
+          type: 'study-files-copied',
+          studyId: study.id,
+          status: 'failed',
+        },
+      },
+    ])
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a copy request for a study whose files the reader never listed copies nothing and says so; fails_when=the reader writes an empty clipboard or text the pane named, or leaves the pane without an answer; why_new=Cycle 0046 row 27, DR-6; seam=the Study pane's webview and the editor's clipboard, recorded by the harness
+test('in a window without a Trash, Copy paths for a study whose files were never listed writes nothing and answers the asking pane with a failure', async () => {
+  // Arrange: a WSL remote window with one saved study; no request listed its files.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    // Act
+    harness.receive({
+      type: 'copy-study-files',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: study.id,
+    })
+    await waitUntil(
+      () => harness.studyFilesCopyAnswers().length > 0,
+      'the answer to Copy paths',
+      2_000,
+    )
+    // Assert
+    assert.deepEqual(harness.clipboardTexts, [])
+    assert.deepEqual(harness.studyFilesCopyAnswers(), [
+      {
+        webview: 'context',
+        answer: {
+          type: 'study-files-copied',
+          studyId: study.id,
+          status: 'failed',
+        },
+      },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=in a window without a Trash the sentence the reader refuses a files request with says what the learner can do there; fails_when=the refusal speaks of deleting, which that window cannot do, and "Remove by hand" shows that sentence; why_new=Cycle 0046 row 59 (ND-1: the reasons were worded for a window with a Trash only); seam=the editor's remote name
+test('in a window without a Trash, a request for the files of a Node test history or of the study of a run that has not stopped is refused with a sentence about removing by hand, not about deleting', async () => {
+  // Arrange: a WSL remote window with a saved Node test history and a live run whose study the reader has saved.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const { record } = await startRun(harness)
+    const liveStudyId = `${harness.service.instanceId}_${record.id}`
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.studies.some((entry) => entry.id === liveStudyId),
+      'the saved study of the live run',
+      2_000,
+    )
+    // Act
+    await requestRemoval(harness, nodeHistory.studyId)
+    const node = structuredClone(harness.reader.inspect().view!.studyRemoval)
+    await requestRemoval(harness, liveStudyId)
+    const live = structuredClone(harness.reader.inspect().view!.studyRemoval)
+    // Assert
+    assert.deepEqual(node, {
+      status: 'refused',
+      studyId: nodeHistory.studyId,
+      text: 'Codebook cannot list the files of a Node test history for removal by hand yet.',
+    })
+    assert.deepEqual(live, {
+      status: 'refused',
+      studyId: liveStudyId,
+      text: "Stop the run before removing its study's files by hand.",
+    })
+    assert.equal(harness.reader.inspect().view!.removalWithoutTrash, true)
   } finally {
     await harness.close()
   }
@@ -4757,7 +7010,9 @@ test('after a removal that moved nothing and could not write the ledger back, th
       structuredClone(
         view.errors.filter((line) => line.includes('Progress is not')),
       ),
-      ['Error: Progress is not a regular file.'],
+      [
+        `Error: Progress is not a regular file: ${ledgerPath}. Put the file itself at that path, or move what stands there away, then try again.`,
+      ],
     )
   } finally {
     await harness.close()
@@ -5477,6 +7732,7 @@ test('a Save learning replay that was capturing its study when a removal that mo
   try {
     const saveStudy = LearningLibrary.prototype.saveStudy
     let writtenStudies = 0
+    let writtenBeforeRemovalEnded = 0
     context.mock.method(
       LearningLibrary.prototype,
       'saveStudy',
@@ -5484,6 +7740,9 @@ test('a Save learning replay that was capturing its study when a removal that mo
         this: LearningLibrary,
         study: Parameters<LearningLibrary['saveStudy']>[0],
       ) {
+        // Observe the write when it starts; the test may resume after an allowed later write has finished.
+        if (harness.reader.inspect().view!.studyRemoval?.status === 'moving')
+          writtenBeforeRemovalEnded++
         await saveStudy.call(this, study)
         writtenStudies++
       },
@@ -5532,9 +7791,12 @@ test('a Save learning replay that was capturing its study when a removal that mo
       failAfter(3_000, 'the save and the removal'),
     ])
     capturing = false
-    const writtenBeforeRemovalEnded = writtenStudies
     await waitUntil(
-      () => writtenStudies === 1,
+      () =>
+        writtenStudies === 1 &&
+        harness.service.state(harness.record).historyOutcome.status ===
+          'saved' &&
+        readerSeams(harness).queuedStudyWrites() === 0,
       'the write of the capture the removal held back',
       2_000,
     )
@@ -5923,6 +8185,884 @@ test('a saved study chosen during Recording is not answered by a playback change
     assert.deepEqual(harness.openRequestReplies(), [
       { webview: 'summary', openRequest: 8 },
     ])
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Leaves an unsealed recording of a run, started on 2026-10-01 at 08:00 UTC, and names its writer: an editor that crashed (a process id of no process, another host, or a later process that got the id) or, with a live child process of the test, an editor window of this machine that still writes it.
+ * `header-only` makes it a recording of 0.2.29.0 (no record of its writer beside the recordings); `with-record` keeps the record this build writes and names the writer there too, with the writer's own process start, and the recording by its folder and its creation time.
+ * @param harness - The reader whose library holds the study.
+ * @param study - The run: a saved study, or a run that saved none ({@link unsavedRunOf}).
+ * @param owner - The writer: its process id and its host name.
+ * @param record - Whether the recording has the record of its writer.
+ * @returns The recording's directory.
+ * @example await unsealedRecordingOf(harness, study, { pid: 2 ** 22 + 1, hostname: 'old-laptop.local' }, 'header-only')
+ */
+async function unsealedRecordingOf(
+  harness: Harness,
+  study: Pick<
+    Awaited<ReturnType<typeof saveEarlierStudy>>,
+    'workspaceKey' | 'id' | 'instanceId' | 'runId' | 'profile'
+  >,
+  owner: { pid: number; hostname: string },
+  record: 'header-only' | 'with-record',
+): Promise<string> {
+  const directory = harness.reader.inspect().libraryDirectory!
+  await new RecordingStore(directory, study.workspaceKey).start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId: study.runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  const folder = join(directory, 'recordings.v2', study.id)
+  const header: { owner: Record<string, unknown> } = JSON.parse(
+    await readFile(join(folder, 'header.json'), 'utf8'),
+  )
+  await writeFile(
+    join(folder, 'header.json'),
+    JSON.stringify({
+      ...header,
+      owner: { ...header.owner, ...owner },
+      createdAt: '2026-10-01T08:00:00.000Z',
+    }),
+  )
+  const recordPath = recordingOwnerRecordPath(directory, study.id)
+  if (record === 'header-only') await rm(recordPath)
+  else
+    await rewriteWriterRecord(directory, study.id, {
+      ...owner,
+      processStart: await readProcessStart(owner.pid),
+      recording: {
+        folder: 'recordings.v2',
+        createdAt: '2026-10-01T08:00:00.000Z',
+      },
+    })
+  return folder
+}
+
+/** The dialog that offers "Move to Trash Anyway" for a recording of old-laptop.local started on 2026-10-01 at 08:00 UTC, as the reader opens it. */
+const DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST = {
+  title: `This study's recording may still be running on another computer. Move the study to the ${TRASH} anyway?`,
+  options: {
+    modal: true,
+    detail: `Its recording was started on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it. If a window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+  },
+  items: [`Move to ${TRASH} Anyway`],
+}
+
+// Value: protects=a learner whose saved study has the recording an editor left when it crashed on this Mac under an earlier host name (macOS takes it from the network), or on another computer, which Codebook cannot probe; fails_when=the removal refuses for good with "Another editor window is still recording this study", although no such window exists, and nothing else can remove the study; why_new=Cycle 0046 OCR review OC1: R9's refusal took a recording of another host for a live writer of this machine; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose crashed recording names another host is moved with its recording after the learner chooses Move to Trash Anyway in a dialog that names that host and the recording’s start', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [
+          study.id,
+          `${study.id}.study.meta.v3.json`,
+          `${study.id}.study.v3.json`,
+        ],
+        studyRemoval: {
+          status: 'moved',
+          studyId: study.id,
+          text: `Saved study moved to the ${TRASH}. The library now holds 0 of 64 saved studies.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study whose recording another computer that shares this storage folder wrote, with the record of its writer this build keeps; fails_when=the record of another machine is judged 'may-run' (the plain refusal returns, OC1's dead end), or the dialog takes the host from the header, so it names this computer (TC3); why_new=Cycle 0046 testing review TC3: every removal test used a header-only recording; seam=the recording's header, which names this host and a process id of no process, its writer record, which names machine-b and old-laptop.local, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recording’s writer record names another machine is moved with its recording after the learner chooses Move to Trash Anyway in a dialog that names the record’s host', async () => {
+  // Arrange: the header names this host; the record of the writer names machine-b under the host name old-laptop.local.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: hostname() },
+      'with-record',
+    )
+    await rewriteWriterRecord(
+      harness.reader.inspect().libraryDirectory!,
+      study.id,
+      { machineId: 'machine-b', hostname: 'old-laptop.local' },
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+        studyRemoval: harness.reader.inspect().view!.studyRemoval?.status,
+      },
+      {
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [
+          study.id,
+          `${study.id}.study.meta.v3.json`,
+          `${study.id}.study.v3.json`,
+        ],
+        studyRemoval: 'moved',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's consent to each recording that the removal moves although its writer may still run on another computer; fails_when=the dialog names only one of the study's recordings and "Move to Trash Anyway" then moves the other too, unnamed (AD6, probe p3 E3); why_new=Cycle 0046 adversarial review AD6; seam=two recordings of the study (recordings.v2 by the helper, recordings.v3 by hand), each a header of another host without a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recordings name two other hosts is moved with both after the learner chooses Move to Trash Anyway in a dialog that names both hosts and starts', async () => {
+  // Arrange: the recordings.v2 recording names old-laptop.local (2026-10-01); a recordings.v3 one names other-desktop.local (2026-10-17).
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    const secondRecording = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v3',
+      study.id,
+    )
+    await mkdir(secondRecording, { recursive: true })
+    await writeFile(
+      join(secondRecording, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: 'other-desktop.local',
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-17T08:00:00.000Z',
+      }),
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) =>
+          join(basename(dirname(move.path)), basename(move.path)),
+        ),
+      },
+      {
+        dialogs: [
+          {
+            title: `Some of this study's recordings may still be running on another computer. Move the study to the ${TRASH} anyway?`,
+            options: {
+              modal: true,
+              detail: `Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them. If a window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`,
+            },
+            items: [`Move to ${TRASH} Anyway`],
+          },
+        ],
+        moved: [
+          join('recordings.v3', study.id),
+          join('recordings.v2', study.id),
+          join(
+            basename(harness.reader.inspect().libraryDirectory!),
+            `${study.id}.study.meta.v3.json`,
+          ),
+          join(
+            basename(harness.reader.inspect().libraryDirectory!),
+            `${study.id}.study.v3.json`,
+          ),
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Saved studies line while the learner reads the dialog about a recording that may still run on another computer, and after their Cancel; fails_when=the line says "Moving the saved study to the Trash…" while nothing moves and the learner has not chosen yet, or the removal stays held after Cancel (PD4); why_new=Cycle 0046 design review PD4; seam=the recording's header (another host, no record of its writer), and the editor's dialogs, stubbed at the vscode boundary: the test reads the line when the second dialog opens
+test('while the dialog about a recording on another computer is open the removal waits for the learner’s confirmation, and Cancel ends it with no line', async () => {
+  // Arrange: the learner confirms the removal, then cancels the dialog about the recording; the line is read as that dialog opens.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    let lineWhileTheDialogIsOpen: unknown
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button !== `Move to ${TRASH} Anyway`) return button
+      lineWhileTheDialogIsOpen = structuredClone(
+        harness.reader.inspect().view!.studyRemoval,
+      )
+      return undefined
+    })
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        lineWhileTheDialogIsOpen,
+        lineAfterCancel: harness.reader.inspect().view!.studyRemoval,
+        moved: harness.trashMoves,
+      },
+      {
+        lineWhileTheDialogIsOpen: { status: 'confirming', studyId: study.id },
+        lineAfterCancel: undefined,
+        moved: [],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Saved studies line once the learner chose to move a study whose recording may still run on another computer; fails_when=the line stays "confirming" while the files move, or the move starts before the line says so (PD4); why_new=Cycle 0046 design review PD4; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary: the test reads the line as the first file moves
+test('after Move to Trash Anyway the removal is shown as moving again while the files move, and ends as moved', async () => {
+  // Arrange: the learner confirms both dialogs; the line is read as the dialog opens and as the first file moves.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    let lineWhileTheDialogIsOpen: unknown
+    const linesWhileMoving: unknown[] = []
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button === `Move to ${TRASH} Anyway`)
+        lineWhileTheDialogIsOpen = structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        )
+      return button
+    })
+    harness.beforeTrashMoves(async () => {
+      linesWhileMoving.push(
+        structuredClone(harness.reader.inspect().view!.studyRemoval),
+      )
+    })
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        lineWhileTheDialogIsOpen,
+        lineAsTheFirstFileMoves: linesWhileMoving[0],
+        lineAtTheEnd: harness.reader.inspect().view!.studyRemoval?.status,
+      },
+      {
+        lineWhileTheDialogIsOpen: { status: 'confirming', studyId: study.id },
+        lineAsTheFirstFileMoves: {
+          status: 'moving',
+          studyId: study.id,
+          text: `Moving the saved study to the ${TRASH}…`,
+        },
+        lineAtTheEnd: 'moved',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's consent to each recording the removal moves, when another computer starts writing a recording of the study while the dialog is open; fails_when="Move to Trash Anyway" judges every writer again and moves the recording the dialog never named with the one it named (S2, probe: host-two written while the dialog was open, and both moved); why_new=Cycle 0046 Claude adversarial review #3 (S2); seam=the study's recordings.v2 header of old-laptop.local, a recordings.v3 header of other-desktop.local the test writes while the second dialog waits, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a recording of another host that appears while the dialog is open keeps the study after Move to Trash Anyway, and the line names both recordings', async () => {
+  // Arrange: the dialog names old-laptop.local; before the learner answers, a recording of other-desktop.local appears.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    const appearing = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v3',
+      study.id,
+    )
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button === `Move to ${TRASH} Anyway`) {
+        await mkdir(appearing, { recursive: true })
+        await writeFile(
+          join(appearing, 'header.json'),
+          JSON.stringify({
+            owner: {
+              pid: ID_OF_NO_PROCESS,
+              hostname: 'other-desktop.local',
+              sessionId: randomUUID(),
+            },
+            createdAt: '2026-10-17T08:00:00.000Z',
+          }),
+        )
+      }
+      return button
+    })
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.length,
+        moved: harness.trashMoves,
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        dialogs: 2,
+        moved: [],
+        studyRemoval: {
+          status: 'failed',
+          studyId: study.id,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Saved studies line when the editor cannot show the dialog about a recording that may still run on another computer (the host rejects the modal dialog); fails_when=the removal stays 'confirming' for good after that rejection, since only a 'moving' removal is cleared when the move ends, so no later delete can start and the line waits for an answer that never comes (TT7, PD4's finally); why_new=Cycle 0046 third testing review TT7: no test rejected the second dialog; seam=the editor's dialogs, stubbed at the vscode boundary: the first is confirmed, the second rejects
+test('a dialog about a recording on another computer that the editor cannot show ends the removal with no line, and the study stays listed', async () => {
+  // Arrange: the learner confirms the removal; the editor then fails to show the dialog about the recording.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) => {
+      if (button === `Move to ${TRASH} Anyway`)
+        throw new Error('The window could not show the dialog.')
+      return button
+    })
+
+    // Act
+    await requestRemoval(harness, study.id).catch(() => undefined)
+
+    // Assert
+    assert.deepEqual(
+      {
+        studyRemoval: harness.reader.inspect().view!.studyRemoval,
+        moved: harness.trashMoves,
+        listed: harness.reader
+          .inspect()
+          .view!.studies.some((entry) => entry.id === study.id),
+      },
+      { studyRemoval: undefined, moved: [], listed: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's Cancel in the dialog about a recording that may still run on another computer; fails_when=Cancel moves the study or its recording anyway, or leaves the removal shown as failed or still moving; why_new=Cycle 0046 OCR review OC1; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('Cancel in the dialog about a recording that names another host moves nothing and leaves the study as it was', async () => {
+  // Arrange: the learner confirms the removal, then cancels the dialog about the recording.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const recording = await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) =>
+      button === `Move to ${TRASH} Anyway` ? undefined : button,
+    )
+    const library = await harness.reader.learningStorage()
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves,
+        studyRemoval: harness.reader.inspect().view!.studyRemoval,
+        listed: (await library.list()).map((entry) => entry.id),
+        recordingLeft: await readdir(recording),
+      },
+      {
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [],
+        studyRemoval: undefined,
+        listed: [study.id],
+        recordingLeft: ['frames.jsonl', 'header.json'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study whose recording (header alone) names a process of this computer that is alive but began, by the clock, after the recording: another process that got the id, or the writer itself after a step of the clock; fails_when=the wall-clock comparison is taken as certain, so the writer counts as gone and the removal moves the recording without the learner's choice; why_new=Cycle 0046 Codex review CX13; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recording names a live process of this computer begun after the recording reaches the dialog, and Move to Trash Anyway moves it', async (context: TestContext) => {
+  // Arrange: the recording was created on 2026-10-01; the live process that has its id now began after it.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const laterProcess = await idleChild(context)
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: laterProcess.pid!, hostname: hostname() },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.map((dialog) => dialog.items),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+        studyRemoval: harness.reader.inspect().view!.studyRemoval?.status,
+      },
+      {
+        dialogs: [[`Move to ${TRASH}`], [`Move to ${TRASH} Anyway`]],
+        moved: [
+          study.id,
+          `${study.id}.study.meta.v3.json`,
+          `${study.id}.study.v3.json`,
+        ],
+        studyRemoval: 'moved',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's reading of the dialog about a recording whose writer is a live process of this computer that began, by the clock, after the recording; fails_when=the dialog says the recording may still be running "on another computer" and that this computer cannot tell, although the writer would be an editor window of this very computer (CX13's case, PD3); why_new=Cycle 0046 design review PD3: the dialog had one title and detail for both places; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs, stubbed at the vscode boundary
+test('the dialog about a recording that a live process of this computer begun after it may still write says that another editor window may still be recording it, and what is lost', async (context: TestContext) => {
+  // Arrange: the recording was created on 2026-10-01; the live process that has its id now began after it. The learner cancels the dialog.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const laterProcess = await idleChild(context)
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: laterProcess.pid!, hostname: hostname() },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) =>
+      button === `Move to ${TRASH} Anyway` ? undefined : button,
+    )
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(structuredClone(harness.warningDialogs.slice(1)), [
+      {
+        title: `This study's recording may still be running in another editor window. Move the study to the ${TRASH} anyway?`,
+        options: {
+          modal: true,
+          detail: `Its recording was started on ${hostname()} at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell whether an editor window of this computer still records it. If a window still records it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+        },
+        items: [`Move to ${TRASH} Anyway`],
+      },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's Cancel in the dialog about a recording that a live process of this computer begun after it may still write; fails_when=Cancel there moves the study or its recording anyway, or leaves the removal shown, although another editor window of this computer may still be recording it; why_new=Cycle 0046 second /ship state-machine review SM1: the cell unconfirmed-here x cancel-anyway had no test of what stays; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs and Trash, stubbed at the vscode boundary; no_claim=the dialog's words, which the test above holds
+test('Cancel in the dialog about a recording that a live process of this computer begun after it may still write moves nothing and leaves the study as it was', async (context: TestContext) => {
+  // Arrange: the recording was created on 2026-10-01; the live process that has its id now began after it. The learner confirms the removal, then cancels the dialog about the recording.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const laterProcess = await idleChild(context)
+    const recording = await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: laterProcess.pid!, hostname: hostname() },
+      'header-only',
+    )
+    harness.answerWarningDialogs(async ([button]) =>
+      button === `Move to ${TRASH} Anyway` ? undefined : button,
+    )
+    const library = await harness.reader.learningStorage()
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.map((dialog) => dialog.items),
+        moved: harness.trashMoves,
+        studyRemoval: harness.reader.inspect().view!.studyRemoval,
+        listed: (await library.list()).map((entry) => entry.id),
+        // A recording that was moved is read as gone, so a Cancel taken for the confirmation fails here and not in the read.
+        recordingLeft: await readdir(recording).catch((): string[] => []),
+      },
+      {
+        dialogs: [[`Move to ${TRASH}`], [`Move to ${TRASH} Anyway`]],
+        moved: [],
+        studyRemoval: undefined,
+        listed: [study.id],
+        recordingLeft: ['frames.jsonl', 'header.json'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a study whose recording another editor window of this machine is still writing, which the learner gets no way to remove; fails_when=a writer this machine can prove alive (its record names this machine, and the live process has the recorded start) is offered "Move to Trash Anyway", so the learner removes a recording while it is written; why_new=Cycle 0046 OCR review OC1: only a writer this machine cannot probe gets the learner's choice; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study whose recording a live window of this machine is still writing is refused, and no Move to Trash Anyway is offered', async (context: TestContext) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const otherWindow = await idleChild(context)
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: otherWindow.pid!, hostname: hostname() },
+      'with-record',
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.map((dialog) => dialog.items),
+        moved: harness.trashMoves,
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        dialogs: [[`Move to ${TRASH}`]],
+        moved: [],
+        studyRemoval: {
+          status: 'failed',
+          studyId: study.id,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a study one of whose recordings a live window of this machine still writes, while another of its recordings names another host; fails_when=the writer on another host is found first and the learner is offered "Move to Trash Anyway", which moves the recording a live window still writes (TC2: swapping the two checks of the removal survived every test); why_new=Cycle 0046 testing review TC2: no study had both kinds of writer, and review AF10: the record of one recording no longer judges the other; seam=the recordings.v2 recording's header and record, which name a live child process of the test with its own start, the recordings.v3 header of old-laptop.local without a record, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a saved study with a recording a live window of this machine still writes and one that names another host is refused plainly, and no Move to Trash Anyway is offered', async (context: TestContext) => {
+  // Arrange: recordings.v2 is written by a live window of this machine, which its record names with its start; recordings.v3 names old-laptop.local in its header alone. The record names recordings.v2, so it judges that recording only.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const otherWindow = await idleChild(context)
+    await unsealedRecordingOf(
+      harness,
+      study,
+      { pid: otherWindow.pid!, hostname: hostname() },
+      'with-record',
+    )
+    const ofAnotherHost = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v3',
+      study.id,
+    )
+    await mkdir(ofAnotherHost, { recursive: true })
+    await writeFile(
+      join(ofAnotherHost, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: 'old-laptop.local',
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-01T08:00:00.000Z',
+      }),
+    )
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, study.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: harness.warningDialogs.map((dialog) => dialog.items),
+        moved: harness.trashMoves,
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        dialogs: [[`Move to ${TRASH}`]],
+        moved: [],
+        studyRemoval: {
+          status: 'failed',
+          studyId: study.id,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Names a run of the reader's workspace that never saved its study, so a test can leave only its recording.
+ * @param harness - The reader whose library the run belongs to.
+ * @returns The run's study id, its instance and run ids, the workspace key and the profile, as a recording names them.
+ * @example const run = await unsavedRunOf(harness)
+ */
+async function unsavedRunOf(
+  harness: Harness,
+): Promise<
+  Pick<
+    Awaited<ReturnType<typeof saveEarlierStudy>>,
+    'workspaceKey' | 'id' | 'instanceId' | 'runId' | 'profile'
+  >
+> {
+  const library = await harness.reader.learningStorage()
+  const instanceId = randomUUID(),
+    runId = randomUUID()
+  return {
+    workspaceKey: library.workspaceKey,
+    id: `${instanceId}_${runId}`,
+    instanceId,
+    runId,
+    profile: 'repository-browser',
+  }
+}
+
+// Value: protects=a run's recording, with no saved study, that another computer sharing this storage folder wrote, with the record of its writer this build keeps; fails_when=the record of another machine is judged 'may-run', so the recording is hidden from Saved studies for good, or the dialog names this computer from the header (TC3); why_new=Cycle 0046 testing review TC3: the listing test used a header-only recording; seam=the recording's header, which names this host and a process id of no process, its writer record, which names machine-b and old-laptop.local, and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a run’s recording whose writer record names another machine is listed in Saved studies, and Delete moves it after the learner chooses Move to Trash Anyway in a dialog that names the record’s host', async () => {
+  // Arrange: only a recording is left of the run; its header names this host, the record of its writer machine-b under old-laptop.local.
+  const harness = await workspaceHarness()
+  try {
+    const run = await unsavedRunOf(harness)
+    await unsealedRecordingOf(
+      harness,
+      run,
+      { pid: ID_OF_NO_PROCESS, hostname: hostname() },
+      'with-record',
+    )
+    await rewriteWriterRecord(
+      harness.reader.inspect().libraryDirectory!,
+      run.id,
+      { machineId: 'machine-b', hostname: 'old-laptop.local' },
+    )
+    await harness.reader.action('retry')
+    const listed = harness.reader
+      .inspect()
+      .view!.studies.map((entry) => [entry.id, entry.format])
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, run.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        listed: structuredClone(listed),
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+      },
+      {
+        listed: [[run.id, 'archive-missing']],
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [run.id],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner whose library holds only the recording an editor left when it crashed on this Mac under an earlier host name, or on another computer, for a run that never saved its study; fails_when=such a recording is hidden from Saved studies for good, so its files stay and no Delete reaches the dialog that names its host; why_new=Cycle 0046 review AF2: a study without an archive was listed only when no writer of any host may still write its recording; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('a run’s crashed recording that names another host is listed in Saved studies, and Delete moves it after the learner chooses Move to Trash Anyway', async () => {
+  // Arrange: only a recording is left of the run, made under another host name.
+  const harness = await workspaceHarness()
+  try {
+    const run = await unsavedRunOf(harness)
+    await unsealedRecordingOf(
+      harness,
+      run,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    await harness.reader.action('retry')
+    const listed = harness.reader
+      .inspect()
+      .view!.studies.map((entry) => [entry.id, entry.format])
+    harness.answerWarningDialogs(async ([button]) => button)
+
+    // Act
+    await requestRemoval(harness, run.id)
+
+    // Assert
+    assert.deepEqual(
+      {
+        listed: structuredClone(listed),
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves.map((move) => basename(move.path)),
+        studyRemoval: structuredClone(
+          harness.reader.inspect().view!.studyRemoval,
+        ),
+      },
+      {
+        listed: [[run.id, 'archive-missing']],
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [run.id],
+        studyRemoval: {
+          status: 'moved',
+          studyId: run.id,
+          text: `Saved study moved to the ${TRASH}. The library now holds 0 of 64 saved studies.`,
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's Cancel for a listed run's recording that may still run on another computer; fails_when=Cancel moves the recording anyway, or the entry leaves Saved studies; why_new=Cycle 0046 review AF2; seam=the recording's header (another host, no record of its writer), and the editor's dialogs and Trash, stubbed at the vscode boundary
+test('Cancel in the dialog about a listed run’s recording that names another host moves nothing, and the entry stays listed', async () => {
+  // Arrange: the learner confirms the removal, then cancels the dialog about the recording.
+  const harness = await workspaceHarness()
+  try {
+    const run = await unsavedRunOf(harness)
+    const recording = await unsealedRecordingOf(
+      harness,
+      run,
+      { pid: ID_OF_NO_PROCESS, hostname: 'old-laptop.local' },
+      'header-only',
+    )
+    await harness.reader.action('retry')
+    harness.answerWarningDialogs(async ([button]) =>
+      button === `Move to ${TRASH} Anyway` ? undefined : button,
+    )
+
+    // Act
+    await requestRemoval(harness, run.id)
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      {
+        dialogs: structuredClone(harness.warningDialogs.slice(1)),
+        moved: harness.trashMoves,
+        listed: structuredClone(
+          harness.reader.inspect().view!.studies.map((entry) => entry.id),
+        ),
+        recordingLeft: await readdir(recording),
+      },
+      {
+        dialogs: [DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST],
+        moved: [],
+        listed: [run.id],
+        recordingLeft: ['frames.jsonl', 'header.json'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the recording a live run of another window of this machine reserved before it saves its study; fails_when=that reservation is listed as what is left of a removed study, so the learner deletes a recording that is being written; why_new=Cycle 0046 review AF2: a recording of another host is listed now, and one of a live writer of this machine must not be; seam=the recording's header and the record of its writer, which name a live child process of the test with its own start
+test('a run’s recording that a live window of this machine still writes is not listed in Saved studies', async (context: TestContext) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const run = await unsavedRunOf(harness)
+    const otherWindow = await idleChild(context)
+    await unsealedRecordingOf(
+      harness,
+      run,
+      { pid: otherWindow.pid!, hostname: hostname() },
+      'with-record',
+    )
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      structuredClone(
+        harness.reader.inspect().view!.studies.map((entry) => entry.id),
+      ),
+      [],
+    )
   } finally {
     await harness.close()
   }

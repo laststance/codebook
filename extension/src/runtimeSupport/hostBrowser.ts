@@ -1,25 +1,31 @@
 import { constants as filesystemConstants } from 'node:fs'
 import {
   access,
+  mkdir,
   mkdtemp,
   readFile,
   realpath,
-  rm,
   writeFile,
 } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import * as vscode from 'vscode'
 
 import {
+  ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS,
   MANAGED_PROFILE_OWNER_FILE,
   MANAGED_PROFILE_PREFIX,
   MANAGED_PROFILE_REMOVAL_RETRIES,
   MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
-  MANAGED_PROFILE_ROOT,
+  PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
+import { currentUserName } from '../utils/currentUserName'
+import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
+import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
+import { retryWhileBusy } from '../utils/retryWhileBusy'
 
 import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
 import type { Cdp } from './cdp'
@@ -27,15 +33,18 @@ import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
   INTERFERENCE_DELAY_MS,
+  POLL_INTERVAL_MS,
   type Scenario,
 } from './constants'
 import { CursorCdpBridge } from './cursorCdpBridge'
 import { awaitResponse } from './utils/awaitResponse'
+import { managedProfileRoot } from './utils/managedProfileRoot'
 import { profileProcesses } from './utils/profileProcesses'
 import { removeAbandonedProfiles } from './utils/removeAbandonedProfiles'
 import type { selectHost } from './utils/selectHost'
 import { selectPageTarget } from './utils/selectPageTarget'
 import { settleCleanup } from './utils/settleCleanup'
+import { WaitTimeoutError } from './utils/waitTimeoutError'
 import { waitUntil } from './utils/waitUntil'
 
 export interface HostConfiguration {
@@ -59,7 +68,131 @@ type RecordEvent = (type: string, detail?: unknown) => unknown
 /** A managed run's own profile folder that its close could not remove, with the removal's error as text; the run shows it in its cleanup record. */
 export type ProfileLeft = { profile: string; reason: string }
 
-/** Owns host-specific browser acquisition/reveal/cleanup for {@link ExperimentRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
+/**
+ * Names the pause between two looks for a managed profile's processes ({@link profileProcesses}), each of which lists every process of the machine ({@link listProcesses}); called by {@link HostBrowser.attachViewport} for the owned Chrome's start and by {@link HostBrowser.close} for its exit.
+ * @param platform - The system the editor runs on.
+ * @returns
+ * - On Windows, where each look starts a PowerShell scan of every process: {@link PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS}, so the scans do not follow each other back to back
+ * - On every other system, where `ps` answers in milliseconds: {@link POLL_INTERVAL_MS}
+ * @example
+ * profileProcessPollIntervalMs('win32') // => 500
+ * profileProcessPollIntervalMs('linux') // => 50
+ */
+function profileProcessPollIntervalMs(platform: NodeJS.Platform): number {
+  return platform === 'win32'
+    ? PROCESS_LISTING_POLL_INTERVAL_MS_ON_WINDOWS
+    : POLL_INTERVAL_MS
+}
+
+/** The sweep of abandoned profile folders that runs for each profile root in this editor's process, until it ends; every managed run of the root joins it ({@link sweepOfRoot}). */
+const runningSweeps = new Map<string, Promise<string[]>>()
+
+/**
+ * Gives the sweep of abandoned profile folders for a root: the one that still runs, or a new one ({@link removeAbandonedProfiles}); called by {@link HostBrowser} once per managed launch.
+ * Why per root: since a close waits for its sweep only {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}, a sweep can outlive its run, and the next run, a new {@link HostBrowser}, would start a second sweep of the same root beside it, which reads every marker's process start again (on Windows a query of up to 3 s each) and finds nothing the first does not remove.
+ * @param root - The managed profile root.
+ * @param owner - This process's owner identity, by which a new sweep judges the markers.
+ * @returns The running sweep's promise, which gives the folders it removed and never rejects.
+ * @example
+ * await sweepOfRoot('/tmp', owner) // => ['/tmp/codebook-browser-a1b2c3']; a second call before it ended gives the same promise
+ */
+function sweepOfRoot(
+  root: string,
+  owner: StorageOwnerIdentity,
+): Promise<string[]> {
+  const running = runningSweeps.get(root)
+  // A sweep of this root still runs: the launch joins it.
+  if (running) return running
+  const sweep = removeAbandonedProfiles(root, owner).finally(() => {
+    runningSweeps.delete(root)
+  })
+  runningSweeps.set(root, sweep)
+  return sweep
+}
+
+/**
+ * Writes the owner marker into a managed run's profile folder, the proof by which a later run may remove the folder should this editor be killed before the run closes; called by {@link HostBrowser.launch} for its resolved folder and by {@link leaveUnresolvedProfileFolder} for a folder that could neither be resolved nor removed.
+ * @param folder - The profile folder.
+ * @param owner - The machine, the boot and the start of this process ({@link currentStorageOwner}).
+ * @returns After the marker is written; it names this process, its owner identity, the operating-system user ({@link currentUserName}), whose sweep alone judges it, and the time.
+ * @example
+ * await writeOwnerMarker('/tmp/codebook-browser-a1b2c3', owner) // codebook-owner.json: { pid: 4242, hostname: 'workstation', user: 'learner', … }
+ */
+async function writeOwnerMarker(
+  folder: string,
+  owner: StorageOwnerIdentity,
+): Promise<void> {
+  const user = currentUserName()
+  await writeFile(
+    join(folder, MANAGED_PROFILE_OWNER_FILE),
+    JSON.stringify({
+      pid: process.pid,
+      ...owner,
+      ...(user !== undefined && { user }),
+      createdAt: new Date().toISOString(),
+    }),
+  )
+}
+
+/**
+ * Deals with a new profile folder whose real path cannot be read, and words the launch's failure by what happened to it; called by {@link madeProfileFolder}.
+ * The folder is removed again at once, without following a link ({@link removeWithoutFollowing}). When the removal fails too (on Windows a file lock, `EPERM`), the folder gets its owner marker by the path it was made at, so a later sweep removes it once this editor has ended, also on a volume that resolves no path ({@link removeAbandonedProfiles} judges it by its listed path); when the marker cannot be written either, the sentence says that no later run will remove it.
+ * @param made - The folder as `mkdtemp` made it.
+ * @param owner - This process's owner identity, for the marker.
+ * @param cause - The error of `realpath`.
+ * @returns The sentence of the launch's failure.
+ * @example
+ * await leaveUnresolvedProfileFolder('R:\\codebook-browser-a1b2c3', owner, error)
+ * // => "The managed browser's profile folder R:\\codebook-browser-a1b2c3 could not be resolved, so it was removed again and the browser was not started: Error: EISDIR: …"
+ */
+async function leaveUnresolvedProfileFolder(
+  made: string,
+  owner: StorageOwnerIdentity,
+  cause: unknown,
+): Promise<string> {
+  const unresolved = `The managed browser's profile folder ${made} could not be resolved`
+  const notStarted = `the browser was not started: ${String(cause)}`
+  const removal = await removeWithoutFollowing(made).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  if (removal === undefined)
+    return `${unresolved}, so it was removed again and ${notStarted}`
+  // A folder that stays gets its marker by the path it was made at, so a later sweep knows it.
+  const marking = await writeOwnerMarker(made, owner).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  if (marking === undefined)
+    return `${unresolved} and could not be removed (${String(removal)}); it stays, marked as this editor's, so a later run removes it once this editor has ended, and ${notStarted}`
+  return `${unresolved}, could not be removed (${String(removal)}) and could not be marked (${String(marking)}), so no later run removes it: remove it by hand. ${notStarted.charAt(0).toUpperCase()}${notStarted.slice(1)}`
+}
+
+/**
+ * Makes a managed run's profile folder in its root and gives the folder's real path, by which Chrome and the debugger name it; called by {@link HostBrowser.launch} before it writes the folder's owner marker.
+ * A folder whose real path cannot be read (on some Windows volumes, a RAM disk, a `subst` or a network drive, the system's own resolution fails) would have no marker and no path the run knows, so neither the close nor a later sweep would remove it: it is removed again, or marked when it cannot be removed ({@link leaveUnresolvedProfileFolder}), and the launch fails with a sentence that says which.
+ * @param root - The managed profile root ({@link managedProfileRoot}).
+ * @param owner - This process's owner identity, for the marker of a folder that stays.
+ * @returns The real path of the new folder.
+ * @throws When the folder cannot be made, or when its real path cannot be read: the error then says what became of the folder, and names it and the cause.
+ * @example
+ * await madeProfileFolder('/tmp', owner) // => '/private/tmp/codebook-browser-a1b2c3' on macOS
+ */
+async function madeProfileFolder(
+  root: string,
+  owner: StorageOwnerIdentity,
+): Promise<string> {
+  const made = await mkdtemp(join(root, MANAGED_PROFILE_PREFIX))
+  try {
+    return await realpath(made)
+  } catch (error) {
+    throw new Error(await leaveUnresolvedProfileFolder(made, owner, error), {
+      cause: error,
+    })
+  }
+}
+
+/** Owns host-specific browser acquisition/reveal/cleanup for {@link ConfiguredBrowserRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
 export class HostBrowser {
   private tab?: vscode.Tab
   private readonly cursorIds = new Set<string>()
@@ -72,9 +205,13 @@ export class HostBrowser {
   private managedProfileRemoved = false
   private leftProfile?: ProfileLeft
   private viewport?: BrowserViewport
+  /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it ({@link startAbandonedProfileSweep}) and awaited by {@link close} for at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}; it never rejects, and none is started once the browser is closing. */
+  private abandonedProfileSweep?: Promise<void>
+  /** Set once {@link close} stopped waiting for a sweep that was still running: the run's journal is complete then, and the sweep's later result is not journaled. */
+  private sweepOutlivedClose = false
 
   /**
-   * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own.
+   * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own. Left out, a managed run uses this user's directory ({@link managedProfileRoot}: the shared `/tmp` on macOS and Linux, the user's own local application data folder on Windows).
    */
   constructor(
     private readonly host: HostConfiguration,
@@ -84,14 +221,29 @@ export class HostBrowser {
     private readonly scenario: Scenario,
     private readonly fail: (reason: string) => void = () => undefined,
     private readonly createViewport?: BrowserViewportFactory,
-    private readonly profileRoot: string = MANAGED_PROFILE_ROOT,
+    private readonly profileRoot?: string,
   ) {
     this.ownerOptions = { ownerAgentId: `codebook-${runId}` }
   }
 
   /**
+   * Names the directory of this run's managed profile folder and of the folders a killed editor left, the same for both; read by {@link launch} for the profile folder and by {@link startAbandonedProfileSweep} for the sweep, so both use the same directory; only a managed browser reads it.
+   * @returns The directory a test named; else this user's directory of {@link managedProfileRoot} on this system.
+   * @example this.managedRoot // => '/tmp' on Linux, 'C:\Users\learner\AppData\Local\Codebook\browser-profiles' on Windows
+   */
+  private get managedRoot(): string {
+    return (
+      this.profileRoot ??
+      managedProfileRoot(process.platform, {
+        environment: process.env,
+        homeDirectory: homedir,
+      })
+    )
+  }
+
+  /**
    * Names the managed profile folder the last {@link close} could not remove, for the run's cleanup record; read by {@link ConfiguredBrowserRun} in its view.
-   * A folder that stays is no failed release: the browser's processes are gone, and a later run removes the folder once this editor has ended.
+   * A folder that stays is no failed release: the browser's processes are gone, or the listing failed and the close could not check them (`browser.managed-exit-unverified`); the folder keeps its owner marker, so a later run removes it once this editor has ended.
    * @returns
    * - `undefined` when the run has no managed profile, has not closed yet, or its folder was removed
    * - The folder and the removal's error when the folder is still there
@@ -102,7 +254,7 @@ export class HostBrowser {
     return this.leftProfile
   }
 
-  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch first removes the profile folders a killed editor left ({@link removeAbandonedProfiles}) and marks its own as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
+  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch that was not cancelled while its owner was read starts the removal of the profile folders a killed editor left ({@link startAbandonedProfileSweep}) without waiting for it, and marks its own folder as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
   async launch(
     configuration: vscode.DebugConfiguration,
     signal: AbortSignal,
@@ -129,25 +281,16 @@ export class HostBrowser {
       )
       signal.throwIfAborted()
       const owner = await currentStorageOwner()
-      // What a killed editor left behind goes before this run adds a folder of its own; the sweep never fails the launch.
-      const abandoned = await removeAbandonedProfiles(this.profileRoot, owner)
-      if (abandoned.length)
-        this.record('browser.abandoned-profiles-removed', {
-          profiles: abandoned,
-        })
+      // A launch cancelled while its owner was read removes nothing and creates nothing.
       signal.throwIfAborted()
-      this.managedProfile = await realpath(
-        await mkdtemp(join(this.profileRoot, MANAGED_PROFILE_PREFIX)),
-      )
+      if (this.closing) throw new Error('Owned browser is closing')
+      this.startAbandonedProfileSweep(owner)
+      const root = this.managedRoot
+      // The root of Windows (below the user's local application data folder) is made at the first run; /tmp is always there.
+      await mkdir(root, { recursive: true })
+      this.managedProfile = await madeProfileFolder(root, owner)
       // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes.
-      await writeFile(
-        join(this.managedProfile, MANAGED_PROFILE_OWNER_FILE),
-        JSON.stringify({
-          pid: process.pid,
-          ...owner,
-          createdAt: new Date().toISOString(),
-        }),
-      )
+      await writeOwnerMarker(this.managedProfile, owner)
       this.record('browser.managed-profile', {
         profile: this.managedProfile,
         chrome: this.host.chrome,
@@ -155,9 +298,40 @@ export class HostBrowser {
       signal.throwIfAborted()
       const { BrowserViewport } = await import('./browserViewport.js')
       signal.throwIfAborted()
-      this.viewport = this.createViewport
-        ? this.createViewport(this.runId, this.record, this.fail, this.scenario)
-        : new BrowserViewport(this.runId, this.record, this.fail, this.scenario)
+      // Keep the raw preparation tracked after request cancellation so a late native viewport cannot escape cleanup.
+      const preparingViewport = this.trackAcquisition(
+        Promise.resolve()
+          .then(() => {
+            signal.throwIfAborted()
+            if (this.closing) throw new Error('Owned browser is closing')
+            return this.createViewport
+              ? this.createViewport(
+                  this.runId,
+                  this.record,
+                  this.fail,
+                  this.scenario,
+                  signal,
+                )
+              : new BrowserViewport(
+                  this.runId,
+                  this.record,
+                  this.fail,
+                  this.scenario,
+                )
+          })
+          .then((viewport) => {
+            this.viewport = viewport
+            // The accepting request can be gone while the native resource still finishes creating.
+            if (this.closing || signal.aborted) this.closeViewport()
+          }),
+      )
+      await awaitResponse(
+        preparingViewport,
+        'owned App viewport preparation',
+        signal,
+      )
+      signal.throwIfAborted()
+      if (this.closing) throw new Error('Owned browser is closing')
       debugConfiguration = {
         ...debugConfiguration,
         type: 'pwa-chrome',
@@ -332,7 +506,28 @@ export class HostBrowser {
     }
   }
 
-  /** Binds the owned viewport only after {@link ExperimentRun} identifies the exact child/page. @example await browser.attachViewport(cdp, signal) */
+  /**
+   * Starts the removal of the profile folders a killed editor left ({@link removeAbandonedProfiles}) beside a managed run's start, which does not wait for it; called by {@link launch} once its owner is read and its signal is still not aborted.
+   * This run's own folder is never removed by the sweep, because its marker names this running process. The sweep never fails the launch, and {@link close} waits for it at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS} ({@link awaitSweepWithinBound}) before it removes this run's own folder.
+   * A browser that is closing starts none: its close may already have passed the step that waits for a sweep, and a sweep started after it would outlive the run. A browser starts at most one sweep, and a launch whose root has a sweep running, one that outlived an earlier run's close, joins it instead of starting another ({@link sweepOfRoot}).
+   * @param owner - The machine, the boot and the start of this process, by which a folder's marker is judged.
+   * @example
+   * this.startAbandonedProfileSweep(await currentStorageOwner()) // journal, once the sweep ended: browser.abandoned-profiles-removed { profiles: ['/tmp/codebook-browser-a1b2c3'] }
+   */
+  private startAbandonedProfileSweep(owner: StorageOwnerIdentity): void {
+    if (this.closing || this.abandonedProfileSweep) return
+    this.abandonedProfileSweep = sweepOfRoot(this.managedRoot, owner)
+      .then((abandoned) => {
+        // A sweep that outlived the run's close journals nothing into the run that already ended.
+        if (abandoned.length && !this.sweepOutlivedClose)
+          this.record('browser.abandoned-profiles-removed', {
+            profiles: abandoned,
+          })
+      })
+      .catch(() => undefined)
+  }
+
+  /** Binds the owned viewport only after {@link ConfiguredBrowserRun} identifies the exact child/page. @example await browser.attachViewport(cdp, signal) */
   async attachViewport(cdp: Cdp, signal: AbortSignal): Promise<void> {
     if (!this.viewport || !this.managedProfile) return
     const profile = this.managedProfile
@@ -344,6 +539,7 @@ export class HostBrowser {
       'owned Chrome process',
       ACTIVE_TIMEOUT_MS,
       signal,
+      profileProcessPollIntervalMs(process.platform),
     )
     if (
       !processes.some((process) =>
@@ -390,7 +586,7 @@ export class HostBrowser {
     this.viewport?.recordCapture(data, phase)
   }
 
-  /** Retires only viewport pause presentation; debugger control remains in {@link ExperimentRun}. @example browser.resumeViewport() */
+  /** Retires only viewport pause presentation; debugger control remains in {@link ConfiguredBrowserRun}. @example browser.resumeViewport() */
   resumeViewport(): void {
     this.viewport?.resume()
   }
@@ -516,13 +712,13 @@ export class HostBrowser {
     this.record('browser.revealed', { title: browser.tab.label, index })
   }
 
-  /** Releases known handles even if acquisition is unresolved, then removes a managed run's own profile folder; {@link ExperimentRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
+  /** Releases known handles even if acquisition is unresolved, waits for the sweep of abandoned profile folders its launch started, then removes a managed run's own profile folder; {@link ConfiguredBrowserRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
   async close(): Promise<void> {
     this.closing = true
     const failures = await settleCleanup([
       {
         description: 'owned viewport close',
-        release: () => this.viewport?.close(),
+        release: (): void => this.closeViewport(),
       },
       {
         description: 'owned CDP bridge close',
@@ -540,6 +736,10 @@ export class HostBrowser {
         description: 'pending browser acquisitions',
         release: (): Promise<void> => this.drainAcquisitions(),
       },
+      {
+        description: 'late owned viewport close',
+        release: (): void => this.closeViewport(),
+      },
       // A launch may reveal its editor after the first sweep; check again after acquisition settles.
       {
         description: 'late owned browser tabs',
@@ -551,20 +751,39 @@ export class HostBrowser {
           // A folder an earlier close removed has no processes to look for, and looking would fail on the missing path.
           if (!this.managedProfile || this.managedProfileRemoved) return
           const profile = this.managedProfile
-          await waitUntil(
-            async () => (await profileProcesses(profile)).length === 0,
-            'owned Chrome profile processes exited',
-          )
+          try {
+            // Each look lists every process of the machine; on Windows the looks are spaced out (profileProcessPollIntervalMs).
+            await waitUntil(
+              async () => (await profileProcesses(profile)).length === 0,
+              'owned Chrome profile processes exited',
+              ACTIVE_TIMEOUT_MS,
+              undefined,
+              profileProcessPollIntervalMs(process.platform),
+            )
+          } catch (error) {
+            // Processes still there at the bound are a failed release. A listing that cannot be made proves nothing either way: the close goes on, so the folder this run made is removed and never left behind, also on a machine where no listing ever succeeds.
+            if (error instanceof WaitTimeoutError) throw error
+            this.record('browser.managed-exit-unverified', {
+              profile,
+              reason: String(error),
+            })
+            return
+          }
           this.record('browser.managed-exit-verified', {
             profile,
             remainingProcesses: 0,
           })
         },
       },
+      // The sweep a managed launch started is waited for within its bound; it never rejects, so it adds no failure.
+      {
+        description: 'abandoned profile sweep',
+        release: (): Promise<void> => this.awaitSweepWithinBound(),
+      },
     ])
     if (failures.length)
       throw new Error(`Browser cleanup incomplete: ${failures.join('; ')}`)
-    // Only here every acquisition has ended and no profile process is left: a browser that starts late never loses its folder.
+    // Only here every acquisition has ended and the wait for the browser's exit is over: the exit was verified, or the listing failed and it could not be checked (AD22); the folder goes either way, its marker last, so a folder Chrome still holds stays marked for a later sweep.
     await this.removeManagedProfile()
     this.record('browser.cleanup-verified', {
       host: this.host.id,
@@ -573,8 +792,46 @@ export class HostBrowser {
   }
 
   /**
-   * Removes this run's own profile folder once its browser is verified gone, so that a run leaves nothing in the profile root; called by {@link close} after every release succeeded, outside the release list.
+   * Waits for the sweep of abandoned profile folders a managed launch started, for at most {@link ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS}; called by {@link close} after its wait for the browser's exit, whether that exit was verified or, with a failed listing, could not be checked.
+   * Why bounded: on Windows each judgement of a folder can cost a PowerShell query of up to 3 s, so a root with many leftovers would hold the close for minutes. A sweep that is still running at the bound goes on in the background; the folders it has not judged stay for the next sweep, and its later result is not journaled into this run (`browser.abandoned-profile-sweep-left-running` says that it outlived the close).
+   * @returns Once the sweep ended or the bound passed; at once without a sweep.
+   * @example
+   * await this.awaitSweepWithinBound() // after 2 s at most
+   */
+  private async awaitSweepWithinBound(): Promise<void> {
+    const sweep = this.abandonedProfileSweep
+    if (!sweep) return
+    const bound = new AbortController()
+    const ended = await Promise.race([
+      sweep.then(() => true),
+      delay(ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS, false, {
+        signal: bound.signal,
+      }),
+    ])
+    // The bound's timer goes with the wait, so no timer outlives a sweep that ended first.
+    bound.abort()
+    if (ended) return
+    this.sweepOutlivedClose = true
+    this.record('browser.abandoned-profile-sweep-left-running', {
+      waitedMs: ABANDONED_PROFILE_SWEEP_CLOSE_WAIT_MS,
+    })
+  }
+
+  /**
+   * Retires the current viewport during {@link close} and after cancelled preparation in {@link launch}, retaining a failed close for retry.
+   * @example this.closeViewport() // the same retired viewport is not closed again by the late cleanup sweep
+   */
+  private closeViewport(): void {
+    const viewport = this.viewport
+    viewport?.close()
+    // A release callback must not clear a successor installed during the retired viewport's close.
+    if (this.viewport === viewport) this.viewport = undefined
+  }
+
+  /**
+   * Removes this run's own profile folder once the close's wait for the browser's exit is over, so that a run leaves nothing in the profile root; called by {@link close} after every release succeeded, outside the release list. The exit is verified then, or, when the process listing failed, could not be checked (AD22): the folder is removed all the same, so no folder is left that no later close or sweep (both need the listing) would remove.
    * A folder that cannot be removed is journaled as `browser.managed-profile-left` and kept for {@link profileLeft}; it is never a failed release, so the run's outcome and the next start are not affected. A removed folder is remembered, which makes a repeated close a no-op here.
+   * The folder is removed by {@link removeWithoutFollowing} with its owner marker ({@link MANAGED_PROFILE_OWNER_FILE}) as the entry that goes last, as the sweep removes a folder: a removal that stops at a file Chrome still holds, or one this user may not remove, leaves a folder that keeps its marker, which a later sweep removes once the file is free. The recursive `rm` of Node.js would remove the marker beside the entry that refuses, and the folder would stay unknown to every sweep. A busy answer is tried again, after 100, 200 and 300 ms ({@link retryWhileBusy}), as `rm` did with its retries, for a file Windows still holds a moment after the browser ended.
    * @example
    * await this.removeManagedProfile() // journal: browser.managed-profile-removed { profile: '/tmp/codebook-browser-a1b2c3' }
    */
@@ -582,12 +839,15 @@ export class HostBrowser {
     if (!this.managedProfile || this.managedProfileRemoved) return
     const profile = this.managedProfile
     try {
-      await rm(profile, {
-        recursive: true,
-        force: true,
-        maxRetries: MANAGED_PROFILE_REMOVAL_RETRIES,
-        retryDelay: MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
-      })
+      // The marker goes last, so a folder that stays keeps it for a later sweep.
+      await retryWhileBusy(
+        () =>
+          removeWithoutFollowing(profile, {
+            lastEntry: MANAGED_PROFILE_OWNER_FILE,
+          }),
+        MANAGED_PROFILE_REMOVAL_RETRIES,
+        MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
+      )
       this.managedProfileRemoved = true
       this.leftProfile = undefined
       this.record('browser.managed-profile-removed', { profile })

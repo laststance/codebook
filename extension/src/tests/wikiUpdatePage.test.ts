@@ -43,7 +43,7 @@ test('a page loaded during a run shows the running sentence and holds the update
   assert.equal(page.isShown(status), true)
   assert.equal(
     status?.textContent,
-    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(link?.getAttribute('aria-disabled'), 'true')
   assert.equal(click.wasSwallowed, true)
@@ -129,7 +129,7 @@ test('the page shows the running update and then its result when the learner con
   // Assert
   assert.equal(
     textWhileRunning,
-    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(linkStateWhileRunning, 'true')
   assert.equal(page.isShown(status), true)
@@ -418,7 +418,7 @@ test('a press after contact was lost during a run shows the running update again
   assert.equal(stateWhileTheReaderWasGone, 'unreachable')
   assert.equal(
     status?.textContent,
-    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(link?.getAttribute('aria-disabled'), 'true')
 })
@@ -641,6 +641,46 @@ test('a publish that lands after a watch timed out is shown also when Codebook c
   )
   assert.equal(status?.getAttribute('data-state'), 'late-publish')
   assert.equal(page.find('[data-codebook-reload]'), undefined)
+})
+
+// Value: protects=a learner who stays on the Wiki page after the watch of a VS Code update passed its 15 minutes while the chat still works; fails_when=the page's sentence says in the present that nothing has been replaced or sends the learner to a press that Codebook refuses, or the page stops saying by itself that the chat published, which the sentence promises; why_new=Cycle 0046 row 330 (native run in VS Code 1.140.0: the chat published two minutes after the bound); seam=none
+test('the page of a VS Code watch that passed its 15 minutes says what held when the watch stopped and what to do for a chat that waits, still works or stopped, and says by itself that a new site was published once the chat publishes', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'timed-out',
+        host: 'vscode',
+        finishedAt: '2026-10-03T11:58:00.000Z',
+        timeoutMs: 900_000,
+        site: 'kept',
+        ...output,
+      },
+      freshness: 'changed',
+    },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const textBeforeThePublish = status?.textContent
+
+  // Act: the chat, which was not stopped with the watch, publishes two minutes later.
+  page.reader.sitePublishedAt = '2026-10-03T12:00:10.000Z'
+  page.reader.publication = 'publication-after-the-watch'
+  page.reader.freshness = 'current'
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(
+    textBeforeThePublish,
+    'No new site appeared within 15 minutes, so Codebook stopped watching at 11:58. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.',
+  )
+  assert.equal(
+    status?.textContent,
+    'A new site was published after this run ended and matches the source. Reload is offered below.',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'late-publish')
+  assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
 })
 
 test('a page loaded after the late publish says so without asking for another reload', async () => {
@@ -1057,7 +1097,7 @@ test('a conflict over twelve files names three in the sentence and lists all twe
   const detail = page.find('[data-codebook-update-detail]')
   assert.equal(
     status?.textContent,
-    'Update stopped at 11:58: it would overwrite your own files in the Wiki folder (pages/01.html, pages/02.html, pages/03.html and 9 more). Nothing was replaced. Move or rename them, then press Update LLM Wiki again. The full list is below.',
+    'Update stopped at 11:58: it would overwrite your own files in the Wiki folder (pages/01.html, pages/02.html, pages/03.html and 9 more). Nothing was replaced. Move or rename them. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it. The full list is below.',
   )
   assert.equal(detail?.tagName, 'details')
   assert.equal(detail?.parentNode, status?.parentNode)
@@ -1120,7 +1160,8 @@ test('a failure reason of 400 characters is cut to 160 in the rail and kept whol
   )
 })
 
-test('the refusal that names another window’s update is shown whole, with its next step and no disclosure', async () => {
+// Value: protects=a learner who reads on the Wiki page that a start was refused because an earlier chat or another window is still updating; fails_when=the page cuts the sentence Codebook wrote, or ends it with "The last usable site is kept." although the state says the site may be replaced after, so the page contradicts the publish it shows next; why_new=Cycle 0045 (the whole sentence), Cycle 0046 row 341 (its end); seam=none
+test('the refusal that names another window’s update is shown whole, with its next step and no disclosure, and ends with what held at its time, not with a site that is kept', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
@@ -1134,6 +1175,8 @@ test('the refusal that names another window’s update is shown whole, with its 
         'An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-3f6c2a1e-8b7d-4c1a-9e55-0d2f6a7b8c90, written 11:57 GMT+9). Codebook waits for it until 12:12 GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification.',
       // Codebook wrote this sentence itself, so the page shows it whole.
       isCodebookSentence: true,
+      // That chat or window can still publish.
+      mayBeReplacedLater: true,
       site: 'kept',
       ...output,
     },
@@ -1143,7 +1186,7 @@ test('the refusal that names another window’s update is shown whole, with its 
   // Assert
   assert.equal(
     page.find('[data-codebook-update-status]')?.textContent,
-    'Update failed at 11:58: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-3f6c2a1e-8b7d-4c1a-9e55-0d2f6a7b8c90, written 11:57 GMT+9). Codebook waits for it until 12:12 GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. The last usable site is kept.',
+    'Update failed at 11:58: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-3f6c2a1e-8b7d-4c1a-9e55-0d2f6a7b8c90, written 11:57 GMT+9). Codebook waits for it until 12:12 GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. Nothing had been replaced by then.',
   )
   assert.equal(page.find('[data-codebook-update-detail]'), undefined)
 })
@@ -1172,6 +1215,82 @@ test('a start refused for an unfinished publish names the recovery request on th
     page.find('[data-codebook-update-status]')?.textContent,
     'Update not started (11:58): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
   )
+})
+
+// Value: protects=the page's running line of a VS Code update whose output lies outside the project; fails_when=the page writes its own copy of the note the editor shows in its confirmation, so a change of that note leaves the page saying something else; why_new=Cycle 0045 pre-landing review PL-14 (row 22 of Cycle 0046); seam=the constants of the loaded reader, whose note is reworded
+test('the running line of a VS Code update whose output lies outside the project ends with the note the editor shows, also after the note is reworded', async () => {
+  // Arrange: a reader whose editor note on approvals outside the project reads differently from today's.
+  const editorNote =
+    'The chat asks before each step in a folder outside this project.'
+  const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(
+    resolve(__dirname, '../deepWikiReader.js'),
+    {
+      './constants': {
+        ...constants,
+        WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE: editorNote,
+      },
+    },
+    // The loaded reader parses each request's address.
+    { URL },
+  )
+  const wiki = await serveMinimalWiki(undefined, startDeepWikiReader)
+  try {
+    const script = await readServedWikiScript(wiki)
+
+    // Act
+    const page = await openFakeWikiPage(script, 'published-before-the-group', {
+      updateStatus: {
+        ...runningInVsCode,
+        isOutputOutsideProject: true,
+        outputDirectory: '/srv/wiki',
+        outputLabel: '/srv/wiki',
+      },
+      freshness: 'changed',
+    })
+
+    // Assert
+    assert.equal(
+      page.find('[data-codebook-update-status]')?.textContent,
+      'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. The chat asks before each step in a folder outside this project. If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the advice after a refused step, which only the page's running line gives since the watch's status bar entry names only its Cancel; fails_when=the page writes its own copy of the advice, so a change of the extension's wording leaves the page with the old one, or the served page hands the sentence writer no advice at all; why_new=Cycle 0046 row 223, renamed with row 336; seam=the reader's constants, of which the advice is reworded
+test('the running line of a VS Code update gives the advice after a refused step in the words the extension hands the page, also after the advice is reworded', async () => {
+  // Arrange: a reader whose advice after a refused step reads differently from today's.
+  const editorAdvice = 'After you refused a step of the chat, choose Cancel'
+  const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(
+    resolve(__dirname, '../deepWikiReader.js'),
+    {
+      './constants': {
+        ...constants,
+        WIKI_REFUSED_STEP_ADVICE: editorAdvice,
+      },
+    },
+    // The loaded reader parses each request's address.
+    { URL },
+  )
+  const wiki = await serveMinimalWiki(undefined, startDeepWikiReader)
+  try {
+    const script = await readServedWikiScript(wiki)
+
+    // Act
+    const page = await openFakeWikiPage(script, 'published-before-the-group', {
+      updateStatus: runningInVsCode,
+      freshness: 'changed',
+    })
+
+    // Assert
+    assert.equal(
+      page.find('[data-codebook-update-status]')?.textContent,
+      'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. After you refused a step of the chat, choose Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
+    )
+  } finally {
+    await wiki.close()
+  }
 })
 
 test('each kind of update state has its own colour on the state words, with fallbacks for sites that lack the tokens', async () => {
@@ -1227,9 +1346,12 @@ test('the update group is a bordered panel with a filled button, and keeps a bou
   for (const rule of [
     '[data-codebook-update-group]{background:var(--panel-2,Canvas);border:1px solid var(--border,#777);border-radius:6px;padding:.6rem}',
     filledButton,
-    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0;align-self:flex-start}}',
   ])
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+  assert.match(
+    styles,
+    /@media\(min-width:701px\) and \(max-width:1000px\)\{[^@]*\[data-codebook-update-group\]\{flex:0 1 28rem;min-width:0;align-self:flex-start\}/,
+  )
   // Both rules weigh the same, so the held-back look must come later to win.
   assert.ok(
     styles.indexOf('.wiki-update[aria-disabled=true]{') >
@@ -1429,6 +1551,30 @@ test('a page served by Codebook says it is checking freshness until the first an
   // Assert
   assert.equal(textBeforeTheFirstAnswer, 'Checking freshness…')
   assert.equal(label?.textContent, 'Wiki source current')
+})
+
+// Value: protects=the reader's work on each return to a Wiki tab; fails_when=the tab's visibilitychange and the window's focus of one return each start a look, so every return asks for the update state twice; why_new=Cycle 0045 pre-landing review PL-11 (row 19 of Cycle 0046); seam=the fake page's held answer of the first look
+test('a return to the tab that shows it and focuses its window asks the reader for the update state once', async () => {
+  // Arrange: the tab was hidden for a minute; the answer of the return's first look is still on its way when the second event arrives.
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+  )
+  const statusReads = (): number =>
+    page.reader.requests.filter((request) => request === 'api/update-status')
+      .length
+  await page.setTabHidden(true)
+  await page.advance(60_000)
+  const readsBeforeTheReturn = statusReads()
+  page.holdNext('api/update-status')
+
+  // Act: the browser fires both events of the one return.
+  await page.setTabHidden(false)
+  await page.focusWindow()
+  await page.release('api/update-status')
+
+  // Assert
+  assert.equal(statusReads() - readsBeforeTheReturn, 1)
 })
 
 test('a second return to the page within the interval asks for the update state but not for freshness again', async () => {
@@ -1861,52 +2007,289 @@ test('the update button and the reload button change under the pointer and while
   )
 })
 
+// Value: protects=the rail entry that opens a page's first cited source, on a served page of any age (an older site carries its own older stylesheet, which draws the block on the link); fails_when=the page script stops injecting the entry's rest, hover, active or focus rule, so an older site's entry gives no feedback and its focus ring is cut by the rail, or the link no longer covers the whole entry, so a press on the file and line opens nothing, or an older site's link keeps its own box inside the entry's, or the label and target lose their two-line form; why_new=Cycle 0046 row 28 (design review DR-8, DR-9), row 69; seam=none
+test('the entry that opens the page’s source answers the pointer, a press and the keyboard on a served page of any age, with its label on one line and its target under it', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    // The block is the entry; the link inside it has no box of its own (a site of 0.2.29.0 drew one on it) and covers the whole entry.
+    '.open-in-editor{position:relative;border:1px solid var(--border,#777);border-radius:6px;padding:.5rem .7rem;font-size:.8rem;overflow-wrap:anywhere}',
+    '.open-in-editor a{display:block;border:0;border-radius:0;padding:0;font-size:inherit;white-space:nowrap;text-decoration:none}',
+    '.open-in-editor a::after{content:"";position:absolute;inset:-1px;border-radius:6px}',
+    '.open-in-editor:hover{background:var(--panel-2,Canvas);border-color:var(--link,LinkText)}',
+    '.open-in-editor:active{background:var(--panel-2,Canvas);border-color:var(--link,LinkText);filter:brightness(.9)}',
+    '.open-in-editor a:focus-visible{outline:none}',
+    '.open-in-editor a:focus-visible::after{outline:2px solid var(--link,LinkText);outline-offset:-2px}',
+    '.open-target{display:block;margin-top:.15rem;font-size:.75rem;line-height:1.45;color:var(--muted,GrayText);overflow-wrap:anywhere}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+  // The entry changes at once: no rule of it names a transition or an animation.
+  assert.doesNotMatch(
+    styles,
+    /\.open-(?:in-editor|target)[^{}]*\{[^}]*(?:animation|transition)/,
+  )
+})
+
+// Value: protects=the Wiki reader between 701 and 1000 px on a served page of any age, where the right rail is a row below the article; fails_when=the injected rules cap the rail again or stop capping the outline and an open detail, so the update panel's sentence is cut behind a scrollbar or a long outline takes the article's room, or the detail's cap no longer follows a short window (14vh), so the rail passes 45vh at 960 x 600, or the output block shrinks until Change location breaks, or the ring of the detail's summary is cut by the detail, or the rules reach the single column below 701 px; why_new=Cycle 0046 row 28 (design review DR-10, second measurement), package SPB (the summary's ring); seam=none
+test('where the rail is a row a served page caps the outline and an open update detail and never the rail or the update panel, keeps the output block’s longest line whole and the ring of the detail’s summary inside the detail, shows eight lines of the entry’s target at most, and leaves the single column alone', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  assert.ok(
+    styles.includes(
+      '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:min(6rem,14vh);overflow:auto}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:-2px}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:8;overflow:hidden}.right-rail .open-in-editor:hover .open-target,.right-rail .open-in-editor:focus-within .open-target{-webkit-line-clamp:none}.right-rail .output{min-width:max-content}}',
+    ),
+  )
+  // The injected sheet comes after the site's own, so a rule of it for 1000 px and narrower would also win in the single column.
+  assert.deepEqual(styles.match(/@media\(max-width:1000px\)/g), null)
+})
+
+// Value: protects=keyboard focus in the chapter list and the right rail of a served page of any age; fails_when=the ring of a full-width link lies outside its link again, where the scrolling column cuts its sides, or the rail loses the room for the ring of its last link; why_new=Cycle 0046 row 61 (design review ND-3); seam=none
+test('a served page of any age draws the focus ring of a chapter link and of an outline link inside the link, and keeps room in the rail for the ring of its last link', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '.chapters a:focus-visible,.right-rail nav a:focus-visible{outline-offset:-2px}',
+    '.right-rail{padding-left:5px;margin-left:-5px;scroll-padding-block:6px}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+})
+
+// Value: protects=the learner who moves through the "On this page" outline of a served page of any age with the keyboard; fails_when=the page script stops giving an older site's outline links room at their sides, so the focus ring inside the link covers the first letter of a title (0.2.29.0 printed the links without side padding), or gives the room without taking the left side back, so the titles move, or gives the outline that scrolls where the rail is a row no room at its left; why_new=Cycle 0046 /ship finding F5 (the measured case runs on a page in the shell of 0.2.29.0 too); seam=none
+test('a served page of any age gives an outline link 5 px of room at each side for its focus ring and takes the room at the left back, and gives the outline that scrolls where the rail is a row the same room', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '.outline a{padding-left:5px;padding-right:5px;margin-left:-5px}',
+    '@media(min-width:701px) and (max-width:1000px){.right-rail nav{flex-basis:calc(10rem + 5px);min-width:calc(10rem + 5px);padding-left:5px;margin-left:-5px}}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+})
+
+// Value: protects=keyboard focus in the article and the composer of a served page of any age, which scroll and cut whatever lies outside them; fails_when=the page script stops giving an older site's article and composer their room for the focus ring, so the ring of the question field or of Ask Codebook is cut at the side, or gives the room without taking it back, so the reading column of an older site moves, or leaves the composer of the single column with the wide layout's height limit and margin; why_new=Cycle 0046 row 67; seam=none
+test('a served page of any age keeps room for the focus ring at the sides of the article and around the composer and takes the room back, and leaves the composer of the single column its own bottom padding', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '.wiki-article{padding-left:5px;margin-left:-5px;scroll-padding-bottom:6px}',
+    '.composer{max-height:calc(34% + 5px);border-image:linear-gradient(to right,transparent 5px,var(--border,#777) 5px calc(100% - 5px),transparent calc(100% - 5px)) 1 0 0;padding-left:5px;padding-right:5px;padding-bottom:5px;margin:0 -5px -5px;scroll-padding-block:6px}',
+    '@media(max-width:700px){.composer{max-height:none;padding-bottom:.6rem;margin-bottom:0}}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+})
+
+// Value: protects=the update link's description on a page whose own content carries the status region's id (a page published before the publisher kept the ids of a page's content apart from the reader's); fails_when=the status region takes its id although a heading of the article carries it, so the id stands twice and the running update link is described by that heading instead of by the sentence that says what the update does; why_new=Cycle 0046 row 84; seam=none
+test('on a page whose article carries the status region’s id the region takes an id of its own, and the update link of a running update is described by the region', async () => {
+  // Arrange: a heading of the article has the id codebook-update-status, and one more the first free id after it.
+  const script = await readServedWikiScript()
+
+  // Act: the page is loaded while an update runs.
+  const page = await openFakeWikiPage(
+    script,
+    'current-shell',
+    { updateStatus: runningInVsCode },
+    {
+      articleHeadingIds: ['codebook-update-status', 'codebook-update-status-2'],
+    },
+  )
+  const pageWithoutTheHeadings = await openFakeWikiPage(
+    script,
+    'current-shell',
+    { updateStatus: runningInVsCode },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      regionId: page.find('[data-codebook-update-status]')?.id,
+      linkDescribedBy: page
+        .find('.wiki-update')
+        ?.getAttribute('aria-describedby'),
+      regionIdWithoutTheHeadings: pageWithoutTheHeadings.find(
+        '[data-codebook-update-status]',
+      )?.id,
+    },
+    {
+      regionId: 'codebook-update-status-3',
+      linkDescribedBy: 'codebook-update-status-3',
+      regionIdWithoutTheHeadings: 'codebook-update-status',
+    },
+  )
+})
+
+// Value: protects=keyboard focus on the answer of a question on a served page of any age (a site published before the shell had the rule draws the browser's own ring there); fails_when=the page script stops injecting the answer's ring rule; why_new=Cycle 0046 row 83; seam=none
+test('a served page of any age gives the answer of a question the reader’s own focus ring, 2 px in the link colour and 3 px outside it', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  assert.ok(
+    styles.includes(
+      '.qa-answer:focus-visible{outline:2px solid var(--link,LinkText);outline-offset:3px}',
+    ),
+    'the page lacks the rule .qa-answer:focus-visible{outline:2px solid var(--link,LinkText);outline-offset:3px}',
+  )
+})
+
+// Value: protects=the chapter list and the outline of a served page of any age, where they are columns that scroll; fails_when=a chapter title or an outline entry that cannot break (an identifier) is wider than its column on a site published before the shell wrapped it, so the column gets a sideways scrollbar; why_new=Cycle 0046 package SPB, found while measuring row 28 at 1200 px on a site published by 0.2.29.0; seam=none
+test('a served page of any age wraps a chapter title and an outline entry that cannot break inside their column', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  assert.ok(
+    styles.includes('.chapters a,.outline a{overflow-wrap:anywhere}'),
+    'the page lacks the rule .chapters a,.outline a{overflow-wrap:anywhere}',
+  )
+})
+
 test('the overview opened in place of a missing page says which page is missing', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
-  // Act: the reader sent the request for a removed page to the overview.
+  // Act: the reader sent the request for a removed page to the overview; the page script has run and the window has not loaded yet.
   const page = await openFakeWikiPage(
     script,
     'current-shell',
     {},
     { search: '?missing=pages%2Fremoved.html' },
   )
-
-  // Assert: the line is the first element of the reading column, above the article and its title.
   const readingColumn = page.find('.reading-column')
   const line = page.find('[data-codebook-missing-page]')
+  const rightAfterTheScript = {
+    text: line?.textContent,
+    role: line?.getAttribute('role'),
+    readingColumn: readingColumn?.children.map((child) => child.tagName),
+    isFirstOfReadingColumn: readingColumn?.children[0] === line,
+    title: page.title(),
+    address: page.address(),
+  }
+  await page.advance(1_000)
+  const textBeforeTheLoad = line?.textContent
+  await page.finishLoading()
+  await page.advance(149)
+  const text149MsAfterTheLoad = line?.textContent
+  await page.advance(1)
+
+  // Assert: the line is in the page, empty, as the first element of the reading column, and the title carries the notice at once; the sentence arrives 150 ms after the load.
+  assert.deepEqual(rightAfterTheScript, {
+    text: '',
+    role: 'status',
+    readingColumn: ['p', 'article'],
+    isFirstOfReadingColumn: true,
+    title: 'Page not in this Wiki · Overview · sample DeepWiki',
+    // Shown once: the address no longer names the missing page.
+    address: '/w/fake-reader-token/index.html',
+  })
+  assert.equal(textBeforeTheLoad, '')
+  assert.equal(text149MsAfterTheLoad, '')
   assert.equal(
     line?.textContent,
     'The page pages/removed.html is not in this Wiki. The last update may have removed it. This is the overview.',
   )
-  assert.equal(line?.getAttribute('role'), 'status')
-  assert.deepEqual(
-    readingColumn?.children.map((child) => child.tagName),
-    ['p', 'article'],
-  )
-  assert.equal(readingColumn?.children[0], line)
+  const styles = page.injectedStyles()
   assert.ok(
-    page
-      .injectedStyles()
-      .includes(
-        '[data-codebook-missing-page]{margin:0;padding:.5rem .7rem;font-size:.875rem;line-height:1.45;border:1px solid var(--border,#777);border-radius:6px;background:var(--panel-2,Canvas);color:var(--text,#333);overflow-wrap:anywhere}',
-      ),
+    styles.includes(
+      '[data-codebook-missing-page]{margin:0;padding:.5rem .7rem;font-size:.875rem;line-height:1.45;border:1px solid var(--border,#777);border-radius:6px;background:var(--panel-2,Canvas);color:var(--text,#333);overflow-wrap:anywhere}',
+    ),
   )
-  // Shown once: the address no longer names the missing page.
-  assert.equal(page.address(), '/w/fake-reader-token/index.html')
+  // The empty line shows no box, so it can wait in the page for its sentence.
+  assert.ok(
+    styles.includes(
+      '[data-codebook-missing-page]:empty{margin:0;padding:0;border:0}',
+    ),
+  )
+})
+
+// Value: protects=the missing-page line on a page whose script runs after the window has loaded; fails_when=the sentence waits for a `load` event that has already passed and never arrives, or arrives together with the line; why_new=Cycle 0046 row 28 (design review DR-11); seam=none
+test('a page that had already loaded when its script ran gets the sentence of a missing page 150 ms later', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(
+    script,
+    'current-shell',
+    {},
+    {
+      search: '?missing=pages%2Fremoved.html',
+      isLoadedBeforeTheScript: true,
+    },
+  )
+  const line = page.find('[data-codebook-missing-page]')
+  const textRightAfterTheScript = line?.textContent
+  await page.advance(149)
+  const text149MsLater = line?.textContent
+  await page.advance(1)
+
+  // Assert
+  assert.equal(textRightAfterTheScript, '')
+  assert.equal(text149MsLater, '')
+  assert.equal(
+    line?.textContent,
+    'The page pages/removed.html is not in this Wiki. The last update may have removed it. This is the overview.',
+  )
+  assert.equal(
+    page.title(),
+    'Page not in this Wiki · Overview · sample DeepWiki',
+  )
 })
 
 test('a missing parameter that is not a page path is shown as a missing page without its text', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
-  // Act: three addresses somebody wrote by hand: a sentence, a path that climbs out, and a file that is no page.
+  // Act: four addresses somebody wrote by hand: a sentence, a path that climbs out, a file that is no page, and a page path of 1,000 characters.
   const lines = []
   for (const missing of [
     'Your session expired: sign in at example.test',
     '../../etc/passwd.html',
     'pages/notes.txt',
+    `${'a'.repeat(995)}.html`,
   ]) {
     const page = await openFakeWikiPage(
       script,
@@ -1914,20 +2297,73 @@ test('a missing parameter that is not a page path is shown as a missing page wit
       {},
       { search: `?missing=${encodeURIComponent(missing)}` },
     )
-    lines.push(page.find('[data-codebook-missing-page]')?.textContent)
+    const line = page.find('[data-codebook-missing-page]')
+    const textRightAfterTheScript = line?.textContent
+    await page.finishLoading()
+    await page.advance(149)
+    const text149MsAfterTheLoad = line?.textContent
+    await page.advance(1)
+    lines.push({
+      textRightAfterTheScript,
+      text149MsAfterTheLoad,
+      text: line?.textContent,
+      title: page.title(),
+    })
   }
   const withoutTheParameter = await openFakeWikiPage(script, 'current-shell')
+  await withoutTheParameter.finishLoading()
+  await withoutTheParameter.advance(150)
 
   // Assert
+  const sentenceWithoutThePath = {
+    textRightAfterTheScript: '',
+    text149MsAfterTheLoad: '',
+    text: 'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+    title: 'Page not in this Wiki · Overview · sample DeepWiki',
+  }
   assert.deepEqual(lines, [
-    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
-    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
-    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+    sentenceWithoutThePath,
+    sentenceWithoutThePath,
+    sentenceWithoutThePath,
+    sentenceWithoutThePath,
   ])
   assert.equal(
     withoutTheParameter.find('[data-codebook-missing-page]'),
     undefined,
   )
+  assert.equal(withoutTheParameter.title(), 'Overview · sample DeepWiki')
+})
+
+// Value: protects=the reading column of the overview opened in place of a missing page; fails_when=the line prints a page path of any length from the address, which anyone can write, so a long one fills the column above the article; why_new=Cycle 0046 row 64 (design review ND-6); seam=none
+test('the missing-page line names a page path of 200 characters and leaves out one of 201', async () => {
+  // Arrange: two page paths as the publisher allows them, one at the limit and one a character over it.
+  const script = await readServedWikiScript()
+  const pathOf200Characters = `pages/${'a'.repeat(189)}.html`
+  const pathOf201Characters = `pages/${'a'.repeat(190)}.html`
+
+  // Act
+  const shown = []
+  for (const missing of [pathOf200Characters, pathOf201Characters]) {
+    const page = await openFakeWikiPage(
+      script,
+      'current-shell',
+      {},
+      { search: `?missing=${encodeURIComponent(missing)}` },
+    )
+    await page.finishLoading()
+    await page.advance(150)
+    shown.push(page.find('[data-codebook-missing-page]')?.textContent)
+  }
+
+  // Assert
+  assert.deepEqual(
+    [pathOf200Characters.length, pathOf201Characters.length],
+    [200, 201],
+  )
+  assert.deepEqual(shown, [
+    `The page pages/${'a'.repeat(189)}.html is not in this Wiki. The last update may have removed it. This is the overview.`,
+    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+  ])
 })
 
 test('each new sentence changes the announced status region once, and a look that finds nothing new does not change it', async () => {

@@ -33,6 +33,8 @@ export const presentationCommandSchema = z.strictObject({
 })
 export type PresentationCommand = z.infer<typeof presentationCommandSchema>
 export type PresentationIntent = Omit<PresentationCommand, 'instanceId'>
+/** Who asked for a presentation change or a recording's open: `'agent'` for the MCP tools' handlers (codebook_presentation, codebook_playback), whose caller may have the learner typing in a chat view; `'learner'` for the Study pane's controls and the commands. */
+export type PresentationRequester = 'agent' | 'learner'
 export const returnCurrentCommandSchema = z.strictObject({
   instanceId: z.uuid(),
   presentationId: z.uuid(),

@@ -5,16 +5,35 @@ export interface ShortcutHelpEntry {
   selector?: string
 }
 
-/** Installs scoped discovery when {@link studyHtml} starts its webview; browser readers can reuse the same DOM-only procedure. @example installShortcutHelp(entries, '#study-content') */
+/**
+ * Installs scoped discovery when {@link studyHtml} starts its webview; browser readers can reuse the same DOM-only procedure.
+ * The dialog is named by its heading and a control is described by the tooltip, both through an id: each of the two ids is the list's own only while no element of the page carries it, else it gets a number, so a page whose content holds one of them (a Wiki page published before the publisher kept such ids apart) cannot name the dialog or describe a control with its own element.
+ * The line that says a search matched nothing is a status region that stays in the dialog, rendered and empty, while the search has matches: its sentence is then a change of a region that exists, which a screen reader announces. It is never taken out with `hidden`.
+ * @param entries - The shortcuts of the page; one with a selector is listed only while a control it names is shown and enabled.
+ * @param rootSelector - The part of the page that must be shown for the list to open.
+ * @example installShortcutHelp(entries, '#study-content')
+ */
 export function installShortcutHelp(
   entries: ShortcutHelpEntry[],
   rootSelector: string,
 ): void {
+  /**
+   * Gives an element of the keyboard help an id no element of the page carries: the id it has, or that id with a number. Called for the heading and for the tooltip before either is added to the page.
+   * A reference by id finds the first element of the page with that id, which would be the page's own element, not the list's.
+   * @param element - The element, already given the id it wants and not yet in the page.
+   * @example keepIdFree(heading) // 'shortcut-title' stays, or becomes 'shortcut-title-2' on a page whose content carries it
+   */
+  const keepIdFree = (element: HTMLElement): void => {
+    const wanted = element.id
+    for (let count = 2; document.querySelector('#' + element.id); count += 1)
+      element.id = wanted + '-' + count
+  }
   const dialog = document.createElement('dialog')
   dialog.className = 'shortcut-dialog'
-  dialog.setAttribute('aria-labelledby', 'shortcut-title')
   const heading = document.createElement('h2')
   heading.id = 'shortcut-title'
+  keepIdFree(heading)
+  dialog.setAttribute('aria-labelledby', heading.id)
   heading.textContent = 'Keyboard shortcuts'
   const close = document.createElement('button')
   close.type = 'button'
@@ -26,9 +45,8 @@ export function installShortcutHelp(
   search.setAttribute('aria-label', 'Search shortcuts')
   const list = document.createElement('div')
   list.className = 'shortcut-list'
+  // Created empty and never hidden: the sentence arrives with the first search that matches nothing.
   const empty = document.createElement('p')
-  empty.textContent = 'No shortcuts match.'
-  empty.hidden = true
   empty.setAttribute('role', 'status')
   const clear = document.createElement('button')
   clear.type = 'button'
@@ -49,6 +67,19 @@ export function installShortcutHelp(
             !control.matches(':disabled'),
         ),
     )
+  /**
+   * Writes the no-match line for the list as it was just rendered; called by `render` after every search and every change of the shown shortcuts.
+   * The line stays rendered either way: its sentence is the change a screen reader announces.
+   * @param isListEmpty - Whether the search matched no shortcut.
+   * @example showNoMatch(true) // the line reads "No shortcuts match."
+   */
+  const showNoMatch = (isListEmpty: boolean): void => {
+    const sentence = isListEmpty ? 'No shortcuts match.' : ''
+    // Written only when it changes, so the sentence is announced once for a run of searches without a match.
+    if (empty.textContent !== sentence) empty.textContent = sentence
+    // An empty paragraph keeps its margins and would open a gap under the list: the line has none while it is empty, whatever the page's stylesheet gives a paragraph.
+    empty.style.margin = sentence ? '' : '0'
+  }
   const render = (): void => {
     const query = search.value.trim().toLocaleLowerCase(),
       bindings = available()
@@ -85,7 +116,7 @@ export function installShortcutHelp(
       row.append(label, keys)
       group?.append(row)
     }
-    empty.hidden = list.childElementCount !== 0
+    showNoMatch(list.childElementCount === 0)
     clear.hidden = !query
   }
   const open = (): void => {
@@ -171,6 +202,7 @@ export function installShortcutHelp(
   })
   const tooltip = document.createElement('div')
   tooltip.id = 'shortcut-tooltip'
+  keepIdFree(tooltip)
   tooltip.className = 'shortcut-tooltip'
   tooltip.setAttribute('role', 'tooltip')
   tooltip.hidden = true

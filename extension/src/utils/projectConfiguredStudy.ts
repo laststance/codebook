@@ -21,7 +21,10 @@ export function projectConfiguredStudy(
   if (selection.itemId !== declaredItem.id)
     throw new Error('Selected item belongs to another configured article.')
   const observation = study?.observations.findLast(
-    (value) => value.itemId === selection.itemId,
+    // An exact historical visit cannot silently substitute another capture of the same learning item.
+    (value) =>
+      value.itemId === selection.itemId &&
+      (input.observationId === undefined || value.id === input.observationId),
   )
   const selectedItem = {
     ...declaredItem,

@@ -5,6 +5,7 @@ import { basename, isAbsolute, relative } from 'node:path'
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import * as vscode from 'vscode'
 
+import type { ConfiguredDescriptor } from './configuredStudySchemas'
 import {
   NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   NODE_REPLAY_DEBUG_MAX_DEPTH,
@@ -15,12 +16,18 @@ import {
 } from './constants'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import { NodeTestOutputTerminal } from './nodeTestOutputTerminal'
-import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
+import {
+  OwnedBreakpointMovedError,
+  OwnedRepositoryBreakpoint,
+} from './ownedRepositoryBreakpoint'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
+import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import { RESUME_COMMANDS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
+import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import { bindOwnedNodeTestDebugSession } from './utils/bindOwnedNodeTestDebugSession'
+import { boundElsewhereRefusalText } from './utils/boundElsewhereRefusalText'
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import {
   inspectNodeTestVariables,
@@ -56,7 +63,7 @@ export type NodeTestSourceStop = {
   debuggerSnapshot: ReplayDebugSnapshot
 }
 
-/** Owns a checked repository Vitest process and ordered native source pauses until explicit release. Called by the Node profile runtime after citation checks. @example const run = new OwnedNodeTestRun(workspace, config, node, record); await run.prepare(); while (run.hasNextStop()) await run.advance(); await run.complete(); await run.stop() */
+/** Owns a checked repository Vitest process and ordered native source pauses until explicit release. Called by the Node profile runtime after citation checks. @example const run = new OwnedNodeTestRun(workspace, config, node, record, descriptor.sources); await run.prepare(); while (run.hasNextStop()) await run.advance(); await run.complete(); await run.stop() */
 export class OwnedNodeTestRun {
   readonly id = randomUUID()
   private readonly abort = new AbortController()
@@ -87,11 +94,15 @@ export class OwnedNodeTestRun {
     private readonly configuration: NodeTestConfiguration,
     private readonly node: string,
     private readonly record: (type: string, detail?: unknown) => unknown,
+    /** The article's text of every source the selected node cites; {@link prepareOwned} refuses the run, and {@link advance} and {@link captureStop} end it at a continuation or at a stop, while the editor holds other text for one of them. A trial without an article gives none. */
+    private readonly citedSources: ConfiguredDescriptor['sources'],
   ) {
     this.tracker = vscode.debug.registerDebugAdapterTrackerFactory('*', {
       createDebugAdapterTracker: (session) => {
         if (!this.owner(session)) return
         this.active.set(session.id, session)
+        // Every stop of an owned Node test session belongs to the run, so the keyboard stays where Codebook left it.
+        codebookStopLedger.ownSession(session.id)
         this.record('node-test.session-started', {
           sessionId: session.id,
           parentId: session.parentSession?.id,
@@ -113,6 +124,8 @@ export class OwnedNodeTestRun {
                 session,
                 message as DebugProtocol.Response,
               )
+            // The adapter's later news about the owned breakpoint (a pending one it verifies) is read before the editor drops its column.
+            this.forwardBreakpointNews(session, message)
             if (
               message.type === 'event' &&
               (message as DebugProtocol.Event).event === 'continued'
@@ -151,6 +164,7 @@ export class OwnedNodeTestRun {
     this.termination = vscode.debug.onDidTerminateDebugSession((session) => {
       this.pausedSessions.delete(session.id)
       this.clientResumes.delete(session.id)
+      codebookStopLedger.forget(session.id)
       if (this.active.delete(session.id))
         this.record('node-test.session-terminated', { sessionId: session.id })
     })
@@ -167,7 +181,22 @@ export class OwnedNodeTestRun {
     return this.preparation
   }
 
+  /**
+   * Checks, launches and attaches the cited test up to its first declared stop; the work behind {@link prepare}, which releases everything when this rejects.
+   * @returns The first declared stop, captured at its native pause.
+   * @throws A `SOURCE_CHANGED` {@link StudyError} before Vitest is asked anything while the editor holds other text for a cited source than the article cites; otherwise the failure of the check, the launch, the attach or the wait that failed.
+   * @example
+   * ```ts
+   * this.preparation = this.prepareOwned() // => the stop at theme.ts:1:14 with its variables and facts
+   * ```
+   */
   private async prepareOwned(): Promise<NodeTestSourceStop> {
+    // The debugger is started without saving, so the editor would show unsaved lines at a pause while the test executes the saved file: refused first, before the listing, the terminal, the test and the debugger.
+    assertConfiguredSourceDocuments(
+      this.workspace,
+      this.citedSources,
+      vscode.workspace.textDocuments,
+    )
     const signal = AbortSignal.any([
       this.abort.signal,
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
@@ -180,7 +209,7 @@ export class OwnedNodeTestRun {
           ...request,
           node: this.node,
           signal,
-          // The listing's own outcome decides the run; what a failed release left behind is journaled with its group and folder.
+          // A failed release is journaled with its group and folder. A listing that failed keeps its own reason; a listing that finished but whose process group could not be confirmed as ended refuses the run, so the test is not started.
           onReleaseFailed: (failure) => {
             this.record('node-test.vitest-listing-not-released', failure)
           },
@@ -231,6 +260,8 @@ export class OwnedNodeTestRun {
         sourceMaps: true,
         timeout: NODE_TEST_ATTACH_TIMEOUT_MS,
       },
+      // Without this the editor saves every modified editor of the learner as the session starts; a learner's document is saved by the learner alone.
+      { suppressSaveBeforeStart: true },
     )
     signal.throwIfAborted()
     if (!started)
@@ -261,8 +292,8 @@ export class OwnedNodeTestRun {
       sessionId: this.bound.session.id,
       identity: this.bound.identity,
     })
-    const registration = await this.breakpoint.registered(
-      this.bound.session,
+    const registration = await this.registeredAsDeclared(
+      launch.stops[0]!.source,
       signal,
     )
     this.ownedBreakpointId = registration.breakpointId
@@ -287,6 +318,64 @@ export class OwnedNodeTestRun {
     return this.captureStop(0, fromIndex)
   }
 
+  /**
+   * Hands the adapter's `breakpoint` events to the owned breakpoint, for the tracker of the owned session: a pending breakpoint the adapter verifies later names its place only there, and the tracker reads it with its column, which both editors drop for a breakpoint requested at column 1.
+   * @param session - The owned session that sent the message.
+   * @param message - Any message of the adapter; only a `breakpoint` event is forwarded.
+   * @example
+   * ```ts
+   * this.forwardBreakpointNews(session, { type: 'event', event: 'breakpoint', body: { reason: 'changed', breakpoint: { id: 4, verified: true, line: 20, column: 12 } } })
+   * ```
+   */
+  private forwardBreakpointNews(
+    session: vscode.DebugSession,
+    message: DebugProtocol.ProtocolMessage,
+  ): void {
+    if (message.type !== 'event') return
+    const event = message as DebugProtocol.Event
+    if (event.event === 'breakpoint') this.breakpoint?.onEvent(session, event)
+  }
+
+  /**
+   * Waits for the adapter's acknowledgement of the current stop's owned breakpoint, for {@link prepareOwned} and {@link advance}; news that put the breakpoint away from the declared position before the receipt was read is refused with the sentence of every such binding.
+   * @param declared - The position the stop was declared at.
+   * @param signal - The caller's cancellation and budget.
+   * @returns The adapter's receipt, `pending` or `bound`.
+   * @throws The refusal of {@link boundElsewhereRefusalText} when the adapter's news names another place; every other failure of the registration unchanged.
+   * @example
+   * ```ts
+   * const registered = await this.registeredAsDeclared(next.source, signal) // { status: 'pending', breakpointId: 4, ... }
+   * ```
+   */
+  private async registeredAsDeclared(
+    declared: { line: number; column: number },
+    signal: AbortSignal,
+  ): Promise<Awaited<ReturnType<OwnedRepositoryBreakpoint['registered']>>> {
+    try {
+      return await this.breakpoint!.registered(this.bound!.session, signal)
+    } catch (error) {
+      if (!(error instanceof OwnedBreakpointMovedError)) throw error
+      throw new Error(boundElsewhereRefusalText(declared, error.place))
+    }
+  }
+
+  /**
+   * Refuses a stop whose owned breakpoint the adapter's news put away from the declared position, at the moment that news arrives; {@link advance} asks it before it resumes the test and {@link captureStop} at every look while the test runs, so the stop does not end one resume later or at its budget.
+   * @param declared - The position the stop was declared at.
+   * @throws The refusal of {@link boundElsewhereRefusalText}, naming both positions.
+   * @example
+   * ```ts
+   * this.assertNotMovedByNews(next.source) // throws 'Declared breakpoint 20:1 is bound at 22:5; …' once the adapter reported 22:5
+   * ```
+   */
+  private assertNotMovedByNews(declared: {
+    line: number
+    column: number
+  }): void {
+    const place = this.breakpoint?.refusedPlace(this.bound!.session)
+    if (place) throw new Error(boundElsewhereRefusalText(declared, place))
+  }
+
   /** Reports whether another declared checked source stop must be captured before the test may finish. @example while (run.hasNextStop()) await run.advance() */
   hasNextStop(): boolean {
     return Boolean(
@@ -296,7 +385,15 @@ export class OwnedNodeTestRun {
     )
   }
 
-  /** Retires the last owned breakpoint, arms the next declared stop and captures its actual paused state. @example const next = await run.advance() */
+  /**
+   * Retires the last owned breakpoint, arms the next declared stop, resumes the test and captures the stop's actual paused state; called by the service for a continuation that has a next declared stop.
+   * @returns The next declared stop, captured at its native pause.
+   * @throws When no next stop can be captured, the accepted pause changed, the next breakpoint is not bound as declared or the capture fails; a `SOURCE_CHANGED` {@link StudyError}, without a resume, while the editor holds other text for a cited source than the article cites. Every failure releases the run.
+   * @example
+   * ```ts
+   * const next = await run.advance() // => { index: 1, frame: { line: 1, column: 14, ... }, ... }
+   * ```
+   */
   async advance(): Promise<NodeTestSourceStop> {
     const previous = this.acceptedStop,
       bound = this.bound,
@@ -327,13 +424,21 @@ export class OwnedNodeTestRun {
         next.source.column,
         'declared-column',
       )
-      const registered = await this.breakpoint.registered(bound.session, signal)
+      const registered = await this.registeredAsDeclared(next.source, signal)
       this.ownedBreakpointId = registered.breakpointId
       // A pending reply names no position, so the adapter is asked once more while the test is still paused.
       if (registered.status === 'pending')
         await this.breakpoint.assertBoundAsDeclared(bound.session, signal)
+      // News that arrived since the receipt was read is refused while the test is still paused.
+      this.assertNotMovedByNews(next.source)
       // The learner can resume or step while retirement and registration are awaited.
       await this.assertAcceptedPause(previous, 'the next declared stop')
+      // Nor is the test resumed on a cited source the learner changed in the editor without saving: the next pause would mark a line of that text. Compared last, so nothing is awaited between this and the resume.
+      assertConfiguredSourceDocuments(
+        this.workspace,
+        this.citedSources,
+        vscode.workspace.textDocuments,
+      )
       const fromIndex = this.stops.length
       await bound.session.customRequest('continue', {
         threadId: previous.threadId,
@@ -356,7 +461,7 @@ export class OwnedNodeTestRun {
    * @param index - Declared stop to capture.
    * @param fromIndex - First native pause that can belong to this stop.
    * @returns The accepted stop.
-   * @throws When the session ends, the owned breakpoint pauses elsewhere in the declared source, the running test exceeds the budget, or capture fails.
+   * @throws When the session ends, the owned breakpoint pauses elsewhere in the declared source, the running test exceeds the budget, or capture fails; a `SOURCE_CHANGED` {@link StudyError} when the editor holds other text for a cited source than the article cites at the pause.
    * @example
    * ```ts
    * await this.captureStop(0, this.stops.length) // => { index: 0, frame: { line: 217, column: 21, ... }, facts: [...], ... }
@@ -383,6 +488,8 @@ export class OwnedNodeTestRun {
       async () => {
         // A test process that ended can never reach this stop; fail now instead of at the budget.
         this.assertActive(bound.session.id)
+        // Neither can a stop whose breakpoint the adapter's news put away from the declared position.
+        this.assertNotMovedByNews(selected.source)
         const nowMs = performance.now()
         // Only time the test could run counts; while a pause Codebook did not make holds it, the learner decides when it continues.
         if (!held) runningMs += nowMs - lastPollMs
@@ -519,6 +626,12 @@ export class OwnedNodeTestRun {
       throw new Error(
         'Node test source changed during historical debugger capture.',
       )
+    // The file is the cited one; a document the learner changed without saving since the start would still make the editor's debugger mark another line than the test executes at this pause.
+    assertConfiguredSourceDocuments(
+      this.workspace,
+      this.citedSources,
+      vscode.workspace.textDocuments,
+    )
     this.record('node-test.snapshot-started', {
       index,
       elapsedMs: this.owned?.elapsedMs() ?? 0,

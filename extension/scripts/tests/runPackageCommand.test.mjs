@@ -217,6 +217,65 @@ test('a successful package build drains its child output and keeps the child res
   await assertRetiredProcess(pid)
 })
 
+// Value: protects=the result of a package command (a build, a package step) on a machine where many processes come and go; fails_when=a group id that names no process group reaches the stop step, whose argument error replaces the command's own result and leaves the command's real groups running; why_new=Cycle 0046 row 143: at a merge `ps` printed the group id 4294967295 for a process it could not read, and a passing test failed with `TypeError [ERR_INVALID_ARG_TYPE]: The "pid" argument must be of type number. Received type number (-4294967295)`; seam=the `ps` on the search path, replaced by a stand-in that adds such a line for every process
+for (const [scenario, expectedOutcome] of [
+  ['success', 'returned'],
+  ['exit', 'Error: Package command failed: pnpm (2)'],
+]) {
+  test(`a group id of 4294967295 in the answer of ps does not replace the result of a package command that ends through ${scenario}, and the command's real process groups are still stopped`, async (context) => {
+    // Arrange: a `ps` that answers the tracker's listing with every real line and, after each, the same process under the group id 4294967295.
+    const fixture = await commandFixture(context, scenario)
+    const realPs = execFileSync('sh', ['-c', 'command -v ps'], {
+      encoding: 'utf8',
+    }).trim()
+    const standInDirectory = join(fixture.directory, 'ps-stand-in')
+    await mkdir(standInDirectory)
+    await writeFile(
+      join(standInDirectory, 'ps'),
+      `#!/bin/sh
+if [ "$*" = "-axo pid=,ppid=,pgid=,stat=" ]; then
+  : > "${standInDirectory}/asked"
+  "${realPs}" "$@" | awk '{ print; print $1, $2, "4294967295", $4 }'
+else
+  exec "${realPs}" "$@"
+fi
+`,
+      { mode: 0o755 },
+    )
+    const searchPath = process.env.PATH
+    process.env.PATH = `${standInDirectory}:${searchPath}`
+    // Act
+    let outcome = 'returned',
+      result
+    try {
+      result = await fixture.runPackageCommand(
+        'pnpm',
+        ['build'],
+        fixture.directory,
+      )
+    } catch (error) {
+      outcome = `${error.name}: ${error.message}`
+      result = error
+    } finally {
+      process.env.PATH = searchPath
+    }
+    // Assert: the command's own result, with its output, and no process of the command left running.
+    assert.equal(outcome, expectedOutcome)
+    assert.match(
+      scenario === 'success' ? result.stdout : result.stderr,
+      scenario === 'success' ? /fixture finished\n/ : /ELIFECYCLE|exit code 2/,
+    )
+    // Node does not promise a listing's order, so the names are compared in name order.
+    assert.deepEqual((await readdir(standInDirectory)).sort(), ['asked', 'ps'])
+    for (const name of ['lifecycle.json', 'writer.json']) {
+      const { pid } = JSON.parse(
+        await readFile(join(fixture.directory, name), 'utf8'),
+      )
+      await assertRetiredProcess(pid)
+    }
+  })
+}
+
 test('package subprocess arguments remain literal and both diagnostic streams are retained', async (context) => {
   // Arrange
   const fixture = await commandFixture(context, 'success')

@@ -123,6 +123,16 @@ export class ReplayDebugAdapter {
     )
   }
 
+  /** Gives {@link ReplayDebugger.awaitRetrieval} the current native stack receipt before historical model selection; native client requests trigger it. @returns Whether the current selection's inspection stack was served. @example adapter.stackRetrieved // => true after the current stackTrace request */
+  get stackRetrieved(): boolean {
+    return (
+      !this.closed &&
+      this.configured &&
+      this.selectionValid &&
+      this.inspectedStack
+    )
+  }
+
   /**
    * Lets {@link ReplayDebugger.present} commit gaps and scope-less stops at once: only a selection whose inspection frame has recorded scopes can load values in native Variables.
    *
@@ -546,7 +556,7 @@ export class ReplayDebugAdapter {
     return handle
   }
 
-  /** Notifies native views of a new moment or missing history only after DAP configuration. @example this.stopped() */
+  /** Reports configured historical selections without borrowing replay-control keyboard focus; called by {@link ReplayDebugAdapter.select} and {@link ReplayDebugAdapter.handleMessage}. @example this.stopped() */
   private stopped(): void {
     this.stoppedAtMs = Date.now()
     this.event('stopped', {
@@ -554,6 +564,8 @@ export class ReplayDebugAdapter {
       description: this.label,
       threadId: this.threadId,
       allThreadsStopped: true,
+      // Historical inspection changes the moment, while the learner keeps the keyboard where it was.
+      preserveFocusHint: true,
     })
   }
 

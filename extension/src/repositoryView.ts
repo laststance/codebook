@@ -75,3 +75,6 @@ export interface RepositoryViewMessage {
   sources: Awaited<ReturnType<RepositorySourceService['inspect']>>
   understanding?: ReturnType<typeof citationLearningState>
 }
+
+/** The reader's request that the Repository Wiki's document post `ready` again: {@link RepositoryReader} sends it once the pane is shown after a `ready` reached it while the pane still counted as hidden, which it cannot take for the shown document's (CR5-6); the document's script ({@link repositoryHtml}) answers it with `ready`. */
+export type RepositoryReadyRequest = { type: 'announce-ready' }

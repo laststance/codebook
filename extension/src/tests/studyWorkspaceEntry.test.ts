@@ -7,8 +7,880 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   readerSeams,
   recordedReaderHarness,
+  saveOneStopNodeHistory,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+
+for (const replaceWrappers of [false, true])
+  test(`MCP-first App preparation reserves its own locked group and preserves both learner groups${replaceWrappers ? ' across native wrapper replacement' : ''}`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    await harness.reader.attach(harness.service)
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: [{ size: 3 }, { size: 2 }],
+    })
+    const first = harness.focusMutableDraft('first-notes.txt', 1),
+      second = harness.focusMutableDraft('second-notes.txt', 2),
+      firstInputs = harness.groups[0]!.tabs.map((tab) => tab.input),
+      secondInputs = harness.groups[1]!.tabs.map((tab) => tab.input)
+    if (replaceWrappers) harness.replaceGroupObjectsOnTabChanges()
+    try {
+      // Act
+      const viewport = await harness.reader.presentation.createViewport(
+        'owned-first',
+        () => {},
+        () => {},
+        'normal',
+      )
+
+      // Assert
+      assert.equal(harness.groups.length, 3)
+      assert.equal(harness.groups[0]!.locked, true)
+      assert.equal(harness.groups[0]!.tabs.length, 1)
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.deepEqual(
+        harness.groups[1]!.tabs.map((tab) => tab.input),
+        firstInputs,
+      )
+      assert.deepEqual(
+        harness.groups[2]!.tabs.map((tab) => tab.input),
+        secondInputs,
+      )
+      assert.equal(first.document.getText(), 'Original learner draft.\n')
+      assert.equal(second.document.getText(), 'Original learner draft.\n')
+      assert.equal(
+        harness.groups[1]!.tabs.some((tab) => tab.isDirty),
+        true,
+      )
+      assert.equal(
+        harness.groups[2]!.tabs.some((tab) => tab.isDirty),
+        true,
+      )
+      const commandsBeforeReuse = harness.commands.length
+      await harness.reader.presentation.createViewport(
+        'owned-second',
+        () => {},
+        () => {},
+        'normal',
+      )
+      assert.equal(harness.groups.length, 3)
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBeforeReuse)
+          .filter(
+            (command) =>
+              command === 'workbench.action.newGroupAbove' ||
+              command === 'workbench.action.lockEditorGroup',
+          ),
+        [],
+      )
+      // A superseded runtime cannot retire its successor's pane or group.
+      viewport.close()
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      await harness.reader.close()
+      assert.equal(harness.groups.length, 2)
+      assert.deepEqual(
+        harness.groups[0]!.tabs.map((tab) => tab.input),
+        firstInputs,
+      )
+      assert.deepEqual(
+        harness.groups[1]!.tabs.map((tab) => tab.input),
+        secondInputs,
+      )
+      assert.deepEqual(harness.editorLayout(), {
+        orientation: 0,
+        groups: [{ size: 3 }, { size: 2 }],
+      })
+    } finally {
+      await harness.close()
+    }
+  })
+
+for (const gesture of ['navigation-command', 'click'] as const)
+  test(`a native Call Stack ${gesture} keeps its input and source visible beside the prepared App`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    await harness.reader.attach(harness.service)
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}] })
+    harness.focusMutableDraft('learner-notes.txt', 1)
+    try {
+      await harness.reader.presentation.createViewport(
+        'native-frame',
+        () => {},
+        () => {},
+        'normal',
+      )
+      harness.pauseDebugger({ focusesEditorOnBreak: false })
+      if (gesture === 'click') harness.focusView()
+
+      // Act
+      const source = harness.selectStackFrame('framework.ts', 1, gesture)
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(
+        harness.groups[0]!.activeTab?.input instanceof
+          harness.editor.TabInputWebview,
+        true,
+      )
+      await harness.revealApplicationPaneOverPausedFile()
+
+      // Assert
+      assert.equal(
+        harness.groups[1]!.activeTab?.input instanceof
+          harness.editor.TabInputText,
+        true,
+      )
+      assert.equal(source.getText(), 'Original learner draft.\n')
+      assert.equal(harness.keyboardOnBody(), false)
+      assert.equal(harness.keyboardInView(), gesture === 'click')
+      assert.equal(harness.groups[0]!.tabs.length, 1)
+    } finally {
+      await harness.close()
+    }
+  })
+
+test('an existing App lease is reusable while an unrelated native layout read remains pending', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.focusMutableDraft('source.txt', 1)
+  let arranging: Promise<unknown> | undefined,
+    successor: Promise<unknown> | undefined,
+    release = (): void => {}
+  try {
+    await harness.reader.presentation.createViewport(
+      'first',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+    arranging = harness.reader.arrangeRepository(new AbortController().signal)
+    await held.started
+    const commandsBeforeReuse = [...harness.commands]
+    let acquired = false
+
+    // Act
+    successor = Promise.resolve(
+      harness.reader.presentation.createViewport(
+        'second',
+        () => {},
+        () => {},
+        'normal',
+      ),
+    ).then(() => {
+      acquired = true
+    })
+    await waitUntil(
+      () => acquired,
+      'existing App acquisition without joining layout',
+      1_000,
+    )
+
+    // Assert
+    assert.equal(acquired, true)
+    assert.deepEqual(harness.commands, commandsBeforeReuse)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+  } finally {
+    release()
+    await Promise.allSettled([arranging, successor])
+    await harness.close()
+  }
+})
+
+test('Close releases the owned App while its preparation waits for native chat command discovery', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const source = harness.focusMutableDraft('original.txt', 1),
+    chat = harness.addSeparateEditorPart()
+  chat.focusTab()
+  let releaseCatalog = (): void => {},
+    enterCatalog = (): void => {},
+    preparing: Promise<unknown> | undefined
+  const catalog = new Promise<void>((resolve) => {
+      releaseCatalog = resolve
+    }),
+    entered = new Promise<void>((resolve) => {
+      enterCatalog = resolve
+    }),
+    getCommands = harness.editor.commands.getCommands
+  context.mock.method(harness.editor.commands, 'getCommands', async () => {
+    enterCatalog()
+    await catalog
+    return getCommands()
+  })
+  try {
+    preparing = Promise.resolve(
+      harness.reader.presentation.createViewport(
+        'catalog-wait',
+        () => {},
+        () => {},
+        'normal',
+      ),
+    )
+    const refused = assert.rejects(preparing, /study workspace was closed/)
+    await entered
+    const commandsBeforeClose = harness.commands.length
+    let closed = false
+
+    // Act: discovery has issued no keyboard command and cannot hold the layout queue against Close.
+    const closing = harness.reader.close().then(() => {
+      closed = true
+    })
+    await waitUntil(
+      () => closed,
+      'Close before chat discovery returns',
+      1_000,
+    ).catch(() => undefined)
+    const closedBeforeDiscovery = closed
+    releaseCatalog()
+    await Promise.all([closing, refused])
+
+    // Assert
+    assert.equal(closedBeforeDiscovery, true)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), undefined)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(source.document.getText(), 'Original learner draft.\n')
+    assert.equal(source.tab.isDirty, true)
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBeforeClose)
+        .filter((command) => command === 'composer.focusComposer'),
+      [],
+    )
+  } finally {
+    releaseCatalog()
+    await preparing?.catch(() => undefined)
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+for (const cancellation of ['before reservation', 'after allocation'] as const)
+  test(`cancelling App preparation ${cancellation} leaves original groups and creates no viewport`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    await harness.reader.attach(harness.service)
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const first = harness.focusMutableDraft('first.txt', 1),
+      second = harness.focusMutableDraft('second.txt', 2),
+      abort = new AbortController(),
+      held =
+        cancellation === 'after allocation'
+          ? harness.holdNextCommand('workbench.action.lockEditorGroup')
+          : undefined
+    try {
+      if (!held) abort.abort(new Error('Preparation cancelled.'))
+
+      // Act
+      const preparing = Promise.resolve(
+          harness.reader.presentation.createViewport(
+            'cancelled',
+            () => {},
+            () => {},
+            'normal',
+            abort.signal,
+          ),
+        ),
+        refused = assert.rejects(preparing, /Preparation cancelled\./)
+      if (held) {
+        await held.started
+        assert.equal(harness.groups.length, 3)
+        abort.abort(new Error('Preparation cancelled.'))
+        held.release()
+      }
+      await refused
+
+      // Assert
+      assert.equal(harness.groups.length, 2)
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), undefined)
+      assert.equal(first.document.getText(), 'Original learner draft.\n')
+      assert.equal(second.document.getText(), 'Original learner draft.\n')
+      assert.deepEqual(
+        harness.groups.map((group) => group.locked ?? false),
+        [false, false],
+      )
+    } finally {
+      held?.release()
+      await harness.close()
+    }
+  })
+
+test('a learner-adopted App group keeps its document and layout when background reveal is refused and the reader closes', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({
+    orientation: 0,
+    groups: [{ size: 3 }, { size: 2 }],
+  })
+  harness.focusMutableDraft('original.txt', 1)
+  try {
+    await harness.reader.presentation.createViewport(
+      'adopted',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const adopted = harness.focusMutableDraft('adopted.txt', 1),
+      retainedLayout = harness.editorLayout()
+
+    // Act
+    await assert.rejects(
+      harness.revealApplicationPaneOverPausedFile(),
+      /Application ownership changed/,
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.toString(),
+      adopted.document.uri.toString(),
+    )
+    await harness.reader.close()
+
+    // Assert
+    assert.equal(harness.groups.length, 3)
+    assert.equal(
+      harness.groups[0]!.activeTab?.input instanceof
+        harness.editor.TabInputText,
+      true,
+    )
+    assert.equal(adopted.document.getText(), 'Original learner draft.\n')
+    assert.equal(adopted.tab.isDirty, true)
+    assert.deepEqual(harness.editorLayout(), retainedLayout)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('an ambiguous duplicate App tab stays visible and receives no background reveal of the earlier panel', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.focusMutableDraft('original.txt', 1)
+  try {
+    await harness.reader.presentation.createViewport(
+      'duplicate-app',
+      () => {},
+      () => {},
+      'normal',
+    )
+    const replacement = harness.editor.window.createWebviewPanel(
+      'codebook.scopedBrowser',
+      'Other Application',
+      { viewColumn: 1, preserveFocus: false },
+    )
+    replacement.reveal(1, false)
+    const revealsBefore = harness.panelReveals()
+
+    // Act
+    await assert.rejects(
+      harness.revealApplicationPaneOverPausedFile(),
+      /Application ownership changed/,
+    )
+
+    // Assert
+    assert.deepEqual(harness.panelReveals(), revealsBefore)
+    assert.equal(replacement.visible, true)
+    assert.equal(replacement.active, true)
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+test('failed App focus grants no cleanup authority over a newly reported group without an observed identity', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const source = harness.focusMutableDraft('original.txt', 1)
+  // The learner's notes in the second group are the active editor, so the preparation focuses the first group before it allocates (row 612: an active first group is not focused at all).
+  harness.focusMutableDraft('learner-notes.txt', 2)
+  const held = harness.holdNextCommand('workbench.action.focusFirstEditorGroup')
+  let preparing: Promise<unknown> | undefined
+  try {
+    preparing = Promise.resolve(
+      harness.reader.presentation.createViewport(
+        'failed-focus',
+        () => {},
+        () => {},
+        'normal',
+      ),
+    )
+    const refused = assert.rejects(preparing, /Native layout command failed/)
+    await held.started
+    // An SDK group that the ownership observer has not seen remains foreign, even when it is empty.
+    const foreign = { viewColumn: 3, tabs: [] }
+    harness.groups.push(foreign)
+    harness.failNextCommand('workbench.action.focusFirstEditorGroup')
+
+    // Act
+    held.release()
+    await refused
+
+    // Assert
+    assert.equal(harness.groups.includes(foreign), true)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), undefined)
+    assert.equal(source.document.getText(), 'Original learner draft.\n')
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
+    held.release()
+    await preparing?.catch(() => undefined)
+    await harness.close()
+  }
+})
+
+for (const entry of ['idle Live selection', 'cold Live reopening'])
+  test(`starting a run after ${entry} preserves the separate chat keyboard without rearranging its prepared panes`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    await harness.reader.attach(harness.service)
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    try {
+      harness.focusMutableDraft('actions.ts', 1)
+      await harness.reader.open()
+      const overview = harness.reader.presentationState()
+      assert.equal(overview.reader.contentTab, 'overview')
+      assert.equal(overview.panes.contextColumn, 3)
+      chat.focusTab()
+      await harness.reader.returnToCurrent({
+        presentationId: overview.presentationId,
+        expectedRevision: overview.reader.contentRevision,
+      })
+      assert.equal(chat.focused(), true)
+      // Reopening the explicitly selected Live screen must prepare it before any run exists too.
+      if (entry === 'cold Live reopening') {
+        await harness.reader.close()
+        await harness.reader.open()
+      }
+      const prepared = harness.reader.presentationState()
+      chat.focusTab()
+      const commandsBeforeStart = harness.commands.length,
+        sourcesBeforeStart = harness.textDocumentShows().length
+
+      // Act
+      harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await [...harness.service.records.values()][0]!.preparation
+      await readerSeams(harness).refresh()
+
+      // Assert
+      assert.equal(prepared.reader.contentTab, 'live')
+      assert.equal(prepared.reader.followingCurrentRun, true)
+      assert.equal(prepared.layoutConfirmed, true)
+      assert.equal(prepared.panes.appColumn, 1)
+      assert.equal(prepared.panes.sourceColumn, 2)
+      assert.equal(prepared.panes.contextColumn, undefined)
+      assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+      assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+      assert.equal(chat.focused(), true)
+      assert.deepEqual(
+        harness
+          .textDocumentShows()
+          .slice(sourcesBeforeStart)
+          .filter((shown) => !shown.preserveFocus),
+        [],
+      )
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBeforeStart)
+          .filter(
+            (command) =>
+              command === 'vscode.setEditorLayout' ||
+              command === 'workbench.action.focusFirstEditorGroup',
+          ),
+        [],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the Study composition of a reader whose explicit Live intent was spent: the learner's Return to the current run asked for the Live composition before any run, a run then started and was stopped by the Close, and the next Open of that stopped run arranges the Study as for any stopped run, with its Study pane; fails_when=the Return's intent never ends, so every later Open that follows the current run arranges the Live composition without the Study pane, also for a run that stopped long ago (Cycle 0046 OCR1-8); why_new=Cycle 0046 OCR1-8; seam=workspaceHarness with the controlled runtime (the service's start and its preparation), readerSeams stopOwnTimer and refresh, the reader's open, returnToCurrent and close, presentationState
+test('an Open after a Return to the current run whose run then started and stopped arranges the Study composition with its Study pane again', async () => {
+  // Arrange: the learner opened the Study and returned it to the current run before any run existed; a run then started, and the Close stopped it.
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const overview = harness.reader.presentationState()
+    await harness.reader.returnToCurrent({
+      presentationId: overview.presentationId,
+      expectedRevision: overview.reader.contentRevision,
+    })
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const run = [...harness.service.records.values()][0]!
+    await run.preparation
+    await readerSeams(harness).refresh()
+    await harness.reader.close()
+
+    // Act
+    await harness.reader.open()
+
+    // Assert: the run is stopped, and the Open arranged the Study composition with its Study pane.
+    const reopened = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        runStopped: run.stopped,
+        followingCurrentRun: reopened.reader.followingCurrentRun,
+        contextColumn: reopened.panes.contextColumn,
+        studyPaneColumn: harness.panelColumn('codebook.studyContext'),
+      },
+      {
+        runStopped: true,
+        followingCurrentRun: true,
+        contextColumn: 3,
+        studyPaneColumn: 3,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('Close during Live preparation keeps its keyboard settlement without an obsolete return to the separate chat', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  let releaseArrangement = (): void => {}
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    chat.focusTab()
+    const state = harness.reader.presentationState(),
+      arrangement = harness.holdNextLayoutResponse()
+    releaseArrangement = arrangement.release
+    const returning = harness.reader.returnToCurrent({
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      }),
+      refused = assert.rejects(returning, /workspace was closed/)
+    await arrangement.started
+    const commandsBeforeClose = harness.commands.length
+
+    // Act
+    const closing = harness.reader.close()
+    arrangement.release()
+    await refused
+    await closing
+
+    // Assert
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBeforeClose)
+        .filter((command) => command === 'composer.focusComposer'),
+      [],
+    )
+  } finally {
+    releaseArrangement()
+    await harness.close()
+  }
+})
+
+test('Close while Live return waits for a Node preview leaves the closed reader revision unchanged', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  readerSeams(harness).stopOwnTimer()
+  let releasePreview = (): void => {}
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().at(-1)!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          history.studyId && !harness.reader.inspect().view?.loading,
+      'the selected Node history is ready',
+      1_000,
+    )
+    harness.addNodeHistoryPreview(history.studyId, 2)
+    const preview = harness.holdNextTabCloseResponse(),
+      state = harness.reader.presentationState()
+    releasePreview = preview.release
+    const returning = harness.reader
+      .returnToCurrent({
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      .then(
+        () => 'completed',
+        () => 'cancelled',
+      )
+    await preview.started
+
+    // Act
+    await harness.reader.close()
+    const closedRevision =
+      harness.reader.presentationState().reader.contentRevision
+    preview.release()
+    const outcome = await returning
+
+    // Assert
+    assert.equal(outcome, 'cancelled')
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(
+      harness.reader.presentationState().reader.contentRevision -
+        closedRevision,
+      0,
+    )
+  } finally {
+    releasePreview()
+    await harness.close()
+  }
+})
+
+for (const newerAction of [
+  'Close',
+  'a new source choice',
+  'a same-source selection',
+  'another window',
+])
+  test(`Live return waiting for the native command catalog preserves ${newerAction}`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    await harness.reader.attach(harness.service)
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    let releaseCatalog = (): void => {},
+      enteredCatalog = (): void => {}
+    const catalogEntered = new Promise<void>((resolve) => {
+        enteredCatalog = resolve
+      }),
+      catalog = new Promise<void>((resolve) => {
+        releaseCatalog = resolve
+      })
+    try {
+      harness.focusMutableDraft('actions.ts', 1)
+      await harness.reader.open()
+      chat.focusTab()
+      const originalCommands = harness.editor.commands.getCommands
+      context.mock.method(harness.editor.commands, 'getCommands', async () => {
+        enteredCatalog()
+        await catalog
+        return originalCommands()
+      })
+      const state = harness.reader.presentationState(),
+        returning = harness.reader
+          .returnToCurrent({
+            presentationId: state.presentationId,
+            expectedRevision: state.reader.contentRevision,
+          })
+          .then(
+            () => 'completed',
+            () => 'cancelled',
+          )
+      await catalogEntered
+      const commandsBeforeChoice = harness.commands.length
+
+      // Act
+      if (newerAction === 'Close') await harness.reader.close()
+      else if (newerAction === 'a new source choice')
+        harness.focusMutableDraft('newer-choice.ts', 1)
+      else if (newerAction === 'a same-source selection') {
+        // Dedicated App preparation can finish on App; genuine source input must select the retained visible source first.
+        const source = harness.editor.window.visibleTextEditors.find(
+          (editor) =>
+            editor.document.uri.toString() ===
+              harness.reader.inspect().sourceUri &&
+            editor.viewColumn ===
+              harness.reader.presentationState().panes.sourceColumn,
+        )
+        assert.ok(source)
+        harness.focusExistingSource(source)
+        harness.changeFocusedSourceSelection(46)
+      } else harness.changeWindowFocus(false)
+      releaseCatalog()
+      const outcome = await returning
+
+      // Assert
+      assert.equal(outcome, newerAction === 'Close' ? 'cancelled' : 'completed')
+      assert.deepEqual(
+        harness.commands
+          .slice(commandsBeforeChoice)
+          .filter((command) => command === 'composer.focusComposer'),
+        [],
+      )
+      if (newerAction === 'Close')
+        assert.equal(harness.reader.presentationState().state, 'closed')
+      else if (newerAction === 'a new source choice') {
+        assert.equal(chat.focused(), false)
+        assert.equal(
+          harness
+            .focusedSource()
+            ?.document.uri.path.endsWith('/newer-choice.ts'),
+          true,
+        )
+      } else if (newerAction === 'a same-source selection')
+        assert.equal(harness.focusedSource()?.selections[0]?.active.line, 46)
+    } finally {
+      releaseCatalog()
+      context.mock.restoreAll()
+      await harness.close()
+    }
+  })
+
+// Value: protects=what the agent reads when the learner closes the Study workspace while the agent's Return Current runs: the Close retired the reader the agent named (its lifetime and presentation identity), so the Return refuses as an identity that ended before it is refused, and the agent rediscovers the reader; fails_when=returnToCurrent goes on to ask for a displayed source after the Close and refuses with EVIDENCE_UNAVAILABLE "Current source is not displayed in the native reader. Inspect its error and retry explicitly.", an error the Close did not make; why_new=Cycle 0046 row 697 (a closed Study, reached by a Close during the Return); seam=workspaceHarness with Cursor's chat part, the reader's returnToCurrent held at the native command catalog (getCommands), and Close
+test('a Return Current during which the learner closes the Study workspace refuses because the named reader lifetime ended, not for a source error', async (context) => {
+  // Arrange: the Study is open beside Cursor's chat; the Return waits for the editor's command catalog.
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  let releaseCatalog = (): void => {},
+    enteredCatalog = (): void => {}
+  const catalogEntered = new Promise<void>((resolve) => {
+      enteredCatalog = resolve
+    }),
+    catalog = new Promise<void>((resolve) => {
+      releaseCatalog = resolve
+    })
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    chat.focusTab()
+    const originalCommands = harness.editor.commands.getCommands
+    context.mock.method(harness.editor.commands, 'getCommands', async () => {
+      enteredCatalog()
+      await catalog
+      return originalCommands()
+    })
+    const state = harness.reader.presentationState(),
+      returning = harness.reader
+        .returnToCurrent({
+          presentationId: state.presentationId,
+          expectedRevision: state.reader.contentRevision,
+        })
+        .then(
+          () => 'completed',
+          (error: unknown) => ({
+            code: Reflect.get(Object(error), 'code'),
+            message: Reflect.get(Object(error), 'message'),
+          }),
+        )
+    await catalogEntered
+
+    // Act
+    await harness.reader.close()
+    releaseCatalog()
+    const outcome = await returning
+
+    // Assert
+    assert.deepEqual(outcome, {
+      code: 'PRESENTATION_INSTANCE_GONE',
+      message: 'The named reader lifetime has ended.',
+    })
+  } finally {
+    releaseCatalog()
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a Return Current that arranged the Live panes beside Cursor's chat when the editor rejects the chat's focus command at the Return's end: the Return still answers with its Live arrangement, and the rejection does not become the Return's failure; fails_when=the give-back to the chat in the Return's finally is awaited without a catch, so the rejected Focus Agent turns the arranged Return into a failure with "Native layout command failed" (Cycle 0046 OCR1-5); why_new=Cycle 0046 OCR1-5; seam=workspaceHarness with Cursor's chat part and its focusTab, failNextCommand('composer.focusComposer'), the reader's open and returnToCurrent, presentationState
+test('a Return Current beside Cursor’s chat whose Focus Agent the editor rejects at the end still answers with its Live arrangement', async () => {
+  // Arrange: the Study is open beside Cursor's chat, which has the keyboard; the editor will reject the chat's focus command.
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    chat.focusTab()
+    harness.failNextCommand('composer.focusComposer')
+    const state = harness.reader.presentationState()
+
+    // Act
+    const answer = await harness.reader
+      .returnToCurrent({
+        presentationId: state.presentationId,
+        expectedRevision: state.reader.contentRevision,
+      })
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+
+    // Assert: the Return answered, Focus Agent was asked once, and the Live arrangement stands confirmed.
+    const after = harness.reader.presentationState()
+    assert.deepEqual(
+      {
+        answer,
+        focusAgentRuns: harness.commands.filter(
+          (command) => command === 'composer.focusComposer',
+        ).length,
+        contentTab: after.reader.contentTab,
+        layoutConfirmed: after.layoutConfirmed,
+        appColumn: after.panes.appColumn,
+      },
+      {
+        answer: 'returned',
+        focusAgentRuns: 1,
+        contentTab: 'live',
+        layoutConfirmed: true,
+        appColumn: 1,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('first Study entry from one editor group keeps empty Context separate from the application', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
@@ -60,6 +932,7 @@ test('cold Wiki entry reserves a second main pane without treating the separate 
   }
 })
 
+// Value: protects=the learner's file in front of the first group while a cold Wiki layout borrows that group's focus beside another editor part to measure the main editor: a newer selection or edit there during the borrow refuses the layout through the reader's focus receipt and stays as the learner made it, with the keyboard, and an unchanged borrow leaves that file the keyboard; fails_when=the borrow takes the learner's newer selection or edit for its own and restores the old reading position over it; why_new=Cycle 0046 row 663 (rework: the chat part has the keyboard now, so the measurement still borrows the first group; from original-notes.txt in front of the second group, the origin these tests had, the measurement borrows nothing, so their unchanged case no longer gives that file its keyboard back after a borrow: it never left it, see studyWorkspaceFocus's tests from the learner's file in the second group); seam=workspaceHarness with addSeparateEditorPart and its focus, focusMutableDraft in columns 1 and 2, holdNextPrimaryFocusResponse and holdNextCommand on the layout read
 for (const boundary of [
   'layout measurement',
   'primary focus response',
@@ -67,10 +940,10 @@ for (const boundary of [
   for (const interaction of ['selection', 'edit', 'none'] as const)
     test(
       interaction === 'none'
-        ? `cold Wiki scope restores prior text focus after unchanged ${boundary}`
+        ? `cold Wiki scope from the chat leaves the borrowed first group's file the keyboard after unchanged ${boundary}`
         : `cold Wiki scope preserves a newer primary ${interaction} during ${boundary}`,
       async () => {
-        // Arrange
+        // Arrange: the chat part has the keyboard; primary-notes.txt is in front of the first group and original-notes.txt of the second.
         const harness = await workspaceHarness(false)
         harness.useNativeLayout({
           orientation: 0,
@@ -79,12 +952,27 @@ for (const boundary of [
         const chat = harness.addSeparateEditorPart()
         const primary = harness.focusMutableDraft('primary-notes.txt', 1),
           original = harness.focusMutableDraft('original-notes.txt', 2)
+        chat.focus()
+        // The reader's own focus receipts, as RepositoryReader.open hands them over: a refusal they show as the learner's change leaves the keyboard where the learner has it.
+        const receipts: ReturnType<typeof harness.retainRepositoryFocus>[] = []
+        const focus = {
+          begin(): void {},
+          retainCurrentFocus(
+            acquire?: Parameters<typeof harness.retainRepositoryFocus>[0],
+          ) {
+            const receipt = harness.retainRepositoryFocus(acquire)
+            receipts.push(receipt)
+            return receipt
+          },
+        }
         const firstRead =
           boundary === 'primary focus response'
             ? harness.holdNextPrimaryFocusResponse()
             : harness.holdNextCommand('vscode.getEditorLayout')
         const opening = harness.reader.arrangeRepository(
           new AbortController().signal,
+          undefined,
+          focus,
         )
         void opening.catch(() => undefined)
         let releaseMeasured = (): void => {}
@@ -121,13 +1009,14 @@ for (const boundary of [
             await opening
             assert.equal(
               harness.focusedSource()?.document.uri.toString(),
-              original.document.uri.toString(),
+              primary.document.uri.toString(),
             )
           } else {
-            await assert.rejects(
-              opening,
-              /primary editor.*changed during scope measurement/i,
-            )
+            // The reader's receipt sees the learner's newer selection or edit first, as in RepositoryReader.open.
+            await assert.rejects(opening, {
+              message:
+                'Native focus changed during repository navigation; the newer learner focus was preserved.',
+            })
             assert.equal(
               harness.focusedSource()?.document.uri.toString(),
               primary.document.uri.toString(),
@@ -157,78 +1046,11 @@ for (const boundary of [
           firstRead.release()
           releaseMeasured()
           await opening.catch(() => undefined)
+          for (const receipt of receipts) receipt.dispose()
           await harness.close()
         }
       },
     )
-
-for (const interaction of ['selection', 'other focus', 'none'] as const)
-  test(`cold Wiki focus restoration ${interaction === 'none' ? 'keeps the unchanged learner reading position' : `preserves newer ${interaction} before its response arrives`}`, async () => {
-    // Arrange
-    const harness = await workspaceHarness(false)
-    harness.useNativeLayout({
-      orientation: 0,
-      groups: [{ size: 490 }, { size: 490 }],
-    })
-    const chat = harness.addSeparateEditorPart()
-    const primary = harness.focusMutableDraft('primary-notes.txt', 1),
-      original = harness.focusMutableDraft('original-notes.txt', 2)
-    harness.retainReadingRange(84, 96)
-    let restored: Pick<typeof original.editor, 'selections'> | undefined
-    harness.changeAfterNextSourceDisplay((editor) => {
-      restored = editor
-      // Native display is already applied; learner input can precede the extension-host response and later selection RPC.
-      if (interaction === 'selection') {
-        editor.selections = [
-          {
-            anchor: editor.selections[0]!.active.with(99, 0),
-            active: editor.selections[0]!.active.with(99, 0),
-          },
-        ]
-        original.editor.selections = editor.selections
-        harness.retainReadingRange(98, 110)
-      }
-      if (interaction === 'other focus') primary.focus()
-    })
-    try {
-      // Act
-      const opening = harness.reader.arrangeRepository(
-        new AbortController().signal,
-      )
-      if (interaction === 'none') await opening
-      else
-        await assert.rejects(
-          opening,
-          /focus or selection changed while.*restored/i,
-        )
-
-      // Assert
-      assert.equal(
-        harness.focusedSource()?.document.uri.toString(),
-        interaction === 'other focus'
-          ? primary.document.uri.toString()
-          : original.document.uri.toString(),
-      )
-      assert.equal(
-        restored?.selections[0]!.active.line,
-        interaction === 'selection' ? 99 : 22,
-      )
-      assert.equal(
-        harness.isReadingLineVisible(interaction === 'selection' ? 104 : 90),
-        true,
-      )
-      assert.equal(original.document.getText(), 'Original learner draft.\n')
-      assert.equal(original.tab.isDirty, true)
-      assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
-      assert.deepEqual(chat.layout(), {
-        orientation: 1,
-        groups: [{ size: 743 }],
-      })
-      assert.equal(harness.runtimes.length, 0)
-    } finally {
-      await harness.close()
-    }
-  })
 
 test('first Study entry reserves all three main panes when a separate chat part already occupies a global column', async () => {
   // Arrange
@@ -405,7 +1227,7 @@ test('an Open Study waiting for an abandoned first entry is refused when a prese
     await new Promise<void>((resolve) => setImmediate(resolve))
 
     // Act: a presentation change starts while the second entry waits, then the abandoned entry finishes.
-    harness.reader['returningCurrent'] = true
+    harness.reader['returningCurrent'] = 'learner'
     entry.release()
     const outcome = await second
 
@@ -413,7 +1235,7 @@ test('an Open Study waiting for an abandoned first entry is refused when a prese
     assert.ok(outcome instanceof Error && 'code' in outcome)
     assert.equal(outcome.code, 'PRESENTATION_UNAVAILABLE')
   } finally {
-    harness.reader['returningCurrent'] = false
+    harness.reader['returningCurrent'] = undefined
     entry.release()
     await Promise.allSettled([first, second])
     await harness.close()
@@ -1939,10 +2761,14 @@ test('a live entry from the Study layout arranges the application above the sour
 })
 
 for (const besideChat of [false, true])
-  // Value: protects=a live entry measuring the editor grid only after the editor closed the retired Study pane's tab, and still measuring again after the focus hand-over a measurement beside another editor part needs; fails_when=the grid is measured before the wait for that tab and once more after it, which costs one layout read (and beside the chat one more focus hand-over) for a grid the entry then discards; why_new=Cycle 0045 SP-5 with PC-3.8 (`arrange` measured, waited for the retired tab, then measured again); seam=workspace harness closing a disposed panel's tab a moment later, its command log
-  test(`a live entry that waits for the retired Study pane's tab measures the editor grid once, after the tab closed${besideChat ? ', and beside a chat that has the keyboard once more after the one focus hand-over' : ''}`, async () => {
-    // Arrange
+  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read; why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; seam=passthrough native-command and arrange observers
+  test(`live entry waits for retired Study tabs before measurement and measures its final arrangement once${besideChat ? ', returning the keyboard to chat' : ''}`, async () => {
+    // Arrange: native tab retirement is delayed, and App preparation has its own separate measurements.
     const harness = await workspaceHarness()
+    const executeCommand = harness.editor.commands.executeCommand,
+      arrange = harness.reader['arrange'],
+      readsWithRetiredTab: boolean[] = [],
+      arrangements: string[][] = []
     try {
       harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
       const chat = besideChat ? harness.addSeparateEditorPart() : undefined
@@ -1955,33 +2781,63 @@ for (const besideChat of [false, true])
         key: randomUUID(),
       })
       await [...harness.service.records.values()][0]!.preparation
-      chat?.focus()
+      // Name the actual chat tab so this entry owns its final focus return.
+      chat?.focusTab()
       const commandsBefore = harness.commands.length
+      // Observe actual native effects without changing their arguments, responses or timing.
+      harness.editor.commands.executeCommand = async (...args) => {
+        if (args[0] === 'vscode.getEditorLayout')
+          readsWithRetiredTab.push(
+            harness.groups.some((group) =>
+              group.tabs.some(
+                (tab) =>
+                  tab.input instanceof harness.editor.TabInputWebview &&
+                  tab.input.viewType === 'codebook.studyContext',
+              ),
+            ),
+          )
+        return executeCommand.call(harness.editor.commands, ...args)
+      }
+      harness.reader['arrange'] = async (...args): Promise<void> => {
+        const start = harness.commands.length
+        try {
+          await arrange.apply(harness.reader, args)
+        } finally {
+          arrangements.push(harness.commands.slice(start))
+        }
+      }
 
       // Act
       await harness.reader.open()
 
-      // Assert: the commands of the entry up to the grid it applied.
-      const entry = harness.commands.slice(commandsBefore),
-        untilApplied = entry.slice(0, entry.indexOf('runCommands'))
+      // Assert: preparation owns its extra reads; the final arrangement measures only once after retirement.
       assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
       assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
       assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+      assert.equal(readsWithRetiredTab.length > 0, true)
+      assert.equal(readsWithRetiredTab.includes(true), false)
       assert.deepEqual(
-        untilApplied.filter(
-          (command) =>
-            command === 'vscode.getEditorLayout' ||
-            command === 'workbench.action.focusFirstEditorGroup',
-        ),
-        besideChat
-          ? [
-              'vscode.getEditorLayout',
-              'workbench.action.focusFirstEditorGroup',
-              'vscode.getEditorLayout',
-            ]
-          : ['vscode.getEditorLayout'],
+        arrangements.map((commands) => {
+          const batch = commands.indexOf('runCommands')
+          assert.notEqual(batch, -1)
+          return commands
+            .slice(0, batch)
+            .filter((command) => command === 'vscode.getEditorLayout').length
+        }),
+        [1],
       )
+      if (chat) {
+        assert.equal(chat.focused(), true)
+        assert.deepEqual(
+          harness.commands
+            .slice(commandsBefore)
+            .filter((command) => command === 'composer.focusComposer'),
+          ['composer.focusComposer'],
+        )
+      }
     } finally {
+      harness.editor.commands.executeCommand = executeCommand
+      harness.reader['arrange'] = arrange
       await harness.close()
     }
   })
@@ -2033,6 +2889,8 @@ test('a live entry in Cursor stays confirmed when the editor rebuilds the source
 test("a live entry from the three-pane Study layout stays confirmed when the context pane's group closes and the editor replaces every group object", async () => {
   // Arrange: as the editor API reported it in Cursor before the start: a selection made with the learner's file focused arranged the three panes, the Application pane shares the first group with that file, the captured source is in the second, the Study pane in the third and the Agent chat's group is the fourth.
   const harness = await workspaceHarness()
+  // The test enters the run with its own refresh: a tick of the reader's timer just before it would enter the run first, and the assertions would read a layout that is still being arranged.
+  readerSeams(harness).stopOwnTimer()
   harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
   harness.groups.at(-1)!.tabs = []
   harness.groups.at(-1)!.activeTab = undefined
@@ -2078,10 +2936,19 @@ test("a live entry from the three-pane Study layout stays confirmed when the con
     assert.equal(ready.panes.sourceColumn, 2)
     assert.equal(ready.panes.contextColumn, undefined)
     assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
-    // The context pane's group is gone, and the chat keeps its tab in the group behind the two panes.
+    assert.equal(harness.groups.length, 4)
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 2)!
+        .tabs.includes(learnerFile.tab),
+      true,
+    )
+    assert.equal(learnerFile.document.getText(), 'Original learner draft.\n')
+    assert.equal(learnerFile.tab.isDirty, true)
+    // Only the created Context group retires; the dedicated App and both original main groups remain before chat.
     assert.equal(
       harness.groups.find((group) => group.tabs.includes(chat.tab))?.viewColumn,
-      3,
+      4,
     )
   } finally {
     await harness.close()

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
+import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
+import { launchDevelopmentServer } from '../utils/launchDevelopmentServer'
 import type * as ServerModule from '../utils/launchDevelopmentServer'
 
 test('development readiness waits for a complete port across process output chunks', async () => {
@@ -561,4 +564,67 @@ test('an application whose root page fails is not ready when the root is its ent
 
   // Assert
   await assert.rejects(ready, /Application root failed: 500/)
+})
+
+// Value: protects=a second real development run after Stop; fails_when=Next's 100ms parent grace kills its still-cleaning worker and leaves .next/dev/lock, although Codebook reports resources released; why_new=Cycle0046 row376, native Cursor407/411; seam=real parent/worker processes and the product launch/close/prerequisite APIs.
+test('a stopped development server lets its worker release the build lock before another run checks the workspace', async (context) => {
+  // Arrange: the Next-shaped parent has its actual default100ms child cutoff; the worker needs250ms to release its native lock after TERM.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-next-shutdown-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const nextDirectory = join(directory, 'node_modules/next/dist/bin')
+  await mkdir(nextDirectory, { recursive: true })
+  await writeFile(
+    join(nextDirectory, 'next'),
+    String.raw`
+const { spawn } = require('node:child_process');
+const path = require('node:path');
+const worker = spawn(process.execPath, [path.join(__dirname, 'worker.cjs')], { stdio: ['ignore', 'inherit', 'inherit'] });
+let stopping = false;
+const stop = () => {
+  if (stopping) return;
+  stopping = true;
+  worker.kill('SIGTERM');
+  const cutoff = setTimeout(() => worker.kill('SIGKILL'), Number(process.env.NEXT_EXIT_TIMEOUT_MS || '100'));
+  worker.once('exit', () => { clearTimeout(cutoff); process.exit(0); });
+};
+process.on('SIGTERM', stop);
+process.on('SIGINT', stop);
+process.on('exit', () => worker.kill('SIGKILL'));
+`,
+  )
+  await writeFile(
+    join(nextDirectory, 'worker.cjs'),
+    String.raw`
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+const lock = path.join(process.cwd(), '.next/dev/lock');
+fs.mkdirSync(path.dirname(lock), { recursive: true });
+fs.writeFileSync(lock, '');
+const server = http.createServer((request, response) => { response.writeHead(200); response.end('ready'); });
+server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:' + server.address().port));
+let stopping = false;
+process.on('SIGTERM', () => {
+  if (stopping) return;
+  stopping = true;
+  server.close();
+  setTimeout(() => { fs.unlinkSync(lock); process.exit(0); }, 250);
+});
+`,
+  )
+  const server = launchDevelopmentServer(directory, process.execPath, () => {})
+  context.after(() => server.close())
+  await server.ready(new AbortController().signal, '/login')
+  assert.equal((await stat(join(directory, '.next/dev/lock'))).isFile(), true)
+
+  // Act: the product signals its owned group and waits for all workers and the listener.
+  await server.close()
+
+  // Assert: the next ordinary prerequisite check succeeds without deleting or reusing a foreign lock.
+  await assert.doesNotReject(
+    assertDevelopmentWorkspace(directory, new AbortController().signal),
+  )
+  await assert.rejects(stat(join(directory, '.next/dev/lock')), {
+    code: 'ENOENT',
+  })
 })
