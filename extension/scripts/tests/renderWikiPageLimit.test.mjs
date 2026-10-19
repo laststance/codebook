@@ -12,12 +12,30 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { WIKI_PAGE_FILE_LIMIT_BYTES } from '../../dist/constants.js'
 import {
   prepareWikiStage,
   publishWiki,
 } from '../../skills/codebook/publish-wiki.mjs'
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
+
+/**
+ * Reads the reader's page file limit from the extension's constants source, not from `dist`: the package lane rebuilds `dist` while its tests run, so a script test that imports it fails at random (Cycle 0046 row 1160, Cycle 0047 row 105).
+ * Called once by the tests of the renderer's page size limit, which hold the renderer's own number equal to it.
+ * @returns `WIKI_PAGE_FILE_LIMIT_BYTES` as `extension/src/constants.ts` writes it, or `NaN` when the file no longer writes it as one number.
+ * @example await readerPageFileLimit() // => 2097152
+ */
+async function readerPageFileLimit() {
+  const constants = await readFile(
+    new URL('../../src/constants.ts', import.meta.url),
+    'utf8',
+  )
+  const written = /^export const WIKI_PAGE_FILE_LIMIT_BYTES = ([\d_]+)$/m.exec(
+    constants,
+  )?.[1]
+  return Number(written?.replaceAll('_', '') ?? Number.NaN)
+}
+
+const WIKI_PAGE_FILE_LIMIT_BYTES = await readerPageFileLimit()
 
 /**
  * Writes the one source of a test project and answers the Wiki manifest of one overview page whose article is a heading and a paragraph of the given number of letters `a`; each letter is one byte of the rendered page.
@@ -73,7 +91,7 @@ async function lettersForPageOf(root, pageBytes) {
   return pageBytes - bytesAroundTheLetters
 }
 
-// Value: protects=every learner whose Wiki the agent publishes with a long page: the reader refuses a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES for good, with a sentence that blames a hand edit, and Update renders the page the same again, so the page could never be read; fails_when=the renderer accepts a page larger than the reader opens, or its limit differs from the reader's (WIKI_PAGE_FILE_LIMIT_BYTES of the built extension, which a skill script cannot import), so a page the reader would show is refused or one it refuses is published; why_new=Cycle 0047 row 78 (ADV-6 = RT-2); seam=none (the built constants and the real renderer); no_claim=the reader's own refusal of a larger file (deepWikiReader.test.ts)
+// Value: protects=every learner whose Wiki the agent publishes with a long page: the reader refuses a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES for good, with a sentence that blames a hand edit, and Update renders the page the same again, so the page could never be read; fails_when=the renderer accepts a page larger than the reader opens, or its limit differs from the reader's (WIKI_PAGE_FILE_LIMIT_BYTES of the extension's constants, which a skill script cannot import), so a page the reader would show is refused or one it refuses is published; why_new=Cycle 0047 row 78 (ADV-6 = RT-2); seam=none (the constants source and the real renderer); no_claim=the reader's own refusal of a larger file (deepWikiReader.test.ts)
 test('a page that renders to exactly the reader’s page file limit is rendered, and one byte more is refused with a sentence that tells the agent to split the page', async () => {
   // Arrange: an overview sized to render to the reader's limit, and the same overview one letter longer.
   const root = await realpath(
