@@ -13700,8 +13700,8 @@ for (const { names, rewrite } of [
 
 // Cycle 0047, second /ship, fixing cycle 1, fixer P1: the publisher's write protocol (rows 172 to 178).
 
-/** The swaps of `swappedFolderFileSystem.mjs` before a move, which the tests below arm on the copy of the publisher marked `?swapped-folder`. The module is the one the static import above loads, so its swaps are shared. */
-const { swapBeforeRenaming } =
+/** The swaps of `swappedFolderFileSystem.mjs` before a move and halfway through a write, which the tests below arm on the copy of the publisher marked `?swapped-folder`. The module is the one the static import above loads, so its swaps are shared. */
+const { swapBeforeRenaming, swapHalfwayThroughWriting } =
   await import('./utils/swappedFolderFileSystem.mjs')
 
 // Value: protects=the learner who follows the refusal of a publish whose status read of a file it made beside its journal failed; fails_when=the publish removes the file beside the journal in every case after the refusal said it was kept, so the learner looks for a file that is gone, which may be another process's; why_new=Cycle 0047 row 177 (S2OCR1a-1); seam=a copy of the shipped publisher whose `node:fs/promises` fails the status read of that file with EIO (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=the same failure for a recovery's claim, which is written the same way
@@ -13890,5 +13890,102 @@ test('a recovery that puts a stopped publish’s candidate back keeps the copy o
       async () => undefined,
     )
     await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a publish or a recovery that has just created its journal on a file share whose clock lags this computer's (a file server, or the Windows host under a WSL2 window after a sleep), and is about to write it; fails_when=the recovery ages a journal without a byte by this computer's clock against the time the file system stamped on it, so the journal looks older than the grace and is removed while its writer still writes; why_new=Cycle 0047 row 173 (S2CXA-A2 = S2CLA-3); seam=this computer's clock set a minute ahead (`Date.now`), which is how a file system clock that lags it by a minute looks to the recovery; no_claim=a real file server
+test('a --recover beside a journal without a byte just written on a file system whose clock lags this computer’s by a minute is refused as one that may still be written, and keeps it', async () => {
+  // Arrange: a journal without a byte, written now; this computer's clock runs a minute ahead of the file system's.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-lagging-clock-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    journal = `${output}.publish-journal.json`
+  const thisComputersClock = Date.now
+  try {
+    await mkdir(dirname(output), { recursive: true })
+    await writeFile(journal, '')
+    Date.now = () => thisComputersClock() + 60_000
+
+    // Act
+    const refusal = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+    Date.now = thisComputersClock
+
+    // Assert
+    assert.deepEqual(
+      { refusal, journal: existsSync(journal) ? 'a journal' : 'no journal' },
+      {
+        refusal:
+          'The Wiki publication journal is empty, and the step that created it may be writing it now. Nothing was moved. Run --recover again once that process exits.',
+        journal: 'a journal',
+      },
+    )
+  } finally {
+    Date.now = thisComputersClock
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's Wiki after a step was stopped between the exclusive create of its journal and the write of it, when another process cleans the folder beside the Wiki while the recovery reads the file system's clock; fails_when=the recovery reads the time of the file it creates to read that clock by its path, which another process's cleanup may have removed by then, so the journal is never aged and stays refused for good; why_new=Cycle 0047 row 173 (S2CXA-A2 = S2CLA-3: the probe's time is read through the handle that created it); seam=a copy of the shipped publisher whose `node:fs/promises` removes that file halfway through its write (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=which process removes it
+test('a --recover beside a journal without a byte that has stood a minute ends it by the file system’s clock, also when another process removes the file it reads that clock from right after its create', async () => {
+  // Arrange: a journal without a byte, last changed a minute ago; the file the recovery reads the file system's clock from is removed as soon as it is made.
+  const { recoverWikiPublication: recoverWhoseClockFileIsRemoved } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-clock-file-removed-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    journal = `${output}.publish-journal.json`
+  let clockFile
+  try {
+    await mkdir(dirname(output), { recursive: true })
+    await writeFile(journal, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+    swapHalfwayThroughWriting(
+      (path) => {
+        if (!basename(path).startsWith('wiki.publish-journal.json.clock-'))
+          return false
+        clockFile = path
+        return true
+      },
+      () => rm(clockFile),
+    )
+
+    // Act
+    const recovery = await recoverWhoseClockFileIsRemoved({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      (result) => result,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recovery,
+        clockFileRemovedByAnother:
+          clockFile !== undefined && !existsSync(clockFile),
+        besideTheWiki: await readdir(dirname(output)),
+      },
+      {
+        recovery: { status: 'unwritten-journal-removed', output },
+        clockFileRemovedByAnother: true,
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    swapHalfwayThroughWriting(
+      () => false,
+      async () => undefined,
+    )
+    await rm(root, { recursive: true, force: true })
   }
 })

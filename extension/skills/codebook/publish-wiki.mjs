@@ -389,7 +389,7 @@ async function writeOwnFile(path, bytes) {
 /** The refusal of a write whose status read failed right after its exclusive open made the file ({@link writeOwnFile}): it names the file, which it kept, and the failure. Called by {@link writeOwnFile}. @example unreadStatusRefusalOf('/repo/.codebook/next/manual.txt', eioError) // => 'The publisher made /repo/.codebook/next/manual.txt but could not read its status: EIO: i/o error. The file there may be another one now, so it was kept. …' */
 const unreadStatusRefusalOf = (path, failure) => 'The publisher made ' + path + ' but could not read its status: ' + failure.message + '. The file there may be another one now, so it was kept. Delete it if it holds nothing of yours, then try again.';
 
-/** Removes a file the publisher made and no longer needs: the file a failed {@link writeOwnFile} made, which holds part of the bytes at most, and the file beside a journal or a claim that {@link writeWholeRecord} gave the record's name. The path may lead to another file by now, so it is removed only while it is that file, by its device and file id ({@link isSameFileAt}), and no byte of another file is lost. Called by {@link writeOwnFile} once the write or the close failed, and by {@link writeWholeRecord} once the record has its name or its write failed. @param file - The record of the file the open made. @example await removeOwnFile({ path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131074n }) */
+/** Removes a file the publisher made and no longer needs: the file a failed {@link writeOwnFile} made, which holds part of the bytes at most, the file beside a journal or a claim that {@link writeWholeRecord} gave the record's name, and the file a recovery read the file system's clock from. The path may lead to another file by now, so it is removed only while it is that file, by its device and file id ({@link isSameFileAt}), and no byte of another file is lost. Called by {@link writeOwnFile} once the write or the close failed, by {@link writeWholeRecord} once the record has its name or its write failed, and by {@link fileSystemTimeBeside} for the file it read the file system's clock from. @param file - The record of the file the open made. @example await removeOwnFile({ path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131074n }) */
 async function removeOwnFile(file) {
   if (await isSameFileAt(file)) await unlink(file.path).catch(() => undefined);
 }
@@ -1295,11 +1295,30 @@ export async function recoverWikiPublication({ projectRoot, outputDirectory, sta
   return result ?? recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, system });
 }
 
-/** How long a journal or a recovery claim without a byte must have stood unchanged before a recovery takes it for one whose writer stopped between the exclusive create and the write ({@link hasStoodUnwritten}): a step that runs is between the two for an instant only. The grace the extension gives a storage lock left empty. Read by {@link hasStoodUnwritten}. */
+/** How long a journal or a recovery claim without a byte must have stood unchanged, by the clock of the file system that holds it, before a recovery takes it for one whose writer stopped between the exclusive create and the write ({@link hasStoodUnwritten}): a step that runs is between the two for the time of one small write only. The grace the extension gives a storage lock left empty. Read by {@link hasStoodUnwritten}. */
 const UNWRITTEN_RECORD_GRACE_MS = 10_000;
+/** How many nanoseconds a millisecond holds, for the file times read as bigints. Read by {@link hasStoodUnwritten}. */
+const NS_PER_MS = 1_000_000n;
+/** What the publisher writes into the file beside a record that it reads the file system's clock from ({@link fileSystemTimeBeside}): one line break, so the file system stamps a write on it. */
+const CLOCK_FILE_BYTES = '\n';
 
-/** Whether a journal or a recovery claim without a byte has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS}, by its last change: a younger one may belong to a step that is writing it now. Called by {@link endUnwrittenJournal} and {@link endUnwrittenClaim}. @example await hasStoodUnwritten('/repo/.codebook/wiki.publish-journal.json') // => true a minute after an earlier version was stopped between creating and writing it */
-const hasStoodUnwritten = async path => Date.now() - (await lstat(path)).mtimeMs > UNWRITTEN_RECORD_GRACE_MS;
+/** Whether a journal or a recovery claim without a byte has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS}, by its last change and by the clock of the file system that stamped it ({@link fileSystemTimeBeside}), never by this computer's: a file server, or the Windows host under a WSL2 window, stamps by its own clock, which this computer's may run minutes ahead of, so a record just created would look old. A younger one may belong to a step that is writing it now, and so may one whose file system's clock cannot be read. Called by {@link endUnwrittenJournal} and {@link endUnwrittenClaim}. @example await hasStoodUnwritten('/repo/.codebook/wiki.publish-journal.json') // => true a minute after an earlier version was stopped between creating and writing it */
+const hasStoodUnwritten = async path => {
+  const changed = (await lstat(path, { bigint: true })).mtimeNs, now = await fileSystemTimeBeside(path);
+  return now !== undefined && now - changed > BigInt(UNWRITTEN_RECORD_GRACE_MS) * NS_PER_MS;
+};
+
+/** The present by the clock of the file system that holds a record: the time it stamps on a file the publisher creates beside the record (`<record>.clock-<uuid>`) and writes ({@link CLOCK_FILE_BYTES}), read through the handle that created it, so another process's cleanup that removes the file right after its create cannot take the time away; the file is removed afterwards while it is still the one created ({@link removeOwnFile}). Called by {@link hasStoodUnwritten}. @returns The time in nanoseconds since the epoch, as a bigint; undefined when the file cannot be created, written or looked at, which counts as a record that may still be written. @example await fileSystemTimeBeside('/repo/.codebook/wiki.publish-journal.json') // => 1790000000123456789n */
+async function fileSystemTimeBeside(path) {
+  const clockFile = path + '.clock-' + randomUUID(), handle = await open(clockFile, 'wx').catch(() => undefined);
+  if (handle === undefined) return undefined;
+  const isWritten = await handle.writeFile(CLOCK_FILE_BYTES).then(() => true, () => false);
+  const status = await handle.stat({ bigint: true }).catch(() => undefined);
+  await handle.close().catch(() => undefined);
+  // Without its status the file cannot be told from one another process put at its name since: it is kept.
+  if (status !== undefined) await removeOwnFile({ path: clockFile, dev: status.dev, ino: status.ino });
+  return isWritten && status !== undefined ? status.mtimeNs : undefined;
+}
 
 /** The refusal of a journal without a byte changed within {@link UNWRITTEN_RECORD_GRACE_MS}, whose step may be writing it now. Read by {@link endUnwrittenJournal}. */
 const UNWRITTEN_JOURNAL_REFUSAL = 'The Wiki publication journal is empty, and the step that created it may be writing it now. Nothing was moved. Run --recover again once that process exits.';
