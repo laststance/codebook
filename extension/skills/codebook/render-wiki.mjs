@@ -6,7 +6,7 @@ import { contentIdsOf, escapeHtml, renderWikiDiagrams, scriptingClauseOf, unbala
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
 const MAX_SOURCE_QUOTE_LINES = 40;
-/** The largest page file the Codebook reader opens, in bytes (2 MiB): the extension's `WIKI_PAGE_FILE_LIMIT_BYTES`, which a test holds equal to this number, since a skill script imports nothing of the extension. The reader refuses a larger page file for good, and an update would render the same page again, so {@link renderWikiPages} refuses such a page before anything is written. */
+/** The largest page file the Codebook reader opens, in bytes (2 MiB): the extension's `WIKI_PAGE_FILE_LIMIT_BYTES`, which a test holds equal to this number, since a skill script imports nothing of the extension. The reader refuses a larger page file for good, and an update would render the same page again, so {@link renderWikiPages} refuses such a page before anything is written, counted as the page can stand on disk ({@link requireReadablePage}). */
 const PAGE_FILE_LIMIT_BYTES = 2_097_152;
 /** The ids the reader's own page scripts give an element of a served page, beside the ids the shell's template carries: the description of the rail entry's link, its file and line as written (the publisher prints it; the reader adds it to a site published without one), the region of the update status, and the heading and the tooltip of the keyboard help. A page's own content must not carry one of them a second time, so {@link contentIdRenames} gives such a content id another name. */
 const READER_ELEMENT_IDS = ['codebook-open-target', 'codebook-update-status', 'shortcut-title', 'shortcut-tooltip'];
@@ -106,10 +106,10 @@ const shellScriptHashOf = template => {
   return `'sha256-${createHash('sha256').update(scripts[0]).digest('base64')}'`;
 };
 
-/** Answers a rendered page the Codebook reader can open, so that a page it would refuse for good is refused here, by its bytes as written (UTF-8), and the agent splits it instead of publishing a page nobody can read; called by {@link renderWikiPages} for each page, before anything is written. @throws When the page has more than {@link PAGE_FILE_LIMIT_BYTES} bytes. @example requireReadablePage('index.html', '<!doctype html>…') // => '<!doctype html>…' */
+/** Answers a rendered page the Codebook reader can open, so that a page it would refuse for good is refused here and the agent splits it instead of publishing a page nobody can read; called by {@link renderWikiPages} for each page, before anything is written. The page is counted as it can stand on disk, where the reader looks at its size: its bytes as written (UTF-8) and one byte more for each line end that no CR precedes, as a checkout with CRLF line ends (Git's `core.autocrlf` on Windows) writes each such LF as CRLF, so a committed Wiki cloned there grows by that much. @throws When the page has more than {@link PAGE_FILE_LIMIT_BYTES} bytes so counted. @example requireReadablePage('index.html', '<!doctype html>…') // => '<!doctype html>…' */
 function requireReadablePage(path, pageHtml) {
-  const pageBytes = Buffer.byteLength(pageHtml, 'utf8');
-  if (pageBytes > PAGE_FILE_LIMIT_BYTES) throw new Error(`Wiki page ${path} renders to ${pageBytes} bytes, more than the ${PAGE_FILE_LIMIT_BYTES} bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.`);
+  const pageBytes = Buffer.byteLength(pageHtml, 'utf8') + (pageHtml.match(/(?<!\r)\n/g)?.length ?? 0);
+  if (pageBytes > PAGE_FILE_LIMIT_BYTES) throw new Error(`Wiki page ${path} renders to ${pageBytes} bytes with CRLF line ends, as a Windows checkout may hold it, more than the ${PAGE_FILE_LIMIT_BYTES} bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.`);
   return pageHtml;
 }
 

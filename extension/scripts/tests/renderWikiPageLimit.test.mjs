@@ -74,26 +74,39 @@ async function overviewOfLetters(root, letterCount) {
 }
 
 /**
- * Tells how many letters the overview's paragraph must hold for its rendered page to have the given number of bytes: the bytes of the page around the paragraph are measured once, from a page of one letter.
- * @param root - The project folder.
- * @param pageBytes - The size the rendered page is to have.
- * @returns The number of letters.
- * @example await lettersForPageOf(root, 2_097_152) // => 2,097,152 less the bytes of the page around the paragraph (its shell, navigation and source links)
+ * Writes a page as a checkout with CRLF line ends holds it: Git's `core.autocrlf` on Windows writes each LF that no CR precedes as CRLF.
+ * Called by the tests of the renderer's page size limit, which measure a page as it can stand on disk, where the reader looks at its size.
+ * @param page - The page as the renderer wrote it.
+ * @returns The page with CRLF line ends.
+ * @example withCrlfLineEnds('<p>\n</p>') // => '<p>\r\n</p>'
  */
-async function lettersForPageOf(root, pageBytes) {
+function withCrlfLineEnds(page) {
+  return page.replace(/(?<!\r)\n/g, '\r\n')
+}
+
+/**
+ * Tells how many letters the overview's paragraph must hold for its rendered page to have the given number of bytes, with LF line ends as the renderer writes it or with the CRLF line ends of a Windows checkout: the bytes of the page around the paragraph are measured once, from a page of one letter.
+ * @param root - The project folder.
+ * @param pageBytes - The size the page is to have.
+ * @param lineEnds - `crlf` to measure the page as a Windows checkout holds it, `lf` as the renderer writes it.
+ * @returns The number of letters.
+ * @example await lettersForPageOf(root, 2_097_152, 'crlf') // => 2,097,152 less the bytes of the page around the paragraph (its shell, navigation and source links) with CRLF line ends
+ */
+async function lettersForPageOf(root, pageBytes, lineEnds) {
   const output = join(root, '.codebook/wiki')
   const pages = await renderWikiPages(await overviewOfLetters(root, 1), {
     projectRoot: root,
     outputDirectory: output,
   })
+  const page = pages.get('index.html') ?? ''
   const bytesAroundTheLetters =
-    Buffer.byteLength(pages.get('index.html') ?? '', 'utf8') - 1
+    Buffer.byteLength(lineEnds === 'crlf' ? withCrlfLineEnds(page) : page) - 1
   return pageBytes - bytesAroundTheLetters
 }
 
-// Value: protects=every learner whose Wiki the agent publishes with a long page: the reader refuses a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES for good, with a sentence that blames a hand edit, and Update renders the page the same again, so the page could never be read; fails_when=the renderer accepts a page larger than the reader opens, or its limit differs from the reader's (WIKI_PAGE_FILE_LIMIT_BYTES of the extension's constants, which a skill script cannot import), so a page the reader would show is refused or one it refuses is published; why_new=Cycle 0047 row 78 (ADV-6 = RT-2); seam=none (the constants source and the real renderer); no_claim=the reader's own refusal of a larger file (deepWikiReader.test.ts)
-test('a page that renders to exactly the reader’s page file limit is rendered, and one byte more is refused with a sentence that tells the agent to split the page', async () => {
-  // Arrange: an overview sized to render to the reader's limit, and the same overview one letter longer.
+// Value: protects=every learner whose Wiki the agent publishes with a long page: the reader refuses a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES for good, with a sentence that blames a hand edit, and Update renders the page the same again, so the page could never be read; fails_when=the renderer accepts a page larger than the reader opens, or its limit differs from the reader's (WIKI_PAGE_FILE_LIMIT_BYTES of the extension's constants, which a skill script cannot import), so a page the reader would show is refused or one it refuses is published; why_new=Cycle 0047 row 78 (ADV-6 = RT-2); Cycle 0047 row 233 (P2CLA-11): the page is measured as a Windows checkout with CRLF line ends holds it; seam=none (the constants source and the real renderer); no_claim=the reader's own refusal of a larger file (deepWikiReader.test.ts)
+test('a page that takes exactly the reader’s page file limit with the CRLF line ends of a Windows checkout is rendered, and one byte more is refused with a sentence that tells the agent to split the page', async () => {
+  // Arrange: an overview sized to take the reader's limit with CRLF line ends, and the same overview one letter longer.
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-render-page-limit-')),
   )
@@ -102,6 +115,7 @@ test('a page that renders to exactly the reader’s page file limit is rendered,
     const lettersAtTheLimit = await lettersForPageOf(
       root,
       WIKI_PAGE_FILE_LIMIT_BYTES,
+      'crlf',
     )
 
     // Act
@@ -120,17 +134,50 @@ test('a page that renders to exactly the reader’s page file limit is rendered,
     // Assert
     assert.deepEqual(
       {
-        renderedBytesAtTheLimit: Buffer.byteLength(
-          atTheLimit.get('index.html') ?? '',
+        bytesWithCrlfAtTheLimit: Buffer.byteLength(
+          withCrlfLineEnds(atTheLimit.get('index.html') ?? ''),
           'utf8',
         ),
         overTheLimit,
       },
       {
-        renderedBytesAtTheLimit: 2_097_152,
+        bytesWithCrlfAtTheLimit: 2_097_152,
         overTheLimit:
-          'Wiki page index.html renders to 2097153 bytes, more than the 2097152 bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.',
+          'Wiki page index.html renders to 2097153 bytes with CRLF line ends, as a Windows checkout may hold it, more than the 2097152 bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.',
       },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a learner on Windows who clones a repository that carries a committed Wiki: Git's core.autocrlf writes each line end of a page as CRLF, so a page the renderer accepted by its bytes with LF line ends grew past the reader's limit on disk and was refused for good, with a sentence that blames a hand edit; fails_when=the renderer counts a page's bytes with LF line ends only, so a page within the limit with LF and over it with CRLF is published; why_new=Cycle 0047 row 233 (P2CLA-11); seam=none (the constants source and the real renderer); no_claim=Git's own conversion (the test writes each LF as CRLF as core.autocrlf does), and the reader's refusal of the grown file (deepWikiReader.test.ts)
+test('a page that renders to exactly the reader’s page file limit with LF line ends, and so takes more with the CRLF line ends of a Windows checkout, is refused with the sentence that tells the agent to split the page', async () => {
+  // Arrange: an overview sized to render to the reader's limit with LF line ends.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-render-page-limit-crlf-')),
+  )
+  try {
+    const output = join(root, '.codebook/wiki')
+    const lettersAtTheLimitWithLf = await lettersForPageOf(
+      root,
+      WIKI_PAGE_FILE_LIMIT_BYTES,
+      'lf',
+    )
+
+    // Act
+    const answer = await renderWikiPages(
+      await overviewOfLetters(root, lettersAtTheLimitWithLf),
+      { projectRoot: root, outputDirectory: output },
+    ).then(
+      () => 'rendered',
+      (error) => error.message,
+    )
+
+    // Assert: the sentence names the page's size with CRLF line ends, which depends on the shell's lines, written here as SIZE.
+    assert.equal(
+      answer.replace(/^(Wiki page index\.html renders to )\d+ /, '$1SIZE '),
+      'Wiki page index.html renders to SIZE bytes with CRLF line ends, as a Windows checkout may hold it, more than the 2097152 bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.',
     )
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -150,7 +197,7 @@ test('the preview and the publish of a candidate whose page renders larger than 
       outputDirectory: output,
     })
     const lettersOverTheLimit =
-      (await lettersForPageOf(root, WIKI_PAGE_FILE_LIMIT_BYTES)) + 1
+      (await lettersForPageOf(root, WIKI_PAGE_FILE_LIMIT_BYTES, 'crlf')) + 1
     await writeFile(
       join(stage, 'codebook-wiki.json'),
       JSON.stringify(await overviewOfLetters(root, lettersOverTheLimit)),
@@ -193,9 +240,9 @@ test('the preview and the publish of a candidate whose page renders larger than 
       },
       {
         preview:
-          'Wiki page index.html renders to 2097153 bytes, more than the 2097152 bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.',
+          'Wiki page index.html renders to 2097153 bytes with CRLF line ends, as a Windows checkout may hold it, more than the 2097152 bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.',
         publish:
-          'Wiki page index.html renders to 2097153 bytes, more than the 2097152 bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.',
+          'Wiki page index.html renders to 2097153 bytes with CRLF line ends, as a Windows checkout may hold it, more than the 2097152 bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.',
         candidateFiles: ['codebook-publication.json', 'codebook-wiki.json'],
         publishedWiki: 'ENOENT',
       },
