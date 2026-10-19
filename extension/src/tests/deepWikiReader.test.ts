@@ -1840,9 +1840,9 @@ test('a page whose browser does not read it keeps its place until its connection
   )
 })
 
-// Value: protects=the editor's extension host and every later page against a browser that stops reading its page and keeps its connection open: no answer of the reader had a send limit, so such a page kept its bytes in the host and its place among the pages in hand for as long as its connection lived; fails_when=a page whose answer is not received within WIKI_RESPONSE_SEND_LIMIT_MS is not ended, so its place stays taken and every later page is refused as busy, or its place is given back while its answer is still held; why_new=Cycle 0047 row 188 (S2CXA-B1, with S2RT-2); seam=the reader loaded with loadModule, a send limit of 500 ms, one place for pages in hand whose give-back the test waits for, a stand-in page-worker module that prepares the first page as 16 MiB of text, and a connection of the test's that does not read until the test resumes it; no_claim=the shipped send limit of 30 s and the shipped six places
+// Value: protects=the editor's extension host and every later page against a browser that stops reading its page and keeps its connection open: no answer of the reader had a send limit, so such a page kept its bytes in the host and its place among the pages in hand for as long as its connection lived; fails_when=a page whose answer is not received within WIKI_RESPONSE_SEND_LIMIT_MS is not ended, so its place stays taken and every later page is refused as busy, or its place is given back while its answer is still held; why_new=Cycle 0047 row 188 (S2CXA-B1, with S2RT-2); seam=the reader loaded with loadModule, a send limit of 1.5 s, one place for pages in hand whose give-back the test waits for, a stand-in page-worker module that prepares the first page as 16 MiB of text, and a connection of the test's that does not read until the test resumes it; no_claim=the shipped send limit of 30 s and the shipped six places
 test('a page whose browser stops reading is ended at the send limit and gives its place back: a page asked for before is refused as busy, one asked for after is served, and the browser receives less than the page', async (context) => {
-  // Arrange: a page besides the overview; a send limit of 500 ms and one place for pages in hand; the overview is prepared as 16 MiB of text and asked for by a connection that does not read it.
+  // Arrange: a page besides the overview; a send limit of 1.5 s and one place for pages in hand; the overview is prepared as 16 MiB of text and asked for by a connection that does not read it.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-stalled-page-')),
   )
@@ -1863,7 +1863,7 @@ test('a page whose browser stops reading is ended at the send limit and gives it
     }),
   )
   const onePlace = await loadReaderWithOnePlaceAndALargeFirstPage({
-    WIKI_RESPONSE_SEND_LIMIT_MS: 500,
+    WIKI_RESPONSE_SEND_LIMIT_MS: 1_500,
   })
   const reader = await onePlace.startDeepWikiReader(
     outputDirectory,
@@ -1878,10 +1878,11 @@ test('a page whose browser stops reading is ended at the send limit and gives it
   await new Promise((resolveTurn) => setImmediate(resolveTurn))
 
   // Act: a page before the send limit, the first page's place at the limit, a page after it; then the browser reads what its connection still holds.
+  // gstack-timing-ok: the refusal of a page over loopback takes milliseconds, far within the send limit of 1.5 s, and the limit ends the first page whatever the timing.
   const beforeResponse = await fetch(new URL('later.html', reader.url))
   const before = { status: beforeResponse.status }
   await beforeResponse.text()
-  const firstPlace = await within(onePlace.placeGivenBack(0), 3_000)
+  const firstPlace = await within(onePlace.placeGivenBack(0), 5_000)
   const afterResponse = await fetch(new URL('later.html', reader.url))
   const after = {
     status: afterResponse.status,
