@@ -61,6 +61,8 @@ export const CURSOR_MCP_CATALOG_LOCK_RETRIES = 20
 export const CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS = 50
 /** The bound below which a random draw lengthens each pause before the catalog's lock is asked for again, so that windows that restart together do not ask in step and several of them take the lock between two of their tries. */
 export const CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS = 100
+/** How long a staged Cursor MCP config (`~/.cursor/.codebook-<uuid>.mcp.json`) that no record names must have stood unchanged before it counts as left by a killed window and is removed; a running window, also one whose catalog has a lock of its own, holds its staged file for an instant. */
+export const CURSOR_MCP_STAGED_CONFIG_GRACE_MS = 60_000
 export const CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS = 120_000
 export const CURSOR_SKILL_RECEIPT_LIMIT_BYTES = 16_384
 /** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */

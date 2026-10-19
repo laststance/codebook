@@ -4,6 +4,7 @@ import {
   link,
   lstat,
   open,
+  readdir,
   rename,
   unlink,
   type FileHandle,
@@ -18,6 +19,7 @@ import {
   CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS,
   CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
   CURSOR_MCP_CATALOG_REFRESH_STEP_MS,
+  CURSOR_MCP_STAGED_CONFIG_GRACE_MS,
   PRIVATE_FILE_MODE,
 } from '../constants'
 
@@ -914,6 +916,86 @@ async function withCatalogLockRetry<Result>(
   }
 }
 
+/**
+ * Writes Codebook's empty config into the staged file and records it for recovery, for {@link refreshCursorMcpCatalog} right after it created the file and before it links the file into place as the config.
+ * The caller removes the staged file when this fails: no record names the file then, and nothing else would remove it.
+ * @param stagedHandle - The staged file, just created; it is closed here.
+ * @param stagedPath - The staged file's path in Cursor's settings folder, which the record names.
+ * @param targetPath - The config's path, which the receipt names.
+ * @param pendingCreationPath - The creation record ({@link recoverCreation}).
+ * @returns The receipt the published config gets, with the staged file's device and inode numbers.
+ * @throws What the write, the flush, the look at the file, its close or the record's write threw.
+ * @example const owner = await recordStagedConfig(stagedHandle, stagedPath, '/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/pending-creation.json')
+ */
+async function recordStagedConfig(
+  stagedHandle: FileHandle,
+  stagedPath: string,
+  targetPath: string,
+  pendingCreationPath: string,
+): Promise<CatalogReceipt> {
+  let staged
+  try {
+    await stagedHandle.writeFile(EMPTY_MCP_CONFIG)
+    await stagedHandle.sync()
+    staged = await stagedHandle.stat({ bigint: true })
+  } finally {
+    await stagedHandle.close()
+  }
+  const owner: CatalogReceipt = {
+    schemaVersion: 1,
+    targetPath,
+    sha256: EMPTY_MCP_CONFIG_SHA256,
+    device: recordedFileId(staged.dev),
+    inode: recordedFileId(staged.ino),
+    installed: true,
+  }
+  const pending: PendingCreation = { schemaVersion: 1, owner, stagedPath }
+  await atomicPrivateWrite(
+    pendingCreationPath,
+    pending,
+    CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
+  )
+  return owner
+}
+
+/** The name {@link refreshCursorMcpCatalog} gives Codebook's new config in Cursor's settings folder until the file is linked into place: `.codebook-<uuid>.mcp.json`, with a random UUID as {@link randomUUID} writes it. */
+const STAGED_CONFIG_NAME =
+  /^\.codebook-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mcp\.json$/
+
+/**
+ * Says whether an entry of Cursor's settings folder is a staged config that a window left when it was killed after it created the file and before it recorded it; for {@link removeLeftStagedConfigs}.
+ * The entry is looked at without following a link and is not opened: what Codebook stages is known by its name and its size, and a running window stages its file for an instant.
+ * @param cursorDirectory - Cursor's settings folder.
+ * @param name - The entry's name.
+ * @returns `true` for a regular file of Codebook's staged name ({@link STAGED_CONFIG_NAME}) that holds no more bytes than Codebook's empty config and was last changed longer ago than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS}; `false` for every other entry, for a younger file (a running window may be staging it), for a larger one (it holds more than Codebook stages) and for a path that cannot be looked at.
+ * @example await isLeftStagedConfig('/home/user/.cursor', '.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json') // => true for an empty file a killed window created two minutes ago
+ */
+async function isLeftStagedConfig(
+  cursorDirectory: string,
+  name: string,
+): Promise<boolean> {
+  if (!STAGED_CONFIG_NAME.test(name)) return false
+  const entry = await lstat(join(cursorDirectory, name)).catch(() => undefined)
+  return (
+    entry !== undefined &&
+    entry.isFile() &&
+    entry.size <= Buffer.byteLength(EMPTY_MCP_CONFIG) &&
+    Date.now() - entry.mtimeMs > CURSOR_MCP_STAGED_CONFIG_GRACE_MS
+  )
+}
+
+/**
+ * Removes the staged configs that windows left in Cursor's settings folder when they were killed after they created the file and before they recorded it, so that no such file stays there for good; called by {@link refreshCursorMcpCatalog} and {@link removeOwnedCursorMcpCatalog} under the catalog's storage lock, after {@link recoverCreation} has settled the staged file that a record names.
+ * Only a file that {@link isLeftStagedConfig} judges left goes: a window whose catalog has a storage folder and a lock of its own may be staging a file at this moment, and a file with more bytes than Codebook stages is not Codebook's. A name that cannot be removed stays for the next sweep; the sweep never fails the command.
+ * @param cursorDirectory - Cursor's settings folder, `~/.cursor`.
+ * @example await removeLeftStagedConfigs('/home/user/.cursor')
+ */
+async function removeLeftStagedConfigs(cursorDirectory: string): Promise<void> {
+  for (const name of await readdir(cursorDirectory).catch(() => []))
+    if (await isLeftStagedConfig(cursorDirectory, name))
+      await unlink(join(cursorDirectory, name)).catch(() => undefined)
+}
+
 /** Wakes Cursor's MCP catalog and returns the generation of an unchanged Codebook-owned empty file. @example await refreshCursorMcpCatalog('/private', '/home/user/.cursor') */
 export async function refreshCursorMcpCatalog(
   storageRoot: string,
@@ -936,6 +1018,7 @@ export async function refreshCursorMcpCatalog(
         cursorDirectory,
         SET_UP_AI_CHAT_COMMAND,
       )
+      await removeLeftStagedConfigs(cursorDirectory)
       await recoverRemoval(
         join(storageDirectory, 'pending-removal.json'),
         receiptPath,
@@ -964,28 +1047,19 @@ export async function refreshCursorMcpCatalog(
             fileFlags.O_RDWR,
           PRIVATE_FILE_MODE,
         )
-        let staged
+        let owner: CatalogReceipt
         try {
-          await stagedHandle.writeFile(EMPTY_MCP_CONFIG)
-          await stagedHandle.sync()
-          staged = await stagedHandle.stat({ bigint: true })
-        } finally {
-          await stagedHandle.close()
+          owner = await recordStagedConfig(
+            stagedHandle,
+            stagedPath,
+            targetPath,
+            pendingCreationPath,
+          )
+        } catch (stagingError) {
+          // The record was not written, so nothing names the staged file: it is Codebook's own and goes before the failure is reported.
+          await unlink(stagedPath).catch(() => undefined)
+          throw stagingError
         }
-        const owner: CatalogReceipt = {
-          schemaVersion: 1,
-          targetPath,
-          sha256: EMPTY_MCP_CONFIG_SHA256,
-          device: recordedFileId(staged.dev),
-          inode: recordedFileId(staged.ino),
-          installed: true,
-        }
-        const pending: PendingCreation = { schemaVersion: 1, owner, stagedPath }
-        await atomicPrivateWrite(
-          pendingCreationPath,
-          pending,
-          CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
-        )
         try {
           await link(stagedPath, targetPath)
         } catch (createError) {
@@ -1120,6 +1194,7 @@ export async function removeOwnedCursorMcpCatalog(
         cursorDirectory,
         commandToRunAgain,
       )
+      await removeLeftStagedConfigs(cursorDirectory)
       const recovered = await recoverRemoval(
         pendingPath,
         receiptPath,
