@@ -462,6 +462,8 @@ export async function workspaceHarness(
   let rejectNextTabClose = false
   /** See `refuseNextGroupClose`. */
   let refusesNextGroupClose = false
+  /** See `holdNextGroupClose`. */
+  let heldGroupClose: { entered: () => void; wait: Promise<void> } | undefined
   const tabCloseRequests: Tab[][] = []
   const tabCloseFocusRequests: boolean[] = []
   /** The main editor's layout as the fake editor held it when each request to close a whole group arrived; see `layoutsAtGroupCloses`. */
@@ -4590,6 +4592,13 @@ export async function workspaceHarness(
             // The public group overload closes its tabs too; production must establish ownership before calling it.
             if (!Array.isArray(tabs)) {
               layoutsAtGroupCloses.push(structuredClone(editorLayout))
+              // In the model of `holdNextGroupClose`, the editor answers this request only once the test releases it; the learner can act meanwhile.
+              const heldAnswer = heldGroupClose
+              heldGroupClose = undefined
+              if (heldAnswer) {
+                heldAnswer.entered()
+                await heldAnswer.wait
+              }
               // In the model of `refuseNextGroupClose`, the editor answers `false` once and the group stays as it was.
               if (refusesNextGroupClose) {
                 refusesNextGroupClose = false
@@ -6696,6 +6705,22 @@ export async function workspaceHarness(
     /** Makes the editor answer the next request to close a whole group with `false` and keep that group, empty or not, as it does when it refuses the close (finding 598). @example harness.refuseNextGroupClose() */
     refuseNextGroupClose(): void {
       refusesNextGroupClose = true
+    },
+    /**
+     * Holds the editor's answer to the next request to close a whole group until the test releases it, before the editor acts on the request (and before `refuseNextGroupClose` refuses it), so a test can move the learner's keyboard while a close is pending.
+     * @returns The entered receipt and the release callback for that one request.
+     * @example const close = harness.holdNextGroupClose(); await close.started; harness.focusMutableDraft('auth.ts', 3); close.release()
+     */
+    holdNextGroupClose() {
+      let entered!: () => void, release!: () => void
+      const started = new Promise<void>((resolve) => {
+          entered = resolve
+        }),
+        wait = new Promise<void>((resolve) => {
+          release = resolve
+        })
+      heldGroupClose = { entered, wait }
+      return { started, release }
     },
     /** Gives focus to a non-text page of the editor that is already open, as a learner's click on its tab does. @example harness.focusOpaqueTab(harness.addOpaqueTab('Extension page', 2)) */
     focusOpaqueTab(tab: Tab): void {
