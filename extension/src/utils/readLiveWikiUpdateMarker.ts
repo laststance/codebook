@@ -49,7 +49,7 @@ export type WikiUpdateMarker = z.infer<typeof wikiUpdateMarkerSchema>
 
 /**
  * A marker file that has no readable content yet: another window created it a moment ago (epoch milliseconds) and is writing it, or the marker file of a run that cannot be read at this moment (since its last write).
- * A marker file that has stayed unreadable for longer than a write takes ({@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS}) also names its path and the last moment it counts (epoch milliseconds), so the refusal says which file is in the way and when it stops counting ({@link describeOtherWikiWindow}).
+ * A marker file that has stayed unreadable for longer than a write takes ({@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS}), or whose modification time lies ahead of the clock, also names its path and the last moment it counts (epoch milliseconds), so the refusal says which file is in the way and when it stops counting ({@link describeOtherWikiWindow}).
  * @example
  * const starting: WikiUpdateMarkerBeingWritten = { beingWrittenSinceMs: 1790000000000 }
  * const unreadable: WikiUpdateMarkerBeingWritten = { beingWrittenSinceMs: 1790000000000, unreadableMarkerPath: '/repo/.codebook/wiki.update-run.json', countsUntilMs: 1790001290000 }
@@ -327,14 +327,15 @@ function lookAtMarkerWithoutContent(
 
 /**
  * Names what a regular marker file within the read's limit is that could not be read at this moment; called by {@link lookAtUnreadableEntry}.
- * Why: such a file can be a running window's marker that another program holds open (on Windows a scanner or an indexer: `EBUSY`, `EPERM`) or that this user may not read (`EACCES`), and the end of that run treats it as possibly its own ({@link claimWikiUpdateMarker}). A start that took it for nobody's would remove it and run beside that update. It counts for as long as a marker written at that time can count: the longer of the two hosts' longest runs, with {@link WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS} and {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS}, which also outlasts a stopped watch's reservation; after that it is nobody's, so a file that stays unreadable cannot refuse every start. Within the {@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS} a write takes, the file may be one another window is writing, and the refusal asks for a moment; a file that stayed unreadable for longer is named with the last moment it counts, so the refusal says which file is in the way and when it stops counting ({@link describeOtherWikiWindow}) instead of asking for a moment for 21 min 30 s.
+ * Why: such a file can be a running window's marker that another program holds open (on Windows a scanner or an indexer: `EBUSY`, `EPERM`) or that this user may not read (`EACCES`), and the end of that run treats it as possibly its own ({@link claimWikiUpdateMarker}). A start that took it for nobody's would remove it and run beside that update. It counts for as long as a marker written at that time can count: the longer of the two hosts' longest runs, with {@link WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS} and {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS}, which also outlasts a stopped watch's reservation; after that it is nobody's, so a file that stays unreadable cannot refuse every start. Within the {@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS} a write takes, the file may be one another window is writing, and the refusal asks for a moment; a file that stayed unreadable for longer, or one dated ahead of the clock (a network share's clock, a clock moved back), is named with the last moment it counts, so the refusal says which file is in the way and when it stops counting ({@link describeOtherWikiWindow}) instead of asking for a moment for 21 min 30 s, or for as long as the file's time lies ahead.
  * @param markerPath - `<output>.update-run.json`.
  * @param modifiedAtMs - When the file was last written (epoch milliseconds).
  * @param nowMs - The present (epoch milliseconds).
- * @returns `being-written` with that time while the file was written less than 21 min 30 s ago and not more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now, from {@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS} after its write also with its path and the last moment it counts; `unowned` for an older one and for one written further ahead.
+ * @returns `being-written` with that time while the file was written less than 21 min 30 s ago and not more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now, from {@link WIKI_UPDATE_MARKER_WRITE_GRACE_MS} after its write, and while it is dated ahead of now, also with its path and the last moment it counts; `unowned` for an older one and for one written further ahead.
  * @example
  * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_790_000_001_999) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000 } }
  * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_790_000_003_000) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000, unreadableMarkerPath: '/repo/.codebook/wiki.update-run.json', countsUntilMs: 1_790_001_290_000 } }
+ * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_789_999_999_999) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000, unreadableMarkerPath: '/repo/.codebook/wiki.update-run.json', countsUntilMs: 1_790_001_290_000 } }
  * lookAtUnreadableMarkerFile('/repo/.codebook/wiki.update-run.json', 1_790_000_000_000, 1_790_001_290_001) // => { kind: 'unowned' }
  */
 function lookAtUnreadableMarkerFile(
@@ -354,13 +355,16 @@ function lookAtUnreadableMarkerFile(
     nowMs <= countsUntilMs &&
     modifiedAtMs <= nowMs + WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
   if (!mayStillCount) return { kind: 'unowned' }
-  // Within the time a write takes, the file may be one another window is writing at this moment.
-  if (modifiedAtMs > nowMs - WIKI_UPDATE_MARKER_WRITE_GRACE_MS)
+  // Within the time a write takes, and not dated ahead of the clock, the file may be one another window is writing at this moment.
+  if (
+    modifiedAtMs > nowMs - WIKI_UPDATE_MARKER_WRITE_GRACE_MS &&
+    modifiedAtMs <= nowMs
+  )
     return {
       kind: 'being-written',
       heldBy: { beingWrittenSinceMs: modifiedAtMs },
     }
-  // A file that stayed unreadable for longer still refuses the start, and the refusal names it and when it stops counting.
+  // A file that stayed unreadable for longer, or one dated ahead of the clock (a share's clock, a clock moved back), still refuses the start, and the refusal names it and when it stops counting.
   return {
     kind: 'being-written',
     heldBy: {
@@ -404,7 +408,7 @@ async function lookAtUnreadableEntry(
  * @param judgement - What the owner is judged by; this process's identity ({@link currentStorageOwner}), {@link readProcessStart} and the clock unless a caller or a test names its own.
  * @returns
  * - `live`: another window's marker that still counts ({@link isLiveMarkerOfAnotherWindow}), including a stopped VS Code watch's reservation inside its bound after its process ended; in `heldBy`, with `watchEndedAtMs` for the caller's reservation check
- * - `being-written`: a file without readable content that was written a moment ago, and a regular marker file that cannot be read at this moment and was written less than any marker counts ({@link lookAtUnreadableMarkerFile}), with that time in `heldBy`, and for such a file that stayed unreadable for longer than a write takes also its path and the last moment it counts
+ * - `being-written`: a file without readable content that was written a moment ago, and a regular marker file that cannot be read at this moment and was written less than any marker counts ({@link lookAtUnreadableMarkerFile}), with that time in `heldBy`, and for such a file that stayed unreadable for longer than a write takes, or that is dated ahead of the clock, also its path and the last moment it counts
  * - `unowned`: this window's own marker, an ended owner's marker without a valid bounded reservation, a run's marker older than any run can be, one whose run starts or whose stopped watch ended too far ahead, an entry without a readable marker that is older than a write takes, and a marker file that cannot be read and is older than any marker counts
  * - `none`: no entry at the marker's path
  *

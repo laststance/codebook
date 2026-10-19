@@ -332,9 +332,14 @@ test('a marker file that cannot be read at this moment counts as one being writt
       },
     },
     after21Minutes30SecondsAnd1Ms: { kind: 'unowned' },
+    // A file dated ahead of the clock is named as well, so its refusal does not ask to wait a moment (Cycle 0047 row 129).
     written5MinutesAhead: {
       kind: 'being-written',
-      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
     },
     writtenFurtherAhead: { kind: 'unowned' },
   })
@@ -401,6 +406,86 @@ test('a marker file that cannot be read still counts as one being written, and n
       heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
     },
     after2000Ms: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
+  })
+})
+
+// Value: protects=the learner refused beside a marker file that cannot be read and whose modification time lies ahead of the clock (a network share's clock, a clock moved back), whose refusal must name that file and when it ends, while a file written at the moment of the look keeps the short refusal; fails_when=the look takes a file dated ahead for one written a moment ago, so the refusal says "Wait a moment and try again" for up to 5 minutes, or names the file already at the moment of its write, or stops refusing the start; why_new=Cycle 0047 row 129 (ADV2-6); seam=the look loaded with loadModule, whose every open of the marker file fails with EACCES, and the clock handed to it; no_claim=the sentence (describeOtherWikiWindow.test.ts)
+test('a marker file that cannot be read and is dated ahead of the clock names its path and the last moment it counts, so its refusal does not ask to wait a moment for up to 5 minutes', async (context) => {
+  // Arrange: a marker file of another window's run, last written at the fixed present, whose every open fails as for a file this user may not read.
+  const outputDirectory = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS,
+    }),
+    NOW_MS,
+  )
+  const markerPath = `${outputDirectory}.update-run.json`
+  const readerWhoseMarkerOpenIsRefused = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...openInputs: Parameters<typeof openWithoutFollowing>
+        ) => {
+          if (openInputs[0] === markerPath)
+            throw Object.assign(
+              new Error(`EACCES: permission denied, open '${markerPath}'`),
+              { code: 'EACCES' },
+            )
+          return openWithoutFollowing(...openInputs)
+        },
+      },
+    },
+  )
+  const { readLiveWikiUpdateMarker: lookInThatWindow } = await loadModule<
+    typeof lookModule
+  >(resolve(__dirname, '../utils/readLiveWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerWhoseMarkerOpenIsRefused,
+  })
+  // The loaded module answers objects of its own context; a copy makes them comparable here.
+  const lookAtTheUnreadableMarker = async (
+    nowMs: number,
+  ): Promise<WikiUpdateMarkerLook> =>
+    structuredClone(
+      await lookInThatWindow(outputDirectory, 'own-window', {
+        identity: THIS_WINDOW,
+        nowMs,
+        readStart: async () => undefined,
+      }),
+    )
+
+  // Act
+  const looks = {
+    atTheMomentOfItsWrite: await lookAtTheUnreadableMarker(NOW_MS),
+    dated1MsAhead: await lookAtTheUnreadableMarker(NOW_MS - 1),
+    dated5MinutesAhead: await lookAtTheUnreadableMarker(NOW_MS - 300_000),
+  }
+
+  // Assert: all three refuse the start; only the look at the moment of the write asks to wait a moment, and the file dated ahead is named with the last moment it counts, 21 min 30 s after its modification time.
+  assert.deepEqual(looks, {
+    atTheMomentOfItsWrite: {
+      kind: 'being-written',
+      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+    },
+    dated1MsAhead: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
+    dated5MinutesAhead: {
       kind: 'being-written',
       heldBy: {
         beingWrittenSinceMs: 1_790_000_000_000,

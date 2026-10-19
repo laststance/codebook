@@ -1483,7 +1483,7 @@ export function activate(
       outputDirectory,
       wikiWindowId,
     )
-    // A marker another window is writing at this moment is the beginning of its run.
+    // A marker another window is writing at this moment is the beginning of its run; a marker file that cannot be read may be a running window's marker, and its refusal names the file once it stayed unreadable past a write's time or is dated ahead of the clock.
     if (markerLook.kind === 'being-written')
       return refuseWikiStart(
         host,
