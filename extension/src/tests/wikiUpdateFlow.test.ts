@@ -2107,44 +2107,7 @@ test('a chat whose reply waits for a confirmation in the moment the 30 second bo
   }
 })
 
-// Value: protects=the learner who retries after a chat that did not answer and whose request could not be stopped; fails_when=the chat's Cancel throws and the page and the notice still say "so the update was not started", although the request is still loading in the chat; why_new=Cycle 0046 row 82; seam=the editor's commands, of which the chat's Cancel throws
-test('a chat whose Cancel fails ends the update with the sentence that the request may still be in the chat and is stopped there before a retry, on the page and in the notice', async () => {
-  // Arrange: the request stays in the chat, and the chat's Cancel throws.
-  const { clock, sleep } = manualAnswerClock()
-  const wiki = await openWikiWindow({
-    chatReply: () => new Promise(() => {}),
-    chatAnswerClock: { sleep },
-    editorCommand: (name) => {
-      if (name === 'workbench.action.chat.cancel')
-        throw new Error("command 'workbench.action.chat.cancel' not found")
-    },
-  })
-  try {
-    const press = wiki.clickUpdate()
-    await waitForChatRequest(wiki.chatRequests)
-
-    // Act
-    clock.advance(30_000)
-    await press
-
-    // Assert
-    const status = wiki.status()
-    assert.equal(status.state, 'failed')
-    assert.equal(
-      status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
-    )
-    assert.equal(wiki.errors.length, 1)
-    assert.match(
-      wiki.errors[0] ?? '',
-      new RegExp(
-        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat\\. Nothing had been replaced by then\\.$`,
-      ),
-    )
-  } finally {
-    await wiki.close()
-  }
-})
+// Retired by Cycle 0047 row 83 (TEST-8): 'a chat whose Cancel fails …' arranged a chat Cancel that Codebook no longer runs (Cycle 0047 row 6); its end, the sentence of a request left in the chat on the page and in the notice, is protected by 'a chat that takes the request and never answers ends the update after 30 seconds, …' and 'at the 30 second bound Codebook runs none of the chat’s commands: …', whose Cancel would end the request.
 
 // Value: protects=the request a learner started in another chat during the 30 seconds an update waited for its first answer; fails_when=Codebook runs the chat's Cancel at the bound, which stops the request in progress of the chat the learner focused last, so the learner's request is stopped while Codebook's request goes on in its own chat; why_new=Cycle 0047 row 6 (S11-X2, the mocked command probe of the Codex review); seam=the editor's commands, whose Cancel and "Remove All Queued" would act on the learner's chat and leave Codebook's request alone
 test('a learner who moved to another chat during the 30 seconds keeps the request in progress there: Codebook runs no Cancel and no queue command, and reports its own request as possibly still in the chat', async () => {
