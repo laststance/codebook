@@ -1177,10 +1177,9 @@ async function manifestJournalOf(state, { root, output, stage }, system) {
     modifiedManifestBackup: output + '.modified-manifest-' + id + '.json', temporaryManifest: join(output, '.codebook-restore-' + id + '.json'), sourceStage: state.legacyRecovery ? stage : undefined };
 }
 
-/** Whether a metadata recovery journal is whole: the retained manifest's digest, the edited one's or null, its id, the paths of the kept edit and of the staging file that id names, and no prepared stage or one named by a text. Called by {@link recoverManifestJournal}. @example isManifestJournal(record, '/repo/.codebook/wiki') // => true for a journal the publisher wrote */
+/** Whether a metadata recovery journal is whole: the retained manifest's digest, the edited one's or null, its id, and the paths of the kept edit and of the staging file that id names. Called by {@link recoverManifestJournal}. @example isManifestJournal(record, '/repo/.codebook/wiki') // => true for a journal the publisher wrote */
 const isManifestJournal = (record, output) => HASH.test(record.manifestSha256) && (record.modifiedManifestSha256 === null || HASH.test(record.modifiedManifestSha256)) &&
-  isRecordId(record.id) && record.modifiedManifestBackup === output + '.modified-manifest-' + record.id + '.json' && record.temporaryManifest === join(output, '.codebook-restore-' + record.id + '.json') &&
-  (record.sourceStage === undefined || typeof record.sourceStage === 'string');
+  isRecordId(record.id) && record.modifiedManifestBackup === output + '.modified-manifest-' + record.id + '.json' && record.temporaryManifest === join(output, '.codebook-restore-' + record.id + '.json');
 
 /** The refusal of a metadata recovery journal whose prepared stage of a legacy adoption ({@link manifestJournalOf}) is a name the recovery may not take ({@link isNameableStage}): the recovery would read that stage, and the refusal of a read names it. Read by {@link recoverManifestJournal}. */
 const UNREAD_SOURCE_STAGE_REFUSAL = 'The prepared stage the Wiki metadata recovery journal names comes from the journal alone, so it was not read and is not repeated here. Nothing was moved, and the journal was kept. Run --recover with --stage set to the candidate you prepared.';
