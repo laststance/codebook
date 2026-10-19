@@ -973,8 +973,8 @@ test('the folders this build writes for a recording stay as 0.2.29.0 reads them:
   )
 })
 
-// Value: protects=the record of a recording's writer lasting exactly as long as the writer, so it never judges a finished recording and never stays behind; fails_when=the record is not written when the recording starts (the recording is judged by its header alone), or stays after the seal of a recording whose study is saved; why_new=Cycle 0046 /ship review R10 (b); since Cycle 0047 row 36 the study is saved before the seal, as a run's checkpoint saves it, because the seal of a recording whose study is not saved keeps the record until that save (the next test); seam=none, the store's own start and seal, and the library's save
-test('the record of a recording’s writer names this window’s process when the recording starts and is gone once the recording of a saved study is sealed', async (context) => {
+// Value: protects=the record of a recording's writer lasting exactly as long as its run holds the recording, so it never judges a finished recording and never stays behind, also for a run whose checkpoint saved the study while it ran; fails_when=the record is not written when the recording starts (the recording is judged by its header alone), the seal removes it because a checkpoint saved the study before the seal, so the study's final state is not saved yet while nothing holds the recording (Cycle 0047 row 98, ADV-10), or the save that follows the seal leaves it; why_new=Cycle 0046 /ship review R10 (b); the record went at the seal of a recording whose study was saved until Cycle 0047 row 98 (ADV-10); seam=none, the store's own start and seal, and the library's saves
+test('the record of a recording’s writer names this window’s process when the recording starts, stays at the seal after a checkpoint saved the study, and goes with the save that follows the seal', async (context) => {
   // Arrange: the run's checkpoint has saved its study before the recording is sealed.
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
@@ -989,6 +989,9 @@ test('the record of a recording’s writer names this window’s process when th
 
   // Act
   await recording.writer.finish(1)
+  const isRecordLeftAfterTheSeal = await isPresent(recordPath)
+  await saveStudyOfRecording(storage, recording.studyId)
+  const isRecordLeftAfterTheSaveThatFollowsTheSeal = await isPresent(recordPath)
 
   // Assert
   assert.deepEqual(
@@ -997,14 +1000,16 @@ test('the record of a recording’s writer names this window’s process when th
       hostname: recordAtStart.hostname,
       machineId: recordAtStart.machineId,
       processStart: recordAtStart.processStart,
-      isRecordLeftAfterTheSeal: await isPresent(recordPath),
+      isRecordLeftAfterTheSeal,
+      isRecordLeftAfterTheSaveThatFollowsTheSeal,
     },
     {
       pid: process.pid,
       hostname: hostname(),
       machineId: 'machine-a',
       processStart: await readProcessStart(process.pid),
-      isRecordLeftAfterTheSeal: false,
+      isRecordLeftAfterTheSeal: true,
+      isRecordLeftAfterTheSaveThatFollowsTheSeal: false,
     },
   )
 })

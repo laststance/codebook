@@ -10,7 +10,7 @@ import {
   unlink,
 } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { CROSS_RUNTIME_RECORDING_VERSION } from './constants'
@@ -75,7 +75,6 @@ import {
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
 import { hasOwnWriterRecordFolder } from './utils/hasOwnWriterRecordFolder'
-import { hasStudyArchive } from './utils/hasStudyArchive'
 import {
   isRecordingWriterLive,
   type ProcessStartsOfList,
@@ -86,7 +85,6 @@ import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingOfDirectory } from './utils/readRecordingWriterRecord'
 import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import { recordingPhases } from './utils/recordingPhases'
-import { removeWriterRecord } from './utils/removeWriterRecord'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { validateRecordingContext } from './utils/validateRecordingContext'
 import { withStorageLock } from './utils/withStorageLock'
@@ -1285,7 +1283,7 @@ export class RecordingWriter {
       })
   }
 
-  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. The record of the writer goes at the seal only when the study is already saved; otherwise the study's save removes it ({@link LearningLibrary.saveStudy}). @example await writer.finish(runtime.evidence.elapsedMs()) */
+  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. The record of the writer stays at the seal, also when a checkpoint saved the study while the run went on: the run's save that follows the seal removes it ({@link LearningLibrary.saveStudy}). @example await writer.finish(runtime.evidence.elapsedMs()) */
   finish(endMs: number): Promise<RecordingSeal> {
     if (this.finishing) return this.finishing
     if (!this.frameCount)
@@ -1325,13 +1323,7 @@ export class RecordingWriter {
           seal,
           MAX_RECORDING_HEADER_BYTES,
         )
-        // A sealed recording keeps the record of its writer while its run has not saved its study: until that save the run holds it, and another window neither lists it as what is left of a removed study nor removes it (recordingWriterOf). The save removes the record then (removeWriterRecordsOfSealedRecordings).
-        const learningDirectory = dirname(dirname(this.directory))
-        if (await hasStudyArchive(learningDirectory, this.header.studyId))
-          await removeWriterRecord(learningDirectory, this.header.studyId, {
-            directory: this.directory,
-            createdAt: this.header.createdAt,
-          })
+        // A sealed recording keeps the record of its writer until its run saves the study after the seal: until then the run holds it, and another window neither lists it as what is left of a removed study nor removes the study, also one a checkpoint saved before the seal, whose final state is not saved yet (recordingWriterOf). That save removes the record (removeWriterRecordsOfSealedRecordings).
         this.finalized = true
         this.sealed()
         return seal

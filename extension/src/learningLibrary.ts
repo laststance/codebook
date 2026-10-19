@@ -579,7 +579,7 @@ export class LearningLibrary {
   }
 
   /**
-   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a sealed recording that its run has released ({@link isSealedRecordingReleased}) has no writer; one sealed since the judgement that its run still holds for its study's first save keeps the verdict of the writer that sealed it; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
+   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a sealed recording that its run has released ({@link isSealedRecordingReleased}) has no writer; one sealed since the judgement that its run still holds for the save of its study after the seal keeps the verdict of the writer that sealed it; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
    * @returns `sealed` for a sealed recording its run has released; the verdict found before the lock while the look is the same, or only a seal came since.
@@ -591,9 +591,8 @@ export class LearningLibrary {
     verdicts: RemovalWriterVerdicts,
   ): Promise<RemovalWriterVerdict | 'sealed'> {
     const now = await lookAtRecording(recording)
-    // A sealed recording that a run of another window still holds for its study's first save keeps that writer's verdict.
-    if (now.isSealed && (await isSealedRecordingReleased(recording, now)))
-      return 'sealed'
+    // A sealed recording that a run of another window still holds for the save of its study after the seal keeps that writer's verdict.
+    if (now.isSealed && isSealedRecordingReleased(now)) return 'sealed'
     const before = verdicts.get(recording)
     // A start under way between the two looks gives a recording another window may have just begun to write.
     if (!before || !isSameRecordingLook(before.look, now))
