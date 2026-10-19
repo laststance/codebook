@@ -7229,3 +7229,86 @@ test('a recovery of a publish whose journal names another machine is refused wit
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the learner's next edit of a candidate after a publish that was killed once it had finalized the candidate's manifest and record, and the --recover that followed; fails_when=the recovery leaves the candidate's manifest rewritten and its record marked published, so the next publish of the edited candidate is refused as "A previously finalized candidate changed"; why_new=Cycle 0047 row 29 (P3RT7, a publish stopped by a kill); seam=a publisher process killed after it finalized the candidate, at its next read of the Wiki's record (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a journal of an earlier version, which keeps no prepared manifest or record to put back
+test('a publish killed after it finalized the candidate is recovered with the candidate’s prepared manifest and record put back, and the candidate publishes after the learner edits it', async () => {
+  // Arrange: the publish of the candidate is killed after it finalized the candidate's manifest and record.
+  const wiki = await publishedWikiWithACandidate()
+  const manifestPath = join(wiki.next, 'codebook-wiki.json'),
+    recordPath = join(wiki.next, 'codebook-publication.json')
+  try {
+    const preparedManifest = await readFile(manifestPath),
+      preparedRecord = await readFile(recordPath)
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        {
+          call: 'renaming',
+          folder: wiki.next,
+          name: '^\\.codebook-publish-.*-codebook-publication\\.json$',
+        },
+        {
+          call: 'reading',
+          folder: wiki.output,
+          name: '^codebook-publication\\.json$',
+        },
+      ],
+    })
+
+    // Act: the recovery, then the learner's edit of the candidate's page and the candidate published again.
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const candidateAfterRecovery = {
+      manifestIsAsPrepared: (await readFile(manifestPath)).equals(
+        preparedManifest,
+      ),
+      recordIsAsPrepared: (await readFile(recordPath)).equals(preparedRecord),
+    }
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.pages[0].contentHtml = '<h2 id="intro">Edited</h2>'
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        candidateAfterRecovery,
+        nextPublish,
+        publishesTheEdit: (
+          await readFile(join(wiki.output, 'index.html'), 'utf8')
+        ).includes('<h2 id="intro">Edited</h2>'),
+      },
+      {
+        killed: '',
+        recovery: 'published-or-restored',
+        candidateAfterRecovery: {
+          manifestIsAsPrepared: true,
+          recordIsAsPrepared: true,
+        },
+        nextPublish: { publishedFiles: 1 },
+        publishesTheEdit: true,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
