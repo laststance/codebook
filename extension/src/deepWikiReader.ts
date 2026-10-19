@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { lstat, open, readFile, realpath } from 'node:fs/promises'
+import { lstat, readFile, realpath, type FileHandle } from 'node:fs/promises'
 import {
   createServer,
   type IncomingMessage,
@@ -53,6 +53,7 @@ import {
 } from './utils/installWikiUpdateStatus'
 import { isWikiSourceCandidate } from './utils/isWikiSourceCandidate'
 import { labelQuestionField } from './utils/labelQuestionField'
+import { openWithoutFollowing } from './utils/openWithoutFollowing'
 import { readUpToLimit } from './utils/readUpToLimit'
 import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
@@ -510,17 +511,28 @@ export async function startDeepWikiReader(
         `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
       )
       // A page file larger than any page costs the editor's process nothing of its size: its size is looked at on the resolved path before it is opened, and the read stops one byte past the limit, also when the file grew since.
+      const look = await lstat(filePath)
+      // Only a regular file is opened: the open of a named pipe would hold a thread of the host's file system until a writer comes.
+      if (!look.isFile()) {
+        sendNoRegularFile(response)
+        return
+      }
       let content: Buffer | undefined
-      if ((await lstat(filePath)).size <= WIKI_PAGE_FILE_LIMIT_BYTES) {
-        const pageFile = await open(filePath, 'r')
+      if (look.size <= WIKI_PAGE_FILE_LIMIT_BYTES) {
+        const pageFile = await openServedWikiFile(filePath)
+        // Another entry took the path between the look and the open.
+        if (!pageFile) {
+          sendNoRegularFile(response)
+          return
+        }
         try {
           content = await readUpToLimit(
-            pageFile,
-            (await pageFile.stat()).size,
+            pageFile.file,
+            pageFile.sizeBytes,
             WIKI_PAGE_FILE_LIMIT_BYTES,
           )
         } finally {
-          await pageFile.close()
+          await pageFile.file.close()
         }
       }
       if (!content) {
@@ -622,6 +634,36 @@ export async function startDeepWikiReader(
     if (server.listening) server.close()
     throw error
   }
+}
+
+/**
+ * Opens a file the Wiki reader serves without following a link at its path and without waiting on a named pipe ({@link openWithoutFollowing}), and keeps it open only when it is a regular file.
+ * Called by the reader for every page file it reads, after its look at the path found a regular file; the opened file is looked at again, because another entry can take the path between the look and the open.
+ * @param path - The file's real path in the Wiki folder.
+ * @returns The open regular file and its size at its `stat`; `undefined` when the opened entry is no regular file, after it was closed.
+ * @throws What the open or the status throws: a missing file, or a link that took the path (`ELOOP`).
+ * @example
+ * await openServedWikiFile('/repo/.codebook/wiki/index.html') // => { file: <FileHandle>, sizeBytes: 2021 }
+ */
+async function openServedWikiFile(
+  path: string,
+): Promise<{ file: FileHandle; sizeBytes: number } | undefined> {
+  const file = await openWithoutFollowing(path)
+  const status = await file.stat().catch(async (error: unknown) => {
+    await file.close()
+    throw error
+  })
+  if (status.isFile()) return { file, sizeBytes: status.size }
+  await file.close()
+  return undefined
+}
+
+/** Refuses a Wiki file that is no regular file: a named pipe, a device or a folder at a path the manifest lists is never opened or read. @param response - The answer to the refused request. @example sendNoRegularFile(response) // 403 */
+function sendNoRegularFile(response: ServerResponse): void {
+  sendJson(response, 403, {
+    error:
+      'The Wiki file is no regular file; a pipe, a device or a folder at its path is not served.',
+  })
 }
 
 /** Refuses any other method on a read-only Wiki route and names the one that works, so a caller is told what to send instead. @param response - The answer to the refused request. @example sendGetOnly(response) // 405, Allow: GET */

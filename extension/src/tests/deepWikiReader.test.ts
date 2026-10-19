@@ -26,6 +26,7 @@ import type * as deepWikiReaderModule from '../deepWikiReader'
 import { readDeepWikiManifest, startDeepWikiReader } from '../deepWikiReader'
 import type * as linkGuardModule from '../utils/assertNoLinkOnWikiPath'
 import type * as linkWalkModule from '../utils/findLinkOnWikiPath'
+import type * as openWithoutFollowingModule from '../utils/openWithoutFollowing'
 import type * as wikiPageWorkerModule from '../wikiPageWorker'
 
 import {
@@ -1040,7 +1041,7 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
   })
 })
 
-// Value: protects=the editor's extension host against a page file in the Wiki folder far larger than any page (nothing limits its size): the reader read it whole and made a string of it before the worker refused it, so its full size, gigabytes for a large file, landed in the host's memory; fails_when=the reader opens or reads a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES, prepares it, or answers it otherwise than with the refusal page that says it is too large, or refuses a page within the limit; why_new=P2P2 residual (the heap limit bounds the worker, not the read before it); Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a constants module whose WIKI_PAGE_FILE_LIMIT_BYTES is 1,000 bytes, a file system module that records which files the reader opens or reads, and a stand-in page-worker module that counts the pages it prepares; no_claim=a file that grows past the limit after its size was looked at (the read stops one byte past the limit)
+// Value: protects=the editor's extension host against a page file in the Wiki folder far larger than any page (nothing limits its size): the reader read it whole and made a string of it before the worker refused it, so its full size, gigabytes for a large file, landed in the host's memory; fails_when=the reader opens or reads a page file larger than WIKI_PAGE_FILE_LIMIT_BYTES, prepares it, or answers it otherwise than with the refusal page that says it is too large, or refuses a page within the limit; why_new=P2P2 residual (the heap limit bounds the worker, not the read before it); Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a constants module whose WIKI_PAGE_FILE_LIMIT_BYTES is 1,000 bytes, a file system module that records which files the reader opens (through its opener that follows no link, loaded with the same file system since Cycle 0047 row 12) or reads, and a stand-in page-worker module that counts the pages it prepares; no_claim=a file that grows past the limit after its size was looked at (the read stops one byte past the limit)
 test('a page file larger than the reader prepares is answered with 503 and a sentence that says so, without the file being opened, while a page within the limit is read and served', async (context) => {
   // Arrange: an overview of 2,021 bytes and a page of 33 bytes, a reader that prepares pages of 1,000 bytes at most, a file system that notes the files the reader opens or reads, and a page worker that counts its pages.
   const projectRoot = await realpath(
@@ -1078,6 +1079,10 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
       return readFile(...parameters)
     },
   }
+  const recordingOpener = await loadModule<typeof openWithoutFollowingModule>(
+    join(__dirname, '..', 'utils', 'openWithoutFollowing.js'),
+    { 'node:fs/promises': recordingFileSystem },
+  )
   let preparedPageCount = 0
   const countingWorker: typeof wikiPageWorkerModule = {
     servedWikiPageOffThread: async () => {
@@ -1091,6 +1096,7 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
       {
         './constants': { ...constants, WIKI_PAGE_FILE_LIMIT_BYTES: 1_000 },
         'node:fs/promises': recordingFileSystem,
+        './utils/openWithoutFollowing': recordingOpener,
         './wikiPageWorker': countingWorker,
       },
       { URL },
@@ -1328,6 +1334,76 @@ test('a page file of exactly the reader’s limit is read and served', async (co
   )
 })
 
+// Value: protects=every request of the open Wiki reader, and the few threads of the editor host's file system, against a named pipe at the path of a page the manifest lists; fails_when=the reader looks only at the size of the entry at a page's path (a pipe has none), so it opens the pipe, and the open holds a thread of the host's file system until a writer comes, which may be never; why_new=Cycle 0047 row 12 (P3CR-1); seam=none (a real named pipe, whose waiting reader the test releases when it ends); no_claim=Windows, which has no named pipe in a folder
+test(
+  'a page whose path holds a named pipe is refused at once with 403, and no open of it waits for a writer',
+  {
+    timeout: 5_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
+        : false,
+  },
+  async (context) => {
+    // Arrange: a Wiki whose manifest lists a page that is a named pipe nobody writes to.
+    const projectRoot = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-pipe-page-')),
+    )
+    const { outputDirectory, manifestPath } =
+      await writeMinimalWiki(projectRoot)
+    const pipePath = join(outputDirectory, 'pipe.html')
+    await promisify(execFile)('mkfifo', [pipePath])
+    const browserTab = new AbortController()
+    // An open that waits on the pipe would keep this process alive: a writer that opens and closes ends it, also when the body was stopped at its time bound.
+    context.after(async () => {
+      browserTab.abort()
+      await open(
+        pipePath,
+        openConstants.O_WRONLY | openConstants.O_NONBLOCK,
+      ).then(
+        (writer) => writer.close(),
+        () => undefined,
+      )
+      await rm(projectRoot, { recursive: true, force: true })
+    })
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        repositoryRoot: projectRoot,
+        pages: [{ path: 'pipe.html' }],
+        assets: [],
+        includedSources: [],
+      }),
+    )
+    const reader = await startDeepWikiReader(
+      outputDirectory,
+      projectRoot,
+      async () => ({ handoff: 'not asked' }),
+    )
+    context.after(() => reader.close())
+
+    // Act
+    const answer = await Promise.race([
+      fetch(new URL('pipe.html', reader.url), {
+        signal: browserTab.signal,
+      }).then(async (response) => ({
+        status: response.status,
+        body: await response.text(),
+      })),
+      new Promise<'still waiting'>((resolveWait) =>
+        setTimeout(() => resolveWait('still waiting'), 2_000),
+      ),
+    ])
+
+    // Assert
+    assert.deepEqual(answer, {
+      status: 403,
+      body: '{"error":"The Wiki file is no regular file; a pipe, a device or a folder at its path is not served."}',
+    })
+  },
+)
+
 // Value: protects=the editor's machine against a Wiki page that names a page of the Wiki many times as an image, media, a style sheet, a font, a track or a script (the page policy lets it load them from the reader's address), so that every such request starts a page worker that may keep a core busy until the deadline; fails_when=the reader prepares a page for a request the browser makes for anything but a page it opens (a Sec-Fetch-Dest other than document or iframe), or it refuses a page the browser opens as a document or in a frame, or one asked for by a client that names no destination; why_new=P2RT3; seam=the reader loaded with loadModule and a stand-in page-worker module that counts the pages it is asked to prepare; no_claim=a browser that sends no Sec-Fetch-Dest (it is served as before)
 test('a Wiki page asked for as an image, media, a style sheet, a font, a track, a script or by a fetch is refused with 403 before any page preparation starts, while a page opened as a document, in a frame or by a client that names no destination is served', async (context) => {
   // Arrange: the one-page Wiki and a reader whose page worker counts the pages it prepares.
@@ -1525,7 +1601,7 @@ test('a page whose browser tab goes while the page is prepared has its preparati
   assert.equal(preparationEnd, 'stopped')
 })
 
-// Value: protects=the editor's machine against a crafted page whose tab closes while the reader still reads the page file; fails_when=the reader starts listening for the response's close only after the file read, so a request gone during the read is prepared until the deadline; why_new=the P2T5 test closes the tab after the preparation started; seam=the reader loaded with loadModule, a file system whose open of the page waits for the test, and a stand-in page worker; no_claim=a real browser's close timing
+// Value: protects=the editor's machine against a crafted page whose tab closes while the reader still reads the page file; fails_when=the reader starts listening for the response's close only after the file read, so a request gone during the read is prepared until the deadline; why_new=the P2T5 test closes the tab after the preparation started; seam=the reader loaded with loadModule, a file system whose open of the page waits for the test (handed to the reader's opener that follows no link since Cycle 0047 row 12), and a stand-in page worker; no_claim=a real browser's close timing
 test('a page whose browser tab goes while the reader reads its file has its preparation stopped', async (context) => {
   // Arrange: the one-page Wiki, a file system whose open of the overview waits until the test lets it go on, and a page worker that answers only when its request goes.
   const projectRoot = await realpath(
@@ -1569,12 +1645,17 @@ test('a page whose browser tab goes while the reader reads its file has its prep
         notePreparationStarted()
       }),
   }
+  const heldOpener = await loadModule<typeof openWithoutFollowingModule>(
+    join(__dirname, '..', 'utils', 'openWithoutFollowing.js'),
+    { 'node:fs/promises': heldFileSystem },
+  )
   const { startDeepWikiReader: startReaderWithHeldOpen } = await loadModule<
     typeof deepWikiReaderModule
   >(
     join(__dirname, '..', 'deepWikiReader.js'),
     {
       'node:fs/promises': heldFileSystem,
+      './utils/openWithoutFollowing': heldOpener,
       './wikiPageWorker': workerAnsweringOnlyAtAbort,
     },
     { URL },
