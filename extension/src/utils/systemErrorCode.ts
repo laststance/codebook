@@ -1,7 +1,7 @@
 /**
  * Reads the system error name (`ESRCH`, `EPERM`, …) of a failed system call, so that callers branch on one string instead of repeating the shape check.
  *
- * Called by {@link isProcessGroupGone} and {@link signalProcessGroup} when `process.kill` throws.
+ * Called wherever the extension tells a failed system call or a worker's end apart by its code: a `process.kill` that throws ({@link isProcessGroupGone}, {@link signalProcessGroup}), the file system calls of the stores, locks and Wiki files, and a page worker that ends at its heap limit (`ERR_WORKER_OUT_OF_MEMORY`, {@link servedWikiPageOffThread}).
  *
  * @param error - Whatever the failed call threw.
  * @returns
