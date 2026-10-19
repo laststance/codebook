@@ -18,7 +18,7 @@ import {
   type WikiChatWithdrawal,
 } from './withdrawWikiChatRequest'
 
-/** How the start of a VS Code Wiki update in the editor chat ended: the answers of {@link waitForWikiChatAnswer}, where `unanswered` also says which session the request went to and whether Codebook saw it leave the chat. A request that ended by itself with a reply in the moment after the bound (`replied`, {@link withdrawWikiChatRequest}) is no `unanswered` start: it is that reply's answer, as within the bound. */
+/** How the start of a VS Code Wiki update in the editor chat ended: the answers of {@link waitForWikiChatAnswer}, where `unanswered` also says which session the request went to and whether Codebook saw it leave the chat. A request the chat answered with a reply in the moment after the bound (`replied`, {@link withdrawWikiChatRequest}: a complete reply, one with an error, or one that waits for a confirmation) is no `unanswered` start: it is that reply's answer, as within the bound. */
 export type WikiChatStartOutcome =
   | Exclude<WikiChatAnswer, { outcome: 'unanswered' }>
   | {
@@ -54,7 +54,7 @@ export type WikiChatStartBounds = {
  * @param options.signal - Aborts the start (the window closes).
  * @param options.bounds - The bounds of the start.
  * @param options.sleep - Delay function that ends early when its signal aborts; tests pass one of a manual clock.
- * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with the withdrawal's result, and always with the session the request went to and the watch of the reply's end ({@link watchWikiChatReply}). A reply that ended the request in the moment after the bound, before the withdrawal ran any command, is read as a reply within the bound is ({@link answerOfWikiChatReply}): `replied` for a complete one, `error-reply` with its message for one that reports an error.
+ * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with the withdrawal's result, and always with the session the request went to and the watch of the reply's end ({@link watchWikiChatReply}). A reply that came in the moment after the bound, before the withdrawal ran any command, is read as a reply within the bound is ({@link answerOfWikiChatReply}): `replied` for a complete one, `error-reply` with its message for one that reports an error, `working` for one that waits for a confirmation, after which the watch starts.
  * @throws What `watchSigns` throws, before any command ran.
  *
  * @example
@@ -120,7 +120,7 @@ export async function startWikiChatUpdate(options: {
       settleMs: bounds.withdrawSettleMs,
       sleep,
     })
-    // A request that ended by itself with a reply after the bound is answered by that reply, a complete one or one with an error, as within the bound.
+    // A reply the chat returned after the bound answers the request as within the bound: a complete one, one with an error, or one that waits for a confirmation, for which the watch starts.
     if (withdrawal === 'replied')
       return { ...answerOfWikiChatReply(await handOver), session, reply }
     return { outcome: 'unanswered', session, withdrawal, reply }

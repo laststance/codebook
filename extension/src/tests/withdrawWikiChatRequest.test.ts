@@ -107,6 +107,37 @@ test('a hand-over command that has already returned a complete reply is reported
   assert.deepEqual(ranCommands, [])
 })
 
+// Value: protects=the chat that asks for its first approval in the moment between the bound of the first answer and the withdrawal, and the learner's own requests in the chat focused last; fails_when=a hand-over command that has already returned a reply that waits for a confirmation is taken for a request still pending, so the withdrawal runs the chat's Cancel (in a shared session after "Remove All Queued") on a request the chat works on, and reports it as left, although the same reply within the bound counts as the chat at work; why_new=Cycle 0047 row 24 (P3RT2); seam=none
+test('a hand-over command that has already returned a reply that waits for a confirmation is reported as a request the chat answered, and no chat command runs, in a shared session or in one of its own', async () => {
+  // Arrange: the chat asks to approve a tool call; its response is not complete.
+  const ranCommands: string[] = []
+  const { sleep } = manualSleep()
+  const withdrawnIn = (session: 'own' | 'shared') =>
+    withdrawWikiChatRequest({
+      handOver: Promise.resolve({
+        type: 'confirmation',
+        kind: 'toolInvocation',
+      }),
+      runChatCommand: async (command) => {
+        ranCommands.push(command)
+      },
+      session,
+      signal: new AbortController().signal,
+      settleMs: 2_000,
+      sleep,
+    })
+
+  // Act
+  const withdrawals = {
+    shared: await withdrawnIn('shared'),
+    own: await withdrawnIn('own'),
+  }
+
+  // Assert
+  assert.deepEqual(withdrawals, { shared: 'replied', own: 'replied' })
+  assert.deepEqual(ranCommands, [])
+})
+
 // Value: protects=what the learner typed into the chat while an update waited for its first answer; fails_when=in a session of Codebook's own the withdrawal runs the chat's "Remove All Queued", which removes the learner's queued requests, or waits two seconds before it stops its own request; why_new=Cycle 0046 row 129; seam=the withdrawal's sleep, on a manual clock
 test('in a session of its own Codebook stops its request with the chat’s Cancel at once, and the queue’s command never runs', async () => {
   // Arrange: the request is the session's request in progress; the Cancel ends the hand-over command with an empty reply.
