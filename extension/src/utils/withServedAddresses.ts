@@ -3,7 +3,11 @@ import { UNICODE_LAST_CODE_POINT } from '../constants'
 import { addressAsBrowserReads } from './addressAsBrowserReads'
 import { browserAttributeText } from './browserAttributeText'
 import { escapeHtml } from './escapeHtml'
-import { type HtmlAttribute, readHtmlStartTags } from './readHtmlStartTags'
+import {
+  type HtmlAttribute,
+  type HtmlReading,
+  readHtmlStartTags,
+} from './readHtmlStartTags'
 import { trimMatchingEnds } from './trimMatchingEnds'
 
 /** The attributes whose value is an address: the ones the publisher holds to its schemes (`ADDRESS_ATTRIBUTES` of `render-wiki-diagrams.mjs`), `cite`, the source of a quote, among them. A test holds the two sets alike. */
@@ -52,6 +56,10 @@ const CODEBOOK_ADDRESS_AS_WRITTEN =
   /^(?:vscode|cursor)(?=:\/\/laststance\.codebook\/)/i
 /** The rename of an attribute that loses its effect: a data attribute, which no browser follows or acts on. */
 const UNLINKED_NAME = 'data-codebook-unlinked'
+/** A select start tag in any case: only a select element takes the select rules, so a page without one reads alike under those of 2025 and those before. */
+const SELECT_START = /<select/i
+/** A noscript start tag in any case: only a noscript element takes the scripting flag, so a page without one reads alike with scripting on and off. */
+const NOSCRIPT_START = /<noscript/i
 
 /**
  * The character a reference of {@link CHARACTER_REFERENCE} names, as the publisher reads it; called by {@link attributeText} for each.
@@ -231,12 +239,101 @@ function editOf(
 }
 
 /**
+ * Prints a page with its edits put in, each at its span, and the text between copied as it stands; called by {@link withServedAddresses} for each pass over a page.
+ * @param page - The page.
+ * @param edits - Edits in page order whose spans do not overlap.
+ * @returns The page with every edit put in.
+ * @example
+ * withEdits('<a href=x>', [{ start: 3, end: 7, text: 'data-codebook-unlinked' }]) // => '<a data-codebook-unlinked=x>'
+ */
+function withEdits(page: string, edits: Iterable<Edit>): string {
+  const pieces: string[] = []
+  let from = 0
+  // Each edit in page order; the text between is copied as it stands.
+  for (const edit of edits) {
+    pieces.push(page.slice(from, edit.start), edit.text)
+    from = edit.end
+  }
+  pieces.push(page.slice(from))
+  return pieces.join('')
+}
+
+/**
+ * The readings ({@link HtmlReading}) of a page that a browser may take and the filter judges it under: Chrome 151's with scripting first, then, for a page that holds a select or a noscript start tag, each combination of the select rules before 2025 and scripting off by which it may read otherwise; called by {@link withNoLinkAnyReadingRefuses}.
+ * A page without a select start tag reads alike under both select rules, and one without a noscript start tag reads alike with scripting on and off ({@link SELECT_START}, {@link NOSCRIPT_START}), so such a page takes no reading beside Chrome's.
+ * @param page - The page.
+ * @returns The readings, Chrome's with scripting first.
+ * @example
+ * readingsOf('<p>x</p>') // => [{ selectRules: 'current', scriptingEnabled: true }]
+ * readingsOf('<select></select>') // => [{ selectRules: 'current', scriptingEnabled: true }, { selectRules: 'before-2025', scriptingEnabled: true }]
+ */
+function readingsOf(page: string): HtmlReading[] {
+  const selectRules: HtmlReading['selectRules'][] = SELECT_START.test(page)
+    ? ['current', 'before-2025']
+    : ['current']
+  const scriptingFlags = NOSCRIPT_START.test(page) ? [true, false] : [true]
+  return selectRules.flatMap((rules) =>
+    scriptingFlags.map((scriptingEnabled) => ({
+      selectRules: rules,
+      scriptingEnabled,
+    })),
+  )
+}
+
+/**
+ * The renames that take the effect from every attribute that one of the readings of a page refuses ({@link isRefusedAttribute}), whatever the others make of its text; called by {@link withNoLinkAnyReadingRefuses}.
+ * A refused name is written in letters, colons and hyphens only, and the character before it and after it is none of these; so the names two readings refuse stand at the same span or apart, and each span is renamed once.
+ * @param page - The page.
+ * @param readings - The readings to judge it under.
+ * @returns The renames in page order, one per span.
+ * @example
+ * renamesUnder(page, readingsOf(page)) // => one rename of `href` for each link a reading of the page refuses
+ */
+function renamesUnder(page: string, readings: readonly HtmlReading[]): Edit[] {
+  const renames = new Map<number, Edit>()
+  // Every reading's start tags; a name two readings refuse is renamed once.
+  for (const reading of readings)
+    for (const { attributes } of readHtmlStartTags(page, reading))
+      for (const attribute of attributes)
+        if (isRefusedAttribute(attribute))
+          renames.set(attribute.nameStart, {
+            start: attribute.nameStart,
+            end: attribute.nameEnd,
+            text: UNLINKED_NAME,
+          })
+  return [...renames.values()].sort(
+    (first, second) => first.start - second.start,
+  )
+}
+
+/**
+ * Takes the effect from every attribute that a reading of a page other than Chrome's refuses ({@link readingsOf}), until no reading finds one; called by {@link withServedAddresses} on the page Chrome's reading served.
+ * Chrome's reading finds nothing more to take away on the page its own edits made: a rename or a rebound value changes only its own tag. Another reading may find an attribute in what Chrome reads as the text of a style, an xmp, an iframe, a title, a plaintext, a CDATA section or a noscript. A rename in one reading can change another reading's end tags (a page may name an element like an attribute and end it), so after a round of renames every reading reads the page again. Each round renames at least one name, never one renamed before, so the rounds end; a page built to need many meets the worker's deadline ({@link servedWikiPageOffThread}).
+ * @param servedByChrome - The page as Chrome's reading served it.
+ * @returns The page with no attribute any reading refuses.
+ * @example
+ * withNoLinkAnyReadingRefuses(servedByChrome) // => the same page, each name a reading beside Chrome's refuses renamed `data-codebook-unlinked`
+ */
+function withNoLinkAnyReadingRefuses(servedByChrome: string): string {
+  let served = servedByChrome
+  // The first round leaves out Chrome's own reading, which the page already passed.
+  let readings = readingsOf(served).slice(1)
+  // Until a round finds nothing to rename; a page without a select or a noscript ends at once.
+  for (;;) {
+    const renames = renamesUnder(served, readings)
+    if (renames.length === 0) return served
+    served = withEdits(served, renames)
+    readings = readingsOf(served)
+  }
+}
+
+/**
  * Serves a page's addresses as the reader may serve them, in one pass over the page: it keeps only the addresses the publisher accepts today and takes the effect from every other one while its text stays, and it binds every Codebook address to the editor that serves the page.
  *
  * Refused are an address of another scheme (`javascript:`, `data:`, `file:`, `vscode-insiders:`, an editor address that is not Codebook's own …), a refresh (`<meta http-equiv="refresh">`), a frame's own page (`srcdoc`) and an svg animation of an address, each read as a browser reads its value ({@link isRefusedAttribute}). The attribute's name becomes `data-codebook-unlinked`, so the element and its value stay and a browser follows nothing. A Codebook address in a link, a form's action or a button's form action gets the serving editor's scheme, in whatever form a browser reads it ({@link reboundAddressOf}).
  *
  * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is the publisher's (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), so a page reads alike published today and served. One published site works in both editors, as each binds Codebook's addresses to itself.
- * How: the page is read once, as a browser reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. A refused attribute's name is replaced by letters and hyphens, and a rebound value keeps its place, so the page is read as before. On an ordinary page the time grows with the page's size. A page built for it can make the HTML parser's own rules take time that grows with the square of its nesting (13 s to minutes for 1 MB), which no reading of the tags avoids; so the Wiki reader runs this function only on a worker thread, which it stops after {@link WIKI_PAGE_SERVE_DEADLINE_MS} ({@link servedWikiPageOffThread}).
+ * How: the page is read as Chrome 151 reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. A refused attribute's name is replaced by letters and hyphens, and a rebound value keeps its place, so the page is read as before. The reader opens in the system's default browser, which may read a select by the rules before 2025 or run without scripting; so a page with a select or a noscript is then read under each of those readings too, and an attribute any of them refuses loses its effect as well, also where Chrome reads it as text ({@link withNoLinkAnyReadingRefuses}); Codebook's addresses are rebound by Chrome's reading alone. On an ordinary page the time grows with the page's size, and a page with a select and a noscript takes up to four readings. A page built for it can make the HTML parser's own rules take time that grows with the square of its nesting (13 s to minutes for 1 MB), which no reading of the tags avoids; so the Wiki reader runs this function only on a worker thread, which it stops after {@link WIKI_PAGE_SERVE_DEADLINE_MS} ({@link servedWikiPageOffThread}).
  * Called by {@link rebindDeepWikiEditorLinks} last, for every page the reader serves, so the page served is this function's output.
  *
  * @param html - The page as the Wiki folder holds it.
@@ -250,16 +347,11 @@ export function withServedAddresses(
   html: string,
   editorScheme: 'vscode' | 'cursor',
 ): string {
-  const pieces: string[] = []
-  let from = 0
-  // Each edit in page order; the text between is copied as it stands.
-  for (const { attributes } of readHtmlStartTags(html))
-    for (const edit of attributes.flatMap((attribute) =>
-      editOf(attribute, editorScheme),
-    )) {
-      pieces.push(html.slice(from, edit.start), edit.text)
-      from = edit.end
-    }
-  pieces.push(html.slice(from))
-  return pieces.join('')
+  const servedByChrome = withEdits(
+    html,
+    readHtmlStartTags(html).flatMap(({ attributes }) =>
+      attributes.flatMap((attribute) => editOf(attribute, editorScheme)),
+    ),
+  )
+  return withNoLinkAnyReadingRefuses(servedByChrome)
 }
