@@ -16810,3 +16810,127 @@ test('the bundled skill tells the agent to recover on the other computer, or wit
     true,
   )
 })
+
+/**
+ * Publishes a Wiki that holds a file of the learner's, prepares a candidate and has the publish of the candidate killed once it copied that file, named the copy in its list beside the journal and finalized the candidate's manifest and record, just before its recheck reads the Wiki's record.
+ * @returns {Promise<{ wiki: Awaited<ReturnType<typeof publishedWikiWithACandidate>>, killed: string }>} The Wiki, and what the probe printed (empty once killed).
+ * @example
+ * const { wiki, killed } = await publishWithACopyKilledPastFinalize()
+ */
+async function publishWithACopyKilledPastFinalize() {
+  const wiki = await publishedWikiWithACandidate()
+  await writeFile(
+    join(wiki.output, 'manual.txt'),
+    'The learner kept these notes',
+  )
+  const killed = runKilledPublisher({
+    operation: 'publishWiki',
+    options: {
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    },
+    killAt: [
+      {
+        call: 'renaming',
+        folder: wiki.next,
+        name: '^\\.codebook-publish-.*-codebook-publication\\.json$',
+      },
+      {
+        call: 'reading',
+        folder: wiki.output,
+        name: '^codebook-publication\\.json$',
+      },
+    ],
+  })
+  return { wiki, killed }
+}
+
+/** The names {@link publisherFilesBeside} answers, with each run's id and each digest in a name replaced by a placeholder. */
+const publisherFilesBesideNamed = async (output) =>
+  (await publisherFilesBeside(output)).map((name) =>
+    name
+      .replace(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
+        '<id>',
+      )
+      .replace(/[0-9a-f]{64}$/, '<digest>'),
+  )
+
+for (const { read, code, isRead } of [
+  {
+    read: 'the candidate’s finalized record',
+    code: 'EACCES',
+    isRead: (wiki) => (path) =>
+      path === join(wiki.next, 'codebook-publication.json'),
+  },
+  {
+    read: 'the copy of the learner’s file in the candidate',
+    code: 'EBUSY',
+    isRead: (wiki) => (path) => path === join(wiki.next, 'manual.txt'),
+  },
+  {
+    read: 'the list of copies beside the journal',
+    code: 'EACCES',
+    isRead: (wiki) => (path) =>
+      path.startsWith(`${wiki.output}.publish-journal.json.copies-`),
+  },
+]) {
+  // Value: protects=a candidate whose publish was killed past finalize, after it copied a learner's file, and the --recover whose read of the candidate's finalized record, of the copy or of the list of copies fails at that moment (a file this user may not read, a scanner or an indexer that holds it on Windows); fails_when=the recovery takes the failed read for a changed record or for no copies, so it puts back only the manifest or leaves the copy, removes the journal, the list of copies and the side file and answers success, and the candidate never publishes again (a changed finalized candidate, or a copy outside its manifest), with nothing left for a recovery to repair it; why_new=Cycle 0047 row 216 (P2CXS-1, P2RT-2); seam=a publisher process killed past finalize (scripts/tests/utils/killedPublisherProbe.mjs), and a copy of the shipped publisher whose `node:fs/promises` fails the first look at the file the row names with the row's system error (scripts/tests/utils/markedCopyHooks.mjs, `?failing`), once; no_claim=a read that fails for good, which keeps the Wiki locked until the file can be read
+  test(`a --recover whose read of ${read} fails with ${code} is refused by that code alone and keeps the journal and the files beside it, and the next --recover recovers the candidate, which then publishes with the learner’s file kept`, async () => {
+    // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; the first look of the recovery at the row's file fails with the row's code.
+    const { recoverWikiPublication: recoverWhoseReadFails } =
+      await loadMarkedCopy('publish-wiki.mjs', '?failing')
+    const { wiki, killed } = await publishWithACopyKilledPastFinalize()
+    try {
+      failLookOf(isRead(wiki), code)
+
+      // Act: the recovery whose read fails, then the next one, then the candidate published again.
+      const firstRecovery = await recoverWhoseReadFails({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+      const keptByTheFirst = await publisherFilesBesideNamed(wiki.output)
+      const nextRecovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ preservedManualFiles }) => ({ preservedManualFiles }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { killed, firstRecovery, keptByTheFirst, nextRecovery, nextPublish },
+        {
+          killed: '',
+          firstRecovery: `The recovery could not read a file of the stopped publish (${code}), so it changed nothing more in its candidate and kept the Wiki publication journal and the files beside it. Run --recover again once the file can be read: another program may hold it open, as a scanner or an indexer can on Windows, or this user may not read it.`,
+          keptByTheFirst: [
+            'wiki.publish-journal.json',
+            'wiki.publish-journal.json.copies-<id>',
+            'wiki.publish-journal.json.prepared-<id>-<digest>',
+            'wiki.publish-lock.json',
+          ],
+          nextRecovery: 'published-or-restored',
+          nextPublish: { preservedManualFiles: 1 },
+        },
+      )
+    } finally {
+      failLookOf(() => false, code)
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
