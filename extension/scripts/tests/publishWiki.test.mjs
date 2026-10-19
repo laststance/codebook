@@ -8164,67 +8164,95 @@ for (const learnerBytes of [
   })
 }
 
-// Value: protects=a file at the place of a learner's file in a candidate whose stopped publish left a journal of an earlier version, which names no copy; fails_when=the recovery takes a file at a copy's place for the publish's copy without the journal naming that copy, so it removes a file it cannot prove the publish's own; why_new=Cycle 0047 row 118 (CXA2-2); seam=a publisher process killed after it copied the learner's file, whose journal is then rewritten as an earlier version wrote it (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a journal of this version, whose recovery removes the copies it names (the tests above)
-test('a recovery by a publish journal of an earlier version, which names no copy of the learner’s file, keeps the file at the copy’s place in the candidate for the next publish to name', async () => {
-  // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed after it copied that file, and its journal is rewritten without the copies it names.
-  const wiki = await publishedWikiWithACandidate()
-  const journal = `${wiki.output}.publish-journal.json`
-  try {
-    await writeFile(
-      join(wiki.output, 'manual.txt'),
-      'The learner kept these notes',
-    )
-    const killed = runKilledPublisher({
-      operation: 'publishWiki',
-      options: {
+for (const kill of [
+  {
+    when: 'after it copied the learner’s file',
+    killAt: (wiki) => [
+      { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+    ],
+    leftByTheKill: 'The learner kept these notes',
+  },
+  {
+    when: 'while it wrote the copy of the learner’s file',
+    killAt: (wiki) => [
+      { call: 'writing-halfway', folder: wiki.next, name: '^manual\\.txt$' },
+    ],
+    leftByTheKill: 'The learner ke',
+  },
+]) {
+  // Value: protects=the next publish of a candidate whose stopped publish left a journal of an earlier version, which names no copy of the learner's files, and the --recover that followed; fails_when=the recovery takes a journal without the list of copies for one that began none, so it leaves the copy (or the part of it a kill left) in the candidate, answers success and removes the journal, and the next publish is refused for the copy as a file outside its manifest; why_new=Cycle 0047 row 134 (P3CXA-3), in place of row 118's test that pinned the copy kept; seam=a publisher process killed at the row's point, whose journal is then rewritten without its list of copies, as an earlier version wrote it (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a file the learner put at a copy's place whose bytes are the start of the learner's file, which such a journal cannot tell from a copy and which the recovery removes, while the Wiki keeps the whole file
+  test(`a recovery by a publish journal of an earlier version, which names no copy, of a publish killed ${kill.when} removes what the copy left in the candidate, and the candidate then publishes with the learner’s file kept`, async () => {
+    // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed at the row's point, and its journal is rewritten without the copies it names.
+    const wiki = await publishedWikiWithACandidate()
+    const journal = `${wiki.output}.publish-journal.json`
+    try {
+      await writeFile(
+        join(wiki.output, 'manual.txt'),
+        'The learner kept these notes',
+      )
+      const killed = runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: kill.killAt(wiki),
+      })
+      const leftByTheKill = await readFile(
+        join(wiki.next, 'manual.txt'),
+        'utf8',
+      ).catch(() => 'nothing')
+      const record = JSON.parse(await readFile(journal, 'utf8'))
+      delete record.learnerCopies
+      await writeFile(journal, JSON.stringify(record))
+
+      // Act: the recovery, given the candidate the agent prepared, then the candidate published again.
+      const recovery = await recoverWikiPublication({
         projectRoot: wiki.root,
         outputDirectory: wiki.output,
         stageDirectory: wiki.next,
-      },
-      killAt: [
-        { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
-      ],
-    })
-    const record = JSON.parse(await readFile(journal, 'utf8'))
-    delete record.learnerCopies
-    await writeFile(journal, JSON.stringify(record))
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+      const fileInTheCandidate = await readFile(
+        join(wiki.next, 'manual.txt'),
+        'utf8',
+      ).catch(() => 'removed')
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ preservedManualFiles }) => ({ preservedManualFiles }),
+        (error) => error.message,
+      )
 
-    // Act: the recovery, then the candidate published again.
-    const recovery = await recoverWikiPublication({
-      projectRoot: wiki.root,
-      outputDirectory: wiki.output,
-    }).then(
-      ({ status }) => status,
-      (error) => error.message,
-    )
-    const fileInTheCandidate = await readFile(
-      join(wiki.next, 'manual.txt'),
-      'utf8',
-    ).catch(() => 'removed')
-    const nextPublish = await publishWiki({
-      projectRoot: wiki.root,
-      outputDirectory: wiki.output,
-      stageDirectory: wiki.next,
-    }).then(
-      ({ preservedManualFiles }) => ({ preservedManualFiles }),
-      (error) => error.message,
-    )
-
-    // Assert
-    assert.deepEqual(
-      { killed, recovery, fileInTheCandidate, nextPublish },
-      {
-        killed: '',
-        recovery: 'published-or-restored',
-        fileInTheCandidate: 'The learner kept these notes',
-        nextPublish:
-          "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
-      },
-    )
-  } finally {
-    await rm(wiki.directory, { recursive: true, force: true })
-  }
-})
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          leftByTheKill,
+          recovery,
+          fileInTheCandidate,
+          nextPublish,
+          learnerFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+        },
+        {
+          killed: '',
+          leftByTheKill: kill.leftByTheKill,
+          recovery: 'published-or-restored',
+          fileInTheCandidate: 'removed',
+          nextPublish: { preservedManualFiles: 1 },
+          learnerFile: 'The learner kept these notes',
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
 
 // Value: protects=the next publish of a candidate after a publish killed just before it moved its journal, with the copy of the learner's file named, into place; fails_when=the recovery leaves the file in the candidate through which the publish was putting its journal in place, so the next publish is refused for it as a file outside its manifest; why_new=Cycle 0047 row 118 (CXA2-2: the journal names each copy before it begins, through a file in the candidate); seam=a publisher process killed just before that move (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a kill after the move and before the copy's file is made, which leaves no file in the candidate
 test('a publish killed just before it moved its journal that names the copy of the learner’s file into place is recovered without the file it wrote for that, and the candidate then publishes with the learner’s file kept', async () => {
