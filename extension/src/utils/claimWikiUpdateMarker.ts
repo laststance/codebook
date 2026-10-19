@@ -45,11 +45,11 @@ import { withoutBootTime } from './withoutBootTime'
 /** A marker that is in the way at the moment another window removes or replaces it under its claim: it is no run that holds the Wiki, and this window may not remove it either. @example const inChange: WikiUpdateMarkerInChange = { isMarkerInChange: true } */
 type WikiUpdateMarkerInChange = { isMarkerInChange: true }
 
-/** What holds the Wiki against a start: another window's running update, a marker another window is writing at this moment, or a marker another window is removing or replacing at this moment. */
+/** What holds the Wiki against a start: another window's running update, a marker another window is writing at this moment or a marker file that cannot be read, or a marker another window is removing or replacing at this moment. */
 type WikiUpdateHolder =
   WikiUpdateMarker | WikiUpdateMarkerBeingWritten | WikiUpdateMarkerInChange
 
-/** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound; each answers `false` while this run's marker stayed as it was because the claim on it could not be had or the marker could not be read, and may be asked again), or what holds the Wiki instead: the marker of the other window's run, the time since which another window is writing its marker, or the note that another window is changing the marker. */
+/** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound; each answers `false` while this run's marker stayed as it was because the claim on it could not be had or the marker could not be read, and may be asked again), or what holds the Wiki instead: the marker of the other window's run, the time since which another window is writing its marker (with the marker file's path and its last counting moment when that file cannot be read), or the note that another window is changing the marker. */
 export type WikiUpdateMarkerClaim =
   | {
       release: () => Promise<boolean>
