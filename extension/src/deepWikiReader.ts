@@ -561,10 +561,29 @@ export async function startDeepWikiReader(
       refusePage(response, relativePath, 'busy')
       return
     }
-    // The place is held until the page's answer has left the host or its connection has closed, both of which the answer's `close` says: a browser that does not read its page keeps the page's bytes in the host until then, or until the send limit ends the answer. The answer has not closed yet, as nothing was awaited since the request came.
-    response.once('close', givePlaceBack)
+    // The place is held until the page's answer has closed and the reader's work for the page has ended: a browser that does not read its page keeps the page's bytes in the host until its answer closes, and one that goes while the reader reads for it closes its answer before the reads end. The answer has not closed yet, as nothing was awaited since the request came.
+    const noteWorkEnded = givePlaceBackAtTheLaterEnd(response, givePlaceBack)
+    try {
+      await servePage(response, relativePath)
+    } finally {
+      noteWorkEnded()
+    }
+  }
+  /**
+   * Reads what a page needs (the manifest, its file's look, the publication identity) and serves it ({@link prepareAndSendPage}), and stops after the read in hand once the page's browser has gone, so a gone request holds its place only while that read ends.
+   * Called by {@link answerPageRequest} once the page has taken its place.
+   * @param response - The page's answer.
+   * @param relativePath - The page's path in the Wiki.
+   * @example await servePage(response, 'index.html')
+   */
+  async function servePage(
+    response: ServerResponse,
+    relativePath: string,
+  ): Promise<void> {
     // An agent may publish a new owned directory while this reader stays open.
     const { files } = await readManifest()
+    // A browser that went while the manifest was read gets no page: nothing more is read for it.
+    if (response.destroyed) return
     // A page the last update removed or renamed sends the learner to the overview instead of a JSON error, and the overview is told which page was asked for, so it can say so.
     if (!files.has(relativePath)) {
       response.writeHead(302, {
@@ -574,14 +593,15 @@ export async function startDeepWikiReader(
       return
     }
     const servedFile = await lookAtServedFile(response, relativePath)
-    if (!servedFile) return
+    if (!servedFile || response.destroyed) return
     // Read before the page itself: a publish between the two reads then leaves the page with the older identity, and it offers a reload instead of hiding one.
     const publication = await readWikiPublicationIdentity(outputDirectory)
+    if (response.destroyed) return
     await prepareAndSendPage(response, relativePath, servedFile, publication)
   }
   /**
    * Reads a page file of the Wiki within the page file limit, prepares it on a page worker under its deadline and sends the page as served, or the refusal page of why it is not; the file is closed before the page is prepared.
-   * Called by {@link answerPageRequest} once the page's place is taken and its file was looked at.
+   * Called by {@link servePage} once the page's place is taken and its file was looked at.
    * @param response - The page's answer.
    * @param relativePath - The page's path in the Wiki.
    * @param servedFile - The page file's real path and its size at the look.
@@ -594,7 +614,7 @@ export async function startDeepWikiReader(
     { filePath, sizeBytes }: { filePath: string; sizeBytes: number },
     publication: Awaited<ReturnType<typeof readWikiPublicationIdentity>>,
   ): Promise<void> {
-    // The page's place is taken, and given back once its answer has left the host or its connection has closed.
+    // The page's place is taken, and given back once its answer has left the host or its connection has closed, and the reader's work for it has ended.
     response.setHeader('Content-Type', 'text/html; charset=utf-8')
     response.setHeader('Content-Security-Policy', SERVED_PAGE_POLICY)
     if (sizeBytes > WIKI_PAGE_FILE_LIMIT_BYTES) {
@@ -609,6 +629,8 @@ export async function startDeepWikiReader(
     }
     let content: Buffer | undefined
     try {
+      // A browser that went while the page was opened gets no page: its file is closed unread.
+      if (response.destroyed) return
       content = await readUpToLimit(
         pageFile.file,
         pageFile.sizeBytes,
@@ -813,6 +835,35 @@ async function sendOpenedWikiFile(
     }),
     response,
   )
+}
+
+/**
+ * Gives a page's place among the pages in hand back at the later of two ends: the close of the page's answer, once the answer has left the host or its connection has closed, and the end of the reader's own work for the page.
+ * Why: when a browser goes while the reader reads the manifest, the publication identity or the page, its answer closes before those reads end; a place given back at the close let a further page in while the gone one still read, so clients that went during slow reads held more pages at once than the places bound (Codex's probe held 12 open files and 24 MiB against six).
+ * Called by the Wiki reader for every page that took its place ({@link takeWikiPagePlace}), before anything is awaited for it, so the answer has not closed yet.
+ * @param response - The page's answer.
+ * @param givePlaceBack - Gives the page's place back ({@link takeWikiPagePlace}).
+ * @returns The step the reader takes once its work for the page has ended, whichever way it ended; a further call does nothing.
+ * @example
+ * const noteWorkEnded = givePlaceBackAtTheLaterEnd(response, givePlaceBack)
+ * try { await servePage(response, 'index.html') } finally { noteWorkEnded() }
+ */
+function givePlaceBackAtTheLaterEnd(
+  response: ServerResponse,
+  givePlaceBack: () => void,
+): () => void {
+  let isAnswerClosed = false
+  let isWorkEnded = false
+  response.once('close', () => {
+    isAnswerClosed = true
+    // The work ended before the answer closed: the close is the later end.
+    if (isWorkEnded) givePlaceBack()
+  })
+  return (): void => {
+    isWorkEnded = true
+    // The answer closed before the work ended, as when its browser went during a read: the work's end is the later end.
+    if (isAnswerClosed) givePlaceBack()
+  }
 }
 
 /** Refuses a Wiki file that is no regular file: a named pipe, a device or a folder at a path the manifest lists is never opened or read. @param response - The answer to the refused request. @example sendNoRegularFile(response) // 403 */

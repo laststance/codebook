@@ -30,6 +30,8 @@ import type * as linkGuardModule from '../utils/assertNoLinkOnWikiPath'
 import type * as linkWalkModule from '../utils/findLinkOnWikiPath'
 import type * as openWithoutFollowingModule from '../utils/openWithoutFollowing'
 import { openWithoutFollowing } from '../utils/openWithoutFollowing'
+import type * as readUpToLimitModule from '../utils/readUpToLimit'
+import { readUpToLimit } from '../utils/readUpToLimit'
 import type * as readWikiFileToOpenModule from '../utils/readWikiFileToOpen'
 import { readWikiFileToOpen } from '../utils/readWikiFileToOpen'
 import type * as readWikiPublicationIdentityModule from '../utils/readWikiPublicationIdentity'
@@ -1983,6 +1985,149 @@ test('a page whose browser does not read it keeps its place until its connection
   )
 })
 
+// Value: protects=the editor's extension host against clients that ask for pages and go while the reader reads them: the reader gave a page's place back at its answer's close, which comes before the reader's work for the page has ended when the browser goes, so each gone request let a further page in while the earlier ones still read the manifest, the publication identity and the page (Codex's probe with slow reads held 12 open files and 24 MiB against the six pages the reader holds); fails_when=a page's place is given back before the reader's work for it has ended, so a page asked for while six gone pages are still read is read too, or the reader goes on to read a page whose browser went; why_new=Cycle 0047 row 228 (P2CXA-B1 = P2CLA-5), a regression of row 188's change; seam=the reader loaded with loadModule, places of a page-place module of its own, a file system whose open of the page waits until the test lets it go, a page read that is counted, a stand-in page worker, and a node:http whose server notes each end of the reader's handler; no_claim=the memory of the editor's process (the opens and reads are counted)
+test('pages whose browser goes while the reader opens them keep their places until the reader has stopped: no more than six are opened at once, a page asked for meanwhile is refused as busy, no page is read after its browser went, and a page asked for after them is served', async (context) => {
+  // Arrange: a page besides the overview; a file system whose open of that page waits until the test lets it go on; a count of the page reads; places of their own for the pages in hand; and a server that notes each end of the reader's handler.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-pages-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let pageOpensAsked = 0
+  const openWaits: ((asked: 'open asked') => void)[] = []
+  let letOpensGoOn = (): void => {}
+  const opensMayGoOn = new Promise<void>((resolveGoOn) => {
+    letOpensGoOn = resolveGoOn
+  })
+  const heldFileSystem = {
+    ...fileSystemPromises,
+    open: async (...parameters: Parameters<typeof open>) => {
+      if (basename(String(parameters[0])) === 'later.html') {
+        pageOpensAsked += 1
+        for (const noteOpenAsked of openWaits.splice(0))
+          noteOpenAsked('open asked')
+        await opensMayGoOn
+      }
+      return open(...parameters)
+    },
+  }
+  let pageReads = 0
+  const countingPageRead: typeof readUpToLimitModule = {
+    readUpToLimit: (...parameters) => {
+      pageReads += 1
+      return readUpToLimit(...parameters)
+    },
+  }
+  const heldOpener = await loadModule<typeof openWithoutFollowingModule>(
+    join(__dirname, '..', 'utils', 'openWithoutFollowing.js'),
+    { 'node:fs/promises': heldFileSystem },
+  )
+  const placesOfTheirOwn = await loadModule<typeof takeWikiPagePlaceModule>(
+    join(__dirname, '..', 'utils', 'takeWikiPagePlace.js'),
+    {},
+  )
+  const servingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => ({
+      state: 'served',
+      html: '<p>Prepared page</p>',
+    }),
+  }
+  const server = httpNotingTheReadersRequests()
+  const { startDeepWikiReader: startReaderWithHeldOpens } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      'node:http': server.http,
+      './utils/openWithoutFollowing': heldOpener,
+      './utils/readUpToLimit': countingPageRead,
+      './utils/takeWikiPagePlace': placesOfTheirOwn,
+      './wikiPageWorker': servingWorker,
+    },
+    { URL },
+  )
+  const reader = await startReaderWithHeldOpens(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held opens are let go also when the test fails, so their requests end.
+  context.after(() => letOpensGoOn())
+
+  // Act: twelve tabs one after another, each closed once the reader opens its page or once it is answered; then the opens go on; then a page after them.
+  const answers: (number | 'request gone')[] = []
+  for (let tab = 0; tab < 12; tab += 1) {
+    const pageOpened = new Promise<'open asked'>((resolveAsked) =>
+      openWaits.push(resolveAsked),
+    )
+    const browserTab = new AbortController()
+    const answer = fetch(new URL('later.html', reader.url), {
+      signal: browserTab.signal,
+    }).then(
+      async (response) => {
+        await response.text()
+        return response.status
+      },
+      () => 'request gone' as const,
+    )
+    await Promise.race([pageOpened, answer])
+    browserTab.abort()
+    answers.push(await answer)
+  }
+  const pageOpensAskedWhileHeld = pageOpensAsked
+  letOpensGoOn()
+  const handlersOfTheTwelve = await within(server.handlersEnded(12), 2_000)
+  const pageReadsOfTheTwelve = pageReads
+  const nextResponse = await fetch(new URL('later.html', reader.url))
+  const next = { status: nextResponse.status, body: await nextResponse.text() }
+
+  // Assert
+  assert.deepEqual(
+    {
+      answers,
+      pageOpensAskedWhileHeld,
+      handlersOfTheTwelve,
+      pageReadsOfTheTwelve,
+      next,
+    },
+    {
+      answers: [
+        'request gone',
+        'request gone',
+        'request gone',
+        'request gone',
+        'request gone',
+        'request gone',
+        503,
+        503,
+        503,
+        503,
+        503,
+        503,
+      ],
+      pageOpensAskedWhileHeld: 6,
+      handlersOfTheTwelve: 'ended',
+      pageReadsOfTheTwelve: 0,
+      next: { status: 200, body: '<p>Prepared page</p>' },
+    },
+  )
+})
+
 // Value: protects=the editor's extension host and every later page against a browser that stops reading its page and keeps its connection open: no answer of the reader had a send limit, so such a page kept its bytes in the host and its place among the pages in hand for as long as its connection lived; fails_when=a page whose answer is not received within WIKI_RESPONSE_SEND_LIMIT_MS is not ended, so its place stays taken and every later page is refused as busy, or its place is given back while its answer is still held; why_new=Cycle 0047 row 188 (S2CXA-B1, with S2RT-2); seam=the reader loaded with loadModule, a send limit of 1.5 s, one place for pages in hand whose give-back the test waits for, a stand-in page-worker module that prepares the first page as 16 MiB of text, and a connection of the test's that does not read until the test resumes it; no_claim=the shipped send limit of 30 s and the shipped six places
 test('a page whose browser stops reading is ended at the send limit and gives its place back: a page asked for before is refused as busy, one asked for after is served, and the browser receives less than the page', async (context) => {
   // Arrange: a page besides the overview; a send limit of 1.5 s and one place for pages in hand; the overview is prepared as 16 MiB of text and asked for by a connection that does not read it.
@@ -3064,30 +3209,27 @@ test('a page whose browser tab goes while the page is prepared has its preparati
   assert.equal(preparationEnd, 'stopped')
 })
 
-// Value: protects=the editor's machine against a crafted page whose tab closes while the reader still reads the page file; fails_when=the reader starts listening for the response's close only after the file read, so a request gone during the read is prepared until the deadline; why_new=the P2T5 test closes the tab after the preparation started; seam=the reader loaded with loadModule, a file system whose open of the page waits for the test (handed to the reader's opener that follows no link since Cycle 0047 row 12), and a stand-in page worker; no_claim=a real browser's close timing
+// Value: protects=the editor's machine against a crafted page whose tab closes while the reader still reads the page file; fails_when=the reader starts listening for the response's close only after the file read, so a request gone during the read is prepared until the deadline; why_new=the P2T5 test closes the tab after the preparation started; Cycle 0047 row 228: the reader reads no page whose tab went while it opened the file, so the read is held here, after the open; seam=the reader loaded with loadModule, a page read that waits for the test, and a stand-in page worker; no_claim=a real browser's close timing
 test('a page whose browser tab goes while the reader reads its file has its preparation stopped', async (context) => {
-  // Arrange: the one-page Wiki, a file system whose open of the overview waits until the test lets it go on, and a page worker that answers only when its request goes.
+  // Arrange: the one-page Wiki, a page read that waits until the test lets it go on, and a page worker that answers only when its request goes.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-read-abort-')),
   )
   context.after(() => rm(projectRoot, { recursive: true, force: true }))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
-  let noteOpenAsked = (): void => {}
-  const openAsked = new Promise<void>((resolveAsked) => {
-    noteOpenAsked = resolveAsked
+  let noteReadAsked = (): void => {}
+  const readAsked = new Promise<void>((resolveAsked) => {
+    noteReadAsked = resolveAsked
   })
-  let letOpenGoOn = (): void => {}
-  const openMayGoOn = new Promise<void>((resolveGoOn) => {
-    letOpenGoOn = resolveGoOn
+  let letReadGoOn = (): void => {}
+  const readMayGoOn = new Promise<void>((resolveGoOn) => {
+    letReadGoOn = resolveGoOn
   })
-  const heldFileSystem = {
-    ...fileSystemPromises,
-    open: async (...parameters: Parameters<typeof open>) => {
-      if (basename(String(parameters[0])) === 'index.html') {
-        noteOpenAsked()
-        await openMayGoOn
-      }
-      return open(...parameters)
+  const heldPageRead: typeof readUpToLimitModule = {
+    readUpToLimit: async (...parameters) => {
+      noteReadAsked()
+      await readMayGoOn
+      return readUpToLimit(...parameters)
     },
   }
   let preparationSignal: AbortSignal | undefined
@@ -3108,38 +3250,35 @@ test('a page whose browser tab goes while the reader reads its file has its prep
         notePreparationStarted()
       }),
   }
-  const heldOpener = await loadModule<typeof openWithoutFollowingModule>(
-    join(__dirname, '..', 'utils', 'openWithoutFollowing.js'),
-    { 'node:fs/promises': heldFileSystem },
-  )
-  const { startDeepWikiReader: startReaderWithHeldOpen } = await loadModule<
+  const { startDeepWikiReader: startReaderWithHeldRead } = await loadModule<
     typeof deepWikiReaderModule
   >(
     join(__dirname, '..', 'deepWikiReader.js'),
     {
-      'node:fs/promises': heldFileSystem,
-      './utils/openWithoutFollowing': heldOpener,
+      './utils/readUpToLimit': heldPageRead,
       './wikiPageWorker': workerAnsweringOnlyAtAbort,
     },
     { URL },
   )
-  const reader = await startReaderWithHeldOpen(
+  const reader = await startReaderWithHeldRead(
     outputDirectory,
     projectRoot,
     async () => ({ handoff: 'not asked' }),
   )
   context.after(() => reader.close())
+  // The held read is let go also when the test fails, so its request ends.
+  context.after(() => letReadGoOn())
   const browserTab = new AbortController()
   const opening = fetch(reader.url, { signal: browserTab.signal }).catch(
     () => 'request gone',
   )
-  await openAsked
+  await readAsked
 
-  // Act: the tab goes while the page file is opened, then the read goes on.
+  // Act: the tab goes while the page file is read, then the read goes on.
   browserTab.abort()
   await opening
   await new Promise((resolveWait) => setTimeout(resolveWait, 200))
-  letOpenGoOn()
+  letReadGoOn()
   await preparationStarted
   const preparationEnd = await within(
     new Promise<'stopped'>((resolveStop) => {
