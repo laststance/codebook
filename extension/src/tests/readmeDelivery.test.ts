@@ -29,6 +29,7 @@ import {
   WIKI_PAGE_FILE_LIMIT_BYTES,
   WIKI_PAGE_NAVIGATION_DESTINATIONS,
   WIKI_PAGE_SERVE_DEADLINE_MS,
+  WIKI_PAGE_WAIT_LIMIT_MS,
   WIKI_PAGE_WAITING_LIMIT,
   WIKI_PAGE_WORKER_CONCURRENCY_LIMIT,
   WIKI_PAGE_WORKER_HEAP_LIMIT_MB,
@@ -1056,7 +1057,7 @@ test('the packaged README says, where it names the Wiki folder, that an untruste
   assert.equal(saysIt, true)
 })
 
-// Value: protects=a learner whose Wiki page shows a dead link, a short page "Page not shown" or a refusal, reading under "LLM Wiki: open and update" what the reader makes inert and what it refuses, with the sentences and the numbers the product keeps; fails_when=the README's section loses the address filter, the page workers' limits (two at a time, four waiting, 10 seconds, 512 MB, 2 MiB), one of the five sentences of the refusal page, the refusal of a page asked for as a part of a page or of a file that is no regular file, or quotes a sentence or a number the product no longer prints or keeps; why_new=Cycle 0047 row 50 (D14.5-2): only the change history described them, with the limits of before Cycle 0047 rows 3, 4 and 19; Cycle 0047 row 104 the sentence of a page that needs more memory; Cycle 0047 row 107 (ADV2-1) the heap limit of 512 MB again; Cycle 0047 row 132 (RT2-2) the sentence of a page too large names an earlier Codebook beside a hand edit; seam=none
+// Value: protects=a learner whose Wiki page shows a dead link, a short page "Page not shown" or a refusal, reading under "LLM Wiki: open and update" what the reader makes inert and what it refuses, with the sentences and the numbers the product keeps; fails_when=the README's section loses the address filter, the page workers' limits (two at a time, four waiting, 30 seconds of waiting, 10 seconds, 512 MB, 2 MiB), one of the five sentences of the refusal page, the refusal of a page asked for as a part of a page or of a file that is no regular file, or quotes a sentence or a number the product no longer prints or keeps; why_new=Cycle 0047 row 50 (D14.5-2): only the change history described them, with the limits of before Cycle 0047 rows 3, 4 and 19; Cycle 0047 row 104 the sentence of a page that needs more memory; Cycle 0047 row 107 (ADV2-1) the heap limit of 512 MB again; Cycle 0047 row 132 (RT2-2) the sentence of a page too large names an earlier Codebook beside a hand edit; Cycle 0047 row 189 (D7) a page that waited 30 seconds for a worker is answered busy too; seam=none
 test('the packaged README says under LLM Wiki what the reader makes inert in a served page and which pages and files it refuses, with the refusal page’s sentences and the limits of its page workers', async () => {
   // Arrange
   const readme = await readPackagedReadme()
@@ -1083,7 +1084,7 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
     `- \`${needsMoreMemory}\` for a page whose preparation needs more than the 512 MB of heap.`,
     `- \`${pastTheDeadline}\` for a page whose preparation passes the 10 seconds.`,
     `- \`${failed}\` for a page whose worker failed.`,
-    `- \`${busy}\` for a page asked for while two pages are prepared and four wait; its file is not read.`,
+    `- \`${busy}\` for a page asked for while two pages are prepared and four wait, whose file is not read, and for a page that waited 30 seconds for a worker.`,
     'An HTML page asked for as a part of a page (an image, a style sheet, a script, a fetch), and not to be opened as a page or in an inline frame (the browser says which in `Sec-Fetch-Dest`), is refused with `A Wiki page is served only to be opened as a page.` (status 403); a request without that header, from a client that is no browser, is served. A file of the Wiki that is no regular file (a named pipe, a device, a folder) is never opened, a page or any other file: `The Wiki file is no regular file; a pipe, a device or a folder at its path is not served.` (status 403).',
   ])
   const reasons: WikiPageRefusalReason[] = [
@@ -1132,6 +1133,7 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
   )
   assert.equal(WIKI_PAGE_WORKER_CONCURRENCY_LIMIT, 2)
   assert.equal(WIKI_PAGE_WAITING_LIMIT, 4)
+  assert.equal(WIKI_PAGE_WAIT_LIMIT_MS, 30_000)
   assert.equal(WIKI_PAGE_SERVE_DEADLINE_MS, 10_000)
   assert.equal(WIKI_PAGE_WORKER_HEAP_LIMIT_MB, 512)
   assert.equal(WIKI_PAGE_FILE_LIMIT_BYTES, 2_097_152)
