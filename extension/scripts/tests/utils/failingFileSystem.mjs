@@ -2,34 +2,36 @@ import * as fileSystem from 'node:fs/promises'
 
 export * from 'node:fs/promises'
 
-/** The write a test asked to fail: the file it waits for and the system error it fails with; gone once it failed. */
+/** The write a test asked to fail: the file it waits for, the system error it fails with and what runs before it fails; gone once it failed. */
 let pendingWriteFailure
 
 /**
  * Asks the next write through a handle of a file that `isAwaited` names to write the first half of its bytes and then fail with a system error, once: as a write that runs into a full disk (`ENOSPC`) or a file size limit (`EFBIG` under `ulimit -f`) after its `open` made the file. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose write fails.
  * @param {'EFBIG' | 'ENOSPC'} code - The system error.
+ * @param {(path: string) => Promise<void>} [swap] - Runs, with the file's path, once the first half is written and before the write fails, while the handle is still open: as another process that puts a file of its own at the name meanwhile.
  * @returns {void}
  * @example
- * failWriteOf((path) => path.endsWith('/next/manual.txt'), 'EFBIG')
+ * failWriteOf((path) => path.endsWith('/next/manual.txt'), 'EFBIG', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') })
  */
-export function failWriteOf(isAwaited, code) {
-  pendingWriteFailure = { isAwaited, code }
+export function failWriteOf(isAwaited, code, swap) {
+  pendingWriteFailure = { isAwaited, code, swap }
 }
 
-/** The status read or the close through a handle that a test asked to fail: the file it waits for, the call, the system error and what runs before a failing status read; gone once it failed. */
+/** The status read or the close through a handle that a test asked to fail: the file it waits for, the call, the system error and what runs first in the failing call; gone once it failed. */
 let pendingHandleCallFailure
 
 /**
  * Asks the next close of a handle of a file that `isAwaited` names to close the file and then fail with a system error, once: as a close on a network or synced file system that runs into a full disk (`ENOSPC`) or a quota (`EDQUOT`) after the whole write was handed on. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose close fails.
  * @param {'EDQUOT' | 'ENOSPC'} code - The system error.
+ * @param {(path: string) => Promise<void>} [swap] - Runs, with the file's path, before the close closes the file and fails, while the handle is still open: as another process that puts a file of its own at the name meanwhile.
  * @returns {void}
  * @example
- * failCloseOf((path) => path.endsWith('/next/manual.txt'), 'ENOSPC')
+ * failCloseOf((path) => path.endsWith('/next/manual.txt'), 'ENOSPC', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') })
  */
-export function failCloseOf(isAwaited, code) {
-  pendingHandleCallFailure = { isAwaited, call: 'close', code }
+export function failCloseOf(isAwaited, code, swap) {
+  pendingHandleCallFailure = { isAwaited, call: 'close', code, swap }
 }
 
 /**
@@ -46,11 +48,11 @@ export function failStatOf(isAwaited, code, swap) {
 }
 
 /**
- * Wraps an open handle so that its `close` closes the file and then fails with `code`, or its `stat` runs `swap` and then fails with `code` and reads nothing; every other member is the handle's own.
+ * Wraps an open handle so that its `close` runs `swap`, closes the file and then fails with `code`, or its `stat` runs `swap` and then fails with `code` and reads nothing; every other member is the handle's own.
  * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
  * @param {'close' | 'stat'} call - The call that fails.
  * @param {string} code - The system error.
- * @param {() => Promise<void>} [swap] - What runs before a failing `stat`.
+ * @param {() => Promise<void>} [swap] - What runs first in the failing call, while the handle is still open.
  * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
  * @example
  * await handleWhoseCallFails(await fileSystem.open(path, 'wx'), 'close', 'ENOSPC').close() // rejects with code ENOSPC after the file was closed
@@ -62,9 +64,10 @@ function handleWhoseCallFails(handle, call, code, swap) {
     })
   return new Proxy(handle, {
     get(target, property) {
-      // The close closes the file first, so no descriptor is left open.
+      // The close closes the file before it fails, so no descriptor is left open; the swap runs while the file is still open, so a file it puts at the name cannot take the open file's id.
       if (property === call && call === 'close')
         return async () => {
+          await swap?.()
           await target.close()
           throw failure()
         }
@@ -80,20 +83,22 @@ function handleWhoseCallFails(handle, call, code, swap) {
 }
 
 /**
- * Wraps an open handle so that its `writeFile` writes the first half of the bytes and then fails with `code`; every other member is the handle's own.
+ * Wraps an open handle so that its `writeFile` writes the first half of the bytes, runs `swap` and then fails with `code`; every other member is the handle's own.
  * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
  * @param {string} code - The system error.
+ * @param {() => Promise<void>} [swap] - What runs after the first half is written and before the write fails.
  * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
  * @example
  * await handleWhoseWriteFails(await fileSystem.open(path, 'wx'), 'EFBIG').writeFile('abcd') // rejects with code EFBIG after writing 'ab'
  */
-function handleWhoseWriteFails(handle, code) {
+function handleWhoseWriteFails(handle, code, swap) {
   return new Proxy(handle, {
     get(target, property) {
       if (property === 'writeFile')
         return async (data) => {
           const bytes = Buffer.from(data)
           await target.write(bytes, 0, Math.floor(bytes.length / 2))
+          await swap?.()
           throw Object.assign(new Error(`${code}: the write stopped partway`), {
             code,
           })
@@ -128,10 +133,14 @@ export async function open(path, ...rest) {
   }
   if (!failure?.isAwaited(String(path))) return handle
   pendingWriteFailure = undefined
-  return handleWhoseWriteFails(handle, failure.code)
+  return handleWhoseWriteFails(
+    handle,
+    failure.code,
+    failure.swap && (() => failure.swap(String(path))),
+  )
 }
 
-/** The renames a test asked to fail: the source each waits for and the system errors still to come, one per call. */
+/** The renames a test asked to fail: the source each waits for, the system errors still to come, one per call, and what runs before each fails. */
 const pendingRenameFailures = []
 
 /** The optional observer of {@link observeRemovals}. */
@@ -141,12 +150,13 @@ let removalObserver
  * Asks the next renames of a folder or file that `isAwaited` names to fail, one call per code in `codes`, in turn: as Windows answers `EBUSY` or `EPERM` while an indexer, a virus scanner or a watcher holds the folder for a moment, or a move that cannot succeed at all (`EXDEV`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {(path: string) => boolean} isAwaited - Whether the source of a rename is the one whose renames fail.
  * @param {string[]} codes - The system errors of the next calls, one each; later calls succeed.
+ * @param {(path: string) => Promise<void>} [swap] - Runs, with the source's path, before each failing call rejects, once nothing was moved: as another process that puts a file of its own at the name meanwhile.
  * @returns {() => void} Drops the errors still to come, so none is left for another test.
  * @example
  * const stop = failRenameOf((path) => path === '/repo/.codebook/wiki', ['EBUSY', 'EPERM']); stop()
  */
-export function failRenameOf(isAwaited, codes) {
-  const failure = { isAwaited, codes: [...codes] }
+export function failRenameOf(isAwaited, codes, swap) {
+  const failure = { isAwaited, codes: [...codes], swap }
   pendingRenameFailures.push(failure)
   return () => {
     failure.codes.length = 0
@@ -168,7 +178,7 @@ export function observeRemovals(observer) {
 }
 
 /**
- * Renames as `rename` does, except while {@link failRenameOf} holds a system error for the source: then the call fails with it and nothing is moved.
+ * Renames as `rename` does, except while {@link failRenameOf} holds a system error for the source: then the call runs that request's swap, if any, and fails with the error, and nothing is moved.
  * @param {string} from - What is moved.
  * @param {string} to - Where it goes.
  * @returns {Promise<void>} What `rename` answers.
@@ -183,6 +193,7 @@ export async function rename(from, to) {
   // The awaited source fails once per code still to come; every other rename moves.
   if (failure !== undefined) {
     const code = failure.codes.shift()
+    await failure.swap?.(String(from))
     throw Object.assign(new Error(`${code}: rename '${from}' -> '${to}'`), {
       code,
     })

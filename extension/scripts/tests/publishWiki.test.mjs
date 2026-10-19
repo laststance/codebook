@@ -11100,3 +11100,122 @@ test('a recovery on a volume that answers a file id of 0 for every entry puts ba
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+for (const failure of [
+  {
+    when: 'stops partway, as at a full disk or under a file size limit,',
+    code: 'EFBIG',
+    ask: (isAwaited, swap) => failWriteOf(isAwaited, 'EFBIG', swap),
+  },
+  {
+    when: 'fails at its close, as at a full disk on a network or synced file system,',
+    code: 'ENOSPC',
+    ask: (isAwaited, swap) => failCloseOf(isAwaited, 'ENOSPC', swap),
+  },
+]) {
+  // Value: protects=a file another process puts at the name of the publish's copy of a learner's file after the publish's 'wx' open made it, when the copy's write or close then fails; fails_when=writeOwnFile's clean-up of the file its open made (removeUnwrittenFile) removes the file at the path without its device and file id, so it removes another process's file; why_new=Cycle 0047 row 165 (CORE3-6); seam=a copy of the shipped publisher whose `node:fs/promises` fails the write or the close through the handle of the learner's file in the candidate, after the row's swap of the file at that name while the handle is open (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a write or close that fails on a real file system, and a file put at the name after the publisher closed its file, which may take that file's id
+  test(`a publish whose copy of the learner’s file ${failure.when} after another process put a file of its own at the copy’s name, keeps that file byte for byte`, async () => {
+    // Arrange: the published Wiki holds a file of the learner's; the publish's copy of it into the candidate fails as the row names, once another process put a file of its own at the copy's name.
+    const { publishWiki: publishWhoseCopyFails } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    const copy = join(wiki.next, 'manual.txt')
+    try {
+      await writeFile(
+        join(wiki.output, 'manual.txt'),
+        'The learner’s own notes',
+      )
+      // The swap runs while the copy's file is open, so the file it puts at the name has another file id.
+      failure.ask(
+        (path) => path === copy,
+        async (path) => {
+          await rm(path)
+          await writeFile(path, 'Another process’s notes')
+        },
+      )
+
+      // Act
+      const refusal = await publishWhoseCopyFails({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => 'published',
+        (error) => error.code,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          fileAtTheCopysName: await readFile(copy, 'utf8').catch(
+            () => 'removed',
+          ),
+          manualFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+        },
+        {
+          refusal: failure.code,
+          fileAtTheCopysName: 'Another process’s notes',
+          manualFile: 'The learner’s own notes',
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=a file another process puts at the name of the file beside the candidate's manifest through which a publish puts the finalized manifest in place (`.codebook-publish-<id>-codebook-wiki.json`), when the move of that file then fails; fails_when=replaceOwnFileThrough's clean-up after the failed move removes the file at that name without its device and file id, so it removes another process's file; why_new=Cycle 0047 row 165 (CORE3-6); seam=a copy of the shipped publisher whose `node:fs/promises` fails the move of that file with EXDEV, after another file took its name (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a move that fails on a real file system, and the file beside the candidate's record or journal, which go through the same step
+test('a publish whose move of the finalized manifest into place fails, after another process put a file of its own at the name of the file beside the manifest, keeps that file byte for byte', async () => {
+  // Arrange: the move of the file beside the candidate's manifest fails with EXDEV, once another process put a file of its own at that file's name.
+  const { publishWiki: publishWhoseMoveFails } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const anotherFile = join(wiki.directory, 'another-process.json')
+  let temporary
+  const stopFailing = failRenameOf(
+    (path) =>
+      dirname(path) === wiki.next &&
+      /^\.codebook-publish-.*-codebook-wiki\.json$/.test(basename(path)),
+    ['EXDEV'],
+    async (path) => {
+      temporary = path
+      // Written elsewhere first, so it is another file than the closed one at the name, whose file id a file made after its removal may take.
+      await writeFile(anotherFile, 'Another process’s manifest')
+      await rename(anotherFile, path)
+    },
+  )
+  try {
+    // Act
+    const refusal = await publishWhoseMoveFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.code,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        fileAtTheNameBesideTheManifest:
+          temporary === undefined
+            ? 'no move failed'
+            : await readFile(temporary, 'utf8').catch(() => 'removed'),
+      },
+      {
+        refusal: 'EXDEV',
+        fileAtTheNameBesideTheManifest: 'Another process’s manifest',
+      },
+    )
+  } finally {
+    stopFailing()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
