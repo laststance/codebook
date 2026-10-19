@@ -19,6 +19,7 @@ import { test, type TestContext } from 'node:test'
 import {
   listProcesses,
   type ListedProcess,
+  type ProcessListingInputs,
 } from '../runtimeSupport/utils/listProcesses'
 import type * as profileProcessesModule from '../runtimeSupport/utils/profileProcesses'
 import type * as sweepModule from '../runtimeSupport/utils/removeAbandonedProfiles'
@@ -119,6 +120,66 @@ test('a profile folder whose marker names a process that is gone is left while a
   // Assert
   assert.deepEqual(removed, [])
   assert.equal(await exists(folder), true)
+})
+
+// Value: protects=a profile folder that a browser of this user still uses in another Windows logon session (a remote session whose editor ended), and one that a process of another session names whose owner cannot be read: the sweep of abandoned profile folders leaves both, and still removes a folder that only another user's process names; fails_when=the sweep's listing keeps only the editor's own session, or leaves out a process whose owner it cannot confirm, so the sweep removes the files of a profile in use (Cycle 0047 row 196); why_new=Cycle 0047 row 196 (S2CXA-C2-2); seam=the Windows listing with a runner stand-in that answers as the query prints for three browsers of session 2, given to the sweep as its lister; the profile match reads the command lines by this system's rules, so each is written as this system writes it; no_claim=a real second logon session
+test('the sweep leaves a profile folder that this user’s browser uses in another Windows logon session or that a process whose owner cannot be read names, and removes one that only another user’s process names', async (context) => {
+  // Arrange: three folders of killed editors of this user; a browser of session 2 names each, run by this user, by an owner that could not be read, and by another user.
+  const root = await profileRoot(context)
+  const folders = {
+    inUseInAnotherSession: join(root, 'codebook-browser-in-another-session'),
+    namedByUnreadOwner: join(root, 'codebook-browser-of-an-unread-owner'),
+    namedByAnotherUser: join(root, 'codebook-browser-of-another-user'),
+  }
+  for (const folder of Object.values(folders))
+    await profileFolder(folder, {
+      pid: ID_OF_NO_PROCESS,
+      hostname: 'workstation',
+      user: 'learner',
+    })
+  // Each browser's command line is percent-encoded as the query prints it; its process id names no process, so on Linux the text decides.
+  const browserNaming = (folder: string): string =>
+    encodeURIComponent(
+      process.platform === 'win32'
+        ? `"c:\\chrome.exe" "--user-data-dir=${folder}"`
+        : `chrome --user-data-dir=${folder}`,
+    )
+  const printed = [
+    'editor 1 S-1-5-21-1000-1001',
+    `${ID_OF_NO_PROCESS} 2 S-1-5-21-1000-1001 ${browserNaming(folders.inUseInAnotherSession)}`,
+    `${ID_OF_NO_PROCESS} 2 ? ${browserNaming(folders.namedByUnreadOwner)}`,
+    `${ID_OF_NO_PROCESS} 2 S-1-5-21-1000-1002 ${browserNaming(folders.namedByAnotherUser)}`,
+  ].join('\r\n')
+  const listWindowsProcesses = (
+    inputs: ProcessListingInputs,
+  ): Promise<ListedProcess[]> =>
+    listProcesses({
+      ...inputs,
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: async () => ({ stdout: printed }),
+    })
+
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    listWindowsProcesses,
+    readProcessStart,
+    'learner',
+  )
+
+  // Assert
+  assert.deepEqual(
+    { removed, left: (await readdir(root)).sort() },
+    {
+      removed: [folders.namedByAnotherUser],
+      left: [
+        'codebook-browser-in-another-session',
+        'codebook-browser-of-an-unread-owner',
+      ],
+    },
+  )
 })
 
 test('a profile folder whose marker names another machine is left, although no process with its id runs here', async (context) => {

@@ -19,7 +19,11 @@ import {
 import { removeWithoutFollowing } from '../../utils/removeWithoutFollowing'
 import { withoutBootTime } from '../../utils/withoutBootTime'
 
-import { listProcesses, type ListedProcess } from './listProcesses'
+import {
+  listProcesses,
+  type ListedProcess,
+  type ProcessListingInputs,
+} from './listProcesses'
 import { profileProcesses } from './profileProcesses'
 
 /**
@@ -123,13 +127,13 @@ async function sweepProfile(
  * see {@link withoutBootTime}), and no process runs with the folder as its profile. A folder without a readable marker is never touched, whoever made it.
  * One sweep judges at most {@link MANAGED_PROFILE_SWEEP_LIMIT} marked folders; the folders without a marker that builds before the marker left behind,
  * and the folders of other users, take none of that bound, so they cannot keep the marked folders listed after them from being looked at. The processes are listed once per sweep, at its first folder
- * whose owner is gone, and every such folder is matched against that one listing. A listing that fails, runs longer than its time bound or prints more than its limit
+ * whose owner is gone, and every such folder is matched against that one listing, which counts every process that may be this user's: on Windows also a process of another logon session whose owner cannot be confirmed ({@link ProcessListingInputs.keepsUnconfirmedOwners}), so a folder such a process names stays. A listing that fails, runs longer than its time bound or prints more than its limit
  * ({@link listProcesses}) removes nothing: every folder stays for a later run, like a folder whose removal fails. A folder is removed by {@link removeWithoutFollowing}: a link inside it is removed as a name, and the files it leads to stay. The starts of the marker's processes are kept for the sweep, so the folders of one running editor cost one read;
  * a kept start never calls an owner gone.
  *
  * @param root - The directory that holds the profile folders: {@link managedProfileRoot} in the product (the shared `/tmp` on macOS and Linux, the user's own local application data folder on Windows), a directory of their own in tests.
  * @param identity - The machine and the boot of this process, by which a marker's owner is judged.
- * @param listRunningProcesses - Lists the processes of this machine; {@link listProcesses} unless a test counts the listings.
+ * @param listRunningProcesses - Lists the processes of this machine, asked to keep the processes whose owner cannot be confirmed; {@link listProcesses} unless a test counts the listings or names its own listing.
  * @param readStart - Reads the start of the process that has a marker's process id now; {@link readProcessStart} unless a test names its own.
  * @param userName - The operating-system user this sweep runs as; {@link currentUserName} unless a test names its own. A folder whose marker names another user is left and not counted, on every system.
  * @returns The folders that were removed, in the order the directory listed them; empty when the root cannot be read. Nothing here throws: what cannot be
@@ -140,7 +144,9 @@ async function sweepProfile(
 export async function removeAbandonedProfiles(
   root: string,
   identity: StorageOwnerIdentity,
-  listRunningProcesses: () => Promise<ListedProcess[]> = listProcesses,
+  listRunningProcesses: (
+    inputs: ProcessListingInputs,
+  ) => Promise<ListedProcess[]> = listProcesses,
   readStart: ProcessStartReader = readProcessStart,
   userName: string | undefined = currentUserName(),
 ): Promise<string[]> {
@@ -157,8 +163,9 @@ export async function removeAbandonedProfiles(
     userName,
     judgedCount: 0,
     removed: [],
-    // One listing serves every folder of the sweep; it is made only when a folder's owner is gone.
-    processes: () => (listing ??= listRunningProcesses()),
+    // One listing serves every folder of the sweep; it is made only when a folder's owner is gone. A process that may be this user's holds the folder it names (Cycle 0047 row 196).
+    processes: () =>
+      (listing ??= listRunningProcesses({ keepsUnconfirmedOwners: true })),
     readStart: (pid, inputs) => readStart(pid, { ...inputs, cache }),
   }
   for (const candidate of candidates) {

@@ -123,33 +123,52 @@ test('macOS and Linux list only the processes of this user, so another user’s 
   assert.deepEqual(listed, { onMac: ofThisUser, onLinux: ofThisUser })
 })
 
-// Value: protects=a managed run on a Windows machine shared with other users, in an editor run as administrator (the only one Windows shows other users' command lines to): its attach and its close match its profile only against the processes of the editor's own logon session; fails_when=the query lists every Win32_Process, so another user's process in another session that names the run's profile fails the attach or holds the close; why_new=Cycle 0047 row 37 (P3RT15); seam=the injected platform, environment and runner; no_claim=a session of another user, which this machine does not have (the query itself ran in full and in Constrained Language mode on this machine's Windows PowerShell 5.1)
-test('the Windows listing asks only for the processes of the logon session PowerShell runs in, which is the editor’s', async () => {
-  // Arrange
-  const listing = answeringListing({ stdout: '' })
-  await listProcesses({
-    platform: 'win32',
-    run: listing.run,
-    environment: { SystemRoot: 'C:\\Windows' },
+// Value: protects=a managed run and the sweep of abandoned profile folders on a Windows machine with several logon sessions: a browser of this user in another session of this user (a remote session whose editor ended) is listed, a process of another user is never listed (row 37), and a process of another session whose owner cannot be read is listed only when the caller asks for it (the sweep, which then holds the folder it names), never for a run's attach and close; fails_when=the listing keeps only the editor's own session, so the sweep removes the files of a profile this user's browser still uses in its other session (Cycle 0047 row 196), or another user's process is listed and fails a run's attach or holds its close (row 37), or a process whose owner cannot be read is taken for the run's browser; why_new=Cycle 0047 row 196 (S2CXA-C2-2): row 37 kept only the editor's session; seam=the injected platform, environment and runner, which answers as the query prints for four browsers in three sessions; no_claim=a second logon session, which this machine does not have (the query ran in full and in Constrained Language mode on this machine's Windows PowerShell 5.1, its owner call also on the processes of session 0)
+test('the Windows listing lists this user’s browser in another logon session and never another user’s, and one whose owner cannot be read only when the caller asks for it', async () => {
+  // Arrange: the editor runs in session 1 as S-1-5-21-1000-1001. Chrome 4242 runs in the editor's session, 5150 in session 2 as the same user, 6006 in session 3 as another user, and 7007 in session 3 with an owner that could not be read.
+  const listing = answeringListing({
+    stdout:
+      'editor 1 S-1-5-21-1000-1001\r\n4242 1 ? %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5Clearner%5CAppData%5CLocal%5Ccodebook-browser-a\r\n5150 2 S-1-5-21-1000-1001 %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5Clearner%5CAppData%5CLocal%5Ccodebook-browser-b\r\n6006 3 S-1-5-21-1000-1002 %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5Clearner%5CAppData%5CLocal%5Ccodebook-browser-c\r\n7007 3 ? %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5Clearner%5CAppData%5CLocal%5Ccodebook-browser-d\r\n',
   })
 
   // Act
-  const [sessionOfPowerShell, processesOfThatSession] = (
-    listing.calls[0]?.listingArguments.at(-1) ?? ''
-  )
-    .split('; ')
-    .slice(0, 2)
+  const listed = {
+    forARun: await listProcesses({
+      platform: 'win32',
+      run: listing.run,
+      environment: { SystemRoot: 'C:\\Windows' },
+    }),
+    forTheSweep: await listProcesses({
+      platform: 'win32',
+      run: listing.run,
+      environment: { SystemRoot: 'C:\\Windows' },
+      keepsUnconfirmedOwners: true,
+    }),
+  }
 
   // Assert
-  assert.deepEqual(
-    { sessionOfPowerShell, processesOfThatSession },
-    {
-      sessionOfPowerShell:
-        "$session = (Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = {0}' -f $PID) -Property SessionId -ErrorAction Stop).SessionId",
-      processesOfThatSession:
-        "Get-CimInstance -ClassName Win32_Process -Filter ('SessionId = {0}' -f $session) -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }",
-    },
-  )
+  const inTheEditorsSession = {
+    pid: 4242,
+    command:
+      '"c:\\chrome.exe" --user-data-dir=C:\\Users\\learner\\AppData\\Local\\codebook-browser-a',
+  }
+  const inAnotherSessionOfThisUser = {
+    pid: 5150,
+    command:
+      '"c:\\chrome.exe" --user-data-dir=C:\\Users\\learner\\AppData\\Local\\codebook-browser-b',
+  }
+  assert.deepEqual(listed, {
+    forARun: [inTheEditorsSession, inAnotherSessionOfThisUser],
+    forTheSweep: [
+      inTheEditorsSession,
+      inAnotherSessionOfThisUser,
+      {
+        pid: 7007,
+        command:
+          '"c:\\chrome.exe" --user-data-dir=C:\\Users\\learner\\AppData\\Local\\codebook-browser-d',
+      },
+    ],
+  })
 })
 
 // Value: protects=the one program the listing starts on macOS and Linux: `ps` by an absolute path, /bin/ps and else /usr/bin/ps, never a `ps` found in the search path or the current folder, and with neither the listing is refused before any program is started, so a sweep removes nothing (AD30, /ship adversarial review Step 11, with SX2's rule that no lookup uses the current folder); fails_when=the listing starts the bare `ps`, which the search path names (a folder the user or a tool put first can hold another program of that name), or takes no second place where /bin has no ps; why_new=`ps` was started by its bare name; seam=the injected platform, runner and program check
@@ -201,10 +220,10 @@ test('macOS and Linux start ps from /bin, else from /usr/bin, and refuse the lis
 
 // Value: protects=a profile sweep and a profile probe on Windows, which has no `ps`, and the program it starts there; fails_when=the listing runs `ps` there (ENOENT), the PowerShell command loses -NoProfile, -NonInteractive, its error action or its bounds, opens a console window, a command line is read wrongly (a path outside ASCII, a process without a readable command line) (Cycle 0046 row 96), or PowerShell is started by its bare name, so a powershell.exe in the editor's current directory or earlier in the search path is started in its place (F4, Cycle 0046 /ship review; row 107 for the start query); why_new=the listing had no form for Windows, and its program was named by its bare name alone; seam=the injected platform, environment and runner. The real query runs in the Windows job.
 test('Windows lists the processes with one bounded PowerShell query, started from the system root, and reads each line as a process id and its command line', async () => {
-  // Arrange: an answer as the query prints it, a process id and the percent-encoding of the command line's UTF-8 bytes on each line, with Windows line ends. Process 4 shows no command line to this user; the second command line holds a folder with a name outside ASCII ("C:\Users\学習者", "learner" in Japanese); the last holds a line break.
+  // Arrange: an answer as the query prints it, with Windows line ends: the editor's session and user first, then on each line a process id, its session, its owner (`?`: not read in the editor's session) and the percent-encoding of the command line's UTF-8 bytes. Processes 0 and 4 show no command line to this user; the second command line holds a folder with a name outside ASCII ("C:\Users\学習者", "learner" in Japanese); the last holds a line break.
   const listing = answeringListing({
     stdout:
-      '0 \r\n4 \r\n4242 %22c%3A%5Cnode.exe%22%20-e%20%22setInterval%28%28%29%20%3D%3E%20%7B%7D%2C%201000%29%22\r\n5150 %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5C%E5%AD%A6%E7%BF%92%E8%80%85%5CAppData%5CLocal%5CTemp%5Ccodebook-browser-a1b2c3\r\n6006 %22c%3A%5Ctool.exe%22%20first-line%0Asecond-line\r\n',
+      'editor 1 S-1-5-21-1000-1001\r\n0 0 ? \r\n4 0 ? \r\n4242 1 ? %22c%3A%5Cnode.exe%22%20-e%20%22setInterval%28%28%29%20%3D%3E%20%7B%7D%2C%201000%29%22\r\n5150 1 ? %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5C%E5%AD%A6%E7%BF%92%E8%80%85%5CAppData%5CLocal%5CTemp%5Ccodebook-browser-a1b2c3\r\n6006 1 ? %22c%3A%5Ctool.exe%22%20first-line%0Asecond-line\r\n',
   })
   // Act
   const listed = await listProcesses({
@@ -220,7 +239,7 @@ test('Windows lists the processes with one bounded PowerShell query, started fro
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "$session = (Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = {0}' -f $PID) -Property SessionId -ErrorAction Stop).SessionId; Get-CimInstance -ClassName Win32_Process -Filter ('SessionId = {0}' -f $session) -Property ProcessId,CommandLine -ErrorAction Stop | ForEach-Object { try { $commandLine = [uri]::EscapeDataString([string]$_.CommandLine) } catch { $commandLine = '' }; '{0} {1}' -f $_.ProcessId, $commandLine }",
+        "$editor = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = {0}' -f $PID) -Property SessionId -ErrorAction Stop; try { $user = (Invoke-CimMethod -InputObject $editor -MethodName GetOwnerSid -ErrorAction Stop).Sid } catch { $user = '' }; if (-not $user) { $user = '?' }; 'editor {0} {1}' -f $editor.SessionId, $user; Get-CimInstance -ClassName Win32_Process -Property ProcessId,SessionId,CommandLine -ErrorAction Stop | ForEach-Object { $process = $_; if ($process.SessionId -eq $editor.SessionId -or $process.CommandLine -like '*user-data-dir*') { $owner = '?'; if ($process.SessionId -ne $editor.SessionId) { try { $sid = (Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop).Sid } catch { $sid = '' }; if ($sid) { $owner = $sid } }; try { $commandLine = [uri]::EscapeDataString([string]$process.CommandLine) } catch { $commandLine = '' }; '{0} {1} {2} {3}' -f $process.ProcessId, $process.SessionId, $owner, $commandLine } }",
       ],
       options: {
         timeout: 10_000,
@@ -249,7 +268,7 @@ test('the Windows listing leaves out a line that is no percent-encoding of UTF-8
   // Arrange: a text with a `+`, which the query's escaping never prints; an escape cut inside a character; and Chrome under Program Files (x86), its `!*'()` left unescaped.
   const listing = answeringListing({
     stdout:
-      "7 abc+def\r\n8 %E5%AD\r\n9 %22C%3A%5CProgram%20Files%20(x86)%5Cit's!*%5Cchrome.exe%22%20--headless\r\n",
+      "editor 1 S-1-5-21-1000-1001\r\n7 1 ? abc+def\r\n8 1 ? %E5%AD\r\n9 1 ? %22C%3A%5CProgram%20Files%20(x86)%5Cit's!*%5Cchrome.exe%22%20--headless\r\n",
   })
   // Act
   const listed = await listProcesses({
@@ -269,7 +288,7 @@ test('the Windows listing leaves out a line that is no percent-encoding of UTF-8
 // Value: protects=the process listing of a Windows machine whose PowerShell runs in Constrained Language mode (AppLocker or App Control for Business on a managed machine put every PowerShell there): the query names only .NET types that mode allows (about_Language_Modes: `[uri]`, `[string]`), so it runs there, and every attach and close of a managed run can see its Chrome (AD22, /ship adversarial review Step 11); fails_when=the query names a type that mode refuses, as `[Convert]` and `[Text.Encoding]` were, so "Method invocation is supported only on core types in this language mode" fails every listing; why_new=the query's types were never checked against the mode; seam=the injected platform, environment and runner. The real query runs in the Windows job, in its full language mode.
 test('the Windows listing query names only .NET types that PowerShell’s Constrained Language mode allows', async () => {
   // Arrange
-  const listing = answeringListing({ stdout: '' })
+  const listing = answeringListing({ stdout: 'editor 1 ?\r\n' })
   await listProcesses({
     platform: 'win32',
     run: listing.run,
@@ -291,7 +310,7 @@ test('the Windows listing starts PowerShell from SystemRoot or windir only, and 
     SystemRoot?: string
     windir?: string
   }): Promise<{ started: string[]; refusal?: string }> => {
-    const listing = answeringListing({ stdout: '' })
+    const listing = answeringListing({ stdout: 'editor 1 ?\r\n' })
     const refusal = await listProcesses({
       platform: 'win32',
       run: listing.run,
