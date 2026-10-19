@@ -92,13 +92,20 @@ export function servedWikiPageOffThread(
 }
 
 /**
- * Hands one page to an idle worker, or to a new one, and answers it once: with the page, at the deadline, at a failure or when the request goes. Afterwards the worker waits for the next page only when it answered a page; otherwise it is stopped. The first page waiting then gets a worker.
+ * Hands one page to an idle worker, or to a new one, and answers it once: with the page, at the deadline, at a failure or when the request goes. Afterwards the worker waits for the next page only when it answered a page; otherwise it is stopped. The first page waiting then gets a worker. A page whose new worker cannot start is answered as failed at once, and the first page waiting then tries a worker of its own; a page that waited keeps its cancellation from the line until its worker took it.
  * Called by {@link servedWikiPageOffThread} when a worker is free, and for the next waiting page whenever a page is answered.
  * @param page - The page asked for; its request has not gone.
  * @example preparePage({ request: { html, options }, limits, answer: resolve, leaveLine })
  */
 function preparePage(page: AskedWikiPage): void {
   const worker = takeIdleWorker() ?? startPageWorker()
+  // A worker that cannot start prepares no page: this page is answered, and the next waiting page is not left behind it.
+  if (!worker) {
+    page.limits.signal.removeEventListener('abort', page.leaveLine)
+    page.answer({ state: 'failed' })
+    startNextWaitingPage()
+    return
+  }
   busyWorkerCount += 1
   // A worker that prepares a page holds the process open until it answers.
   worker.ref()
@@ -132,6 +139,8 @@ function preparePage(page: AskedWikiPage): void {
     page.limits.deadlineMs,
   )
   page.limits.signal.addEventListener('abort', fail, { once: true })
+  // The page's cancellation passes from the line to its worker only now, when the worker has taken the page.
+  page.limits.signal.removeEventListener('abort', page.leaveLine)
   worker.once('message', receive)
   worker.once('error', failWith)
   // An exit before the answer is a failure.
@@ -141,16 +150,23 @@ function preparePage(page: AskedWikiPage): void {
 
 /**
  * Starts a worker thread that prepares pages, under the heap limit; called by {@link preparePage} when no idle worker waits.
- * @returns The worker, which waits for its first page.
- * @example const worker = startPageWorker()
+ * @returns The worker, which waits for its first page; `undefined` when `new Worker` throws, as it does when the system gives it no thread (`ERR_WORKER_INIT_FAILED`), so the throw never escapes from the event that freed a worker.
+ * @example const worker = startPageWorker() // => a Worker, or undefined when none can start
  */
-function startPageWorker(): Worker {
+function startPageWorker(): Worker | undefined {
   const data: WikiPageWorkerData = { role: WIKI_PAGE_WORKER_ROLE }
-  // The heap limit bounds the memory a large page takes in the editor's process; a worker past it ends with ERR_WORKER_OUT_OF_MEMORY, and its page is answered as too large.
-  const worker = new Worker(join(__dirname, 'wikiPageWorker.js'), {
-    workerData: data,
-    resourceLimits: { maxOldGenerationSizeMb: WIKI_PAGE_WORKER_HEAP_LIMIT_MB },
-  })
+  let worker: Worker
+  try {
+    // The heap limit bounds the memory a large page takes in the editor's process; a worker past it ends with ERR_WORKER_OUT_OF_MEMORY, and its page is answered as too large.
+    worker = new Worker(join(__dirname, 'wikiPageWorker.js'), {
+      workerData: data,
+      resourceLimits: {
+        maxOldGenerationSizeMb: WIKI_PAGE_WORKER_HEAP_LIMIT_MB,
+      },
+    })
+  } catch {
+    return undefined
+  }
   // An error is always followed by the worker's exit, which the page it prepares answers; between pages neither may reach the host as an uncaught error, and an idle worker that ends leaves the idle ones.
   worker.on('error', () => undefined)
   worker.once('exit', () => dropIdleWorker(worker))
@@ -197,13 +213,12 @@ function dropIdleWorker(worker: Worker): void {
 }
 
 /**
- * Hands the oldest waiting page to the worker just freed; called by {@link preparePage} after every answer.
+ * Hands the oldest waiting page to the worker just freed; called by {@link preparePage} after every answer. The page keeps its cancellation from the line until {@link preparePage} gave it a worker.
  * @example startNextWaitingPage()
  */
 function startNextWaitingPage(): void {
   const next = waitingPages.shift()
   if (!next) return
-  next.limits.signal.removeEventListener('abort', next.leaveLine)
   preparePage(next)
 }
 

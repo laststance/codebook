@@ -434,3 +434,137 @@ test('a page whose request went before it was asked for is answered as failed at
     { answer: { state: 'failed' }, startedWorkers: 0 },
   )
 })
+
+/**
+ * Loads the page-worker module with a `Worker` class whose chosen starts throw as `new Worker` throws when the system gives it no thread (`ERR_WORKER_INIT_FAILED`); every other start runs the real compiled worker file.
+ * Called by the tests of a worker that cannot start.
+ * @param failingStarts - Which starts throw, counted from 0 in the order the module asks for workers.
+ * @param constantOverrides - Constants the loaded module reads instead of the shipped ones.
+ * @returns The loaded module's {@link servedWikiPageOffThread} and how many starts it asked for, the failed ones included.
+ * @example
+ * const pool = await loadPageWorkerWhoseStartsFail([0], {})
+ * await pool.servedWikiPageOffThread('<body></body>', PAGE_OPTIONS, limits) // => { state: 'failed' }
+ * pool.startAttempts() // => 1
+ */
+async function loadPageWorkerWhoseStartsFail(
+  failingStarts: number[],
+  constantOverrides: Partial<Record<keyof typeof constants, unknown>>,
+): Promise<{
+  servedWikiPageOffThread: typeof servedWikiPageOffThread
+  startAttempts: () => number
+}> {
+  let startAttempts = 0
+  /** The real Worker, except at the chosen starts, where it throws before any thread starts. */
+  class WorkerWhoseStartsFail extends workerThreads.Worker {
+    constructor(
+      ...parameters: ConstructorParameters<typeof workerThreads.Worker>
+    ) {
+      const attempt = startAttempts
+      startAttempts += 1
+      if (failingStarts.includes(attempt))
+        throw Object.assign(new Error('The Worker initialization failed'), {
+          code: 'ERR_WORKER_INIT_FAILED',
+        })
+      super(...parameters)
+    }
+  }
+  const loaded = await loadModule<typeof wikiPageWorkerModule>(
+    join(__dirname, '..', 'wikiPageWorker.js'),
+    {
+      'node:worker_threads': {
+        ...workerThreads,
+        Worker: WorkerWhoseStartsFail,
+      },
+      './constants': { ...constants, ...constantOverrides },
+    },
+  )
+  return {
+    servedWikiPageOffThread: loaded.servedWikiPageOffThread,
+    startAttempts: () => startAttempts,
+  }
+}
+
+// Value: protects=a learner whose page meets a host that cannot start a worker thread (no thread or no memory left for one): the page must get the refusal page; fails_when=the synchronous throw of `new Worker` (ERR_WORKER_INIT_FAILED) leaves servedWikiPageOffThread as a rejection, which the reader answers with a JSON error, or the failed start keeps a place among the busy workers so the next page never gets one; why_new=Cycle 0047 row 5 (S11-X3 = S11-F4); seam=the page-worker module loaded with a Worker class whose first start throws (the second runs a real thread); no_claim=what makes a real start fail
+test('a page whose worker cannot start is answered as failed, not with an error, and the next page gets a worker that starts', async () => {
+  // Arrange: the first start of a worker throws.
+  const pool = await loadPageWorkerWhoseStartsFail([0], {})
+  const limits = { deadlineMs: 10_000, signal: new AbortController().signal }
+
+  // Act: the rejection, if any, is noted by its code.
+  const first = await within(
+    pool
+      .servedWikiPageOffThread(
+        '<body><p>First page</p></body>',
+        PAGE_OPTIONS,
+        limits,
+      )
+      .catch((error: { code?: string }) => ({ rejectedWith: error.code })),
+    2_000,
+  )
+  const second = await within(
+    pool.servedWikiPageOffThread(
+      '<body><p>Second page</p></body>',
+      PAGE_OPTIONS,
+      limits,
+    ),
+    5_000,
+  )
+
+  // Assert: the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({ first, second, startAttempts: pool.startAttempts() }),
+    {
+      first: { state: 'failed' },
+      second: {
+        state: 'served',
+        html: '<body><p>Second page</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      startAttempts: 2,
+    },
+  )
+})
+
+// Value: protects=every page that waited for a worker when the worker it gets cannot start: it must be answered, and the pages behind it must still start; fails_when=the throw of `new Worker` escapes from the event that freed the worker (an abort, an exit, the deadline) as an uncaught error in the editor's host, the page that waited is never answered because its entry and its cancellation were dropped before its worker started, or the pages behind it never start; why_new=Cycle 0047 row 5 (S11-X3 = S11-F4); seam=the page-worker module loaded with one worker at a time and a Worker class whose second start throws (the first and the third run real threads); no_claim=a worker that fails after its start (the reader test of a failing worker covers it)
+test('when the worker of a page that waited cannot start, that page is answered as failed and the page behind it still gets a worker', async () => {
+  // Arrange: one worker at a time; the slow page holds it, and two pages wait behind it.
+  const pool = await loadPageWorkerWhoseStartsFail([1], {
+    WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+  })
+  const signal = new AbortController().signal
+  const slowRequest = new AbortController()
+  const slow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+    deadlineMs: 30_000,
+    signal: slowRequest.signal,
+  })
+  const waiting = pool.servedWikiPageOffThread(
+    '<body><p>Waiting page</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  const behind = pool.servedWikiPageOffThread(
+    '<body><p>Page behind</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+
+  // Act: the slow page's request goes, so the waiting page needs a new worker, and that start throws.
+  slowRequest.abort()
+  const answers = await within(Promise.all([slow, waiting, behind]), 5_000)
+
+  // Assert: the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({ answers, startAttempts: pool.startAttempts() }),
+    {
+      answers: [
+        { state: 'failed' },
+        { state: 'failed' },
+        {
+          state: 'served',
+          html: '<body><p>Page behind</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+      ],
+      startAttempts: 3,
+    },
+  )
+})
