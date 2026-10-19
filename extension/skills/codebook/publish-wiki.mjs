@@ -534,6 +534,8 @@ async function restoreFinalizedFiles(finalized, stage) {
 
 /** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files. @param options.system - The system whose process and boot the journal records of its owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
 export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false, system = SYSTEM_HERE }) {
+  // The read of the owner the journal names (PowerShell on Windows, sysctl and ps on macOS) starts now and runs beside the rendering; a preview writes no journal and asks nothing.
+  if (!renderOnly) ownerHere(system);
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { root, output, stage, journal } = paths;
   if (!stage) throw new Error('The Wiki publisher requires a prepared stage.');
   // Every write below is held to the look the paths were resolved with.
@@ -747,9 +749,15 @@ async function processSpaceHere(system) {
 /** The read of {@link ownerHere}, once per process and system. */
 const ownerReadings = new WeakMap();
 
-/** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name, the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}) and the process's start ({@link processStartOf}), each as `system` tells it ({@link SYSTEM_HERE}). Read once per process and system. Called by {@link publishJournalOf}, {@link claimRecovery} and {@link manifestJournalOf} before a journal or a claim is written, and by {@link requireExited}. @returns The owner, without the process id. @example await ownerHere(SYSTEM_HERE) // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446' } */
+/** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name, the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}) and the process's start ({@link processStartOf}), each as `system` tells it ({@link SYSTEM_HERE}). Read once per process and system: {@link publishWiki} and {@link recoverWikiPublication} start the read first, without waiting for it, so its queries run beside their other steps; {@link publishJournalOf}, {@link claimRecovery} and {@link manifestJournalOf} wait for it before a journal or a claim is written, and {@link requireExited} before it judges an owner. @returns The owner, without the process id. @example await ownerHere(SYSTEM_HERE) // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446' } */
 function ownerHere(system) {
-  if (!ownerReadings.has(system)) ownerReadings.set(system, (async () => ({ host: hostname(), space: await processSpaceHere(system), boot: await bootHere(system), start: await processStartOf(process.pid, system, undefined) }))());
+  if (!ownerReadings.has(system)) {
+    // The space, the boot and the start are read side by side: on macOS and Windows each may start a program.
+    const reading = Promise.all([processSpaceHere(system), bootHere(system), processStartOf(process.pid, system, undefined)]).then(([space, boot, start]) => ({ host: hostname(), space, boot, start }));
+    // A step refused before it waits for the read must not end the process with an unhandled rejection; a step that waits still gets the failure.
+    reading.catch(() => undefined);
+    ownerReadings.set(system, reading);
+  }
   return ownerReadings.get(system);
 }
 
@@ -918,6 +926,8 @@ async function restoreManifestHeld(record, paths, requirePathHeld, isResumed) {
 
 /** Recovers stopped swaps or manifest-only drift; altered metadata and manual files remain available. A stopped publish is recovered whatever the published manifest holds now, since the retained manifest of the Wiki's record decides; a manifest edited meanwhile is restored by the next recovery. A stopped metadata recovery whose edited manifest changed again since is ended and recovered once more from the manifest as it is now, so each edit is kept beside the Wiki. @param options.goneOwner - The host name and the space of process ids of a journal's owner that the learner confirmed gone (`--gone-host`, `--gone-space`): a place that cannot come back, such as a rebuilt container or a machine that is gone, where no publisher runs; accepted only when they are those of the journal's owner ({@link requireGoneOwnerOf}), never taken without the learner. @param options.system - The system whose processes and boot the owner of a journal or a claim is judged by ({@link SYSTEM_HERE}, which the CLI passes). @example await recoverWikiPublication({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' }) */
 export async function recoverWikiPublication({ projectRoot, outputDirectory, stageDirectory, goneOwner, system = SYSTEM_HERE }) {
+  // The read of this recovery's owner, which judges a journal's or a claim's owner and names its own, starts now and runs beside the steps before them.
+  ownerHere(system);
   const paths = await locations(projectRoot, outputDirectory, stageDirectory), { journal } = paths;
   // Every write and move below is held to the look the paths were resolved with.
   const requirePathHeld = await holdOfPath(paths, []);

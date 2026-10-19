@@ -7900,6 +7900,123 @@ for (const { when, creationTime, outcome, recovered } of [
   })
 }
 
+for (const { step, renderOnly, asked } of [
+  {
+    step: 'a publish asks the system about its owner (sysctl and ps on macOS) before it reads the candidate’s manifest, so those queries run beside the rendering',
+    renderOnly: false,
+    asked: {
+      beforeTheManifest: ['/usr/sbin/sysctl', '/bin/ps'],
+      inAll: ['/usr/sbin/sysctl', '/bin/ps'],
+    },
+  },
+  {
+    step: 'a preview, which writes no journal, asks the system nothing about its owner',
+    renderOnly: true,
+    asked: { beforeTheManifest: [], inAll: [] },
+  },
+]) {
+  // Value: protects=the time a publish takes on Windows and macOS, where the read of the owner a journal names starts PowerShell or ps and sysctl, and the time of a preview, which needs no owner; fails_when=the owner's read starts only when the journal is written, after the pages are rendered and written, so its queries add their whole time to the publish, or a preview starts them for nothing; why_new=Cycle 0047 row 67 (PERF-2, advisory); seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the candidate's manifest (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), and the publisher's `system` option, here macOS with a runner that notes each query (the CLI passes the system it runs on); no_claim=a measured time on a real Windows or macOS
+  test(step, async () => {
+    // Arrange: a published Wiki with a candidate; the runner notes each query, and the queries asked so far are noted when the publisher reads the candidate's manifest.
+    const { publishWiki: publishWhoseReadIsSeen } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?swapped-folder',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    const queries = []
+    let beforeTheManifest
+    const macOS = {
+      platform: 'darwin',
+      environment: {},
+      run: async (program) => {
+        queries.push(program)
+        return undefined
+      },
+    }
+    swapBeforeReading(
+      (path) => path === join(wiki.next, 'codebook-wiki.json'),
+      async () => {
+        beforeTheManifest = [...queries]
+      },
+    )
+    try {
+      // Act
+      const outcome = await publishWhoseReadIsSeen({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+        renderOnly,
+        system: macOS,
+      }).then(
+        () => 'ended',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { outcome, asked: { beforeTheManifest, inAll: queries } },
+        { outcome: 'ended', asked },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=the time a recovery takes on Windows and macOS, where the read of the owner a claim names and of this recovery's own owner starts PowerShell or ps and sysctl; fails_when=the owner's read starts only when the journal's owner is judged, after the paths are resolved and the journal is read, so its queries add their whole time to the recovery; why_new=Cycle 0047 row 67 (PERF-2, advisory); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given an owner of macOS on this host, and a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the journal (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), with the `system` option macOS and a runner that notes each query; no_claim=a measured time on a real Windows or macOS
+test('a recovery asks the system about its owner (sysctl and ps on macOS) before it reads the journal a stopped publish left, and recovers the Wiki', async () => {
+  // Arrange: the journal of a killed publish names macOS on this host; the runner notes each query, and the queries asked so far are noted when the recovery reads the journal.
+  const { recoverWikiPublication: recoverWhoseReadIsSeen } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+    record.owner = {
+      host: hostname(),
+      space: 'darwin',
+      boot: { atMs: Date.now() - Math.round(uptime() * 1000) },
+      start: 'ps:Mon Oct  5 09:12:33 2026',
+    }
+  })
+  const queries = []
+  let beforeTheJournal
+  const macOS = {
+    platform: 'darwin',
+    environment: {},
+    run: async (program) => {
+      queries.push(program)
+      return undefined
+    },
+  }
+  swapBeforeReading(
+    (path) => path === `${wiki.output}.publish-journal.json`,
+    async () => {
+      beforeTheJournal = [...queries]
+    },
+  )
+  try {
+    // Act
+    const recovery = await recoverWhoseReadIsSeen({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      system: macOS,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, recovery, beforeTheJournal },
+      {
+        killed: '',
+        recovery: 'published-or-restored',
+        beforeTheJournal: ['/usr/sbin/sysctl', '/bin/ps'],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the learner's --recover after a killed publish before a restart of the machine, whose process id a process of the new boot has; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running"; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another boot (another boot id, or a boot time an hour earlier where the system names none), no process start and the test process's own id; no_claim=a boot time moved by a correction of the clock within the tolerance
 test('a recovery of a killed publish whose journal names an earlier boot of this machine recovers the Wiki whatever process has its id now', async () => {
   // Arrange
