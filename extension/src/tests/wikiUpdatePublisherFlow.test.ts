@@ -652,6 +652,85 @@ test('Update anyway on each refusal of a start that another window’s stopped w
   }
 })
 
+// Value: protects=the one agent per Wiki when Update anyway is pressed late on the refusal that named this window's stopped chat with the newest candidate its watch saw, after another candidate that watch saw was written again; fails_when=a refusal that names several leftovers is passed as soon as one of them was passed (every leftover unpassed is asked for, instead of any), so the late press starts a second chat beside the one that is still writing; why_new=Cycle 0047 row 11 (P3SM3: that mutant passed every flow test); seam=the learner's press of the notification's button, which the test makes after the candidate was written again; no_claim=which chat wrote the candidate again
+test('Update anyway pressed late on the refusal that named this window’s stopped chat with the newest candidate its watch saw is refused again once an older candidate that watch saw was written again, names that candidate, and sends no chat request', async () => {
+  // Arrange: this window's chat stages two candidates, its watch sees both, and the learner stops the watch; the next press is refused, and its Update anyway is pressed later.
+  const progress: CancellableProgress[] = []
+  let pressUpdateAnyway = (): void => {}
+  const laterPress = new Promise<string>((resolvePress) => {
+    pressUpdateAnyway = (): void => resolvePress('Update anyway')
+  })
+  let isOverrideChosen = false
+  let offersOfUpdateAnyway = 0
+  const wiki = await openPublishedWikiWindow({
+    cancellable: progress,
+    // Only the first refusal's button is pressed, when the test says; the refusal after it is left alone.
+    chooseAction: (_message, actions) => {
+      if (!isOverrideChosen || !actions.includes('Update anyway'))
+        return undefined
+      offersOfUpdateAnyway += 1
+      return offersOfUpdateAnyway === 1 ? laterPress : undefined
+    },
+  })
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+    const olderStage = await wiki.prepare()
+    await agentTakesAMoment()
+    const newerStage = await wiki.prepare()
+    // The watch looks again once the second receipt is on disk; that look sees both candidates.
+    const listingsWithBothStaged = wiki.looks.candidateListings
+    await waitForStatus(
+      wiki.status,
+      () => wiki.looks.candidateListings > listingsWithBothStaged,
+    )
+    await agentTakesAMoment()
+    progress[0]!.cancel()
+    await waitForStatus(wiki.status, hasEnded)
+    const refusalsBefore = wiki.offeredActions.length
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    const requestsBefore = wiki.chatRequests.length
+    // The chat, which the stopped watch did not stop, writes its older candidate again.
+    await agentTakesAMoment()
+    await wiki.writeCandidate(olderStage, { heading: 'Still working' })
+
+    // Act
+    pressUpdateAnyway()
+    const deadline = Date.now() + 6_000
+    while (
+      wiki.offeredActions.length < refusalsBefore + 2 &&
+      wiki.status().state !== 'running' &&
+      Date.now() < deadline
+    )
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+    await agentTakesAMoment()
+
+    // Assert
+    const refusals = wiki.offeredActions
+      .slice(refusalsBefore)
+      .filter(({ actions }) => actions.includes('Update anyway'))
+      .map(({ message }) => message)
+    assert.equal(refusals.length, 2)
+    assert.match(
+      refusals[0] ?? '',
+      new RegExp(
+        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(newerStage)}, written `,
+      ),
+    )
+    assert.match(
+      refusals[1] ?? '',
+      new RegExp(
+        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(olderStage)}, written `,
+      ),
+    )
+    assert.equal(wiki.chatRequests.length, requestsBefore)
+    assert.equal(wiki.status().state, 'failed')
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a candidate the earlier chat keeps writing after this window stopped watching refuses the retry', async () => {
   // Arrange
   const progress: CancellableProgress[] = []
