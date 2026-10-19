@@ -1,9 +1,33 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import type * as Parse5 from 'parse5' with { 'resolution-mode': 'import' }
+
 import { readHtmlStartTags } from '../utils/readHtmlStartTags'
 import { servedWikiPageHtml } from '../utils/servedWikiPageHtml'
 import { withServedAddresses } from '../utils/withServedAddresses'
+
+// The pinned parser stands for Chrome on pages without a select or a noscript; Node 24 loads this ESM package synchronously.
+const parse5: typeof Parse5 = require('parse5')
+
+/**
+ * The namespaces of the script elements a browser builds from a page, in tree order: the HTML namespace for a script that loads its file, the svg or MathML one for a script of that content, which loads nothing; called by the tests of the reader's tag in svg and MathML content.
+ * @param page - The page as served.
+ * @returns Each script element's namespace.
+ * @example
+ * scriptNamespaces('<svg><script></script></svg>') // => ['http://www.w3.org/2000/svg']
+ */
+function scriptNamespaces(page: string): string[] {
+  const found: string[] = []
+  const visit = (node: Parse5.DefaultTreeAdapterMap['node']): void => {
+    if ('tagName' in node && node.tagName === 'script')
+      found.push(node.namespaceURI)
+    if ('childNodes' in node) for (const child of node.childNodes) visit(child)
+    if ('content' in node) visit(node.content)
+  }
+  visit(parse5.parse(page))
+  return found
+}
 
 // Value: protects=the reader's own script tag at the end of every served Wiki page; fails_when=the publication or the script's address is printed into the tag unescaped, so a quote ends its attribute early, or the text is read as a replacement pattern, so `$&` prints the page's `</body>` inside the tag; why_new=CR3-3; seam=none; no_claim=the reader today serves a publication of hex digits, `@` and decimal digits and an address under `/w/<hex token>/`, which hold neither character
 test('the reader’s script tag carries the publication and its address as written, with a quote and $& among them', () => {
@@ -64,7 +88,7 @@ test('a page whose quoted value or script text holds </body> before its own end 
   )
 })
 
-// Value: protects=the reader's update state, its notice of newer pages and its stale-answer notice on every served Wiki page, which the reader's own script shows; fails_when=the reader puts its script tag at the page's first literal `</body>`, so the tag lands inside a comment that holds `</body>`, or is missing on a page that writes `</BODY>` or has no body end at all, and none of the three shows; why_new=Cycle 0047 row 7 (S11-F5); seam=none; no_claim=a page that leaves svg or MathML open at its body end (the tag is then a foreign script there, as before)
+// Value: protects=the reader's update state, its notice of newer pages and its stale-answer notice on every served Wiki page, which the reader's own script shows; fails_when=the reader puts its script tag at the page's first literal `</body>`, so the tag lands inside a comment that holds `</body>`, or is missing on a page that writes `</BODY>` or has no body end at all, and none of the three shows; why_new=Cycle 0047 row 7 (S11-F5); seam=none; no_claim=a page that leaves svg or MathML open at its body end, which the test after the next one holds (Cycle 0047 row 72)
 test('the reader’s script tag goes in at the body end the parser found, past a commented </body> and before </BODY>, or at the page’s end when it has none, and is read as a script tag', () => {
   // Arrange
   const options = {
@@ -118,6 +142,70 @@ test('a page that ends inside an open link tag gets the reader’s tag at its en
   assert.equal(
     served,
     '<body><p>Text</p><a data-codebook-unlinked=vscode://file/x<script src="/w/t/codebook-qa.js"></script>',
+  )
+  assert.equal(withServedAddresses(served, 'vscode'), served)
+})
+
+// Value: protects=the reader's update state, its notice of newer pages and its stale-answer notice on a served Wiki page that leaves svg or MathML content open where the reader's script tag goes, at the body's end or, without one, at the page's end; fails_when=the tag goes in there as it is, so Chrome reads it as an svg or MathML script element, which loads nothing, or a meta goes in where an integration point (foreignObject) already lets the tag be an HTML script; why_new=Cycle 0047 row 72 (ADV-12); seam=the pinned parser stands for Chrome's tree of these pages, which hold no select and no noscript; no_claim=native editor (no browser ran), and a page that ends inside a tag, a comment or a raw-text element, whose open text takes the tag
+test('the reader’s script tag loads where svg or MathML content is open at the body’s end or at the page’s end, after a meta that leaves that content, and goes in as before inside a foreignObject', () => {
+  // Arrange: svg and MathML content open at the body's end, svg content open at the end of a page without a body end, a MathML annotation-xml at whose body end the body is out of scope, and an svg foreignObject, an HTML integration point.
+  const options = {
+    editorScheme: 'vscode',
+    clientAddress: '/w/t/codebook-qa.js',
+    publication: undefined,
+  } as const
+  const pages = [
+    '<body><p>Text</p><svg><g></body>',
+    '<body><p>Text</p><math><mrow></body>',
+    '<body><p>Text</p><svg><g>',
+    '<body><p>Text</p><math><annotation-xml></body>',
+    '<body><p>Text</p><svg><foreignObject></body>',
+  ]
+
+  // Act
+  const served = pages.map((page) => servedWikiPageHtml(page, options))
+
+  // Assert: a meta precedes the tag in svg and MathML content, none in the foreignObject, and a browser builds each tag as an HTML script.
+  assert.deepEqual(served, [
+    '<body><p>Text</p><svg><g><meta><script src="/w/t/codebook-qa.js"></script></body>',
+    '<body><p>Text</p><math><mrow><meta><script src="/w/t/codebook-qa.js"></script></body>',
+    '<body><p>Text</p><svg><g><meta><script src="/w/t/codebook-qa.js"></script>',
+    '<body><p>Text</p><math><annotation-xml></body><meta><script src="/w/t/codebook-qa.js"></script>',
+    '<body><p>Text</p><svg><foreignObject></body><script src="/w/t/codebook-qa.js"></script>',
+  ])
+  assert.deepEqual(served.map(scriptNamespaces), [
+    ['http://www.w3.org/1999/xhtml'],
+    ['http://www.w3.org/1999/xhtml'],
+    ['http://www.w3.org/1999/xhtml'],
+    ['http://www.w3.org/1999/xhtml'],
+    ['http://www.w3.org/1999/xhtml'],
+  ])
+})
+
+// Value: protects=the rule that the page a learner receives is the address filter's output, also after the reader leaves svg content for its own script tag; fails_when=the meta and the tag are put in after the filter read the page, so a CDATA section that the open svg made text after the body's end becomes a bogus comment that ends at its first `>`, and the link after it is served live to Chrome; why_new=Cycle 0047 row 72 (ADV-12), the meta that leaves svg content changes how Chrome reads the rest of the page; seam=none; no_claim=native editor (no browser ran)
+test('a link that leaving svg content for the reader’s tag lets out of a CDATA section after the body’s end loses its link, and filtering again changes nothing', () => {
+  // Arrange: svg content open at the body's end, and after it a CDATA section whose text holds a link to another extension's address.
+  const svgOpenAtBodyEnd = '<body><p>Text</p><svg></body>'
+  const linkInCdata = '<![CDATA[x><a href=vscode://file/x>]]>'
+  const options = {
+    editorScheme: 'vscode',
+    clientAddress: '/w/t/codebook-qa.js',
+    publication: undefined,
+  } as const
+
+  // Act
+  const served = servedWikiPageHtml(svgOpenAtBodyEnd + linkInCdata, options)
+
+  // Assert: the meta and the tag stand at the body's end, Chrome reads the link after the bogus comment as a tag and the filter took its link, and filtering again changes nothing.
+  assert.equal(
+    served,
+    '<body><p>Text</p><svg><meta><script src="/w/t/codebook-qa.js"></script></body><![CDATA[x><a data-codebook-unlinked=vscode://file/x>]]>',
+  )
+  assert.deepEqual(
+    readHtmlStartTags(served)
+      .filter((tag) => tag.name === 'a')
+      .map((tag) => tag.attributes.map((attribute) => attribute.name)),
+    [['data-codebook-unlinked']],
   )
   assert.equal(withServedAddresses(served, 'vscode'), served)
 })

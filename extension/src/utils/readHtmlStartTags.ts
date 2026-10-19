@@ -46,10 +46,12 @@ const CHROME_READING: HtmlReading = {
   scriptingEnabled: true,
 }
 
-/** A page as one reading reads it: its start tags in source order, and where the end tag of its body starts, when the parser took one as the body's end (`undefined` for a page without, and for a frameset). */
+/** A page as one reading reads it: its start tags in source order; where the end tag of its body starts, when the parser took one as the body's end (`undefined` for a page without, and for a frameset); and whether a start tag put in right before that end, or at the page's end, would take the rules of svg or MathML content, as it does where such an element other than an integration point is the current node, so that a script tag there would be an svg or MathML element, which loads nothing. */
 export type HtmlPageReading = {
   startTags: HtmlStartTag[]
   bodyEndTagStart: number | undefined
+  bodyEndInForeignContent: boolean
+  pageEndInForeignContent: boolean
 }
 
 /** White space between the parts of a tag: the five characters a browser separates them at. */
@@ -266,7 +268,7 @@ function readTagAt(html: string, nameAt: number): HtmlStartTag | undefined {
 /**
  * Keeps original start-tag spans while parse5 owns the complete HTML tree; created by {@link readHtmlPage} for each page and reading ({@link HtmlReading}).
  * Under the reading's `current` select rules its select adapters apply them (a select changes no insertion mode, so table tokens close it by the table rules, and an input closes it by the body rule; an open select ends every scope but the table scope); under `before-2025` it leaves a select to the pinned parser, whose select rules are those of the HTML standard before 2025. In either reading it requires a matching table section before closing a row; it resets the insertion mode by HTML elements alone, skips each end tag that provably changes nothing, writes an end's name in svg case under an svg element and compares a foreign element's name with it as Chrome does, and ignores a body-rule end at an svg or MathML integration point. Other tree construction stays with the pinned parser.
- * It depends on parse5 8.0.1 internals, which an upgrade must recheck one by one: the protected hooks it overrides (`_startTagOutsideForeignContent`, `_endTagOutsideForeignContent`, `_resetInsertionMode`, `_resetInsertionModeForSelect`, `onItemPush`, `onItemPop`, `onStartTag`, `onEndTag`) and the order the pinned parser calls them in; the pinned reset's walk, which reads `openElements.tagIDs` from the current node down and stops at the first tag id of `RESET_MODE_TAG_IDS`, whatever the namespace, so that the reader's reset may hide a foreign element's tag id for one pass; the @internal fields it reads or changes (`openElements` with `items`, `tagIDs`, `stackTop` and `tmplCount`, `insertionMode` with the mode numbers in constants.ts, `formElement`, `currentNotInHTML`, `skipNextNewLine`, `currentToken`); the methods of `activeFormattingElements` it wraps, which must stay the only ones that add or remove entries; the four scope checks of `openElements` it wraps (`hasInScope`, `hasInListItemScope`, `hasInButtonScope`, `hasNumberedHeaderInScope`), whose scope ends `SCOPE_END_TAG_IDS`, `LIST_ITEM_SCOPE_END_TAG_IDS`, `BUTTON_SCOPE_END_TAG_IDS` and `FOREIGN_SCOPE_END_TAG_IDS` repeat from parse5's open-element-stack.js; `_isSpecialElement` and the body rule for an end of an unknown name, which matches by tag id before it asks whether an element is special; and `foreignContent.adjustTokenSVGTagName` with its svg case table, which lacks the names of `HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS` (recheck the table against the HTML standard's at an upgrade), the hook `shouldProcessStartTagTokenInForeignContent` it overrides to add them for start tags, and `_getAdjustedCurrentElement`.
+ * It depends on parse5 8.0.1 internals, which an upgrade must recheck one by one: the protected hooks it overrides (`_startTagOutsideForeignContent`, `_endTagOutsideForeignContent`, `_resetInsertionMode`, `_resetInsertionModeForSelect`, `onItemPush`, `onItemPop`, `onStartTag`, `onEndTag`) and the order the pinned parser calls them in; the pinned reset's walk, which reads `openElements.tagIDs` from the current node down and stops at the first tag id of `RESET_MODE_TAG_IDS`, whatever the namespace, so that the reader's reset may hide a foreign element's tag id for one pass; the @internal fields it reads or changes (`openElements` with `items`, `tagIDs`, `stackTop` and `tmplCount`, `insertionMode` with the mode numbers in constants.ts, `formElement`, `currentNotInHTML`, `skipNextNewLine`, `currentToken`); the methods of `activeFormattingElements` it wraps, which must stay the only ones that add or remove entries; the four scope checks of `openElements` it wraps (`hasInScope`, `hasInListItemScope`, `hasInButtonScope`, `hasNumberedHeaderInScope`), whose scope ends `SCOPE_END_TAG_IDS`, `LIST_ITEM_SCOPE_END_TAG_IDS`, `BUTTON_SCOPE_END_TAG_IDS` and `FOREIGN_SCOPE_END_TAG_IDS` repeat from parse5's open-element-stack.js; `_isSpecialElement` and the body rule for an end of an unknown name, which matches by tag id before it asks whether an element is special; and `foreignContent.adjustTokenSVGTagName` with its svg case table, which lacks the names of `HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS` (recheck the table against the HTML standard's at an upgrade), the hook `shouldProcessStartTagTokenInForeignContent` it overrides to add them for start tags, and `_getAdjustedCurrentElement`; the @internal `tokenizer.inForeignNode`, which the pinned parser sets after each push and pop and the reader reads at a body end and at the page's end (the hook `onEof`), and the body's end tag location, which the pinned parser records on the body, second on the stack, when it takes a `</body>`.
  * @example new HtmlPageReader('<p>text</p>').tokenizer.write('<p>text</p>', true)
  */
 class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
@@ -297,6 +299,10 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private readonly formattingEntryNames = new Map<string, number>()
   /** Whether the reading takes the select rules of 2025 ({@link HtmlReading}), which the select adapters apply; otherwise the pinned parser's own select rules stand. */
   private readonly followsCurrentSelectRules: boolean
+  /** Whether a start tag put in right before the `</body>` the parser took as the body's end would take the rules of svg or MathML content; recorded by {@link HtmlPageReader.onEndTag}. */
+  bodyEndInForeignContent = false
+  /** Whether a start tag put in at the page's end would take the rules of svg or MathML content; recorded by {@link HtmlPageReader.onEof}. */
+  pageEndInForeignContent = false
 
   /**
    * Retains the original page for attribute offsets; called only by {@link readHtmlPage}.
@@ -944,12 +950,55 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Skips an end tag that provably changes nothing, so that a page of many such ends after deep nesting takes no scan of the stack per end; the pinned parser's foreign rule and its body rule for an unknown name each walk the stack.
+   * Reads an end tag ({@link HtmlPageReader.readEndTag}), and for a `</body>` the parser takes as the body's end records whether a start tag put in right before it would take the rules of svg or MathML content: the body's end closes no element, so such a start tag meets the stack this end meets. The tokenizer calls this for each end tag.
    * @param token - The source end token.
-   * @returns Nothing; every other end keeps the parser's rules.
-   * @example reader.onEndTag(spanEnd) // no stack scan for an absent span in a table cell
+   * @returns Nothing; {@link HtmlPageReader.bodyEndInForeignContent} holds the answer of the body's end.
+   * @example reader.onEndTag(bodyEnd) // records true for '<body><svg><g></body>'
    */
   override onEndTag(token: Parse5.Token.TagToken): void {
+    const isBodyEnd = token.tagID === htmlTree.TAG_ID.BODY
+    const startTagIsForeign = this.tokenizer.inForeignNode
+    this.readEndTag(token)
+    // Only a `</body>` the parser takes is the body's end; one it ignores, inside a template or an svg foreignObject, leaves the record of an earlier one.
+    if (isBodyEnd && this.tookAsBodyEnd(token))
+      this.bodyEndInForeignContent = startTagIsForeign
+  }
+
+  /**
+   * Tells whether the parser took an end tag as the body's end, by the place it records on the body, which stays second on the stack until the page ends; called by {@link HtmlPageReader.onEndTag} after a `</body>`.
+   * @param token - The `</body>` just read.
+   * @returns Whether the body's end tag is this one.
+   * @example reader.tookAsBodyEnd(bodyEnd) // => false for '<body><template></body>'
+   */
+  private tookAsBodyEnd(token: Parse5.Token.TagToken): boolean {
+    const start = token.location?.startOffset
+    const body = this.openElementAt(1)
+    return (
+      start !== undefined &&
+      body?.tagID === htmlTree.TAG_ID.BODY &&
+      this.treeAdapter.getNodeSourceCodeLocation(body.element)?.endTag
+        ?.startOffset === start
+    )
+  }
+
+  /**
+   * Records whether a start tag put in at the page's end would take the rules of svg or MathML content, before the pinned parser ends the page and closes every element; the tokenizer calls this once, after the page's last characters.
+   * @param token - The end-of-file token.
+   * @returns Nothing; {@link HtmlPageReader.pageEndInForeignContent} holds the answer.
+   * @example reader.onEof(endOfFile) // records true for '<body><svg><g>'
+   */
+  override onEof(token: Parse5.Token.EOFToken): void {
+    this.pageEndInForeignContent = this.tokenizer.inForeignNode
+    super.onEof(token)
+  }
+
+  /**
+   * Skips an end tag that provably changes nothing, so that a page of many such ends after deep nesting takes no scan of the stack per end; the pinned parser's foreign rule and its body rule for an unknown name each walk the stack. Called by {@link HtmlPageReader.onEndTag}.
+   * @param token - The source end token.
+   * @returns Nothing; every other end keeps the parser's rules.
+   * @example reader.readEndTag(spanEnd) // no stack scan for an absent span in a table cell
+   */
+  private readEndTag(token: Parse5.Token.TagToken): void {
     if (this.isAbsentEndWithoutEffect(token.tagName)) {
       // Preserve onEndTag's bookkeeping even when tree construction is a no-op.
       this.skipNextNewLine = false
@@ -1039,13 +1088,14 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
 }
 
 /**
- * Reads a page as one reading of a browser does ({@link HtmlReading}): its original start tags, using full HTML tree feedback, and where the end tag of its body starts; for the Wiki address filter, which also puts the reader's script tag at that end.
+ * Reads a page as one reading of a browser does ({@link HtmlReading}): its original start tags, using full HTML tree feedback, where the end tag of its body starts, and whether svg or MathML content is open there and at the page's end; for the Wiki address filter, which also puts the reader's script tag at that end, or without one at the page's end, after a tag that leaves such content.
  * Raw attribute slices keep duplicates and untouched text; the tree parser decides where markup is active.
  * @param html - The unchanged page source.
  * @param reading - The select rules and the scripting flag to read the page with; Chrome 151's with scripting when omitted.
- * @returns The start tags in source order, with every original attribute's exact positions and values, and the start of the body's end tag ({@link HtmlPageReading}).
+ * @returns The start tags in source order, with every original attribute's exact positions and values, the start of the body's end tag, and whether a start tag right before it or at the page's end takes the rules of svg or MathML content ({@link HtmlPageReading}).
  * @example
  * readHtmlPage('<!-- </body> --><p>x</BODY>').bodyEndTagStart // => 20
+ * readHtmlPage('<body><svg><g></body>').bodyEndInForeignContent // => true
  */
 export function readHtmlPage(
   html: string,
@@ -1056,6 +1106,8 @@ export function readHtmlPage(
   return {
     startTags: reader.startTags,
     bodyEndTagStart: reader.bodyEndTagStart(),
+    bodyEndInForeignContent: reader.bodyEndInForeignContent,
+    pageEndInForeignContent: reader.pageEndInForeignContent,
   }
 }
 
