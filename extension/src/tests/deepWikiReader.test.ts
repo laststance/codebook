@@ -1137,6 +1137,77 @@ test('a page file larger than the reader prepares is answered with 503 and a sen
   )
 })
 
+// Value: protects=the editor's extension host, in whose process two page workers run, against a page file far larger than any generated page (a few hundred kilobytes): the reader must refuse it before reading it, so neither its bytes nor its preparation (0.5 to 0.75 GB for 8 MB under the former limits, Node 24) land in the host; fails_when=WIKI_PAGE_FILE_LIMIT_BYTES is raised to 3 MB or more again (it was 8 MB), so such a page is read and prepared; why_new=Cycle 0047 row 4 (S11-F3); seam=the reader loaded with loadModule and a stand-in page-worker module that counts the pages it prepares, under the shipped limits; no_claim=the memory of the real editor hosts (VS Code, Cursor), which are measured by hand
+test('a page file of 3 MB, far larger than any generated page, is refused as too large under the reader’s shipped limit and is not prepared', async (context) => {
+  // Arrange: a page of 3,000,000 bytes that the manifest lists, and a page worker that counts its pages.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-3mb-page-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'large.html'),
+    `<!doctype html><body>${'x'.repeat(2_999_972)}</body>`,
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'large.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let preparedPageCount = 0
+  const countingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      preparedPageCount += 1
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithCountingWorker } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { './wikiPageWorker': countingWorker },
+      { URL },
+    )
+  const reader = await startReaderWithCountingWorker(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(new URL('large.html', reader.url))
+  const answer = {
+    status: response.status,
+    // The overview's address under this reader's random prefix, written as OVERVIEW.
+    body: (await response.text()).replaceAll(
+      new URL(reader.url).pathname,
+      'OVERVIEW',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      answer,
+      preparedPageCount,
+      pageBytes: (await lstat(join(outputDirectory, 'large.html'))).size,
+    },
+    {
+      answer: {
+        status: 503,
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>This page is too large for Codebook to prepare for reading. No page of a Wiki is that large, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+      },
+      preparedPageCount: 0,
+      pageBytes: 3_000_000,
+    },
+  )
+})
+
 // Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared; why_new=the P2P2 test's no_claim names this growth; Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat lets the page grow after the look, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
 test('a page file that grows past the limit after the reader looked at its size is answered with the page that says it is too large, and is not prepared', async (context) => {
   // Arrange: an overview of 33 bytes that grows by 2,000 bytes right after the reader's look at its size, a reader that prepares pages of 1,000 bytes at most, and a page worker that counts its pages.

@@ -121,6 +121,23 @@ test('a page that needs more memory than a page worker may use is refused as too
   )
 })
 
+// Value: protects=the editor's extension host, in whose process every page worker runs: under the former limit of 512 MB one worker took 0.5 to 0.75 GB before it was refused or served (Node 24), two at once twice that, and Electron's V8 may keep every isolate of the process in one pointer-compression area; fails_when=WIKI_PAGE_WORKER_HEAP_LIMIT_MB or WIKI_PAGE_WORKER_CONCURRENCY_LIMIT is raised so that the workers that may run at once may together hold more old-generation heap than one worker could before (512 MB); why_new=Cycle 0047 row 4 (S11-F3); seam=none (the shipped constants); no_claim=the memory of the real editor hosts (VS Code, Cursor), which are measured by hand; that an ordinary page still fits (the test below)
+test('the page workers that may run at once may together use no more heap than one page worker could before Cycle 0047', () => {
+  // Arrange: the heap limit of one page worker until Cycle 0046.
+  const formerHeapLimitOfOneWorkerMb = 512
+
+  // Act
+  const heapOfAllWorkersAtOnceMb =
+    constants.WIKI_PAGE_WORKER_HEAP_LIMIT_MB *
+    constants.WIKI_PAGE_WORKER_CONCURRENCY_LIMIT
+
+  // Assert
+  assert.ok(
+    heapOfAllWorkersAtOnceMb <= formerHeapLimitOfOneWorkerMb,
+    `the page workers may use ${heapOfAllWorkersAtOnceMb} MB of heap together`,
+  )
+})
+
 // Value: protects=every ordinary Wiki page against a heap limit of the page worker set too low for it; fails_when=WIKI_PAGE_WORKER_HEAP_LIMIT_MB is lowered below what an ordinary page of more than 1 MB needs, so the learner gets the refusal page for an ordinary page; why_new=P2P2 (the limit it adds); seam=none; no_claim=pages larger than the 1.14 MB page (a 5 MB page was served by hand, a 20 MB page was refused)
 test('an ordinary page of more than 1 MB is served under the page worker’s heap limit', async () => {
   // Arrange: a body of 9,000 sections of a heading, text, a link and code, 1,143,000 bytes.
