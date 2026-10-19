@@ -1085,7 +1085,7 @@ test('the packaged README says under LLM Wiki what the reader makes inert in a s
     `- \`${needsMoreMemory}\` for a page whose preparation needs more than the 512 MB of heap.`,
     `- \`${pastTheDeadline}\` for a page whose preparation passes the 10 seconds.`,
     `- \`${failed}\` for a page whose worker failed.`,
-    `- \`${busy}\` for a page asked for while two pages are prepared and four wait, whose file is not read, and for a page that waited 30 seconds for a worker.`,
+    `- \`${busy}\` for a page asked for while six pages are read, prepared, waiting or being sent, whose file is not read, and for a page that waited 30 seconds for a worker.`,
     'An HTML page asked for as a part of a page (an image, a style sheet, a script, a fetch), and not to be opened as a page or in an inline frame (the browser says which in `Sec-Fetch-Dest`), is refused with `A Wiki page is served only to be opened as a page.` (status 403); a request without that header, from a client that is no browser, is served. A file of the Wiki that is no regular file (a named pipe, a device, a folder) is never opened, a page or any other file: `The Wiki file is no regular file; a pipe, a device or a folder at its path is not served.` (status 403).',
   ])
   const reasons: WikiPageRefusalReason[] = [
