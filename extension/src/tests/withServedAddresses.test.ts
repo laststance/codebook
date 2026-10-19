@@ -1554,6 +1554,41 @@ test('a style inside a select is text in Chrome’s reading, and the link in it 
   assert.deepEqual(chromeLinkAddresses(page), [])
 })
 
+// Value: protects=the learner whose Chrome reads a page the filter changed for another reading, against an editor link that only that change lets Chrome read; fails_when=withNoLinkAnyReadingRefuses stops after its first round, so the rename of a link the older select rules read turns Chrome's end of an element named href into the end of another name, the svg that end closed stays open, and the script after it is an svg script whose link Chrome follows; why_new=Cycle 0047 row 71 (S7-G1), the second round had no test; seam=none (the reader's reading of Chrome 151 stands for Chrome, the pinned parser for a browser of the older select rules); no_claim=native editor (no browser ran)
+test('when renaming a link the older select rules read leaves an svg open in Chrome’s reading, the filter reads the page again, and the link Chrome then reads in an svg script loses its link too', () => {
+  // Arrange: Chrome reads a style in a select as text, which the older rules ignore; those rules read a tag whose quoted value holds Chrome's end of the style, an element named href and an svg; what Chrome reads as the end of that element, which closes the svg, the older rules read as a link; and a script's text holds a link, which an svg script would hold as a tag.
+  const styleInSelect = '<select><style>'
+  const tagOfTheOlderRules = '<a title="</style><href><svg>" '
+  const hrefEndOrLink = `</href =${OTHER_EDITOR_ADDRESS}>`
+  const scriptWithLink = `<script><a href=${OTHER_EDITOR_ADDRESS}></script></select>`
+  const page =
+    styleInSelect + tagOfTheOlderRules + hrefEndOrLink + scriptWithLink
+  const afterTheFirstRound =
+    styleInSelect +
+    tagOfTheOlderRules +
+    `</data-codebook-unlinked =${OTHER_EDITOR_ADDRESS}>` +
+    scriptWithLink
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert: Chrome reads no link in the page as published, but reads the script's link once the first rename left the svg open; the served page takes both links, no reading follows the address, and a second filtering changes nothing.
+  assert.deepEqual(chromeLinkAddresses(page), [])
+  assert.deepEqual(chromeLinkAddresses(afterTheFirstRound), [
+    OTHER_EDITOR_ADDRESS,
+  ])
+  assert.equal(
+    served,
+    '<select><style><a title="</style><href><svg>" </data-codebook-unlinked =vscode://file/x><script><a data-codebook-unlinked=vscode://file/x></script></select>',
+  )
+  assert.deepEqual(followedEditorAddresses(served), {
+    chrome: [],
+    beforeSelectRulesOf2025: [],
+    withoutScripting: [],
+  })
+  assert.equal(withServedAddresses(served, 'vscode'), served)
+})
+
 /** Where the select corpus of the older select rules puts its select: in the body, in each part of a table, in a template and a template's cell, in svg's and MathML's integration points, and nested in each other, a template in a select among them. */
 const SELECT_PLACES: Readonly<Record<string, string>> = {
   body: '',
