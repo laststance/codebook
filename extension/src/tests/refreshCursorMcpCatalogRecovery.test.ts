@@ -1211,6 +1211,217 @@ test('a window that sleeps between staging its first Cursor MCP config and putti
   )
 })
 
+// Value: protects=the setup of a Cursor window that sleeps longer than a minute after it put Codebook's first config in place and before it removes the staged name (the config's second name, small and with the staging write's time), while a window of another Cursor profile sweeps ~/.cursor: the staged name gone is the goal, so the setup completes; fails_when=the removal of the staged name fails with a raw ENOENT, so the setup ends with the file system's own text and leaves its creation record behind, although the config is in place; why_new=Cycle 0047 row 238 (P2OCR2a2-1 = P2CLA-6): row 198 covers a sweep before the link only; seam=node:fs/promises unlink of the loaded catalog, before whose first removal of a staged name the file is dated back two minutes and the other profile's removal of the managed catalog runs, with its sweep; no_claim=a real sleep of the machine
+test('a window that sleeps between putting its first Cursor MCP config in place and removing the staged name, while another profile’s window sweeps ~/.cursor, completes its setup', async (context) => {
+  // Arrange: no config yet; this window links its staged config into place, and before it removes the staged name another Cursor profile's window removes its managed catalog, which sweeps the staged files older than a minute.
+  const folders = await catalogFolders(context)
+  const storageOfAnotherProfile = join(
+    folders.cursorDirectory,
+    'storage-of-another-profile',
+  )
+  let hasSlept = false,
+    sweepOfTheOtherWindow: string | undefined
+  const catalog = await loadCatalogWith({
+    ...fileSystem,
+    unlink: async (path: string) => {
+      // Only the window's first removal of a staged name sleeps past the sweep's minute.
+      if (!hasSlept && /^\.codebook-.+\.mcp\.json$/.test(basename(path))) {
+        hasSlept = true
+        const twoMinutesAgo = new Date(Date.now() - 120_000)
+        await utimes(path, twoMinutesAgo, twoMinutesAgo)
+        sweepOfTheOtherWindow = await outcomeOf(
+          removeOwnedCursorMcpCatalog(
+            storageOfAnotherProfile,
+            folders.cursorDirectory,
+          ),
+        )
+      }
+      return fileSystem.unlink(path)
+    },
+  })
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      sweepOfTheOtherWindow,
+      refreshGaveAGeneration: /^answered [a-f0-9-]{36}$/.test(refresh),
+      config: await readFile(folders.configPath, 'utf8').catch(
+        (error: unknown) => `no config (${systemErrorCode(error)})`,
+      ),
+      entriesOfTheCursorFolder: (await readdir(folders.cursorDirectory)).sort(),
+      records: (await readdir(folders.recordDirectory)).sort(),
+    },
+    {
+      sweepOfTheOtherWindow: 'answered not-owned',
+      refreshGaveAGeneration: true,
+      config: EMPTY_CONFIG,
+      entriesOfTheCursorFolder: [
+        'mcp.json',
+        'storage',
+        'storage-of-another-profile',
+      ],
+      records: ['receipt.json'],
+    },
+  )
+})
+
+// Value: protects=the setup that recovers a staged Cursor MCP config an earlier setup left with its creation record (its link was refused), while a window of another Cursor profile sweeps ~/.cursor in the moment between the recovery's look at the staged file and its removal: the staged name gone is the goal, so the setup goes on and creates the config; fails_when=the recovery's removal of the staged name fails with a raw ENOENT, so every setup ends with the file system's own text until the sweep and the recovery no longer meet; why_new=Cycle 0047 row 238 (P2OCR2a2-1 = P2CLA-6): the recovery removes a staged name as the setup does after its link; seam=node:fs/promises link of a first loaded catalog, which refuses with EPERM, and unlink of a second one, before whose first removal of a staged name the file is dated back two minutes and the other profile's removal of the managed catalog runs, with its sweep; no_claim=the timing of a real sweep
+test('a setup that recovers a staged Cursor MCP config an earlier setup left, while another profile’s window sweeps that staged file, creates the config', async (context) => {
+  // Arrange: an earlier setup whose link the file system refused left its staged config and its creation record.
+  const folders = await catalogFolders(context)
+  const storageOfAnotherProfile = join(
+    folders.cursorDirectory,
+    'storage-of-another-profile',
+  )
+  const refusingCatalog = await loadCatalogWith({
+    ...fileSystem,
+    link: async () => {
+      throw Object.assign(new Error('EPERM: operation not permitted, link'), {
+        code: 'EPERM',
+      })
+    },
+  })
+  const earlierSetup = await outcomeOf(
+    refusingCatalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+  const recordsLeft = (await readdir(folders.recordDirectory)).sort()
+  let hasSlept = false,
+    sweepOfTheOtherWindow: string | undefined
+  const catalog = await loadCatalogWith({
+    ...fileSystem,
+    unlink: async (path: string) => {
+      // Only the recovery's removal of the staged name meets the other window's sweep.
+      if (!hasSlept && /^\.codebook-.+\.mcp\.json$/.test(basename(path))) {
+        hasSlept = true
+        const twoMinutesAgo = new Date(Date.now() - 120_000)
+        await utimes(path, twoMinutesAgo, twoMinutesAgo)
+        sweepOfTheOtherWindow = await outcomeOf(
+          removeOwnedCursorMcpCatalog(
+            storageOfAnotherProfile,
+            folders.cursorDirectory,
+          ),
+        )
+      }
+      return fileSystem.unlink(path)
+    },
+  })
+
+  // Act
+  const setup = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      earlierSetup,
+      recordsLeft,
+      sweepOfTheOtherWindow,
+      setupGaveAGeneration: /^answered [a-f0-9-]{36}$/.test(setup),
+      config: await readFile(folders.configPath, 'utf8').catch(
+        (error: unknown) => `no config (${systemErrorCode(error)})`,
+      ),
+      entriesOfTheCursorFolder: (await readdir(folders.cursorDirectory)).sort(),
+      records: (await readdir(folders.recordDirectory)).sort(),
+    },
+    {
+      earlierSetup: `refused: Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${folders.configPath} (EPERM). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+      recordsLeft: ['pending-creation.json'],
+      sweepOfTheOtherWindow: 'answered not-owned',
+      setupGaveAGeneration: true,
+      config: EMPTY_CONFIG,
+      entriesOfTheCursorFolder: [
+        'mcp.json',
+        'storage',
+        'storage-of-another-profile',
+      ],
+      records: ['receipt.json'],
+    },
+  )
+})
+
+// Value: protects=the setup of a Cursor window whose staged config another profile's sweep removes before each of its two links (two sleeps past the sweep's minute): the setup is refused once with the link's sentence, no staged file stays in ~/.cursor, and the next setup completes; fails_when=the second sweep is staged around again without end, the refusal lets the file system's own text out, a staged file stays behind, or the creation record that names the swept file keeps the next setup from creating the config; why_new=Cycle 0047 row 238 (state machines cell "staged file swept again after it was staged again"): untested; seam=node:fs/promises link of the loaded catalog, at whose first two calls the staged file is dated back two minutes and the other profile's removal of the managed catalog runs, with its sweep; no_claim=a real sleep of the machine
+test('a window whose staged Cursor MCP config another profile’s window sweeps before each of its two links is refused once with the link’s sentence, and the next setup completes', async (context) => {
+  // Arrange: no config yet; another Cursor profile's window sweeps ~/.cursor before this window's first and second link.
+  const folders = await catalogFolders(context)
+  const storageOfAnotherProfile = join(
+    folders.cursorDirectory,
+    'storage-of-another-profile',
+  )
+  const sweepsOfTheOtherWindow: string[] = []
+  const catalog = await loadCatalogWith({
+    ...fileSystem,
+    link: async (existingPath: string, newPath: string) => {
+      if (sweepsOfTheOtherWindow.length < 2) {
+        const twoMinutesAgo = new Date(Date.now() - 120_000)
+        await utimes(existingPath, twoMinutesAgo, twoMinutesAgo)
+        sweepsOfTheOtherWindow.push(
+          await outcomeOf(
+            removeOwnedCursorMcpCatalog(
+              storageOfAnotherProfile,
+              folders.cursorDirectory,
+            ),
+          ),
+        )
+      }
+      return fileSystem.link(existingPath, newPath)
+    },
+  })
+
+  // Act
+  const firstSetup = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+  const entriesAfterTheFirstSetup = (
+    await readdir(folders.cursorDirectory)
+  ).sort()
+  const nextSetup = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      sweepsOfTheOtherWindow,
+      firstSetup,
+      entriesAfterTheFirstSetup,
+      nextSetupGaveAGeneration: /^answered [a-f0-9-]{36}$/.test(nextSetup),
+      config: await readFile(folders.configPath, 'utf8').catch(
+        (error: unknown) => `no config (${systemErrorCode(error)})`,
+      ),
+      records: (await readdir(folders.recordDirectory)).sort(),
+    },
+    {
+      sweepsOfTheOtherWindow: ['answered not-owned', 'answered not-owned'],
+      firstSetup: `refused: Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${folders.configPath} (ENOENT). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+      entriesAfterTheFirstSetup: ['storage', 'storage-of-another-profile'],
+      nextSetupGaveAGeneration: true,
+      config: EMPTY_CONFIG,
+      records: ['receipt.json'],
+    },
+  )
+})
+
 // Value: protects=a learner's ~/.cursor after a Cursor window was killed while it staged Codebook's first config: the file the refresh itself staged, under the name it gives such a file, is one the next refresh removes; fails_when=the name the refresh gives its staged config and the name the sweep of left staged configs removes drift apart (a rename of either), so such files stay in ~/.cursor for good while every test that writes its staged names by hand still passes (Cycle 0047 row 153); why_new=Cycle 0047 row 153 (P3MAINT-2): the two names were linked only by a docstring; seam=./atomicPrivateWrite of the loaded catalog, which refuses the creation record with ENOSPC, and its node:fs/promises, whose removals in Cursor's settings folder fail, so the refresh leaves its staged file as a window killed before its record does; the file is dated back two minutes; no_claim=a real kill of a window
 test('a staged Cursor MCP config that a refresh left under its own name is removed by the next refresh once it is older than a minute', async (context) => {
   // Arrange: a refresh whose creation record cannot be written, and whose removal of its staged file then fails too, leaves that file in ~/.cursor; the file is dated back two minutes.

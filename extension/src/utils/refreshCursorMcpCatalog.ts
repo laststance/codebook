@@ -706,6 +706,20 @@ async function advanceOwnedRefreshId(
   return refreshId
 }
 
+/**
+ * Removes the staged name of Codebook's config, where a name that is already gone counts as removed; called by {@link refreshCursorMcpCatalog} once the config is in place (the staged name is its second name then) and by {@link recoverCreation} for a staged file that was never put in place.
+ * Why: a window of another Cursor profile, with a storage folder and a lock of its own, sweeps the staged names older than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS} ({@link removeLeftStagedConfigs}); a window that slept past that minute before its removal finds the name gone, which is what the removal was for (Cycle 0047 row 238).
+ * @param stagedPath - The staged name, `<Cursor's settings folder>/.codebook-<uuid>.mcp.json`.
+ * @throws What the removal threw for a name that is still there (a file held open on Windows, a folder this user may not change).
+ * @example await removeStagedName('/home/user/.cursor/.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json')
+ */
+async function removeStagedName(stagedPath: string): Promise<void> {
+  await unlink(stagedPath).catch((error: unknown) => {
+    // A name another profile's sweep removed is removed.
+    if (!isMissing(error)) throw error
+  })
+}
+
 /** Completes ownership after an atomic config publication, or discards only its verified unpublished staging file. @param commandToRunAgain - The command the learner ran, which a refusal of the creation record names as the one to run again. @example await recoverCreation(pending, receipt, target, cursorDirectory, 'Codebook: Set Up AI Chat') */
 async function recoverCreation(
   pendingPath: string,
@@ -753,7 +767,7 @@ async function recoverCreation(
       CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
     )
   // Codebook's own unpublished file goes; a config that was edited in place right after its publication still has the staged name as a second name: that name goes, the file stays at its path.
-  if (staged) await unlink(record.stagedPath)
+  if (staged) await removeStagedName(record.stagedPath)
   else
     refuseUnopenedConfig(
       await dropSecondNameOfOneFile(targetPath, record.stagedPath),
@@ -1062,7 +1076,7 @@ async function isLeftStagedConfig(
 
 /**
  * Removes the staged configs that windows left in Cursor's settings folder when they were killed after they created the file and before they recorded it, so that no such file stays there for good; called by {@link refreshCursorMcpCatalog} and {@link removeOwnedCursorMcpCatalog} under the catalog's storage lock, after {@link recoverCreation} has settled the staged file that a record names.
- * Only a file that {@link isLeftStagedConfig} judges left goes: a window whose catalog has a storage folder and a lock of its own may be staging a file at this moment, and a file with more bytes than Codebook stages is not Codebook's. Such a window that slept longer than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS} between staging its file and linking it finds the file gone and stages it again ({@link isStagedConfigSwept}). A name that cannot be removed stays for the next sweep; the sweep never fails the command.
+ * Only a file that {@link isLeftStagedConfig} judges left goes: a window whose catalog has a storage folder and a lock of its own may be staging a file at this moment, and a file with more bytes than Codebook stages is not Codebook's. Such a window that slept longer than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS} between staging its file and linking it finds the file gone and stages it again, once ({@link isStagedConfigSwept}); one that slept after the link finds the staged name, the config's second name then, gone, which counts as removed ({@link removeStagedName}). A name that cannot be removed stays for the next sweep; the sweep never fails the command.
  * @param cursorDirectory - Cursor's settings folder, `~/.cursor`.
  * @example await removeLeftStagedConfigs('/home/user/.cursor')
  */
@@ -1156,7 +1170,7 @@ export async function refreshCursorMcpCatalog(
           staged.owner,
           CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
         )
-        await unlink(staged.stagedPath)
+        await removeStagedName(staged.stagedPath)
         await unlink(pendingCreationPath)
         handle = await openPublishedConfig(targetPath)
       }
