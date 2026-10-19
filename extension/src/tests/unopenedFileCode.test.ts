@@ -149,7 +149,8 @@ test('every place of the Cursor setup that opens a file that exists goes through
         'openConfigForItsTimes',
       ],
       asksTheOwnerOfTheCodes: ['refusalOfUnopenedFile'],
-      createsAFile: ['refreshCursorMcpCatalog'],
+      // The staged config is created by its own helper, which a window calls again when another profile's sweep took its file (Cycle 0047 row 198).
+      createsAFile: ['stageConfig'],
     },
     ruleOfTheTwoNames: {
       opensAFile: ['openName'],
