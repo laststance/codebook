@@ -7766,6 +7766,68 @@ for (const { when, printedStart, outcome, recovered } of [
   })
 }
 
+for (const { when, creationTime, outcome, recovered } of [
+  {
+    when: 'of another process',
+    creationTime: '2026-10-06T10:00:00.1234560Z',
+    outcome: 'recovers the Wiki',
+    recovered: 'published-or-restored',
+  },
+  {
+    when: 'of the recorded start’s microsecond',
+    creationTime: '2026-10-05T09:12:33.1234560Z',
+    outcome: 'is refused as one that may still be running',
+    recovered: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+  },
+]) {
+  // Value: protects=the learner's --recover on Windows after a killed publish whose process id a process of another user, or one run as administrator, has now, whose start PowerShell may not read; fails_when=the publisher's Windows query reads the start alone, so it is unknown and the Wiki stays locked as "may still be running" for as long as that process runs, or the process table's creation time, named to the microsecond, is compared with the recorded start to the 100 ns, so a publisher that still runs counts as gone; why_new=Cycle 0047 row 63 (SIMP-1 = MAINT-1 = ADV-2 = CORE-1): the publisher's copy of the start reader lacked row 33's Win32_Process fallback; seam=the publisher's `system` option, here Windows with a stand-in for PowerShell that may not read the process's start (the CLI passes the system it runs on); no_claim=a real process of another user on Windows
+  test(`a recovery on Windows of a killed publish whose process id went to a process whose start PowerShell may not read, by the process table's creation time ${when}, ${outcome}`, async () => {
+    // Arrange: the journal names the test process's id, this host, Windows's space and the killed publisher's start to the 100 ns.
+    const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+      record.pid = process.pid
+      record.owner = {
+        host: hostname(),
+        space: 'win32',
+        boot: { atMs: Date.now() - Math.round(uptime() * 1000) },
+        start: 'win:2026-10-05T09:12:33.1234567Z',
+      }
+    })
+    const windows = {
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      // A stand-in for PowerShell that may not read the test process's start: only a query that falls back to the process table (Win32_Process) prints, its creation time behind the mark `cim:`.
+      run: async (program, args) =>
+        program ===
+          'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' &&
+        args[3]?.includes(`Get-Process -Id ${process.pid} -ErrorAction Stop`) &&
+        args[3].includes(
+          `'cim:' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=${process.pid}' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o')`,
+        )
+          ? `cim:${creationTime}`
+          : undefined,
+    }
+    try {
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        system: windows,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { killed, recovery },
+        { killed: '', recovery: recovered },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
 // Value: protects=the learner's --recover after a killed publish before a restart of the machine, whose process id a process of the new boot has; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running"; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another boot (another boot id, or a boot time an hour earlier where the system names none), no process start and the test process's own id; no_claim=a boot time moved by a correction of the clock within the tolerance
 test('a recovery of a killed publish whose journal names an earlier boot of this machine recovers the Wiki whatever process has its id now', async () => {
   // Arrange

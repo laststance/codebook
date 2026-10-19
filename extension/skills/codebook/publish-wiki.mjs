@@ -667,20 +667,52 @@ async function macStartOf(pid, system) {
   return text !== undefined && /^[\x20-\x7e]{1,64}$/.test(text) ? 'ps:' + text : undefined;
 }
 
-/** The start of a Windows process: the creation time PowerShell prints in UTC, PowerShell started by its full path under the system root that the environment of `system` names, never found on the search path, and run by the runner of `system` ({@link SYSTEM_HERE}). The query of {@link START_QUERIES} on Windows. @returns `win:<time>`; undefined without a system root and for any other answer. @example await windowsStartOf(4242, SYSTEM_HERE) // => 'win:2026-10-05T09:12:33.1234567Z' */
-async function windowsStartOf(pid, system) {
+/** A UTC time in the round-trip form PowerShell's `ToString('o')` prints, with its whole seconds and its fraction as groups; an error text never has it. Read by {@link windowsStartOf} and {@link windowsTicksOf}. */
+const WINDOWS_UTC_TIME = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/;
+/** What the Windows start query prints before a creation time it read from the process table (Win32_Process) because PowerShell may not read the process's start. Read by {@link windowsStartCommand} and {@link windowsStartOf}. */
+const PROCESS_TABLE_MARK = 'cim:';
+/** How many digits of a second a Windows start counts (100 ns ticks), and how many such ticks a millisecond has. Read by {@link windowsTicksOf}. */
+const WINDOWS_TICK_DIGITS = 7, WINDOWS_TICKS_PER_MS = 10_000n;
+/** How many 100 ns ticks the microsecond holds to which the process table names a creation time: a recorded start less than this far from it is that process's. Read by {@link startOfProcessTableTime}. */
+const WINDOWS_PROCESS_TABLE_PRECISION_TICKS = 10n;
+
+/** Counts a UTC time in round-trip form ({@link WINDOWS_UTC_TIME}) in 100 ns ticks since the epoch, so two Windows times of different precision can be compared. Called by {@link startOfProcessTableTime}. @returns The ticks; undefined for a text that is no such time. @example windowsTicksOf('2026-10-05T09:12:33.1234567Z') // => 17911915531234567n */
+function windowsTicksOf(text) {
+  const parts = WINDOWS_UTC_TIME.exec(text), secondsMs = parts ? Date.parse(parts[1] + 'Z') : Number.NaN;
+  if (!Number.isFinite(secondsMs)) return undefined;
+  return BigInt(secondsMs) * WINDOWS_TICKS_PER_MS + BigInt((parts[2] ?? '').padEnd(WINDOWS_TICK_DIGITS, '0').slice(0, WINDOWS_TICK_DIGITS));
+}
+
+/** Names a process by the creation time the Windows process table gave for it, when PowerShell may not read the process's start. The table names the time to the microsecond, while a recorded start was read to the 100 ns by its own process: a recorded Windows start less than {@link WINDOWS_PROCESS_TABLE_PRECISION_TICKS} ticks from the table's time is that process's and is answered as it is, so {@link processStateOf} finds it equal; any other is answered as the table names it, which no recorded start equals. Called by {@link windowsStartOf}. @param expectedStart - The start the journal or the claim records for this process id, if any. @returns `expectedStart` for a Windows start of the same microsecond; `win:<creation>` otherwise. @example startOfProcessTableTime('2026-10-05T09:12:33.1234560Z', 'win:2026-10-05T09:12:33.1234567Z') // => 'win:2026-10-05T09:12:33.1234567Z' */
+function startOfProcessTableTime(creation, expectedStart) {
+  const creationTicks = windowsTicksOf(creation), expectedTicks = expectedStart?.startsWith('win:') ? windowsTicksOf(expectedStart.slice('win:'.length)) : undefined;
+  // Only a Windows start of the same microsecond is confirmed; a start of another form or without a time never is.
+  if (creationTicks !== undefined && expectedTicks !== undefined && expectedTicks - creationTicks > -WINDOWS_PROCESS_TABLE_PRECISION_TICKS && expectedTicks - creationTicks < WINDOWS_PROCESS_TABLE_PRECISION_TICKS)
+    return expectedStart;
+  return 'win:' + creation;
+}
+
+/** The PowerShell command that asks when a process was created: the process's start, and where this user may not read it (a process of another user, or one run as administrator), its creation time from the process table (Win32_Process through CIM) behind {@link PROCESS_TABLE_MARK}, in the one bounded query; a process id that names no process ends it with an error before the table is asked. The same command as the extension's process-start reader. Called by {@link windowsStartOf}. @example windowsStartCommand(4242) // => "$process = Get-Process -Id 4242 -ErrorAction Stop; try { … } … 'cim:' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=4242' …)" */
+const windowsStartCommand = pid => ['$process = Get-Process -Id ' + pid + ' -ErrorAction Stop', 'try { $start = $process.StartTime } catch { $start = $null }',
+  "if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { '" + PROCESS_TABLE_MARK + "' + (Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId=" + pid + "' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o') }"].join('; ');
+
+/** The start of a Windows process: the creation time PowerShell prints in UTC ({@link windowsStartCommand}), PowerShell started by its full path under the system root that the environment of `system` names, never found on the search path, and run by the runner of `system` ({@link SYSTEM_HERE}). Where this user may not read the process's start, the process table's creation time answers ({@link startOfProcessTableTime}), so a process id that went to a process of another user does not keep a stopped publish's journal for as long as that process runs. The query of {@link START_QUERIES} on Windows. @param expectedStart - The start a journal or a claim records for this process id, which a creation time of the process table may confirm. @returns `win:<time>`; undefined without a system root and for any other answer. @example await windowsStartOf(4242, SYSTEM_HERE, undefined) // => 'win:2026-10-05T09:12:33.1234567Z' */
+async function windowsStartOf(pid, system, expectedStart) {
   const systemRoot = [system.environment.SystemRoot, system.environment.windir].find(path => /^[A-Za-z]:[\\/]/.test(path ?? ''));
   const text = systemRoot === undefined ? undefined : await system.run(win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id ' + pid + " -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')"]);
-  return text !== undefined && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(text) ? 'win:' + text : undefined;
+    ['-NoProfile', '-NonInteractive', '-Command', windowsStartCommand(pid)]);
+  if (text !== undefined && WINDOWS_UTC_TIME.test(text)) return 'win:' + text;
+  // A creation time read from the process table names the process to the microsecond only.
+  const creation = text?.startsWith(PROCESS_TABLE_MARK) ? text.slice(PROCESS_TABLE_MARK.length) : undefined;
+  return creation !== undefined && WINDOWS_UTC_TIME.test(creation) ? startOfProcessTableTime(creation, expectedStart) : undefined;
 }
 
 /** The query of a process's start on each system whose starts the publisher reads. Read by {@link processStartOf}. */
 const START_QUERIES = { linux: linuxStartOf, darwin: macStartOf, win32: windowsStartOf };
 
-/** When a process began, as its system tells it ({@link START_QUERIES} by the platform of `system`), so that a process id another process took since is told from the process a journal or a claim records. Called by {@link ownerHere} for this process and by {@link processStateOf} for the process that has a recorded id now. @returns The start with its system's form before a colon (`linux:`, `ps:`, `win:`); undefined when it cannot be read, and on any other system. @example await processStartOf(process.pid, SYSTEM_HERE) // => 'linux:16362446' */
-async function processStartOf(pid, system) {
-  return Object.hasOwn(START_QUERIES, system.platform) ? START_QUERIES[system.platform](pid, system) : undefined;
+/** When a process began, as its system tells it ({@link START_QUERIES} by the platform of `system`), so that a process id another process took since is told from the process a journal or a claim records. Called by {@link ownerHere} for this process and by {@link processStateOf} for the process that has a recorded id now. @param expectedStart - The start a journal or a claim records for the process id, which a Windows creation time named to the microsecond may confirm ({@link windowsStartOf}). @returns The start with its system's form before a colon (`linux:`, `ps:`, `win:`); undefined when it cannot be read, and on any other system. @example await processStartOf(process.pid, SYSTEM_HERE, undefined) // => 'linux:16362446' */
+async function processStartOf(pid, system, expectedStart) {
+  return Object.hasOwn(START_QUERIES, system.platform) ? START_QUERIES[system.platform](pid, system, expectedStart) : undefined;
 }
 
 /** The program that names macOS's boot session, by its full path, so no program of the current directory or the search path answers instead. Read by {@link bootHere}. */
@@ -712,7 +744,7 @@ const ownerReadings = new WeakMap();
 
 /** What a journal or a recovery claim of this process records of its owner beside the process id, so a later recovery tells whether that owner can still be at work: the machine's host name, the space of process ids ({@link processSpaceHere}), the boot ({@link bootHere}) and the process's start ({@link processStartOf}), each as `system` tells it ({@link SYSTEM_HERE}). Read once per process and system. Called by {@link publishJournalOf}, {@link claimRecovery} and {@link manifestJournalOf} before a journal or a claim is written, and by {@link requireExited}. @returns The owner, without the process id. @example await ownerHere(SYSTEM_HERE) // => { host: 'workstation', space: 'linux@4026531836', boot: { id: '0c1d…' }, start: 'linux:16362446' } */
 function ownerHere(system) {
-  if (!ownerReadings.has(system)) ownerReadings.set(system, (async () => ({ host: hostname(), space: await processSpaceHere(system), boot: await bootHere(system), start: await processStartOf(process.pid, system) }))());
+  if (!ownerReadings.has(system)) ownerReadings.set(system, (async () => ({ host: hostname(), space: await processSpaceHere(system), boot: await bootHere(system), start: await processStartOf(process.pid, system, undefined) }))());
   return ownerReadings.get(system);
 }
 
@@ -751,7 +783,7 @@ const isOfEarlierBootTime = (owner, here, hasBootIds) => owner.start === undefin
 /** Judges a recorded owner of this boot and space by its process id: `gone` when no process has the id, or when the process that has it now began at another time than the recorded start, as `system` tells it ({@link processStartOf}); `running` otherwise, also when the start cannot be read. Called by {@link ownerStateOf}. @example await processStateOf(process.pid, { start: 'linux:1' }, SYSTEM_HERE) // => 'gone' */
 async function processStateOf(pid, owner, system) {
   if (isProcessIdFree(pid)) return 'gone';
-  const liveStart = owner.start === undefined ? undefined : await processStartOf(pid, system);
+  const liveStart = owner.start === undefined ? undefined : await processStartOf(pid, system, owner.start);
   return liveStart !== undefined && liveStart !== owner.start ? 'gone' : 'running';
 }
 
