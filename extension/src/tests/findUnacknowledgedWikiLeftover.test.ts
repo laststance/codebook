@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -281,6 +281,40 @@ test('this window’s own stopped chat refuses the start up to the watch’s end
       { kind: 'last-run', endedAtMs: at(12, 0) },
     ])
     assert.equal(atTheEnd, undefined)
+  } finally {
+    await rm(wiki.parent, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the one agent per Wiki while a chat this window never watched has a candidate beside the Wiki within the bound; fails_when=a site published after that candidate was written passes it, as a publish ends the wait for another window's stopped watch or this window's own, so the press starts a second agent beside the chat that is still writing it; why_new=Cycle 0047 row 89 (SM-3); seam=the clock and the listing of the candidates, handed over, and the manifest's time for the time of the publish; no_claim=a candidate prepared from the site before that publish, which the listing leaves out because the publisher refuses it (the tests of listWikiCandidates hold that)
+test('a candidate this window’s watch never saw keeps refusing the start after a site was published since it was written', async () => {
+  // Arrange: wiki.stage-1, which no watch of this window saw, was written at 12:00 and is still beside the Wiki; a site was published at 12:05; no window has a stopped watch. It is 12:06.
+  const wiki = await makeUnpublishedWiki()
+  try {
+    await mkdir(wiki.outputDirectory)
+    await mkdir(join(wiki.parent, 'wiki.stage-1'))
+    const manifestPath = join(wiki.outputDirectory, 'codebook-wiki.json')
+    await writeFile(manifestPath, '{}')
+    await utimes(manifestPath, new Date(at(12, 5)), new Date(at(12, 5)))
+
+    // Act
+    const refusal = await findUnacknowledgedWikiLeftover(wiki.outputDirectory, {
+      nowMs: at(12, 6),
+      watchTimeoutMs: WATCH_TIMEOUT_MS,
+      otherWindow: undefined,
+      lastRun: undefined,
+      acknowledged: [],
+      listCandidates: () =>
+        Promise.resolve([
+          { name: 'wiki.stage-1', writtenAtMs: at(12, 0), ownedPaths: [] },
+        ]),
+    })
+
+    // Assert
+    assert.deepEqual(refusal, {
+      named: [{ kind: 'candidate', name: 'wiki.stage-1' }],
+      reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-1, written ${clockTime(12, 0)}). Codebook waits for it until ${clockTime(12, 15)}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+    })
   } finally {
     await rm(wiki.parent, { recursive: true, force: true })
   }
