@@ -47,6 +47,42 @@ type ProcessListingForm = {
   processesOf: (printed: string) => ListedProcess[]
 }
 
+/** A line `ps` prints for {@link unixListing}: the process id, the effective user id and the command line. The pattern captures text in every group of a line it matches. */
+const UNIX_PROCESS_LINE = /^\s*(\d+)\s+(\d+)\s+(.+)$/
+
+/**
+ * Says whether a listed process is one of the user whose processes the `ps` listing reads; called by {@link unixProcessOfLine}.
+ * @param ownerId - The effective user id of the process, as `ps` printed it.
+ * @param userId - The effective user id whose processes are read; `undefined` reads every user's.
+ * @returns `true` for a process of that user, and for every process when no user is named.
+ * @example
+ * isProcessOfUser(502, 501)       // => false
+ * isProcessOfUser(502, undefined) // => true
+ */
+function isProcessOfUser(ownerId: number, userId: number | undefined): boolean {
+  return userId === undefined || ownerId === userId
+}
+
+/**
+ * Reads one line `ps` printed for {@link unixListing} as a process of one user; called by the reader of that listing for every line.
+ * @param line - One printed line, `<pid> <uid> <command line>`.
+ * @param userId - The effective user id whose processes are read; `undefined` reads every user's.
+ * @returns The process with its id and command line; `undefined` for a line that names no process id, user id or command line, and for a process of another user.
+ * @example
+ * unixProcessOfLine(' 4242   501 /usr/bin/chrome --user-data-dir=/tmp/x', 501) // => { pid: 4242, command: '/usr/bin/chrome --user-data-dir=/tmp/x' }
+ * unixProcessOfLine(' 5150   502 /usr/bin/sleep 600', 501)                     // => undefined
+ */
+function unixProcessOfLine(
+  line: string,
+  userId: number | undefined,
+): ListedProcess | undefined {
+  // A line the pattern matches has text in every group, so its command line stands for the whole match.
+  const [, pid, ownerId, command] = UNIX_PROCESS_LINE.exec(line) ?? []
+  // A process of another user is not listed.
+  if (!command || !isProcessOfUser(Number(ownerId), userId)) return undefined
+  return { pid: Number(pid), command }
+}
+
 /**
  * Gives the form of `ps` on macOS and Linux: every process of every user (`-ax`), with its effective user id and the command line at its whole width (`-ww`), as `<pid> <uid> <command line>`, of which the lines of one user are read; called by {@link listingFormOf}, which names its program by an absolute path.
  * Why one user's: a run matches its browser's profile against the listing ({@link profileProcesses}), and on a machine shared with other users a process of another user that names the run's profile folder (its path is in every user's listing) would be taken for the run's browser: with a debugging port it fails the attach, and one that never exits holds the close until its bound. The browser a run starts is this user's process.
@@ -61,13 +97,9 @@ function unixListing(
   return {
     listingArguments: ['-axww', '-o', 'pid=,uid=,command='],
     processesOf: (printed) =>
-      printed.split('\n').flatMap((line) => {
-        const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line)
-        if (!match?.[1] || !match[2] || !match[3]) return []
-        // A process of another user is not listed.
-        if (userId !== undefined && Number(match[2]) !== userId) return []
-        return [{ pid: Number(match[1]), command: match[3] }]
-      }),
+      printed
+        .split('\n')
+        .flatMap((line) => unixProcessOfLine(line, userId) ?? []),
   }
 }
 
@@ -99,14 +131,15 @@ const UNREAD_OWNER = '?'
 const PERCENT_ENCODED_TEXT = /^[A-Za-z0-9\-._~!*'()%]+$/
 
 /**
- * Decodes a command line the Windows listing printed percent-encoded; called by the reader of {@link windowsListing}.
- * @param encoded - The text after the process's owner.
- * @returns The command line; `undefined` for a text that is no percent-encoding of UTF-8.
+ * Decodes a command line the Windows listing printed percent-encoded; called by {@link windowsLineOf} for every process line.
+ * @param encoded - The text after the process's owner; `undefined` for a line that is no process line.
+ * @returns The command line; `undefined` for a text that is no percent-encoding of UTF-8, and for no text.
  * @example
  * decodedCommandLine('%22c%3A%5Cnode.exe%22') // => '"c:\\node.exe"'
  */
-function decodedCommandLine(encoded: string): string | undefined {
-  if (!PERCENT_ENCODED_TEXT.test(encoded)) return undefined
+function decodedCommandLine(encoded: string | undefined): string | undefined {
+  if (encoded === undefined || !PERCENT_ENCODED_TEXT.test(encoded))
+    return undefined
   try {
     return decodeURIComponent(encoded)
   } catch {
@@ -119,7 +152,23 @@ function decodedCommandLine(encoded: string): string | undefined {
 type WindowsOwnership = { session: string; sid: string }
 
 /**
- * Judges whose a process of the Windows listing is; called by the reader of {@link windowsListing} for every process line.
+ * Gives a logon session and a SID that a line of the Windows listing names, as one ownership; called by {@link windowsEditorOf} for the editor's line and by {@link windowsLineOf} for every process line.
+ * @param session - The session the line names; `undefined` for a line its pattern does not match.
+ * @param sid - The SID the line names, {@link UNREAD_OWNER} when it could not be read; `undefined` for a line its pattern does not match.
+ * @returns The ownership; `undefined` when either is missing.
+ * @example
+ * windowsOwnershipOf('1', 'S-1-5-21-1-1001') // => { session: '1', sid: 'S-1-5-21-1-1001' }
+ * windowsOwnershipOf(undefined, undefined)   // => undefined
+ */
+function windowsOwnershipOf(
+  session: string | undefined,
+  sid: string | undefined,
+): WindowsOwnership | undefined {
+  return session && sid ? { session, sid } : undefined
+}
+
+/**
+ * Judges whose a process of the Windows listing is; called by {@link windowsProcessOfLine} for every process line.
  * A process of the editor's own logon session counts as this user's without its owner being read (Cycle 0047 row 37: there a process started with other credentials is listed too, and its command line is shown only to an administrator). A process of another session is this user's when its owner's SID is the editor's (Cycle 0047 row 196: a browser of this user in another remote session).
  * @param process - The process's session and the SID of its owner.
  * @param editor - The editor's session and the SID of the user PowerShell runs as.
@@ -143,10 +192,120 @@ function windowsOwnerOf(
 }
 
 /**
+ * Says whether the Windows listing lists a process whose owner was judged ({@link windowsOwnerOf}); called by {@link windowsProcessOfLine}.
+ * @param owner - Whose the process is.
+ * @param keepsUnconfirmedOwners - Whether a process whose owner cannot be confirmed is kept ({@link ProcessListingInputs.keepsUnconfirmedOwners}).
+ * @returns `true` for this user's process, and for one that may be this user's when the caller counts it; `false` for another user's process, which is never listed.
+ * @example
+ * isListedOwner('unconfirmed', false) // => false
+ * isListedOwner('unconfirmed', true)  // => true
+ */
+function isListedOwner(
+  owner: ReturnType<typeof windowsOwnerOf>,
+  keepsUnconfirmedOwners: boolean,
+): boolean {
+  return owner === 'own' || (owner === 'unconfirmed' && keepsUnconfirmedOwners)
+}
+
+/**
+ * Reads the line {@link WINDOWS_LISTING_COMMAND} prints first, the editor's logon session and the SID of the user PowerShell runs as; called by {@link windowsProcessesOf}, which judges every process line by it.
+ * @param lines - The printed lines, trimmed.
+ * @returns The editor's session and SID, from the first line that is the editor's.
+ * @throws When no printed line is the editor's: no process could be judged then.
+ * @example
+ * windowsEditorOf(['editor 1 S-1-5-21-1-1001', '5150 2 S-1-5-21-1-1001 %22c%3A%5Cchrome.exe%22']) // => { session: '1', sid: 'S-1-5-21-1-1001' }
+ */
+function windowsEditorOf(lines: string[]): WindowsOwnership {
+  const [, session, sid] =
+    lines
+      .map((line) => WINDOWS_EDITOR_LINE.exec(line))
+      .find((match) => match !== null) ?? []
+  const editor = windowsOwnershipOf(session, sid)
+  if (!editor)
+    throw new Error(
+      'The process listing (PowerShell) printed no line of its own logon session, so no process could be judged as this user’s.',
+    )
+  return editor
+}
+
+/** A process line of the Windows listing as {@link windowsLineOf} reads it: the process id, its session and owner, and its decoded command line. */
+type WindowsProcessLine = {
+  pid: number
+  ownership: WindowsOwnership
+  command: string
+}
+
+/**
+ * Reads one process line {@link WINDOWS_LISTING_COMMAND} printed, `<pid> <session> <owner> <command line, percent-encoded>`; called by {@link windowsProcessOfLine}.
+ * @param line - One printed line, trimmed.
+ * @returns The process id, its session and owner and its decoded command line; `undefined` for a line that is no process line, and for one whose command line is empty or no percent-encoding of UTF-8.
+ * @example
+ * windowsLineOf('5150 2 ? %22c%3A%5Cchrome.exe%22') // => { pid: 5150, ownership: { session: '2', sid: '?' }, command: '"c:\\chrome.exe"' }
+ * windowsLineOf('4 0 ?')                            // => undefined
+ */
+function windowsLineOf(line: string): WindowsProcessLine | undefined {
+  // A line the pattern matches has text in every group, so its session and owner stand for the whole match.
+  const [, pid, session, sid, encodedCommand] =
+    WINDOWS_PROCESS_LINE.exec(line) ?? []
+  const ownership = windowsOwnershipOf(session, sid)
+  const command = decodedCommandLine(encodedCommand)
+  if (!ownership || !command) return undefined
+  return { pid: Number(pid), ownership, command }
+}
+
+/**
+ * Reads one line the Windows listing printed as a process this user's listing holds; called by {@link windowsProcessesOf} for every line.
+ * @param line - One printed line, trimmed.
+ * @param editor - The editor's session and SID ({@link windowsEditorOf}).
+ * @param keepsUnconfirmedOwners - Whether a process whose owner cannot be confirmed is kept ({@link ProcessListingInputs.keepsUnconfirmedOwners}).
+ * @returns The process with its id and command line; `undefined` for a line that is no process line with a readable command line, for another user's process, and for one whose owner cannot be confirmed unless the caller keeps it.
+ * @example
+ * windowsProcessOfLine('5150 2 S-1-5-21-1-1001 %22c%3A%5Cchrome.exe%22', { session: '1', sid: 'S-1-5-21-1-1001' }, false) // => { pid: 5150, command: '"c:\\chrome.exe"' }
+ * windowsProcessOfLine('6006 2 ? %22c%3A%5Cchrome.exe%22', { session: '1', sid: 'S-1-5-21-1-1001' }, false)               // => undefined
+ */
+function windowsProcessOfLine(
+  line: string,
+  editor: WindowsOwnership,
+  keepsUnconfirmedOwners: boolean,
+): ListedProcess | undefined {
+  const read = windowsLineOf(line)
+  // Another user's process is never listed; one that may be this user's only for a caller that counts it.
+  if (
+    !read ||
+    !isListedOwner(
+      windowsOwnerOf(read.ownership, editor),
+      keepsUnconfirmedOwners,
+    )
+  )
+    return undefined
+  return { pid: read.pid, command: read.command }
+}
+
+/**
+ * Reads what {@link WINDOWS_LISTING_COMMAND} printed as the processes of this user ({@link windowsOwnerOf}) with a readable command line, and with `keepsUnconfirmedOwners` those that may be this user's; the reader of {@link windowsListing}.
+ * @param printed - What PowerShell printed.
+ * @param keepsUnconfirmedOwners - Whether a process whose owner cannot be confirmed is kept ({@link ProcessListingInputs.keepsUnconfirmedOwners}).
+ * @returns The listed processes, in the order PowerShell printed them; a process of another user is never listed.
+ * @throws When no printed line is the editor's ({@link windowsEditorOf}).
+ * @example
+ * windowsProcessesOf('editor 1 S-1-5-21-1-1001\r\n5150 2 S-1-5-21-1-1001 %22c%3A%5Cchrome.exe%22\r\n6006 2 ? %22c%3A%5Cchrome.exe%22\r\n', false) // => [{ pid: 5150, command: '"c:\\chrome.exe"' }]
+ */
+function windowsProcessesOf(
+  printed: string,
+  keepsUnconfirmedOwners: boolean,
+): ListedProcess[] {
+  const lines = printed.split('\n').map((line) => line.trim())
+  const editor = windowsEditorOf(lines)
+  return lines.flatMap(
+    (line) => windowsProcessOfLine(line, editor, keepsUnconfirmedOwners) ?? [],
+  )
+}
+
+/**
  * Gives PowerShell on Windows, which has no `ps`: {@link WINDOWS_LISTING_COMMAND}, without a profile and without a prompt, and the reader of what it printed; called by {@link listingFormOf}, which names its program by its full path under the system root.
  * @param keepsUnconfirmedOwners - Whether a process whose owner cannot be confirmed is kept ({@link ProcessListingInputs.keepsUnconfirmedOwners}).
- * @returns The listing's arguments and its reader, which lists the processes of this user ({@link windowsOwnerOf}) with a readable command line, and with `keepsUnconfirmedOwners` those that may be this user's; a process of another user is never listed.
- * @throws From the reader, when the listing printed no line of the editor's session: no process could be judged then.
+ * @returns The listing's arguments and its reader ({@link windowsProcessesOf}), which lists the processes of this user ({@link windowsOwnerOf}) with a readable command line, and with `keepsUnconfirmedOwners` those that may be this user's; a process of another user is never listed.
+ * @throws From the reader, when the listing printed no line of the editor's session ({@link windowsEditorOf}): no process could be judged then.
  * @example
  * windowsListing(false).processesOf('editor 1 S-1-5-21-1-1001\r\n5150 2 S-1-5-21-1-1001 %22c%3A%5Cchrome.exe%22\r\n6006 2 ? %22c%3A%5Cchrome.exe%22\r\n') // => [{ pid: 5150, command: '"c:\\chrome.exe"' }]
  */
@@ -160,33 +319,8 @@ function windowsListing(
       '-Command',
       WINDOWS_LISTING_COMMAND,
     ],
-    processesOf: (printed) => {
-      const lines = printed.split('\n').map((line) => line.trim())
-      const editorLine = lines
-        .map((line) => WINDOWS_EDITOR_LINE.exec(line))
-        .find((match) => match !== null)
-      if (!editorLine?.[1] || !editorLine[2])
-        throw new Error(
-          'The process listing (PowerShell) printed no line of its own logon session, so no process could be judged as this user’s.',
-        )
-      const editor = { session: editorLine[1], sid: editorLine[2] }
-      return lines.flatMap((line) => {
-        const match = WINDOWS_PROCESS_LINE.exec(line)
-        const command = match?.[4] && decodedCommandLine(match[4])
-        if (!match?.[1] || !match[2] || !match[3] || !command) return []
-        const owner = windowsOwnerOf(
-          { session: match[2], sid: match[3] },
-          editor,
-        )
-        // Another user's process is never listed; one that may be this user's only for a caller that counts it.
-        if (
-          owner === 'another-user' ||
-          (owner === 'unconfirmed' && !keepsUnconfirmedOwners)
-        )
-          return []
-        return [{ pid: Number(match[1]), command }]
-      })
-    },
+    processesOf: (printed) =>
+      windowsProcessesOf(printed, keepsUnconfirmedOwners),
   }
 }
 
