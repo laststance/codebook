@@ -1631,3 +1631,17 @@ test('a coverage upload that fails leaves a warning in the Test job', async () =
     true,
   )
 })
+
+// Value: protects=pnpm's one-day wait before it installs a newly published version, for every package of the extension's workspace (pnpm 11 and later wait 1440 minutes unless told otherwise); fails_when=pnpm-workspace.yaml exempts a package or a version from the wait (the fallow 3.34.1 upgrade left ten such entries) or shortens the wait below a day; why_new=Cycle 0047 row 1 (row 1066 of Cycle 0046); seam=none; no_claim=that the lockfile installs (CI's frozen install shows it)
+test('the extension workspace exempts no package from pnpm’s one-day wait for newly published versions and does not shorten that wait', async () => {
+  // Arrange
+  const workspace = await repositoryText('extension/pnpm-workspace.yaml')
+
+  // Act
+  const hasExemptions = /^minimumReleaseAgeExclude:/m.test(workspace)
+  const waitMinutes = /^minimumReleaseAge:\s*(\d+)/m.exec(workspace)?.[1]
+
+  // Assert
+  assert.equal(hasExemptions, false)
+  assert.equal(waitMinutes === undefined || Number(waitMinutes) >= 1440, true)
+})
