@@ -3604,7 +3604,7 @@ test('a publish refused after it finalized the candidate whose prepared record c
         ).includes('<h2 id="intro">Edited</h2>'),
       },
       {
-        refusal: `Publication failed; the candidate’s prepared manifest and record could not be put back in ${wiki.next}: ENOSPC: the write stopped partway. Run --recover.`,
+        refusal: `Publication failed; the candidate’s prepared manifest and record could not be put back in ${wiki.next}: ENOSPC: the write stopped partway. Run --recover. The publish was refused first: EXDEV: rename '${wiki.next}' -> '${wiki.output}'`,
         journalKept: true,
         recovery: 'published-or-restored',
         nextPublish: { publishedFiles: 1 },
@@ -4125,6 +4125,76 @@ test('a publish whose swap fails while the kept prior Wiki is held by another pr
       {
         refusal: 'EXDEV',
         besideTheWiki: ['next', 'wiki'],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    stopFailingTheMoveBack()
+    stopFailingTheSwap()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who must tell why a publish failed when its swap failed and the move of the kept prior Wiki back failed too; fails_when=the publish throws the failure of its undo in place of its own refusal, so the swap's failure is lost from the message and from the cause chain; why_new=Cycle 0047 row 122 (P2OCR1-2 = P2MAINT-4 = ADV2-8); seam=a copy of the shipped publisher whose `node:fs/promises` fails the move of the candidate into the Wiki's place with EXDEV and the move of the prior Wiki back with EACCES (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a failed restore of the candidate's prepared files, whose message names the publish's refusal the same way (the test of row 59)
+test('a publish whose swap fails and whose move of the prior Wiki back fails too names both failures, keeps its journal, and --recover then moves the prior Wiki back', async () => {
+  // Arrange: the move of the candidate into the Wiki's place fails with EXDEV, then the move of the prior Wiki back fails with EACCES.
+  const { publishWiki: publishWhoseUndoFails } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  const stopFailingTheSwap = failRenameOf(
+    (path) => path === wiki.next,
+    ['EXDEV'],
+  )
+  const stopFailingTheMoveBack = failRenameOf(
+    (path) => path.startsWith(`${wiki.output}.previous-`),
+    ['EACCES'],
+  )
+  try {
+    // Act: the refused publish; the recovery, once the publisher's process has ended, which this test's process stands in for, so the journal is given a process id no process has.
+    const refusal = await publishWhoseUndoFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => ({
+        message: error.message,
+        causes: [
+          error.cause?.errors?.[0]?.code,
+          error.cause?.errors?.[1]?.cause?.code,
+        ],
+      }),
+    )
+    const journalText = await readFile(journal, 'utf8').catch(() => '{}')
+    const { backup } = JSON.parse(journalText)
+    await writeFile(
+      journal,
+      journalText.replace(`"pid":${process.pid},`, '"pid":99999999,'),
+    )
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        recovery,
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        refusal: {
+          message: `Publication failed; the prior Wiki remains at ${backup}. Run --recover. The publish was refused first: EXDEV: rename '${wiki.next}' -> '${wiki.output}'`,
+          causes: ['EXDEV', 'EACCES'],
+        },
+        recovery: 'previous-restored',
         wikiPage: wiki.wikiPage,
       },
     )

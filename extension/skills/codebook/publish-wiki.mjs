@@ -539,13 +539,16 @@ async function requireLearnerFilesUnchanged(current, manual, manualHashes, outpu
   for (const path of currentManual) if (manualHashes[path] !== digest(await regularBytes(join(output, path)))) throw new Error('A manual Wiki file changed during publication: ' + path);
 }
 
-/** Undoes a publish refused before its swap. The prior Wiki goes back first, so the time without a Wiki folder does not grow with what the publish wrote into the candidate. The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it ({@link removeWritten}). The candidate's prepared manifest and record are put back ({@link restoreFinalizedFiles}) only while the path and the candidate hold; a refused hold leaves the finalized ones, which publish again unchanged, and the publish's own refusal is the one reported. Called by {@link publishWiki}. @returns The refusal of a move back that failed, or else of a restore that failed, either of which keeps the journal for --recover; undefined otherwise. @example await undoRefusedPublish({ output, stage, backup, movedOld: true, written, made, finalized, requirePathHeld, isFolderWhereItWas }) // => undefined */
-async function undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas }) {
+/** Undoes a publish refused before its swap. The prior Wiki goes back first, so the time without a Wiki folder does not grow with what the publish wrote into the candidate. The candidate is not moved before the swap, so what this publish wrote still stands where it wrote it; a refusal of any kind removes it ({@link removeWritten}). The candidate's prepared manifest and record are put back ({@link restoreFinalizedFiles}) only while the path and the candidate hold; a refused hold leaves the finalized ones, which publish again unchanged, and the publish's own refusal is the one reported. Called by {@link publishWiki}. @param refusal - The publish's own refusal, which the undo answers. @returns The failure of the undo, either of which keeps the journal for --recover: that of a move back that failed, or else of a restore that failed, with the publish's own refusal kept in its message and its cause ({@link undoFailureOf}); undefined otherwise. @example await undoRefusedPublish({ output, stage, backup, movedOld: true, written, made, finalized, requirePathHeld, isFolderWhereItWas, refusal }) // => undefined */
+async function undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas, refusal }) {
   const moveBackFailure = movedOld ? await renameRetried(backup, output).then(() => undefined, cause => new Error('Publication failed; the prior Wiki remains at ' + backup + '. Run --recover.', { cause })) : undefined;
   await removeWritten(written, made);
   const restoreFailure = finalized.length > 0 && await requirePathHeld().then(() => isFolderWhereItWas(stage), () => false) ? await restoreFinalizedFiles(finalized, stage) : undefined;
-  return moveBackFailure ?? restoreFailure;
+  return undoFailureOf(refusal, moveBackFailure ?? restoreFailure);
 }
+
+/** The failure of the undo of a refused publish ({@link undoRefusedPublish}) as the publish answers it: the undo's sentence, which says what --recover must do, then the publish's own refusal, which started the undo; its cause holds both, the refusal first and then the undo's failure with its own cause. Called by {@link undoRefusedPublish}. @returns The answer; undefined when the undo did not fail. @example undoFailureOf(exdevError, moveBackFailure).message // => "Publication failed; the prior Wiki remains at /repo/.codebook/wiki.previous-…. Run --recover. The publish was refused first: EXDEV: cross-device link not permitted, rename …" */
+const undoFailureOf = (refusal, failure) => failure && new Error(failure.message + ' The publish was refused first: ' + refusal.message, { cause: new AggregateError([refusal, failure], 'The publish’s refusal, then the failure of its undo') });
 
 /** Puts the prepared bytes back in each candidate file a refused publish finalized ({@link restoreFinalized}), each tried whatever became of the one before. A restore that fails leaves the candidate's manifest and record a pair that may not publish again: the prepared manifest beside a record marked published for the finalized one, which the next publish refuses as a changed finalized candidate. So the failure is answered, and the publish keeps its journal, which still holds the prepared bytes, for --recover to put them back ({@link restoreStoppedCandidate}). Called by {@link undoRefusedPublish} while the path and the candidate hold. @returns The refusal that names the candidate and the first failure, with that failure as its cause; undefined when every file was put back. @example await restoreFinalizedFiles(finalized, '/repo/.codebook/next') // => undefined */
 async function restoreFinalizedFiles(finalized, stage) {
@@ -601,8 +604,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
     return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length };
   } catch (error) {
     if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
-    const moveBackFailure = await undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas });
-    if (moveBackFailure !== undefined) throw moveBackFailure;
+    const undoFailure = await undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas, refusal: error });
+    if (undoFailure !== undefined) throw undoFailure;
     await removeOwnedRecord(journal, journalNow.bytes);
     throw error;
   }
