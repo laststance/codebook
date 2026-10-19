@@ -302,6 +302,71 @@ test('no more than two pages are prepared at once: a third page waits for a free
   )
 })
 
+// Value: protects=the editor's extension host against many pages asked for at once (a page that names hundreds of others, a script that opens them): each waiting page kept its page (up to 2 MiB, and a string of twice that) in the host's memory, and the line had no end (a probe kept 100 pages waiting beside two workers); fails_when=the line of pages waiting for a worker takes more than WIKI_PAGE_WAITING_LIMIT pages, so a further page waits instead of being refused at once, or a page that found room in the line is not served; why_new=Cycle 0047 row 3 (S11-X1); seam=the page-worker module loaded with a Worker class that records the threads it starts (the threads are real), under the shipped limits; no_claim=the reader's refusal before it reads a page file (deepWikiReader.test.ts)
+test('while two pages are prepared and four wait, a further page is refused as busy at once without a worker, and the four waiting pages are still served', async () => {
+  // Arrange: two slow pages under a deadline of 1.5 s take both workers, and four small pages wait.
+  const pool = await loadPageWorkerRecordingThreads({})
+  const signal = new AbortController().signal
+  const slowPages = [
+    pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+      deadlineMs: 1_500,
+      signal,
+    }),
+    pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+      deadlineMs: 1_500,
+      signal,
+    }),
+  ]
+  const waitingPages = [1, 2, 3, 4].map((number) =>
+    pool.servedWikiPageOffThread(
+      `<body><p>Waiting page ${number}</p></body>`,
+      PAGE_OPTIONS,
+      { deadlineMs: 10_000, signal },
+    ),
+  )
+
+  // Act
+  const further = await within(
+    pool.servedWikiPageOffThread(
+      '<body><p>Further page</p></body>',
+      PAGE_OPTIONS,
+      { deadlineMs: 10_000, signal },
+    ),
+    500,
+  )
+  const workersWhenTheFurtherPageWasAnswered = pool.startedWorkers.length
+  const answers = await Promise.all([...slowPages, ...waitingPages])
+
+  // Assert: the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({ further, workersWhenTheFurtherPageWasAnswered, answers }),
+    {
+      further: { state: 'busy' },
+      workersWhenTheFurtherPageWasAnswered: 2,
+      answers: [
+        { state: 'deadline' },
+        { state: 'deadline' },
+        {
+          state: 'served',
+          html: '<body><p>Waiting page 1</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+        {
+          state: 'served',
+          html: '<body><p>Waiting page 2</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+        {
+          state: 'served',
+          html: '<body><p>Waiting page 3</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+        {
+          state: 'served',
+          html: '<body><p>Waiting page 4</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+      ],
+    },
+  )
+})
+
 // Value: protects=the editor's process against worker threads held for a reader nobody reads: each idle worker keeps its isolate and the heap that the pages it prepared grew it to, up to WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES; fails_when=a worker that answered its page is kept idle for good, or is stopped at once so no page reuses it; why_new=P2P3 (workers are reused after an answer); Cycle 0047 row 17 (P3P1) the heap an idle worker keeps is the one its pages grew it to, not its last page's; seam=the page-worker module loaded with a Worker class that records the threads it starts, and a constants module whose WIKI_PAGE_WORKER_IDLE_MS is 300 ms; no_claim=the memory an idle worker holds (the bound on it has its own test)
 test('a worker left without a page for longer than its idle time ends, and the next page gets a new worker', async () => {
   // Arrange

@@ -92,3 +92,18 @@ test('the refusal page of the Wiki’s overview itself has no link to the overvi
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook stopped preparing this page after 10 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.</p></body></html>',
   )
 })
+
+// Value: protects=a learner whose page the reader did not prepare because it held as many pages as its page workers prepare and let wait: the page must say to reload in a moment, not that preparing failed; fails_when=the sentence is chosen by a chain that gives every reason it does not name the failure's sentence, so a page refused only for a moment advises Update LLM Wiki, or this refusal page loses its link to the overview; why_new=Cycle 0047 row 3 (S11-X1) the reason busy, and row 19 (P3OCR2-1) a sentence of its own for each reason; seam=none; no_claim=when the reader refuses a page as busy (deepWikiReader.test.ts, wikiPageWorker.test.ts)
+test('a page refused because the reader holds as many pages as it can says to reload it in a moment, not that preparing failed, and links to the Wiki’s overview', () => {
+  // Arrange
+  const readerPrefix = '/w/0f/'
+
+  // Act
+  const page = wikiPageRefusalHtml('busy', 10_000, readerPrefix, 'guide.html')
+
+  // Assert
+  assert.equal(
+    page,
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook is preparing as many pages as it can at once, so it did not prepare this one. Reload the page in a moment.</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p></body></html>',
+  )
+})

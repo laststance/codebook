@@ -59,7 +59,11 @@ import { readUpToLimit } from './utils/readUpToLimit'
 import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
-import { wikiPageRefusalHtml } from './utils/wikiPageRefusalHtml'
+import { takeWikiPagePlace } from './utils/takeWikiPagePlace'
+import {
+  wikiPageRefusalHtml,
+  type WikiPageRefusalReason,
+} from './utils/wikiPageRefusalHtml'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 import { servedWikiPageOffThread } from './wikiPageWorker'
 
@@ -518,14 +522,36 @@ export async function startDeepWikiReader(
         'Content-Security-Policy',
         `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
       )
-      let content: Buffer | undefined
-      if (look.size <= WIKI_PAGE_FILE_LIMIT_BYTES) {
+      /** Answers the page with the refusal page of its reason, status 503, under the page policy set above. */
+      const refusePage = (reason: WikiPageRefusalReason): void => {
+        response.statusCode = 503
+        response.end(
+          wikiPageRefusalHtml(
+            reason,
+            WIKI_PAGE_SERVE_DEADLINE_MS,
+            prefix,
+            relativePath,
+          ),
+        )
+      }
+      if (look.size > WIKI_PAGE_FILE_LIMIT_BYTES) {
+        refusePage('too-large')
+        return
+      }
+      const givePlaceBack = takeWikiPagePlace()
+      // Every place for pages in hand is taken: the file is not read, as the page could only be refused after it.
+      if (!givePlaceBack) {
+        refusePage('busy')
+        return
+      }
+      try {
         const pageFile = await openServedWikiFile(filePath)
         // Another entry took the path between the look and the open.
         if (!pageFile) {
           sendNoRegularFile(response)
           return
         }
+        let content: Buffer | undefined
         try {
           content = await readUpToLimit(
             pageFile.file,
@@ -535,53 +561,40 @@ export async function startDeepWikiReader(
         } finally {
           await pageFile.file.close()
         }
-      }
-      if (!content) {
-        response.statusCode = 503
-        response.end(
-          wikiPageRefusalHtml(
-            'too-large',
-            WIKI_PAGE_SERVE_DEADLINE_MS,
-            prefix,
-            relativePath,
-          ),
+        if (!content) {
+          refusePage('too-large')
+          return
+        }
+        // The page is prepared on a worker thread under a deadline, so a page built to make the parser slow stops no extension of the window.
+        const preparation = new AbortController()
+        // A request that went while the reader read the files above is closed already, and its page is not prepared; one that goes later stops the preparation when its response closes. Both are looked at in one step, so no close falls between them.
+        if (response.destroyed) preparation.abort()
+        else
+          response.on('close', () => {
+            if (!response.writableFinished) preparation.abort()
+          })
+        const served = await servedWikiPageOffThread(
+          content.toString('utf8'),
+          {
+            editorScheme,
+            clientAddress: `${prefix}codebook-qa.js`,
+            publication,
+          },
+          {
+            deadlineMs: WIKI_PAGE_SERVE_DEADLINE_MS,
+            signal: preparation.signal,
+          },
         )
-        return
+        if (served.state === 'served') {
+          response.end(served.html)
+          return
+        }
+        // A page the worker did not prepare is never served as the folder holds it.
+        refusePage(served.state)
+      } finally {
+        // The page is answered: its bytes are no longer held, and the next page may take the place.
+        givePlaceBack()
       }
-      // The page is prepared on a worker thread under a deadline, so a page built to make the parser slow stops no extension of the window.
-      const preparation = new AbortController()
-      // A request that went while the reader read the files above is closed already, and its page is not prepared; one that goes later stops the preparation when its response closes. Both are looked at in one step, so no close falls between them.
-      if (response.destroyed) preparation.abort()
-      else
-        response.on('close', () => {
-          if (!response.writableFinished) preparation.abort()
-        })
-      const served = await servedWikiPageOffThread(
-        content.toString('utf8'),
-        {
-          editorScheme,
-          clientAddress: `${prefix}codebook-qa.js`,
-          publication,
-        },
-        {
-          deadlineMs: WIKI_PAGE_SERVE_DEADLINE_MS,
-          signal: preparation.signal,
-        },
-      )
-      if (served.state === 'served') {
-        response.end(served.html)
-        return
-      }
-      // A page the worker did not prepare is never served as the folder holds it.
-      response.statusCode = 503
-      response.end(
-        wikiPageRefusalHtml(
-          served.state,
-          WIKI_PAGE_SERVE_DEADLINE_MS,
-          prefix,
-          relativePath,
-        ),
-      )
       return
     }
     // No file of the Wiki folder is served as script: under `nosniff` a browser runs no script of another type, so a `.js` file there is plain text, and the reader's own script stays the one script file of this origin.

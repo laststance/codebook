@@ -1214,6 +1214,126 @@ test('a page file of 3 MB, far larger than any generated page, is refused as too
   )
 })
 
+// Value: protects=the editor's extension host against many pages asked for at once: each page the reader holds keeps its file's bytes (up to 2 MiB, and a string of twice that) in the host until it is answered, and the reader read every page asked for, however many already waited; fails_when=the reader opens a page file while as many pages as the page workers prepare and let wait (six) are in hand, or answers such a page otherwise than at once with status 503 and the sentence to reload it in a moment; why_new=Cycle 0047 row 3 (S11-X1): the bound holds before a file is read; seam=the reader loaded with loadModule, its opener loaded with a file system that records the files it opens, and a stand-in page-worker module that holds every page until the test lets them go; no_claim=the line of the real page workers (wikiPageWorker.test.ts)
+test('while six pages are in hand, a further page is refused at once with 503 and a sentence to reload it in a moment, and its file is not opened', async (context) => {
+  // Arrange: a page besides the overview, an opener that notes the files it opens, and a page worker that holds every page until the test lets them go.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-pages-in-hand-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  const filesTheReaderOpened: string[] = []
+  const recordingOpener = await loadModule<typeof openWithoutFollowingModule>(
+    join(__dirname, '..', 'utils', 'openWithoutFollowing.js'),
+    {
+      'node:fs/promises': {
+        ...fileSystemPromises,
+        open: (...parameters: Parameters<typeof open>) => {
+          filesTheReaderOpened.push(basename(String(parameters[0])))
+          return open(...parameters)
+        },
+      },
+    },
+  )
+  let letPagesGo = (): void => {}
+  const pagesMayGo = new Promise<void>((resolveGo) => {
+    letPagesGo = resolveGo
+  })
+  let pagesInHand = 0
+  let noteSixPagesInHand = (): void => {}
+  const sixPagesInHand = new Promise<void>((resolveSix) => {
+    noteSixPagesInHand = resolveSix
+  })
+  const workerHoldingPages: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      pagesInHand += 1
+      if (pagesInHand === 6) noteSixPagesInHand()
+      await pagesMayGo
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithPagesInHand } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      './utils/openWithoutFollowing': recordingOpener,
+      './wikiPageWorker': workerHoldingPages,
+    },
+    { URL },
+  )
+  const reader = await startReaderWithPagesInHand(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held pages are let go also when the test fails, so their connections end.
+  context.after(() => letPagesGo())
+  const heldPages = Array.from({ length: 6 }, () =>
+    fetch(reader.url).then((response) => response.text()),
+  )
+  await sixPagesInHand
+
+  // Act: a seventh page, then the six held pages are let go.
+  const further = await Promise.race([
+    fetch(new URL('later.html', reader.url)).then(async (response) => ({
+      status: response.status,
+      // The overview's address under this reader's random prefix, written as OVERVIEW.
+      body: (await response.text()).replaceAll(
+        new URL(reader.url).pathname,
+        'OVERVIEW',
+      ),
+    })),
+    new Promise<'still waiting'>((resolveWait) =>
+      setTimeout(() => resolveWait('still waiting'), 1_000),
+    ),
+  ])
+  letPagesGo()
+  const heldAnswers = await Promise.all(heldPages)
+
+  // Assert
+  assert.deepEqual(
+    { further, heldAnswers, filesTheReaderOpened },
+    {
+      further: {
+        status: 503,
+        body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook is preparing as many pages as it can at once, so it did not prepare this one. Reload the page in a moment.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
+      },
+      heldAnswers: [
+        '<p>Prepared page</p>',
+        '<p>Prepared page</p>',
+        '<p>Prepared page</p>',
+        '<p>Prepared page</p>',
+        '<p>Prepared page</p>',
+        '<p>Prepared page</p>',
+      ],
+      filesTheReaderOpened: [
+        'index.html',
+        'index.html',
+        'index.html',
+        'index.html',
+        'index.html',
+        'index.html',
+      ],
+    },
+  )
+})
+
 // Value: protects=the editor's extension host against a page file that grows past the reader's limit after its size was looked at; fails_when=the reader reads the opened page whole (readFile, or readUpToLimit without the limit), so the grown file is read and prepared; why_new=the P2P2 test's no_claim names this growth; Cycle 0047 row 15 (P3D1): the refused page is the overview, so its refusal page has no link to itself; seam=the reader loaded with loadModule, a 1,000-byte limit, a file system whose lstat lets the page grow after the look, and a counting page worker; no_claim=the real race's timing (the growth is made at the look)
 test('a page file that grows past the limit after the reader looked at its size is answered with the page that says it is too large, and is not prepared', async (context) => {
   // Arrange: an overview of 33 bytes that grows by 2,000 bytes right after the reader's look at its size, a reader that prepares pages of 1,000 bytes at most, and a page worker that counts its pages.

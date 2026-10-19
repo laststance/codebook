@@ -8,6 +8,7 @@ import {
 } from 'node:worker_threads'
 
 import {
+  WIKI_PAGE_WAITING_LIMIT,
   WIKI_PAGE_WORKER_CONCURRENCY_LIMIT,
   WIKI_PAGE_WORKER_HEAP_LIMIT_MB,
   WIKI_PAGE_WORKER_IDLE_MS,
@@ -42,13 +43,13 @@ const WIKI_PAGE_WORKER_ROLE = 'codebook-wiki-page'
 const idleWorkers: { worker: Worker; retirement: NodeJS.Timeout }[] = []
 /** How many workers prepare a page now; never more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT}. */
 let busyWorkerCount = 0
-/** Pages asked for while every worker was busy, oldest first. */
+/** Pages asked for while every worker was busy, oldest first; never more than {@link WIKI_PAGE_WAITING_LIMIT}. */
 const waitingPages: AskedWikiPage[] = []
 
 /**
  * Prepares one Wiki page for serving ({@link servedWikiPageHtml}) on a worker thread, so that the editor's extension host runs on while the page is read, and stops the worker when the deadline passes.
  * Why: the HTML parser takes time that grows with the square of the page on some crafted pages (from 13 s to minutes for 1 MB), and nothing limits the size of a page in the Wiki folder; on the host's own thread such a page would stop every extension of the window. The worker's heap is limited ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}), because it runs in the host's process, which a page of tens of megabytes would otherwise grow by gigabytes.
- * At most {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} workers prepare pages at once, so pages asked for together keep that many cores busy at most; a page asked for while every worker is busy waits for the first one free, and its deadline counts from then. A worker that answered its page with a heap of at most {@link WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES} waits {@link WIKI_PAGE_WORKER_IDLE_MS} for the next one and prepares it without loading the reader's code again ({@link servedWikiPageHtml} keeps nothing from one page to the next); a waiting worker keeps the heap its pages grew it to, so one whose heap grew past that bound is stopped after its answer. A worker stopped at the deadline, one that failed and one whose request went are stopped and never reused, so a stopped worker takes nothing of a later page with it.
+ * At most {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} workers prepare pages at once, so pages asked for together keep that many cores busy at most; a page asked for while every worker is busy waits for the first one free, and its deadline counts from then. At most {@link WIKI_PAGE_WAITING_LIMIT} pages wait, each holding its page in the host's memory; a further page is answered at once as `busy`, so the wait is bounded too (the last waiting page gets a worker within two deadlines). A worker that answered its page with a heap of at most {@link WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES} waits {@link WIKI_PAGE_WORKER_IDLE_MS} for the next one and prepares it without loading the reader's code again ({@link servedWikiPageHtml} keeps nothing from one page to the next); a waiting worker keeps the heap its pages grew it to, so one whose heap grew past that bound is stopped after its answer. A worker stopped at the deadline, one that failed and one whose request went are stopped and never reused, so a stopped worker takes nothing of a later page with it.
  * The worker is this module's compiled file, loaded from the folder of the running code (`dist`), where the package ships it as a bundle of its own.
  * Called by the Wiki reader for every HTML file it serves.
  * @param html - The page as the Wiki folder holds it.
@@ -59,6 +60,7 @@ const waitingPages: AskedWikiPage[] = []
  * - `{ state: 'served', html }` with the page as served
  * - `{ state: 'deadline' }` when the deadline passed first; the worker is stopped
  * - `{ state: 'too-large' }` when the worker reached its heap limit ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}, `ERR_WORKER_OUT_OF_MEMORY`): a reload would only run another worker to the same end
+ * - `{ state: 'busy' }` at once when every worker is busy and {@link WIKI_PAGE_WAITING_LIMIT} pages wait already; no worker starts for it
  * - `{ state: 'failed' }` when the worker failed otherwise, answered no page, or the request went, also while the page waited; never the page unprepared
  * @example
  * await servedWikiPageOffThread('<body></body>', { editorScheme: 'vscode', clientAddress: '/w/t/codebook-qa.js', publication: undefined }, { deadlineMs: 10_000, signal })
@@ -87,6 +89,11 @@ export function servedWikiPageOffThread(
     }
     if (busyWorkerCount < WIKI_PAGE_WORKER_CONCURRENCY_LIMIT) {
       preparePage(page)
+      return
+    }
+    // Every worker is busy and the line is full: the page would only hold its bytes in the host for a wait that long.
+    if (waitingPages.length >= WIKI_PAGE_WAITING_LIMIT) {
+      resolve({ state: 'busy' })
       return
     }
     // Every worker is busy: the page waits for the first one free, and leaves the line when its request goes.
