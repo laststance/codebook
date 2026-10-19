@@ -3733,46 +3733,111 @@ test('a publish whose copy of the learner’s file stops partway leaves no part 
   }
 })
 
-for (const { failOf, code, when } of [
+// Value: protects=the next publish of a candidate after a publish whose copy of the learner's file failed at its close, after its 'wx' open made the file; fails_when=writeOwnFile closes the handle before its clean-up and passes on a failed close before it, so the file stays in the candidate without a record and the next publish is refused for it as a file outside the manifest; why_new=Cycle 0047 row 65 (OCR1-2 = ADV-7); seam=a copy of the shipped publisher whose `node:fs/promises` fails the close through the handle of the learner's file in the candidate (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a close that fails on a real file system, and a failed status read, which keeps the file at the copy's name (the next tests)
+test('a publish whose copy of the learner’s file fails at its close after the whole write, as at a full disk on a network or synced file system, leaves no file of it in the candidate, and the candidate publishes when run again', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; the publish's copy of it into the candidate fails as named.
+  const { publishWiki: publishWhoseCopyFails } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+    failCloseOf((path) => path === join(wiki.next, 'manual.txt'), 'ENOSPC')
+
+    // Act: the failed publish, then the candidate published again.
+    const refusal = await publishWhoseCopyFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.code,
+    )
+    const copyInTheCandidate = await readFile(
+      join(wiki.next, 'manual.txt'),
+      'utf8',
+    ).catch(() => 'no copy')
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ preservedManualFiles }) => ({ preservedManualFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        copyInTheCandidate,
+        nextPublish,
+        manualFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+      },
+      {
+        refusal: 'ENOSPC',
+        copyInTheCandidate: 'no copy',
+        nextPublish: { preservedManualFiles: 1 },
+        manualFile: 'The learner’s own notes',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const atTheName of [
   {
-    failOf: failCloseOf,
-    code: 'ENOSPC',
-    when: 'fails at its close after the whole write, as at a full disk on a network or synced file system,',
+    when: 'when nothing else stands there',
+    swap: undefined,
+    bytes: '',
   },
   {
-    failOf: failStatOf,
-    code: 'EIO',
-    when: 'fails at its status read right after its open made the file,',
+    when: 'when another process put an empty file there since',
+    swap: async (path) => {
+      await rm(path)
+      await writeFile(path, '')
+    },
+    bytes: '',
+  },
+  {
+    when: 'when another process put a file with bytes there since',
+    swap: async (path) => {
+      await rm(path)
+      await writeFile(path, 'Another process’s notes')
+    },
+    bytes: 'Another process’s notes',
   },
 ]) {
-  // Value: protects=the next publish of a candidate after a publish whose copy of the learner's file failed at its close or at its status read, after its 'wx' open made the file; fails_when=writeOwnFile closes the handle before its clean-up and passes on a failed close before it, or keeps no record of the file when the status read fails, so the file stays in the candidate without a record and the next publish is refused for it as a file outside the manifest; why_new=Cycle 0047 row 65 (OCR1-2 = ADV-7); seam=a copy of the shipped publisher whose `node:fs/promises` fails the close or the status read through the handle of the learner's file in the candidate (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a close that fails on a real file system
-  test(`a publish whose copy of the learner’s file ${when} leaves no file of it in the candidate, and the candidate publishes when run again`, async () => {
-    // Arrange: the published Wiki holds a file of the learner's; the publish's copy of it into the candidate fails as named.
-    const { publishWiki: publishWhoseCopyFails } = await loadMarkedCopy(
+  // Value: protects=a file another process puts at the name of the publish's copy of a learner's file after the publish's 'wx' open made it, when the publish then cannot read the status of the file it made, and the learner who must tell which file it is; fails_when=writeOwnFile's clean-up takes the file at the path for the one its open made without its device and file id, by its size or at all, so it removes another process's file, or the refusal does not name the file it kept; why_new=Cycle 0047 row 120 (CXA2-4 = P2TEST-5); seam=a copy of the shipped publisher whose `node:fs/promises` fails the status read through the handle of the learner's file in the candidate with EIO, after the row's swap of the file at that name (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a status read that fails on a real file system
+  test(`a publish whose copy of the learner’s file fails at its status read right after its open made the file keeps the file at the copy’s name ${atTheName.when} and names it in its refusal, and the next publish is refused for it`, async () => {
+    // Arrange: the published Wiki holds a file of the learner's; the status read of the publish's copy of it fails right after the open made the file, once the row's swap ran.
+    const { publishWiki: publishWhoseStatusReadFails } = await loadMarkedCopy(
       'publish-wiki.mjs',
       '?failing',
     )
     const wiki = await publishedWikiWithACandidate()
+    const copy = join(wiki.next, 'manual.txt')
     try {
       await writeFile(
         join(wiki.output, 'manual.txt'),
         'The learner’s own notes',
       )
-      failOf((path) => path === join(wiki.next, 'manual.txt'), code)
+      failStatOf((path) => path === copy, 'EIO', atTheName.swap)
 
       // Act: the failed publish, then the candidate published again.
-      const refusal = await publishWhoseCopyFails({
+      const refusal = await publishWhoseStatusReadFails({
         projectRoot: wiki.root,
         outputDirectory: wiki.output,
         stageDirectory: wiki.next,
       }).then(
         () => 'published',
-        (error) => error.code,
+        (error) => ({ message: error.message, cause: error.cause?.code }),
       )
-      const copyInTheCandidate = await readFile(
-        join(wiki.next, 'manual.txt'),
-        'utf8',
-      ).catch(() => 'no copy')
+      const fileAtTheCopysName = await readFile(copy, 'utf8').catch(
+        () => 'removed',
+      )
       const nextPublish = await publishWiki({
         projectRoot: wiki.root,
         outputDirectory: wiki.output,
@@ -3786,14 +3851,18 @@ for (const { failOf, code, when } of [
       assert.deepEqual(
         {
           refusal,
-          copyInTheCandidate,
+          fileAtTheCopysName,
           nextPublish,
           manualFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
         },
         {
-          refusal: code,
-          copyInTheCandidate: 'no copy',
-          nextPublish: { preservedManualFiles: 1 },
+          refusal: {
+            message: `The publisher made ${copy} but could not read its status: EIO: the stat of the file failed. The file there may be another one now, so it was kept. Delete it if it holds nothing of yours, then try again.`,
+            cause: 'EIO',
+          },
+          fileAtTheCopysName: atTheName.bytes,
+          nextPublish:
+            "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
           manualFile: 'The learner’s own notes',
         },
       )

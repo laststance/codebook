@@ -17,7 +17,7 @@ export function failWriteOf(isAwaited, code) {
   pendingWriteFailure = { isAwaited, code }
 }
 
-/** The status read or the close through a handle that a test asked to fail: the file it waits for, the call and the system error; gone once it failed. */
+/** The status read or the close through a handle that a test asked to fail: the file it waits for, the call, the system error and what runs before a failing status read; gone once it failed. */
 let pendingHandleCallFailure
 
 /**
@@ -36,24 +36,26 @@ export function failCloseOf(isAwaited, code) {
  * Asks the next status read through a handle of a file that `isAwaited` names to fail with a system error, once, right after its `open` made the file: as a read error of the disk (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose status read fails.
  * @param {'EIO'} code - The system error.
+ * @param {(path: string) => Promise<void>} [swap] - Runs, with the file's path, before the status read fails: as another process that puts a file of its own at the name meanwhile.
  * @returns {void}
  * @example
- * failStatOf((path) => path.endsWith('/next/manual.txt'), 'EIO')
+ * failStatOf((path) => path.endsWith('/next/manual.txt'), 'EIO', async (path) => { await rm(path); await writeFile(path, 'Another process’s notes') })
  */
-export function failStatOf(isAwaited, code) {
-  pendingHandleCallFailure = { isAwaited, call: 'stat', code }
+export function failStatOf(isAwaited, code, swap) {
+  pendingHandleCallFailure = { isAwaited, call: 'stat', code, swap }
 }
 
 /**
- * Wraps an open handle so that its `close` closes the file and then fails with `code`, or its `stat` fails with `code` and reads nothing; every other member is the handle's own.
+ * Wraps an open handle so that its `close` closes the file and then fails with `code`, or its `stat` runs `swap` and then fails with `code` and reads nothing; every other member is the handle's own.
  * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
  * @param {'close' | 'stat'} call - The call that fails.
  * @param {string} code - The system error.
+ * @param {() => Promise<void>} [swap] - What runs before a failing `stat`.
  * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
  * @example
  * await handleWhoseCallFails(await fileSystem.open(path, 'wx'), 'close', 'ENOSPC').close() // rejects with code ENOSPC after the file was closed
  */
-function handleWhoseCallFails(handle, call, code) {
+function handleWhoseCallFails(handle, call, code, swap) {
   const failure = () =>
     Object.assign(new Error(`${code}: the ${call} of the file failed`), {
       code,
@@ -68,6 +70,7 @@ function handleWhoseCallFails(handle, call, code) {
         }
       if (property === call)
         return async () => {
+          await swap?.()
           throw failure()
         }
       const value = Reflect.get(target, property, target)
@@ -116,7 +119,12 @@ export async function open(path, ...rest) {
   // Only the awaited file's handle fails, once.
   if (callFailure?.isAwaited(String(path))) {
     pendingHandleCallFailure = undefined
-    return handleWhoseCallFails(handle, callFailure.call, callFailure.code)
+    return handleWhoseCallFails(
+      handle,
+      callFailure.call,
+      callFailure.code,
+      callFailure.swap && (() => callFailure.swap(String(path))),
+    )
   }
   if (!failure?.isAwaited(String(path))) return handle
   pendingWriteFailure = undefined
