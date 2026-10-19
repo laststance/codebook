@@ -109,15 +109,17 @@ export type StudyRemoval =
       moveUnknown?: true
     }
 
-/** Says whether a run of this machine may still write one recording directory, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording whose writer this machine cannot confirm (one on another computer, or a live process of this computer that it cannot confirm as the writer: a process of another user whose start it cannot read, one that began, by the clock, after the recording, or, for a recording without its writer's record or with a record without the writer's start, a process of another user (its header's rule)) is no such reservation: the learner decides about it when they delete the study. */
+/** Says whether a run of this machine may still write one recording directory, or holds it sealed until it has saved its study from a checkpoint taken after the seal, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording sealed and released by its run ({@link isSealedRecordingReleased}) is no reservation. A recording whose writer this machine cannot confirm (one on another computer, or a live process of this computer that it cannot confirm as the writer: a process of another user whose start it cannot read, one that began, by the clock, after the recording, or, for a recording without its writer's record or with a record without the writer's start, a process of another user (its header's rule)) is no such reservation: the learner decides about it when they delete the study. */
 type RecordingJudge = (recording: string) => Promise<boolean>
 
 /**
- * Judges whether a run of this machine, this window's own included, may still write one recording directory ({@link RecordingJudge}: {@link recordingWriterOf} with `counts` answers `may-run`); the predicate of the list ({@link LearningLibrary.entryWithoutArchive}); the removal derives the same answer from its one judgement ({@link LearningLibrary.writerVerdictsOf}).
+ * Judges whether a run of this machine, this window's own included, may still write one recording directory or holds it sealed ({@link RecordingJudge}: {@link recordingWriterOf} with `counts` answers `may-run`); the predicate of the list ({@link LearningLibrary.entryWithoutArchive}); the removal derives the same answer from its one judgement ({@link LearningLibrary.writerVerdictsOf}).
  * @param recording - The recording directory.
  * @param starts - The process starts of the caller's list or removal ({@link ProcessStartsOfList}).
- * @returns `true` while such a run may still write it; `false` for a sealed recording, a writer that is gone, and one this computer cannot confirm.
- * @example await isReservedByRunHere('/…/recordings.v2/<id>', new Map()) // => true while another window of this machine records that run
+ * @returns `true` while such a run may still write it, and for a sealed recording that a run of another window of this machine holds until it has saved its study from a checkpoint taken after the seal; `false` for a recording sealed and released by its run ({@link isSealedRecordingReleased}: this window's own sealed recording is so at once), a writer that is gone (also a sealed recording's), and one this computer cannot confirm.
+ * @example
+ * await isReservedByRunHere('/…/recordings.v2/<id>', new Map()) // => true while another window of this machine records that run
+ * await isReservedByRunHere('/…/recordings.v2/<id>', new Map()) // => true while that window holds the sealed recording, false once it saved the study after the seal
  */
 async function isReservedByRunHere(
   recording: string,
@@ -495,12 +497,14 @@ export class LearningLibrary {
 
   /**
    * Says whether the paths of a study are what is left of a saved study without its archive, which is listed ({@link entriesWithoutArchive}) and may be removed ({@link removeStudy}).
-   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one unless a run of this machine may still write it ({@link RecordingJudge}): the recording of a run that has not saved its study yet is reserved before the first save and belongs to that run. A recording whose writer this machine cannot confirm (a run on another computer, which it cannot probe, or a live process of this computer it cannot confirm as the writer: one of another user whose start it cannot read, or one that began, by the clock, after the recording) is such a rest too, and Delete asks the learner about it ({@link removeStudy}).
+   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one unless a run of this machine may still write it or holds it sealed ({@link RecordingJudge}): the recording of a run of another window belongs to that run until the run has saved its study from a checkpoint taken after the seal; only then is it sealed and released by its run ({@link isSealedRecordingReleased}), as this window's own sealed recording is at once (this window lists it by its own run state). A recording whose writer this machine cannot confirm (a run on another computer, which it cannot probe, or a live process of this computer it cannot confirm as the writer: one of another user whose start it cannot read, or one that began, by the clock, after the recording) is such a rest too, and Delete asks the learner about it ({@link removeStudy}).
    * The list and the removal ask the same question: the list with {@link recordingWriterOf} for every candidate, the removal with what it judged before its lock ({@link isReservedHereUnderLock}).
    * @param paths - The study's paths as {@link studyPaths} found them.
    * @param isReservedHere - Says whether a run of this machine may still write one recording directory ({@link RecordingJudge}).
-   * @returns `true` when no archive is left and a sidecar, or a recording no run of this machine may still write, is; `false` for a study with an archive, for one of which nothing is left, and for one that has only recordings a run of this machine may still write.
-   * @example await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }, judge) // => true once that recording is sealed
+   * @returns `true` when no archive is left and a sidecar, or a recording no run of this machine may still write or holds sealed, is; `false` for a study with an archive, for one of which nothing is left, and for one that has only recordings a run of this machine may still write or holds sealed.
+   * @example
+   * await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }, judge) // => true once that recording is sealed and released by its run
+   * await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }, judge) // => false while a run of another window of this machine holds it sealed, its study not saved after the seal
    */
   private async isLeftWithoutArchive(
     paths: StudyPaths,
@@ -513,7 +517,7 @@ export class LearningLibrary {
     )
   }
 
-  /** Says whether one of a study's recording directories is no reservation of a run of this machine: sealed, abandoned, or with a writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer); asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNoRunHereHolds(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed */
+  /** Says whether one of a study's recording directories is no reservation of a run of this machine: sealed and released by its run ({@link isSealedRecordingReleased}), abandoned (its writer gone, also a sealed recording's), or with a writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer); a sealed recording that a run of this machine holds until it has saved its study from a checkpoint taken after the seal is a reservation. Asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNoRunHereHolds(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed and released by its run; false while that run holds it sealed */
   private async hasRecordingNoRunHereHolds(
     recordings: string[],
     isReservedHere: RecordingJudge,
@@ -608,9 +612,11 @@ export class LearningLibrary {
    * Answers under the storage lock whether a run of this machine may still write one recording ({@link RecordingJudge}), from the verdict found before the lock ({@link verdictUnderLock}); called by {@link refuseUnlessRemovable} for a study without an archive, with the question the list asks ({@link isLeftWithoutArchive}).
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns `false` for a recording sealed since; the verdict for any other.
+   * @returns `false` for a recording sealed and released by its run ({@link isSealedRecordingReleased}); the verdict found before the lock for any other, also for a recording sealed since that its run still holds until it has saved its study from a checkpoint taken after the seal.
    * @throws What {@link verdictUnderLock} throws for a recording that changed or appeared since the judgement.
-   * @example await this.isReservedHereUnderLock('/…/recordings.v2/<id>', verdicts) // => false once that recording is sealed
+   * @example
+   * await this.isReservedHereUnderLock('/…/recordings.v2/<id>', verdicts) // => false once that recording is sealed and released by its run
+   * await this.isReservedHereUnderLock('/…/recordings.v2/<id>', verdicts) // => true, the verdict before the lock, while another window of this machine holds it sealed
    */
   private async isReservedHereUnderLock(
     recording: string,
@@ -624,9 +630,11 @@ export class LearningLibrary {
    * Answers under the storage lock which writer of another window may still write one recording, from the verdict found before the lock ({@link verdictUnderLock}); called by {@link writersOfOtherWindows}.
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns `finished` for a recording sealed since; the verdict for any other.
+   * @returns `finished` for a recording sealed and released by its run ({@link isSealedRecordingReleased}); the verdict found before the lock for any other, also for a recording sealed since that its run still holds until it has saved its study from a checkpoint taken after the seal.
    * @throws What {@link verdictUnderLock} throws for a recording that changed or appeared since the judgement.
-   * @example await this.writerOfAnotherWindowUnderLock('/…/recordings.v2/<id>', verdicts) // => { kind: 'finished' } once that recording is sealed
+   * @example
+   * await this.writerOfAnotherWindowUnderLock('/…/recordings.v2/<id>', verdicts) // => { kind: 'finished' } once that recording is sealed and released by its run
+   * await this.writerOfAnotherWindowUnderLock('/…/recordings.v2/<id>', verdicts) // => { kind: 'may-run', createdAt } while another window of this machine holds it sealed
    */
   private async writerOfAnotherWindowUnderLock(
     recording: string,
