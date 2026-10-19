@@ -379,8 +379,8 @@ test('a writer record that names no recording, as an earlier build of this deliv
   assert.deepEqual(writer, { kind: 'gone' })
 })
 
-// Value: protects=the writer record of another recording of the same study id when one recording is sealed; fails_when=the seal removes the record kept by the study id whatever recording it names, so the other recording loses the record that judges it (AF10); why_new=Cycle 0046 review AF10; seam=the record, which the test makes name the recordings.v3 recording of the id, and the seal of the recordings.v2 recording by this window's writer
-test('the seal of a recording removes only its own writer record and leaves the record of another recording of the same id', async (context) => {
+// Value: protects=the writer record of another recording of the same study id when the study of one sealed recording is saved after the seal, the save that removes a sealed recording's record since Cycle 0047 row 98; fails_when=that removal removes the record kept by the study id whatever recording it names, so the other recording loses the record that judges it (AF10); why_new=Cycle 0047 row 242 (P2CORE-2): the test acted on the seal, which since row 98 removes no record, so it could not fail; seam=the record, which the test makes name the recordings.v3 recording of the id, the seal of the recordings.v2 recording by this window's writer, and the library's save of the study that follows it
+test('the save that follows the seal of a recording removes only its own writer record and leaves the record of another recording of the same id', async (context) => {
   // Arrange: the store started recordings.v2/<id>; its record now names recordings.v3/<id>, as that recording's start would have written it.
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
@@ -397,12 +397,16 @@ test('the seal of a recording removes only its own writer record and leaves the 
 
   // Act
   await recording.writer.finish(1)
+  await saveStudyOfRecording(storage, recording.studyId)
 
   // Assert
   assert.deepEqual(
     {
       isRecordPresent: await isPresent(recordPath),
-      namedRecording: JSON.parse(await readFile(recordPath, 'utf8')).recording,
+      namedRecording: await readFile(recordPath, 'utf8').then(
+        (text) => JSON.parse(text).recording,
+        () => 'no record',
+      ),
     },
     {
       isRecordPresent: true,

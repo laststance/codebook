@@ -1412,8 +1412,8 @@ test('a folder or a link that took the lock’s place during a write stays, and 
   })
 })
 
-// Value: protects=a Cursor setup in a window whose own leftover catalog lock stays unreadable (a scanner holds it): the catalog's tries of one setup take back that leftover once, and the setup is refused within the catalog's one to three seconds of pauses and that one take-back of about half a second; fails_when=every try of the hold runs the release's 20 attempts again (withStorageLock.ts takeBackOwnLeftover), about half a second each, so the catalog's 21 tries keep the setup waiting about 12 s before it is refused (Cycle 0047 row 199); why_new=Cycle 0047 row 199 (S2PERF-3): no test measured a take-back that keeps failing; seam=the read of the lock's owner in a loaded withStorageLock, which answers nothing, given to a loaded Cursor MCP catalog; no_claim=the length of each pause (a random draw)
-test('a Cursor setup whose own leftover catalog lock stays unreadable takes it back once and is refused within a few seconds, not after every try’s half second', async (context) => {
+// Value: protects=a Cursor setup in a window whose own leftover catalog lock stays unreadable (a scanner holds it): the catalog's tries of one setup take back that leftover once, so the setup is refused within the catalog's one to three seconds of pauses and that one take-back of about half a second; fails_when=every try of the hold runs the release's 20 attempts again (withStorageLock.ts takeBackOwnLeftover), about half a second each, so the catalog's 21 tries keep the setup waiting about 12 s before it is refused (Cycle 0047 row 199): the count of owner reads, one take-back's 20, tells it, as no wall-clock bound on a loaded machine does (row 242, P2TEST-6); why_new=Cycle 0047 row 199 (S2PERF-3): no test measured a take-back that keeps failing; seam=the read of the lock's owner in a loaded withStorageLock, which answers nothing and is counted, given to a loaded Cursor MCP catalog; no_claim=the length of each pause (a random draw) and the setup's time, which the test reports as a diagnostic only
+test('a Cursor setup whose own leftover catalog lock stays unreadable takes it back once, not at every try, and is refused', async (context) => {
   // Arrange: a first hold of the catalog's storage whose release cannot read its lock, so the lock is left and noted; it stays unreadable.
   const cursorDirectory = await storageDirectory(context)
   const storageRoot = join(cursorDirectory, 'storage'),
@@ -1442,17 +1442,16 @@ test('a Cursor setup whose own leftover catalog lock stays unreadable takes it b
     )
   const elapsedMs = performance.now() - startedAt
 
-  // Assert: the pauses take one to three seconds and the one take-back half a second; the bound, half the 12 s of a take-back at every try, leaves room for a loaded machine.
+  // Assert: one take-back reads the owner at each of the release's 20 attempts; a take-back at every try would read it 20 times a try. The time is reported, not asserted: a loaded machine stretches it.
+  context.diagnostic(`refused after ${Math.round(elapsedMs)} ms`)
   assert.deepEqual(
     {
       setup,
       ownerReadsOfTheSetup: window.ownerReads,
-      isRefusedWithinSixSeconds: elapsedMs < 6_000,
     },
     {
       setup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
       ownerReadsOfTheSetup: 20,
-      isRefusedWithinSixSeconds: true,
     },
   )
 })
