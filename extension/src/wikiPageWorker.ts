@@ -16,10 +16,9 @@ import type { WikiPageRefusalReason } from './utils/wikiPageRefusalHtml'
 
 /** How {@link servedWikiPageHtml} is told the editor, the reader's script address and the publication of the page it prepares. */
 type ServedWikiPageOptions = Parameters<typeof servedWikiPageHtml>[1]
-/** What {@link servedWikiPageOffThread} answers: the page as served, or why it is not served; a page file too large to prepare is refused by the reader before it is read. */
+/** What {@link servedWikiPageOffThread} answers: the page as served, or why it is not served. A page that needs more heap than a worker may use ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}) is too large, as a page file larger than the reader reads is. */
 type ServedWikiPage =
-  | { state: 'served'; html: string }
-  | { state: Exclude<WikiPageRefusalReason, 'too-large'> }
+  { state: 'served'; html: string } | { state: WikiPageRefusalReason }
 /** What the reader hands a worker for each page: the page as the Wiki folder holds it and the options it is served with. */
 type WikiPageRequest = { html: string; options: ServedWikiPageOptions }
 /** What a worker is started with: the mark of a worker this module started. */
@@ -55,7 +54,8 @@ const waitingPages: AskedWikiPage[] = []
  * @returns
  * - `{ state: 'served', html }` with the page as served
  * - `{ state: 'deadline' }` when the deadline passed first; the worker is stopped
- * - `{ state: 'failed' }` when the worker failed (its heap limit included), answered no page, or the request went, also while the page waited; never the page unprepared
+ * - `{ state: 'too-large' }` when the worker reached its heap limit ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}, `ERR_WORKER_OUT_OF_MEMORY`): a reload would only run another worker to the same end
+ * - `{ state: 'failed' }` when the worker failed otherwise, answered no page, or the request went, also while the page waited; never the page unprepared
  * @example
  * await servedWikiPageOffThread('<body></body>', { editorScheme: 'vscode', clientAddress: '/w/t/codebook-qa.js', publication: undefined }, { deadlineMs: 10_000, signal })
  * // => { state: 'served', html: '<body><script src="/w/t/codebook-qa.js"></script></body>' }
@@ -110,7 +110,7 @@ function preparePage(page: AskedWikiPage): void {
     clearTimeout(deadline)
     page.limits.signal.removeEventListener('abort', fail)
     worker.off('message', receive)
-    worker.off('error', fail)
+    worker.off('error', failWith)
     worker.off('exit', fail)
     busyWorkerCount -= 1
     // Only a worker that answered a page waits for the next one: a worker stopped, failed or past the deadline may be in any state.
@@ -124,13 +124,16 @@ function preparePage(page: AskedWikiPage): void {
       ? settle({ state: 'served', html: message }, true)
       : settle({ state: 'failed' }, false)
   const fail = (): void => settle({ state: 'failed' }, false)
+  // A worker past its heap limit ends with ERR_WORKER_OUT_OF_MEMORY: the page needs more memory than a worker may use, which no reload changes.
+  const failWith = (error: unknown): void =>
+    settle({ state: isOutOfMemory(error) ? 'too-large' : 'failed' }, false)
   const deadline = setTimeout(
     () => settle({ state: 'deadline' }, false),
     page.limits.deadlineMs,
   )
   page.limits.signal.addEventListener('abort', fail, { once: true })
   worker.once('message', receive)
-  worker.once('error', fail)
+  worker.once('error', failWith)
   // An exit before the answer is a failure.
   worker.once('exit', fail)
   worker.postMessage(page.request)
@@ -143,7 +146,7 @@ function preparePage(page: AskedWikiPage): void {
  */
 function startPageWorker(): Worker {
   const data: WikiPageWorkerData = { role: WIKI_PAGE_WORKER_ROLE }
-  // The heap limit bounds the memory a large page takes in the editor's process; a worker past it ends with an error, answered as a failure.
+  // The heap limit bounds the memory a large page takes in the editor's process; a worker past it ends with ERR_WORKER_OUT_OF_MEMORY, and its page is answered as too large.
   const worker = new Worker(join(__dirname, 'wikiPageWorker.js'), {
     workerData: data,
     resourceLimits: { maxOldGenerationSizeMb: WIKI_PAGE_WORKER_HEAP_LIMIT_MB },
@@ -202,6 +205,21 @@ function startNextWaitingPage(): void {
   if (!next) return
   next.limits.signal.removeEventListener('abort', next.leaveLine)
   preparePage(next)
+}
+
+/**
+ * Tells whether a worker's error is the end at its heap limit ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}); asked by {@link preparePage} for the error a worker ends with.
+ * @param error - What the worker's `error` event carried.
+ * @returns Whether its code is `ERR_WORKER_OUT_OF_MEMORY`.
+ * @example isOutOfMemory(Object.assign(new Error('Worker terminated due to reaching memory limit'), { code: 'ERR_WORKER_OUT_OF_MEMORY' })) // => true
+ */
+function isOutOfMemory(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'ERR_WORKER_OUT_OF_MEMORY'
+  )
 }
 
 /**
