@@ -8008,10 +8008,11 @@ for (const otherBytes of [
       })
       await writeFile(join(wiki.next, 'manual.txt'), otherBytes.text)
 
-      // Act: the recovery, then the candidate published again.
+      // Act: the recovery, given the candidate the agent prepared, as the agent's flow runs it, then the candidate published again.
       const recovery = await recoverWikiPublication({
         projectRoot: wiki.root,
         outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
       }).then(
         ({ status }) => status,
         (error) => error.message,
@@ -8081,10 +8082,11 @@ for (const learnerBytes of [
       })
       await writeFile(join(wiki.next, 'manual.txt'), learnerBytes.text)
 
-      // Act: the recovery, then the candidate published again.
+      // Act: the recovery, given the candidate the agent prepared, as the agent's flow runs it, then the candidate published again.
       const recovery = await recoverWikiPublication({
         projectRoot: wiki.root,
         outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
       }).then(
         ({ status }) => status,
         (error) => error.message,
