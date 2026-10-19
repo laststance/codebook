@@ -14559,3 +14559,96 @@ for (const lock of [
     }
   })
 }
+
+/** A module loaded before the publisher (`--import`) that has the create of every file the publisher reads the file system's clock from (`<record>.clock-<uuid>`) fail with ENOSPC, as on a full disk, while every other file is created as usual. */
+const WITHOUT_SPACE_FOR_CLOCK_FILES = `data:text/javascript,${encodeURIComponent(
+  "import fileSystem from 'node:fs/promises'; import { syncBuiltinESMExports } from 'node:module'; const open = fileSystem.open; fileSystem.open = async (path, ...rest) => { if (/\\.clock-[0-9a-f-]{36}$/.test(String(path))) throw Object.assign(new Error('ENOSPC: no space left on device, open'), { code: 'ENOSPC' }); return open(path, ...rest) }; syncBuiltinESMExports();",
+)}`
+
+for (const record of [
+  {
+    names: 'a journal without a byte',
+    sentenceName: 'Wiki publication journal',
+    arrange: async (wiki) => {
+      const path = `${wiki.output}.publish-journal.json`
+      await writeFile(path, '')
+      return path
+    },
+  },
+  {
+    names: 'a publish lock without a byte',
+    sentenceName: 'Wiki publish lock',
+    arrange: async (wiki) => {
+      const path = `${wiki.output}.publish-lock.json`
+      await writeFile(path, '')
+      return path
+    },
+  },
+  {
+    names:
+      'a stopped recovery claim without a byte beside the journal of a killed publish',
+    sentenceName: 'Wiki recovery claim',
+    arrange: async (wiki) => {
+      const journal = `${wiki.output}.publish-journal.json`
+      runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+        ],
+      })
+      const path = `${journal}.recovery-${createHash('sha256')
+        .update(await readFile(journal).catch(() => ''))
+        .digest('hex')}`
+      await writeFile(path, '')
+      return path
+    },
+  },
+]) {
+  // Value: protects=the learner whose --recover meets a record without a byte where no file can be written beside it (a full disk, a quota, a folder this user may not write); fails_when=the recovery cannot read the file system's clock and answers that the step that created the record may be writing it now, which names no cause, so the learner runs --recover again and again with the same answer; why_new=Cycle 0047 row 210 (found while fixing row 173: the age of an empty record is read through a file created beside it); seam=a module loaded first (`--import`) that has the create of the publisher's clock file fail with ENOSPC; no_claim=a real full disk
+  test(`a --recover beside ${record.names} that has stood a minute, where no file can be created beside it, is refused through the CLI with the system's reason, and keeps the record`, async () => {
+    // Arrange: the row's record without a byte, last changed a minute ago, and a publisher that cannot create its clock file.
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      const path = await record.arrange(wiki)
+      const aMinuteAgo = new Date(Date.now() - 60_000)
+      await utimes(path, aMinuteAgo, aMinuteAgo)
+
+      // Act
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--import',
+          WITHOUT_SPACE_FOR_CLOCK_FILES,
+          PUBLISHER_COMMAND,
+          '--recover',
+          '--project',
+          wiki.root,
+          '--output',
+          wiki.output,
+        ],
+        { encoding: 'utf8', timeout: 10_000 },
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          status: result.status,
+          stderr: result.stderr,
+          record: await readFile(path, 'utf8').catch(() => 'removed'),
+        },
+        {
+          status: 1,
+          stderr: `Error: The ${record.sentenceName} is empty, and its age cannot be judged: the file through which the publisher reads the clock of the file system that holds it could not be created beside it (ENOSPC). It was kept, and nothing was moved. Free space there, or give this user write access to that folder, then run --recover again.\n`,
+          record: '',
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
