@@ -29,21 +29,26 @@ const ORDINARY_PAGE =
   )
 /** A small page the worker serves first, so that compiling the reader is not counted in the time of the ordinary page. */
 const WARM_UP_PAGE = '<p><a href="x">warm</a></p>'.repeat(2_000)
+/** The reader's script tag as {@link servedWikiPageHtml} hands it to the filter for a page served without a publication. */
+const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 
 /**
- * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, and answers how long each took, or `unfinished` for the pages left when the deadline passed; the reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
- * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`, so that each crafted page is compared with an ordinary page in the same thread under the same load.
+ * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers how long each took, or `unfinished` for the pages left when the deadline passed; the reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
+ * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`, so that each crafted page is compared with an ordinary page in the same thread under the same load, served by the same call.
  * @param moduleName - The compiled module under `dist/utils`, without `.js`.
  * @param exportName - The function it exports.
  * @param pages - The crafted pages, by name.
+ * @param tagAtBodyEnd - The tag the function puts at the body's end of every page, the ordinary page's included, as the reader hands its script tag to the filter ({@link servedWikiPageHtml}); none when left out.
  * @returns The time of the ordinary page and of each crafted page in milliseconds, or `unfinished`.
  * @example
  * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { ordinary: 128, small: 0.1 }
+ * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<body></body>' }, READER_SCRIPT_TAG) // => { ordinary: 210, small: 0.1 }
  */
 async function servingTimes(
   moduleName: string,
   exportName: string,
   pages: Record<string, string>,
+  tagAtBodyEnd?: string,
 ): Promise<Record<string, number | 'unfinished'>> {
   const times: Record<string, number | 'unfinished'> = Object.fromEntries(
     ['ordinary', ...Object.keys(pages)].map((name) => [name, 'unfinished']),
@@ -53,7 +58,8 @@ async function servingTimes(
 const serve = require(workerData.module)[workerData.exportName]
 const timeOf = (page) => {
   const started = performance.now()
-  serve(page, 'cursor')
+  if (workerData.tagAtBodyEnd === undefined) serve(page, 'cursor')
+  else serve(page, 'cursor', workerData.tagAtBodyEnd)
   return performance.now() - started
 }
 timeOf(workerData.warmUp)
@@ -69,6 +75,7 @@ for (const [name, page] of Object.entries(workerData.pages)) {
         warmUp: WARM_UP_PAGE,
         ordinary: ORDINARY_PAGE,
         pages,
+        tagAtBodyEnd,
       },
     },
   )
@@ -441,6 +448,47 @@ test('the reader filters an ordinary page of more than 1 MB within three times t
   assert.ok(
     wholeTime <= ORDINARY_PAGE_GROWTH_BOUND_RATIO * halfTime,
     `the whole page took ${wholeTime} ms and its half ${halfTime} ms`,
+  )
+})
+
+// Value: protects=the extension host's page workers against the filter's cost on the path the reader takes for every page: the reader hands its script tag to the filter (servedWikiPageHtml), which puts it at the body's end or the page's end, after a meta where svg content is open there, reads the page again with them in it, and reads a page with a select and a noscript under all four readings, again after each round that renamed an attribute; fails_when=the pass with the reader's tag, the meta or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts, so a page of 1 MB with a select, a noscript and an svg before its end takes more than four times as long as the ordinary page served the same way (these rows took 2.4 to 2.7 times it plain and 2.4 to 2.5 under c8 on the development host, 16 CPUs, Node 24.21); why_new=Cycle 0047 row 191 (S2PERF-2 = S2TEST-4): every timing test called the filter without the reader's tag, so this path was never timed; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=a page whose svg Chrome's reading closes before the tag's place while the page holds a select and a noscript, which the filter also reads under the three other readings up to the tag (3.3 to 3.45 times the ordinary page with a body end, 3.9 to 4.1 without one, by the count of its readings), and native editor responsiveness
+test('the reader filters a page of more than 1 MB with a select, a noscript and an svg open before its body end, or before its end without a body end, with its script tag put in as the reader serves it, within four times the time of an ordinary page served the same way', async () => {
+  // Arrange: a select, a noscript, the ordinary page's sections or refused links, and an svg left open, with a body end and without one.
+  const start =
+    '<body><select><option>a</option></select><noscript><p>n</p></noscript>'
+  const refusedLinks = '<a href="vscode://file/x">x</a>'.repeat(35_000)
+  const pages = {
+    sectionsBeforeAnOpenSvgAtTheBodyEnd: `${start}${ORDINARY_PAGE}<svg><g></body>`,
+    sectionsBeforeAnOpenSvgWithoutABodyEnd: `${start}${ORDINARY_PAGE}<svg><g>`,
+    refusedLinksBeforeAnOpenSvgAtTheBodyEnd: `${start}${refusedLinks}<svg><g></body>`,
+    refusedLinksBeforeAnOpenSvgWithoutABodyEnd: `${start}${refusedLinks}<svg><g>`,
+  }
+
+  // Act
+  const times = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+    READER_SCRIPT_TAG,
+  )
+
+  // Assert: every page is over 1 MB, and each was filtered within the bound of the ordinary page's time.
+  assert.deepEqual(
+    Object.values(pages).map((page) => page.length > 1_000_000),
+    [true, true, true, true],
+  )
+  const ordinary = times.ordinary
+  if (typeof ordinary !== 'number')
+    assert.fail('the ordinary page was not filtered before the deadline')
+  assert.deepEqual(
+    Object.entries(times).filter(
+      ([name, milliseconds]) =>
+        name !== 'ordinary' &&
+        (milliseconds === 'unfinished' ||
+          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
+    ),
+    [],
+    `the ordinary page took ${ordinary} ms`,
   )
 })
 
