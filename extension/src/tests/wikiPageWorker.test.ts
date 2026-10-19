@@ -572,8 +572,8 @@ test('while as many stopped threads are lost as page workers may run at once, a 
   )
 })
 
-// Value: protects=every page that waits behind a stopped page worker whose thread does not end, after an earlier lost thread has ended: a lost thread that ends gives back its count among the lost ones, and the bound on lost threads (row 109) would otherwise hold every later stop that passes the stop limit in its place as if that thread were still lost; fails_when=a lost thread that ends is still counted as lost, so the next thread whose stop passes WIKI_PAGE_WORKER_STOP_LIMIT_MS keeps its place and the page behind it waits for good; why_new=Cycle 0047 row 109 (ADV2-12); seam=the page-worker module loaded with one worker at a time, a stop limit of 300 ms, and a Worker class that records the threads it starts and holds the stop of the first and of the second worker each until the test lets it go (the threads are real); no_claim=the shipped limit of two workers (the count is kept the same way)
-test('once a lost thread has ended, the next stopped worker whose thread does not end gives its place back at the stop limit, and the page behind it is served', async () => {
+// Value: protects=every page that waits behind a stopped page worker whose thread does not end, after an earlier lost thread has ended: a lost thread that ends gives back its count among the lost ones, and the bound on lost threads (row 109) would otherwise hold every later stop that passes the stop limit in its place as if that thread were still lost; fails_when=a lost thread that ends is still counted as lost, so the next thread whose stop passes WIKI_PAGE_WORKER_STOP_LIMIT_MS keeps its place and the page behind it waits for good, or a lost thread's end gives back the place it gave back at its stop limit a second time, so the pool counts more free places than it has and two pages asked for at once start a worker beyond WIKI_PAGE_WORKER_CONCURRENCY_LIMIT; why_new=Cycle 0047 row 109 (ADV2-12); Cycle 0047 row 149 (P3COV-1) two pages asked for at once after both lost threads ended, as no test held that a place is given back once; seam=the page-worker module loaded with one worker at a time, a stop limit of 300 ms, and a Worker class that records the threads it starts and holds the stop of the first and of the second worker each until the test lets it go (the threads are real); no_claim=the shipped limit of two workers (the count is kept the same way)
+test('once a lost thread has ended, the next stopped worker whose thread does not end gives its place back at the stop limit, the page behind it is served, and once both lost threads ended two pages asked for at once still get one worker between them', async () => {
   // Arrange: one worker at a time and a stop limit of 300 ms; the first and the second worker's stops are each held until the test lets them go.
   let letTheFirstStopGo: () => void = () => undefined
   const firstStopLetGo = new Promise<void>((resolveStop) => {
@@ -617,14 +617,31 @@ test('once a lost thread has ended, the next stopped worker whose thread does no
   const behindWhileTheSecondStopIsHeld = await within(behind, 2_000)
   letTheSecondStopGo()
   const secondLostThreadEnd = await within(pool.endOfWorker(1), 2_000)
+  const pagesAskedTogether = await within(
+    Promise.all([
+      pool.servedWikiPageOffThread(
+        '<body><p>First page asked together</p></body>',
+        PAGE_OPTIONS,
+        { deadlineMs: 10_000, signal },
+      ),
+      pool.servedWikiPageOffThread(
+        '<body><p>Second page asked together</p></body>',
+        PAGE_OPTIONS,
+        { deadlineMs: 10_000, signal },
+      ),
+    ]),
+    5_000,
+  )
 
-  // Assert: the answers are copied out of the loaded module's context.
+  // Assert: the two pages asked together were prepared one after the other by the worker that served the page behind, in the pool's one place, and no fourth worker started; the answers are copied out of the loaded module's context.
   assert.deepEqual(
     structuredClone({
       slowAnswers,
       firstLostThreadEnd,
       behindWhileTheSecondStopIsHeld,
       secondLostThreadEnd,
+      pagesAskedTogether,
+      startedWorkers: pool.startedWorkers.length,
     }),
     {
       slowAnswers: [{ state: 'deadline' }, { state: 'deadline' }],
@@ -634,6 +651,17 @@ test('once a lost thread has ended, the next stopped worker whose thread does no
         html: '<body><p>Page behind</p><script src="/w/t/codebook-qa.js"></script></body>',
       },
       secondLostThreadEnd: 'ended',
+      pagesAskedTogether: [
+        {
+          state: 'served',
+          html: '<body><p>First page asked together</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+        {
+          state: 'served',
+          html: '<body><p>Second page asked together</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+      ],
+      startedWorkers: 3,
     },
   )
 })
