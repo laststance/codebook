@@ -17514,3 +17514,121 @@ test('the bundled skill tells the agent that a publish answering publishLockKept
     true,
   )
 })
+
+/** The id the stand-in D-Bus copy of row 245 holds, as `machine-id(5)` gives one. */
+const DBUS_COPY_MACHINE_ID = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
+
+/**
+ * A module loaded before the publisher (`--import`) under which this Linux computer has no `/etc/machine-id`, as a container without systemd, while `/var/lib/dbus/machine-id` holds {@link DBUS_COPY_MACHINE_ID}, as a container image that installs D-Bus writes it when the image is built: every container of that image holds the same one.
+ * @param {string} copyFile - A file that holds the D-Bus copy's id, which an open of `/var/lib/dbus/machine-id` opens instead.
+ * @returns {string} The module as a `data:` URL.
+ * @example
+ * runKilledPublisher(spec, ['--import', withTheDbusCopyAlone('/tmp/x/machine-id')])
+ */
+const withTheDbusCopyAlone = (copyFile) =>
+  `data:text/javascript,${encodeURIComponent(
+    `import fileSystem from 'node:fs/promises'; import { syncBuiltinESMExports } from 'node:module'; const open = fileSystem.open; fileSystem.open = async (path, ...rest) => { if (path === '/etc/machine-id') throw Object.assign(new Error("ENOENT: no such file or directory, open '/etc/machine-id'"), { code: 'ENOENT' }); return open(path === '/var/lib/dbus/machine-id' ? ${JSON.stringify(copyFile)} : path, ...rest) }; syncBuiltinESMExports();`,
+  )}`
+
+/**
+ * Publishes a Wiki, prepares a candidate and has the publish of the candidate killed just after it wrote its journal, in a process under {@link withTheDbusCopyAlone}.
+ * @returns {Promise<{ wiki: Awaited<ReturnType<typeof publishedWikiWithACandidate>>, killed: string, standIn: string, journal: string }>} The Wiki, what the probe printed (empty once killed), the stand-in module, and the journal's path.
+ * @example
+ * const { wiki, standIn, journal } = await publishKilledWithTheDbusCopyAlone()
+ */
+async function publishKilledWithTheDbusCopyAlone() {
+  const wiki = await publishedWikiWithACandidate()
+  const copyFile = join(wiki.directory, 'dbus-machine-id')
+  await writeFile(copyFile, `${DBUS_COPY_MACHINE_ID}\n`)
+  const standIn = withTheDbusCopyAlone(copyFile)
+  const killed = runKilledPublisher(
+    {
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+      ],
+    },
+    ['--import', standIn],
+  )
+  return {
+    wiki,
+    killed,
+    standIn,
+    journal: `${wiki.output}.publish-journal.json`,
+  }
+}
+
+// Value: protects=a Wiki on a shared project folder of two Linux containers of one image (or two clones of one VM) with one host name; fails_when=the publisher takes the D-Bus copy of the machine id for the computer's id where /etc/machine-id is missing, which an image that installs D-Bus writes when it is built, so every container of that image records one digest and a recovery takes another container's publish for an earlier boot of its own; why_new=Cycle 0047 row 245 (P2RT-3, the owner's D11: /etc/machine-id alone); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs) under a module loaded first (`--import`) that has /etc/machine-id missing and /var/lib/dbus/machine-id hold an id; no_claim=a real container, and a clone that kept /etc/machine-id, which counts as this computer (the README's limit)
+test('a publish on Linux without /etc/machine-id, where /var/lib/dbus/machine-id holds an id, records no digest of the computer’s id in its journal', async () => {
+  // Arrange / Act: the publish of the candidate, killed after its journal, where /etc/machine-id is missing and the D-Bus copy holds an id.
+  const { wiki, killed, journal } = await publishKilledWithTheDbusCopyAlone()
+  try {
+    const { owner } = JSON.parse(await readFile(journal, 'utf8'))
+
+    // Assert
+    assert.deepEqual(
+      { killed, machine: owner.machine ?? 'no digest' },
+      { killed: '', machine: 'no digest' },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a publish that may still run in another container of the same image, or another clone of one VM, with this host name, on a shared project folder; fails_when=both the journal and the recovery take the D-Bus copy, one id for every container of the image, for the computer's id, so the recovery takes a journal of another boot for an earlier boot of this computer and moves the Wiki without the learner's pair; why_new=Cycle 0047 row 245 (P2RT-3, the owner's D11); seam=a publisher process killed after its journal and the recovery's command line, each under a module loaded first (`--import`) that has /etc/machine-id missing and /var/lib/dbus/machine-id hold one id, and the journal given another boot id; no_claim=a real container
+test('a --recover on Linux without /etc/machine-id of a journal of another boot is refused with --gone-host and --gone-space as the way out, though both name one D-Bus copy of the machine id, and the journal is kept', async () => {
+  // Arrange: the journal of a publish killed where only the D-Bus copy holds an id, given another boot id.
+  const { wiki, killed, standIn, journal } =
+    await publishKilledWithTheDbusCopyAlone()
+  try {
+    const record = JSON.parse(await readFile(journal, 'utf8'))
+    record.owner = {
+      ...record.owner,
+      boot: { id: '00000000-0000-4000-8000-000000000000' },
+    }
+    const journalText = JSON.stringify(record)
+    await writeFile(journal, journalText)
+
+    // Act: the recovery's command line, where only the D-Bus copy holds an id too.
+    const recovery = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        standIn,
+        PUBLISHER_COMMAND,
+        '--recover',
+        '--project',
+        wiki.root,
+        '--output',
+        wiki.output,
+      ],
+      { encoding: 'utf8', timeout: 10_000 },
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        code: recovery.status,
+        refusal: recovery.stderr,
+        journal: await readFile(journal, 'utf8').then(
+          (text) => (text === journalText ? 'kept' : 'changed'),
+          () => 'gone',
+        ),
+      },
+      {
+        killed: '',
+        code: 1,
+        refusal: `Error: The prior Wiki publisher process ${record.pid} ran on ${JSON.stringify(record.owner.host)} (${record.owner.space}) under another boot, which this recovery cannot prove was this computer before a restart: another computer may have the same host name. If another computer with this host name may be publishing this Wiki, run --recover there after it exits. Otherwise, or if that computer cannot come back, run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.\n`,
+        journal: 'kept',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})

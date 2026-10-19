@@ -1126,8 +1126,8 @@ async function processSpaceHere(system) {
   return LINUX_SPACE_WITHOUT_NAMESPACE + (/^pid:\[(\d+)\]$/.exec(await readlink('/proc/self/ns/pid').catch(() => ''))?.[1] ?? '');
 }
 
-/** The files a Linux computer keeps its id in, in the order they are read: systemd's, then the copy of D-Bus, which a system without systemd may keep alone. Read by {@link linuxMachineIdOf}. */
-const LINUX_MACHINE_ID_PATHS = ['/etc/machine-id', '/var/lib/dbus/machine-id'];
+/** The file a Linux computer keeps its id in, systemd's, the only one read: the copy of D-Bus (`/var/lib/dbus/machine-id`), which a system without systemd may keep alone, is written when a container image that installs D-Bus is built, so every container of that image holds the same one, and two of them with one host name would count as one computer (the owner's D11). A computer without this file names no id, and a record of another boot of it needs the learner's pair once ({@link placeStateOf}). Read by {@link linuxMachineIdOf}. */
+const LINUX_MACHINE_ID_PATH = '/etc/machine-id';
 /** A Linux computer's id as `machine-id(5)` gives it: 32 hexadecimal digits in lower case, so an empty file and `uninitialized` name none. Read by {@link linuxMachineIdOf}. */
 const LINUX_MACHINE_ID = /^[0-9a-f]{32}$/;
 /** How many bytes of a Linux computer's id file are read: the id and its line end with room to spare, so a longer file names no id. Read by {@link boundedFileTextOf}. */
@@ -1157,13 +1157,10 @@ async function boundedFileTextOf(path) {
   return Promise.race([reading, delay(START_QUERY_TIMEOUT_MS, undefined, { ref: false })]).catch(() => undefined);
 }
 
-/** A Linux computer's id: the first of {@link LINUX_MACHINE_ID_PATHS} that holds one ({@link LINUX_MACHINE_ID}). The query of {@link MACHINE_ID_QUERIES} on Linux. @returns The id; undefined where neither file holds one (a container without systemd, a system not set up yet). @example await linuxMachineIdOf() // => 'e58f781eda8c48a988f3936f3ce684c3' */
+/** A Linux computer's id, as {@link LINUX_MACHINE_ID_PATH} holds it ({@link LINUX_MACHINE_ID}). The query of {@link MACHINE_ID_QUERIES} on Linux. @returns The id; undefined where the file holds none (a container without systemd, a system not set up yet). @example await linuxMachineIdOf() // => 'e58f781eda8c48a988f3936f3ce684c3' */
 async function linuxMachineIdOf() {
-  for (const path of LINUX_MACHINE_ID_PATHS) {
-    const text = await boundedFileTextOf(path);
-    if (text !== undefined && LINUX_MACHINE_ID.test(text)) return text;
-  }
-  return undefined;
+  const text = await boundedFileTextOf(LINUX_MACHINE_ID_PATH);
+  return text !== undefined && LINUX_MACHINE_ID.test(text) ? text : undefined;
 }
 
 /** A Mac's hardware UUID (`IOPlatformUUID`), as `ioreg` prints it for the platform device, run by the runner of `system` ({@link SYSTEM_HERE}) and bounded as a start query is, with room for every property `ioreg` prints beside it ({@link MACHINE_ID_QUERY_MAX_BYTES}). The query of {@link MACHINE_ID_QUERIES} on macOS. @returns The UUID; undefined for any other answer. @example await macMachineIdOf(SYSTEM_HERE) // => '8C9E3B1A-4D2F-4E6B-9A71-0F3C2D5E8B14' */
