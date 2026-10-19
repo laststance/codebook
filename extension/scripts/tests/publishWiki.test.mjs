@@ -13767,6 +13767,32 @@ for (const syntaxError of [
     text: '{\n  "schemaVersion": 1,\n  "pages": [\n    "CRAFTED-MARKER",\n  ]\n}\n',
     place: 'line 5, column 3',
   },
+  // Value: protects=the place the refusal names for a break in an object, after its end and at a manifest cut short, each read by a step of its own since row 212; fails_when=the key, colon, object comma or end step, or the end of the text, answers another place or none; why_new=the rows above break inside a list only, so no row reads an object's steps or a text that ends early (Cycle 0047 rows 178 and 212); seam=none (the shipped CLI as the agent runs it); no_claim=a manifest that JSON.parse refuses where the walk finds no break (it gets the refusal without a place)
+  {
+    kind: 'a key without quotes',
+    text: '{\n  CRAFTED-MARKER: 1\n}\n',
+    place: 'line 2, column 3',
+  },
+  {
+    kind: 'a key without its colon',
+    text: '{\n  "CRAFTED-MARKER" 1\n}\n',
+    place: 'line 2, column 20',
+  },
+  {
+    kind: 'no comma between two members of an object',
+    text: '{\n  "schemaVersion": 1\n  "CRAFTED-MARKER": []\n}\n',
+    place: 'line 3, column 3',
+  },
+  {
+    kind: 'text after the end of the manifest',
+    text: '{\n  "schemaVersion": 1\n}\nCRAFTED-MARKER\n',
+    place: 'line 4, column 1',
+  },
+  {
+    kind: 'a manifest cut short inside a list',
+    text: '{\n  "schemaVersion": 1,\n  "CRAFTED-MARKER": [',
+    place: 'line 3, column 22',
+  },
 ]) {
   // Value: protects=the agent that edits a candidate's manifest by hand and must find its own syntax error; fails_when=the refusal of a manifest that is no JSON names no place, so the agent cannot find the error, or it passes on the parser's message, which quotes the manifest's text; why_new=Cycle 0047 row 178 (S2OCR1a-2); seam=none (the shipped CLI as the agent runs it); no_claim=a manifest that is JSON but no object, whose refusal names no place
   test(`a publish of a candidate whose manifest has a syntax error (${syntaxError.kind}) is refused through the CLI with the line and the column of the error and none of the manifest’s text`, async () => {

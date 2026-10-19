@@ -1422,6 +1422,88 @@ test('while six pages are in hand, a further page is refused at once with 503 an
   )
 })
 
+// Value: protects=the refusal page a learner gets while six pages are in hand: it is typed as HTML and served under the page policy, as the other refusals are; fails_when=the busy refusal, which the reader now answers before it reads the manifest, loses its Content-Type or its Content-Security-Policy, so under nosniff a browser shows its text raw or it runs without the page policy; why_new=the tests of six pages in hand compare the busy refusal's status and body only; the type and the policy are compared for the deadline and failure refusals (Cycle 0047 rows 188 and 190); seam=the reader loaded with loadModule and a stand-in page-worker module that holds every page until the test lets them go; no_claim=how a real browser shows a page without a type
+test('while six pages are in hand, a further page is refused with a page typed as HTML and served under the page policy', async (context) => {
+  // Arrange: a page besides the overview, and a page worker that holds every page until the test lets them go.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-busy-refusal-type-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'later.html'),
+    '<!doctype html><body>Later</body>',
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [{ path: 'later.html' }],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let letPagesGo = (): void => {}
+  const pagesMayGo = new Promise<void>((resolveGo) => {
+    letPagesGo = resolveGo
+  })
+  let pagesInHand = 0
+  let noteSixPagesInHand = (): void => {}
+  const sixPagesInHand = new Promise<void>((resolveSix) => {
+    noteSixPagesInHand = resolveSix
+  })
+  const workerHoldingPages: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => {
+      pagesInHand += 1
+      if (pagesInHand === 6) noteSixPagesInHand()
+      await pagesMayGo
+      return { state: 'served', html: '<p>Prepared page</p>' }
+    },
+  }
+  const { startDeepWikiReader: startReaderWithPagesInHand } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    { './wikiPageWorker': workerHoldingPages },
+    { URL },
+  )
+  const reader = await startReaderWithPagesInHand(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held pages are let go also when the test fails, so their connections end.
+  context.after(() => letPagesGo())
+  const heldPages = Array.from({ length: 6 }, () =>
+    fetch(reader.url).then((response) => response.text()),
+  )
+  await sixPagesInHand
+
+  // Act
+  const further = await within(
+    fetch(new URL('later.html', reader.url)).then(async (response) => ({
+      status: response.status,
+      type: response.headers.get('content-type'),
+      policy: response.headers.get('content-security-policy'),
+      sentence: /<p>([^<]*)<\/p>/.exec(await response.text())?.[1],
+    })),
+    5_000,
+  )
+  letPagesGo()
+  await Promise.all(heldPages)
+
+  // Assert
+  assert.deepEqual(further, {
+    status: 503,
+    type: 'text/html; charset=utf-8',
+    policy: SERVED_PAGE_POLICY,
+    sentence:
+      'Codebook is preparing as many pages as it can at once, so it did not prepare this one. Reload the page in a moment.',
+  })
+})
+
 // Value: protects=the Wiki reader's pages after pages it could not serve: each page gives its place back once it is answered, refused or failed; fails_when=a page its worker refuses, or one whose open fails, keeps its place, so after six such pages every page is refused with "Reload the page in a moment" until the editor reloads; why_new=the test of six pages in hand lets all six be served and asks for no page after them; seam=none; no_claim=the real page workers and a real race at the open (a stand-in worker refuses six pages, a stand-in opener fails six opens with ELOOP)
 test('pages that their worker refuses and pages whose open fails give their places back, so the page asked for after twelve of them is served', async (context) => {
   // Arrange: a page besides the overview; an opener whose first six opens fail, as when a link takes the path between the reader's look and its open; a page worker that refuses its first six pages and serves the pages after them.

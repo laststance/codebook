@@ -172,6 +172,58 @@ test('the Windows listing lists this user’s browser in another logon session a
   })
 })
 
+// Value: protects=the profile sweep on a Windows machine where the editor cannot read its own owner: a browser of another logon session may be this user's, so the sweep keeps it; fails_when=the owner check reads only the process's unread owner, so a process of another session with a readable owner counts as another user's and the sweep removes the profile folder it uses; why_new=the logon-session test reads the editor's owner; no test lists processes while the editor's own owner is unread (Cycle 0047 row 196); seam=none (the runner stands in for PowerShell); no_claim=PowerShell's GetOwnerSid on a real machine (the printed answer stands in for it)
+test('the Windows listing of an editor whose own owner cannot be read lists a process of another logon session only for the sweep, whatever owner that process names', async () => {
+  // Arrange: the editor runs in session 1 and its own owner could not be read. Chrome 4242 runs in the editor's session, 5150 in session 2 with a readable owner, and 6006 in session 3 with an owner that could not be read either.
+  const listing = answeringListing({
+    stdout:
+      'editor 1 ?\r\n4242 1 ? %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5Clearner%5CAppData%5CLocal%5Ccodebook-browser-a\r\n5150 2 S-1-5-21-1000-1001 %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5Clearner%5CAppData%5CLocal%5Ccodebook-browser-b\r\n6006 3 ? %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5Clearner%5CAppData%5CLocal%5Ccodebook-browser-c\r\n',
+  })
+
+  // Act
+  const listed = {
+    forARun: await listProcesses({
+      platform: 'win32',
+      run: listing.run,
+      environment: { SystemRoot: 'C:\\Windows' },
+    }),
+    forTheSweep: await listProcesses({
+      platform: 'win32',
+      run: listing.run,
+      environment: { SystemRoot: 'C:\\Windows' },
+      keepsUnconfirmedOwners: true,
+    }),
+  }
+
+  // Assert: only the editor's own session is this user's for sure; the other two sessions hold the sweep and never reach a run.
+  assert.deepEqual(listed, {
+    forARun: [
+      {
+        pid: 4242,
+        command:
+          '"c:\\chrome.exe" --user-data-dir=C:\\Users\\learner\\AppData\\Local\\codebook-browser-a',
+      },
+    ],
+    forTheSweep: [
+      {
+        pid: 4242,
+        command:
+          '"c:\\chrome.exe" --user-data-dir=C:\\Users\\learner\\AppData\\Local\\codebook-browser-a',
+      },
+      {
+        pid: 5150,
+        command:
+          '"c:\\chrome.exe" --user-data-dir=C:\\Users\\learner\\AppData\\Local\\codebook-browser-b',
+      },
+      {
+        pid: 6006,
+        command:
+          '"c:\\chrome.exe" --user-data-dir=C:\\Users\\learner\\AppData\\Local\\codebook-browser-c',
+      },
+    ],
+  })
+})
+
 // Value: protects=the one program the listing starts on macOS and Linux: `ps` by an absolute path, /bin/ps and else /usr/bin/ps, never a `ps` found in the search path or the current folder, and with neither the listing is refused before any program is started, so a sweep removes nothing (AD30, /ship adversarial review Step 11, with SX2's rule that no lookup uses the current folder); fails_when=the listing starts the bare `ps`, which the search path names (a folder the user or a tool put first can hold another program of that name), or takes no second place where /bin has no ps; why_new=`ps` was started by its bare name; seam=the injected platform, runner and program check
 test('macOS and Linux start ps from /bin, else from /usr/bin, and refuse the listing without starting a program where neither holds it', async () => {
   // Arrange

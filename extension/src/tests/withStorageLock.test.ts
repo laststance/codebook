@@ -1456,3 +1456,54 @@ test('a Cursor setup whose own leftover catalog lock stays unreadable takes it b
     },
   )
 })
+
+// Value: protects=the Cursor setups of a window after one was refused for its own unreadable leftover catalog lock: once the lock can be read, the next setup takes it back and completes; fails_when=the take-backs found kept are remembered past one setup's tries (withCatalogLock's keptTakeBacks made shared), so every later setup skips the take-back and is refused until the editor restarts; why_new=the row 199 test runs one setup only; no test runs a setup after a refused one (Cycle 0047 row 199); seam=the read of the lock's owner in a loaded withStorageLock, which answers nothing while the test says so, and the catalog loaded with that write; no_claim=a scanner on a real Windows machine (the unread owner stands in for it)
+test('a Cursor setup refused for its own unreadable leftover catalog lock leaves the next setup free to take that lock back once it can be read, and that setup completes', async (context) => {
+  // Arrange: a first hold of the catalog's storage whose release cannot read its lock, so the lock is left and noted, and a setup refused while it stays unreadable.
+  const cursorDirectory = await storageDirectory(context)
+  const storageRoot = join(cursorDirectory, 'storage'),
+    catalogStorage = join(storageRoot, 'cursor-mcp-catalog')
+  await mkdir(catalogStorage, { recursive: true })
+  const lockPath = join(await realpath(catalogStorage), 'writer.lock')
+  const window = await windowThatCountsOwnerReads(lockPath)
+  await window.withStorageLock(catalogStorage, async () => {
+    window.isOwnerUnread = true
+  })
+  const catalog = await loadModule<typeof catalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    { './withStorageLock': { withStorageLock: window.withStorageLock } },
+    // The catalog tells a missing file by `instanceof Error`; the file system's errors belong to this realm.
+    { Error },
+  )
+  const refusedSetup = await catalog
+    .refreshCursorMcpCatalog(storageRoot, cursorDirectory)
+    .then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+  // Act: the lock can be read again, and the window runs the setup once more.
+  window.isOwnerUnread = false
+  const nextSetup = await catalog
+    .refreshCursorMcpCatalog(storageRoot, cursorDirectory)
+    .then(
+      () => 'answered',
+      (error: unknown) => String(error),
+    )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusedSetup,
+      nextSetup,
+      config: await readFile(join(cursorDirectory, 'mcp.json'), 'utf8')
+        .then(() => 'written')
+        .catch(() => 'missing'),
+    },
+    {
+      refusedSetup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+      nextSetup: 'answered',
+      config: 'written',
+    },
+  )
+})

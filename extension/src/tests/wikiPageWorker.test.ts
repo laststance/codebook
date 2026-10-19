@@ -818,6 +818,52 @@ test('a page that waits behind stopped workers whose threads do not end is answe
   )
 })
 
+// Value: protects=a page that waited for a worker and got one before its wait limit (D7): its worker answers it, also when that answer comes after the limit; fails_when=the wait limit's timer is not cleared once a worker takes the page (preparePage), so the page is answered busy at the limit while its worker still prepares it; why_new=the wait-limit test (row 189) holds its page without a worker until the limit; no test lets a page take a worker before the limit and answer after it; seam=the page-worker module loaded with one worker at a time and a wait limit of 1 s, and a Worker class whose first start runs a script that answers its first page after 0.4 s and its second after 1.2 s; no_claim=the shipped wait limit of 30 s; a real page whose preparation takes that long (the script's timers stand in for it)
+test('a page that gets a worker before its wait limit is served by that worker, also when the answer comes after the limit', async () => {
+  // Arrange: one worker at a time and a wait limit of 1 s; the only worker answers its first page after 0.4 s and its second after 1.2 s, each with a small heap, so it waits for the next page.
+  const pool = await loadPageWorkerRecordingThreads(
+    { WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1, WIKI_PAGE_WAIT_LIMIT_MS: 1_000 },
+    () => undefined,
+    (startIndex) =>
+      startIndex === 0
+        ? "const { parentPort } = require('node:worker_threads'); let pages = 0; parentPort.on('message', () => { pages += 1; const [html, delayMs] = pages === 1 ? ['<p>First page, answered after 0.4 s</p>', 400] : ['<p>Second page, answered after 1.2 s</p>', 1200]; setTimeout(() => parentPort.postMessage({ html, heapBytes: 1 }), delayMs) })"
+        : undefined,
+  )
+  const signal = new AbortController().signal
+
+  // Act: the first page takes the worker; once the worker runs, a second page waits for it, and takes it when the first page is answered, 0.6 s before its wait limit.
+  const first = pool.servedWikiPageOffThread(
+    '<body><p>First page</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  const workerRuns = await within(pool.onlineOfWorker(0), 5_000)
+  const second = pool.servedWikiPageOffThread(
+    '<body><p>Second page</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  // gstack-timing-ok: the first answer comes 0.4 s after the worker runs, 0.6 s before the second page's wait limit of 1 s, and the second answer 0.6 s after that limit; the 5 s only bound a defect that holds an answer back.
+  const answers = await within(Promise.all([first, second]), 5_000)
+
+  // Assert: the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({
+      workerRuns,
+      answers,
+      startedWorkers: pool.startedWorkers.length,
+    }),
+    {
+      workerRuns: 'online',
+      answers: [
+        { state: 'served', html: '<p>First page, answered after 0.4 s</p>' },
+        { state: 'served', html: '<p>Second page, answered after 1.2 s</p>' },
+      ],
+      startedWorkers: 1,
+    },
+  )
+})
+
 // Value: protects=a page whose worker thread ends before it answers without an error (a thread that exits by itself), and the page that waits behind it; fails_when=the pool answers such a page only at a message or an error, so it and every page behind it wait until the deadline or for good, or the place of the ended worker is given to the next page before its stop has settled; why_new=Cycle 0047 row 192 (S2SM-U28, the exit before an answer, wikiPageWorker.ts `worker.once('exit', fail)`); seam=the page-worker module loaded with one worker at a time and a Worker class whose first start runs a script that ends its thread at the first page it is handed (the second start runs the compiled worker file), recording the threads alive at each start (the threads are real); no_claim=what makes a real worker thread end before its answer
 test('a page whose worker thread ends before it answers, without an error, is answered as failed, and the page waiting behind it gets a worker once that thread has ended and is served', async () => {
   // Arrange: one worker at a time; the first worker's thread ends as soon as it is handed a page.
