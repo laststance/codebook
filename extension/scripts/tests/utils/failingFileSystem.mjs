@@ -109,8 +109,47 @@ function handleWhoseWriteFails(handle, code, swap) {
   })
 }
 
+/** The optional observer of {@link observeWrites}. */
+let writeObserver
+
 /**
- * Opens a file as `open` does; the handle of the file {@link failWriteOf} waits for fails its write partway, once, and the handle of the file {@link failCloseOf} or {@link failStatOf} waits for fails that call, once.
+ * Asks every write of a file, through a handle of its `open` or by `writeFile`, to tell `observer` the file's path and the number of bytes asked to be written first, as long as the observer is not stopped; so a test counts what a step writes.
+ * @param {(path: string, byteCount: number) => void} observer - Receives the path and the byte count of each write before it runs.
+ * @returns {() => void} Stops this observer without clearing a newer one.
+ * @example
+ * const stop = observeWrites((path, byteCount) => { written += byteCount }); stop()
+ */
+export function observeWrites(observer) {
+  writeObserver = observer
+  return () => {
+    if (writeObserver === observer) writeObserver = undefined
+  }
+}
+
+/**
+ * Wraps an open handle so that its `writeFile` tells the observer of {@link observeWrites} the path and the byte count first; every other member is the handle's own.
+ * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered, maybe wrapped to fail.
+ * @param {string} path - The file's path.
+ * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
+ * @example
+ * await handleWhoseWritesAreObserved(await fileSystem.open(path, 'wx'), path).writeFile('abcd') // tells the observer (path, 4)
+ */
+function handleWhoseWritesAreObserved(handle, path) {
+  return new Proxy(handle, {
+    get(target, property) {
+      if (property === 'writeFile')
+        return async (data, ...rest) => {
+          writeObserver?.(path, Buffer.byteLength(data))
+          return target.writeFile(data, ...rest)
+        }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
+/**
+ * Opens a file as `open` does; the handle of the file {@link failWriteOf} waits for fails its write partway, once, the handle of the file {@link failCloseOf} or {@link failStatOf} waits for fails that call, once, and every handle tells the observer of {@link observeWrites} each `writeFile` through it.
  * @param {string} path - The file to open.
  * @param {...unknown} rest - The caller's flags and mode, handed on unchanged.
  * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers, wrapped for the awaited file.
@@ -118,6 +157,19 @@ function handleWhoseWriteFails(handle, code, swap) {
  * await open('/repo/.codebook/next/manual.txt', 'wx') // => a handle whose writeFile fails partway, after failWriteOf named this file
  */
 export async function open(path, ...rest) {
+  const handle = await openFailing(path, ...rest)
+  return handleWhoseWritesAreObserved(handle, String(path))
+}
+
+/**
+ * Opens a file as `open` does, wrapped to fail where {@link failWriteOf}, {@link failCloseOf} or {@link failStatOf} waits for it. Called by {@link open}.
+ * @param {string} path - The file to open.
+ * @param {...unknown} rest - The caller's flags and mode, handed on unchanged.
+ * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers, wrapped for the awaited file.
+ * @example
+ * await openFailing('/repo/.codebook/next/manual.txt', 'wx')
+ */
+async function openFailing(path, ...rest) {
   const handle = await fileSystem.open(path, ...rest)
   const failure = pendingWriteFailure,
     callFailure = pendingHandleCallFailure
@@ -214,7 +266,7 @@ export async function unlink(path) {
 }
 
 /**
- * Writes a file as `writeFile` does, except for the file {@link failWriteOf} waits for: that write puts the first half of the bytes into the file, with the caller's flags, and then fails with the system error, once.
+ * Writes a file as `writeFile` does, after telling the observer of {@link observeWrites} its path and byte count, except for the file {@link failWriteOf} waits for: that write puts the first half of the bytes into the file, with the caller's flags, and then fails with the system error, once.
  * @param {string} path - The file to write.
  * @param {string | Buffer} data - Its bytes.
  * @param {...unknown} rest - The caller's options, handed on unchanged.
@@ -223,6 +275,7 @@ export async function unlink(path) {
  * await writeFile('/repo/.codebook/wiki.publish-journal.json', journalText, { flag: 'wx' }) // rejects with code ENOSPC after writing half of it, after failWriteOf named this file
  */
 export async function writeFile(path, data, ...rest) {
+  writeObserver?.(String(path), Buffer.byteLength(data))
   const failure = pendingWriteFailure
   // Only the awaited file's write fails, once.
   if (!failure?.isAwaited(String(path)))

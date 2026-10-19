@@ -40,6 +40,7 @@ import {
   failStatOf,
   failWriteOf,
   observeRemovals,
+  observeWrites,
 } from './utils/failingFileSystem.mjs'
 import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
@@ -2341,7 +2342,7 @@ const markedCopies = new Map()
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
- * - `?failing`: the write of the file a test names with {@link failWriteOf}, through a handle or by `writeFile`, stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
+ * - `?failing`: the write of the file a test names with {@link failWriteOf}, through a handle or by `writeFile`, stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write tells the observer of {@link observeWrites} its path and byte count first, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
  * - `?aliased-folder`: the folder a test names with {@link nameFolderAlso} answers to another name beside it too, as one folder does to names of another case on macOS and Windows (`aliasedFolderFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
  * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing' | '?aliased-folder'} mark - The mark of its stand-in.
@@ -8254,9 +8255,9 @@ for (const kill of [
   })
 }
 
-// Value: protects=the next publish of a candidate after a publish killed just before it moved its journal, with the copy of the learner's file named, into place; fails_when=the recovery leaves the file in the candidate through which the publish was putting its journal in place, so the next publish is refused for it as a file outside its manifest; why_new=Cycle 0047 row 118 (CXA2-2: the journal names each copy before it begins, through a file in the candidate); seam=a publisher process killed just before that move (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a kill after the move and before the copy's file is made, which leaves no file in the candidate
-test('a publish killed just before it moved its journal that names the copy of the learner’s file into place is recovered without the file it wrote for that, and the candidate then publishes with the learner’s file kept', async () => {
-  // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed just before it moves the journal that names the copy of that file into place.
+// Value: protects=the next publish of a candidate after a publish killed just before it moved its list of copies, with the copy of the learner's file named, into place beside its journal; fails_when=the recovery leaves the file in the candidate through which the publish was putting that list in place, so the next publish is refused for it as a file outside its manifest; why_new=Cycle 0047 row 118 (CXA2-2: the journal names each copy before it begins, through a file in the candidate), whose list moved beside the journal by row 135 (P3OCR1-1); seam=a publisher process killed just before that move (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a kill after the move and before the copy's file is made, which leaves no file in the candidate
+test('a publish killed just before it moved its list of copies that names the copy of the learner’s file into place is recovered without the file it wrote for that, and the candidate then publishes with the learner’s file kept', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed just before it moves the list of copies that names the copy of that file into place.
   const wiki = await publishedWikiWithACandidate()
   try {
     await writeFile(
@@ -8274,12 +8275,12 @@ test('a publish killed just before it moved its journal that names the copy of t
         {
           call: 'renaming',
           folder: wiki.next,
-          name: '^\\.codebook-publish-.*-publish-journal\\.json$',
+          name: '^\\.codebook-publish-.*-publish-copies\\.json$',
         },
       ],
     })
     const filesLeftByTheKill = (await readdir(wiki.next)).filter((name) =>
-      name.endsWith('-publish-journal.json'),
+      name.endsWith('-publish-copies.json'),
     ).length
 
     // Act: the recovery, then the candidate published again.
@@ -11987,3 +11988,138 @@ test('a recovery whose look into a candidate named by a name of the journal’s 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+/**
+ * Publishes a candidate with a large manifest beside a Wiki that holds a given number of the learner's files, with the copy of the publisher whose `node:fs/promises` tells an observer each write, and counts the bytes the publish writes.
+ * @param {number} learnerFileCount - How many files of the learner's the Wiki holds, each `notes/file-<n>.txt` with 32 bytes.
+ * @returns {Promise<{ written: number, preservedManualFiles: number }>} The bytes written through every write of the publish, and the learner's files it kept.
+ * @example
+ * await bytesWrittenByAPublishBeside(21) // => { written: 1234567, preservedManualFiles: 21 }
+ */
+async function bytesWrittenByAPublishBeside(learnerFileCount) {
+  const { publishWiki: publishWhoseWritesAreCounted } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  let written = 0
+  const stopObserving = observeWrites((path, byteCount) => {
+    // Only the publish's own writes beside the Wiki and in it, not those of the test.
+    if (path.startsWith(dirname(wiki.output))) written += byteCount
+  })
+  try {
+    await mkdir(join(wiki.output, 'notes'))
+    for (let index = 0; index < learnerFileCount; index++)
+      await writeFile(
+        join(wiki.output, `notes/file-${String(index).padStart(2, '0')}.txt`),
+        'The learner notes, number '.padEnd(31, '.') + String(index % 10),
+      )
+    const manifestPath = join(wiki.next, 'codebook-wiki.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.pages[0].contentHtml += '<p>A long explanation.</p>'.repeat(4096)
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    written = 0
+    const { preservedManualFiles } = await publishWhoseWritesAreCounted({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    })
+    return { written, preservedManualFiles }
+  } finally {
+    stopObserving()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+}
+
+// Value: protects=the time and the disk wear of a publish beside a Wiki with many of the learner's files and a large manifest; fails_when=the publish names each copy of a learner's file before it begins by writing its whole journal again, whose prepared manifest and record hold the Wiki's manifest twice, so its writes grow by the journal's size for each learner's file (about 270 MB for 100 copies beside a Wiki of 40 pages); why_new=Cycle 0047 row 135 (P3OCR1-1 = P3PERF-1 = P3CLA-5); seam=a copy of the shipped publisher whose `node:fs/promises` tells the test each write (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=the time the writes take, and the kill at each step, which the killed-publish tests cover
+test('a publish beside a Wiki with twenty more of the learner’s files writes, for each, its copy and at most 1 KiB more, however large the manifest is', async () => {
+  // Arrange: the same candidate, whose manifest is about 100 KiB, beside a Wiki with 1 file of the learner's and beside one with 21.
+  const learnerFileBytes = 32
+
+  // Act
+  const besideOne = await bytesWrittenByAPublishBeside(1)
+  const besideTwentyOne = await bytesWrittenByAPublishBeside(21)
+
+  // Assert
+  assert.deepEqual(
+    {
+      kept: [
+        besideOne.preservedManualFiles,
+        besideTwentyOne.preservedManualFiles,
+      ],
+      isWithinTheBound:
+        besideTwentyOne.written - besideOne.written <=
+        20 * (learnerFileBytes + 1024),
+    },
+    { kept: [1, 21], isWithinTheBound: true },
+    `the publish beside 21 files wrote ${besideTwentyOne.written - besideOne.written} bytes more than the one beside 1`,
+  )
+})
+
+for (const step of [
+  {
+    names: 'a publish that copied the learner’s file into the candidate',
+    run: (wiki) =>
+      publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(({ preservedManualFiles }) => ({ preservedManualFiles })),
+    answer: { preservedManualFiles: 1 },
+  },
+  {
+    names:
+      'the recovery of a publish killed while it wrote the copy of the learner’s file',
+    run: (wiki) => {
+      const killed = runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          {
+            call: 'writing-halfway',
+            folder: wiki.next,
+            name: '^manual\\.txt$',
+          },
+        ],
+      })
+      return recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(({ status }) => ({ killed, status }))
+    },
+    answer: { killed: '', status: 'published-or-restored' },
+  },
+]) {
+  // Value: protects=the folder beside the Wiki folder after a publish or a recovery ends; fails_when=the list of copies beside the journal is not removed with the journal, so a file of the publisher's stays beside the Wiki after every publish that copied a learner's file; why_new=Cycle 0047 row 135 (P3OCR1-1: the copies are named in a list beside the journal); seam=for the recovery, a publisher process killed halfway through the copy (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a stop between the removal of the list and that of the journal, which leaves the journal alone
+  test(`${step.names} leaves no journal and no list of copies beside the Wiki folder`, async () => {
+    // Arrange: the published Wiki holds a file of the learner's, and a candidate stands beside it.
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      await writeFile(
+        join(wiki.output, 'manual.txt'),
+        'The learner kept these notes',
+      )
+
+      // Act
+      const answer = await step.run(wiki).catch((error) => error.message)
+
+      // Assert
+      assert.deepEqual(
+        {
+          answer,
+          besideTheWiki: (await readdir(dirname(wiki.output))).filter((name) =>
+            name.startsWith('wiki.publish-journal'),
+          ),
+        },
+        { answer: step.answer, besideTheWiki: [] },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
