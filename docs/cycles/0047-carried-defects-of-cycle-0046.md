@@ -16,8 +16,8 @@ This section is the project's current state; no separate state file exists ([rul
 
 | Field | Current value |
 | --- | --- |
-| Updated / product | 2026-10-19. Full product unfinished; deadline missed. Cycle 0046 is delivered as 0.2.30.0: PR #88 merged as `ef38585a` after 24 of 24 checks on its head, CI on `main` 23 of 23, Issue #87 closed. It closed 1191 of its 1192 rows; its second `/ship` stopped unconverged after its last review pass, and by the owner's direction of 2026-10-18 the defects it left (row 1066, 51 findings of the last reviews and documentation audits, and the record of the repository's visibility) are the 53 tasks of Cycle 0047, a bug-fix cycle whose pull request holds only their fixes. Their fixes are integrated (rows 1 to 57 closed); the delivery's first review pass found 45 more (rows 58 to 102), fixing them and the gate after it found 4 (rows 103 to 106), its second review pass found 26 (rows 107 to 132) and its third 33 (rows 133 to 165); its third and last fixing cycle fixed them and 4 found while it ran (rows 166 to 169), the first `/ship` invocation stopped there unconverged, and the owner directed a second, whose first review pass found 35 (rows 170 to 204). C66, the native round on the delivered source, passed in both Ubuntu hosts. |
-| Counts | Bug-fix cycle, no increment: [all tasks](0047-carried-defects.md): 210 rows, 206 closed, 0 native-pending, 4 implementing (rows 58 to 169 are the findings of the first `/ship`'s three review passes and eight found while they were fixed; rows 170 to 204 the findings of the second `/ship`'s first review pass, rows 205 to 210 found while they were fixed); every broader acceptance and delivery gate remains. |
+| Updated / product | 2026-10-20. Full product unfinished; deadline missed. Cycle 0046 is delivered as 0.2.30.0: PR #88 merged as `ef38585a` after 24 of 24 checks on its head, CI on `main` 23 of 23, Issue #87 closed. It closed 1191 of its 1192 rows; its second `/ship` stopped unconverged after its last review pass, and by the owner's direction of 2026-10-18 the defects it left (row 1066, 51 findings of the last reviews and documentation audits, and the record of the repository's visibility) are the 53 tasks of Cycle 0047, a bug-fix cycle whose pull request holds only their fixes. Their fixes are integrated (rows 1 to 57 closed); the delivery's first review pass found 45 more (rows 58 to 102), fixing them and the gate after it found 4 (rows 103 to 106), its second review pass found 26 (rows 107 to 132) and its third 33 (rows 133 to 165); its third and last fixing cycle fixed them and 4 found while it ran (rows 166 to 169), the first `/ship` invocation stopped there unconverged, and the owner directed a second, whose first review pass found 35 (rows 170 to 204); its first fixing cycle closed them and the 6 found while they were fixed (rows 205 to 210). C66, the native round on the delivered source, passed in both Ubuntu hosts. |
+| Counts | Bug-fix cycle, no increment: [all tasks](0047-carried-defects.md): 210 rows, 210 closed, 0 native-pending, 0 implementing (rows 58 to 169 are the findings of the first `/ship`'s three review passes and eight found while they were fixed; rows 170 to 204 the findings of the second `/ship`'s first review pass, rows 205 to 210 found while they were fixed); every broader acceptance and delivery gate remains. |
 | Previous cycles | [Cycle 0046](0046-carried-defects-of-cycle-0045.md) (Issue #87, closed through PR #88, 0.2.30.0), a bug-fix cycle: 1192 rows (the 46 tasks Cycle 0045 left and 1146 found while it ran), 1191 closed; locks, claims and the update marker judged by their owner's process start, the VS Code update's own chat with its watch and withdrawal, the reader's address filter and page workers, the publisher's refusals, the Study workspace's keyboard and leftover groups; its two `/ship` invocations stopped unconverged and it carried 53 defects to Cycle 0047 by the owner's direction. [Cycle 0045](0045-natural-request-and-carried-defects.md) (Issue #85, closed through PR #86, 0.2.29.0): the frozen natural `/codebook` request, submitted three times per host (N14-a FAIL on part 5, N14-b on parts 3, 5 and 7, the later four PARTIAL), and all 222 rows Cycle 0044 left; it left the 46 tasks of Cycle 0046. |
 | Checkout | `codex/cycle-0047-carried-defects-of-cycle-0046`, created from `main` `ef38585a` (0.2.30.0, PR #88) on the Windows host (WSL2, `/home/murakami/laststance/codebook`); the Mac's local branches and its ignored `artifacts/` are not on this machine |
 | Tracking | Goal #1 open; Cycle 0047 Issue #90 open, its draft PR #91 open; Cycle 0046 Issue #87 closed through PR #88 and Cycle 0045 Issue #85 through PR #86, each closing comment naming the outcomes that are not PASS and every defect the cycle left; every earlier cycle's Issue is closed through the pull request its record names. The repository is public (since 2026-10-16) |
@@ -86,7 +86,7 @@ Complete the mandatory [AGENTS.md](../../AGENTS.md) entry using the current file
 
 Historical C15 focus evidence and original task5's unresolved continuous-focus/screenshot limits remain in the cycle and the AC table above.
 
-**One next action:** Finish fixing cycle 1 of Cycle 0047's second `/ship` invocation: fix rows 206, 207, 208 and 210, which fixing rows 172 to 174 found in the publisher's new writes, each with a test shown red without its fix, as rows 170 to 205 were; then the full gate and the second review pass of the whole candidate, the native round in both Ubuntu hosts, CI, the exact-head merge and Issue #90's closing comment. If the invocation stops unconverged, the findings still open become Cycle 0048's tasks. Counts: 210 rows, 206 closed, 0 native-pending, 4 implementing.
+**One next action:** Run the full gate on the candidate in which the first fixing cycle of Cycle 0047's second `/ship` invocation closed rows 170 to 210, then that invocation's second review pass of the whole candidate: the core checklist, six specialists, the Red Team, the delegated and outside reviews and the adversarial challenge; fix every finding with a test shown red without its fix; then the native round in both Ubuntu hosts, CI, the exact-head merge and Issue #90's closing comment. If the invocation stops unconverged, the findings still open become Cycle 0048's tasks. Counts: 210 rows, 210 closed, 0 native-pending, 0 implementing.
 
 Before TypeScript or runtime work, load the local TypeScript rules and the [behavioral design](../designs/codebook.md); load [DEVELOPMENT.md](../../DEVELOPMENT.md) for cycle, review and delivery work. Keep VS Code and Cursor evidence apart, and mechanism, development, native and final evidence apart. Final completion still requires the full accepted product, nine projects in both hosts and owner acceptance. Pull request delivery, CI, merge, packaging, installed verification and publication are separate gates.
 
@@ -206,9 +206,46 @@ The second invocation started at 21:23 JST with its own record and count. Its pr
 
 The first review pass read `d2b17c4f` from the start: the core checklist (all 161 eligible gate hunks read, none a finding), six specialists, the Red Team, the CodeRabbit CLI (132 files), the open-code-review delegate (72 of 72 reviewable files), the Claude adversarial review, the Codex structured review (its first attempt answered in prose the result checker cannot read, its retry passed the gate with one P2) and the Codex adversarial challenge in four scopes (its update-flow scope also answered in prose once and found one defect on its retry). Rows 170 to 204 are the pass's findings, merged where several sources named one defect: the weightiest are row 170 (five sources: a first save that cannot look at its recording folder forgets the study), row 171 (two sources: another computer with this host name is judged an earlier boot), row 172 (two publishes at once lose a page) and row 188 (a slow client holds a page's memory past the bound). The owner decided four questions on 2026-10-19: "OS machine-id digest (Recommended)", "One redesign (Recommended)", "30 s wait limit (Recommended)" and "(2) and (3) only (Recommended)" (rows 171, 172 to 176, 189 and 204); the third simplification advisory, the page pool's own waiting limit, stays as a second guard. Three low-confidence notes stay in the review's appendix: the Windows start query's 3 s bound under a cold PowerShell (to be checked on the Windows CI job), and the two that rows 188 and 199 take up.
 
+### The second `/ship`: its first fixing cycle (2026-10-19 and 2026-10-20)
+
+Five fixers worked from `b63c78c1`, each in its own worktree:
+
+- P1: the publisher's writes, the owner's D6 redesign.
+- P2: the publisher's owner machine (D5), its untested state cells and test hygiene.
+- R: the reader (D7, and D8's merged block).
+- U: the update marker.
+- S: saves, processes, runs, locks, Cursor's catalog and the writer record's docstrings.
+
+They closed rows 170 to 204, each behavioral row with a test shown red on the unfixed code or on a mutant of its line. Rows 202 and 203 are the parent's.
+
+The parent integrated the fixes by cherry-pick. P1, which changed the same two publisher files as P2, rebased its branch onto the integration branch and resolved those conflicts itself. After a build the parent ran each fixer's files again:
+
+- the publisher's tests: 473 of 473, with the README and skill pins 259 of 259;
+- the reader's: 345 of 345, and the filter's 67 of 67;
+- the marker's: 233 of 233;
+- the stores', recordings', processes', catalog's and every Study workspace partition's: 2190 of 2190.
+
+Six rows were found while the fixers worked, and are closed too:
+
+- row 205 (fixer R): a page shape the timing test left out, now timed against a bound of its own;
+- rows 206 to 210 (fixer P1's notes):
+  - a killed run's leftovers beside the Wiki folder, now removed by the run's id or past the grace;
+  - the gone pairs' refusals beside a lock;
+  - the README's bullet;
+  - `--prepare` and the lock, which row 209 closes by evidence;
+  - the refusal where no clock file can be created.
+
+Decisions:
+
+- Row 196 lists this user's processes of every Windows logon session by their owner's SID. A process whose owner cannot be read holds only the sweep of abandoned profiles.
+- Row 198 makes the window whose staged config was swept stage it again, since the sweeping window cannot read another profile's records.
+- Row 210 keeps the record and names the system's reason.
+
+The gate scan after the fixes listed 27 new or changed eligible hunks of 170, and the parent read each of them, none a finding. The tests that changed since `d2b17c4f` were compared block by block: each removed or renamed test is replaced or extended, and none of their assertions is weakened.
+
 ## Result and decision
 
-Result pending. Counts: 210 rows, 206 closed, 4 implementing. The first `/ship` invocation stopped unconverged after its third fixing cycle; the second, which the owner directed on 2026-10-19, reviews the candidate from the start before the native round, CI, the exact-head merge and Issue #90's closing comment.
+Result pending. Counts: 210 rows, 210 closed, 0 implementing. The first `/ship` invocation stopped unconverged after its third fixing cycle; the second, which the owner directed on 2026-10-19, reviews the candidate from the start before the native round, CI, the exact-head merge and Issue #90's closing comment.
 
 ## Handoff
 
