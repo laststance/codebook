@@ -356,6 +356,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private cleaning = false
   private cleaned = false
   private resourcesReleased = false
+  /** True from the completion of the run until its final save of its events and run record settled ({@link observeAfter}); read through {@link isSavingCompletion}. */
+  private savingCompletion = false
   private status = 'preparing'
   private origin?: string
   private operation?: ConfiguredRuntimeView['operation']
@@ -5290,6 +5292,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.operation!.afterVerified = true
     this.status = 'completed'
+    // The completion is the result only once its final save settled ({@link isSavingCompletion}).
+    this.savingCompletion = true
     // A completed run has no deadline left: neither its phase's nor its whole-run deadline may fail it while it waits for its release.
     clearTimeout(this.progressTimer)
     clearTimeout(this.runTimer)
@@ -5303,7 +5307,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     } catch (error) {
       // The final save belongs to the completion: a run whose final events or record were not saved (a failed write, the event limit passed by this last event) fails with it, so its journal ends with `run.failed` and its recording is sealed partial (Cycle 0047 row 197). A failure that reaches the run after this save leaves it completed (row 41).
       if (this.status === 'completed') this.enterFailure(String(error))
+    } finally {
+      this.savingCompletion = false
     }
+  }
+
+  /**
+   * Says whether the run completed and its final save of its events and run record has not settled yet; asked by {@link StudyService.endedRunState}, so that a continuation waiting for the next state answers the result only once that save succeeded, and the failure when it failed (Cycle 0047 row 241).
+   * Why: the run shows `completed` from its completion on, also during that save, as the run record it saves says (row 197's failure turns it into `failed` after the save); an agent answered with the result in between would report a run that then fails.
+   * @returns `true` while the final save is under way; `false` before the completion and once the save settled.
+   * @example run.isSavingCompletion() // => true while runtime.json of the completed run is written
+   */
+  isSavingCompletion(): boolean {
+    return this.savingCompletion
   }
 
   /** Evaluates owned DOM data only after origin verification; invalid selectors/conditions never dispatch input. @example await this.readDom('before') */

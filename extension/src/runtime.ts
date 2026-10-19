@@ -128,6 +128,8 @@ export interface StudyRuntime {
   reveal(snapshot: RuntimeSnapshot): Promise<void>
   /** Restarts a held pause's hold deadline while the learner reads a replay; runtimes without a pause hold omit it. */
   renewPauseHold?(): void
+  /** Says whether the run completed and its final save has not settled yet, during which its completion is no result (a failed save fails the run); runtimes without such a save omit it. */
+  isSavingCompletion?(): boolean
 }
 export interface StudyEnvironment {
   readonly workspace: string

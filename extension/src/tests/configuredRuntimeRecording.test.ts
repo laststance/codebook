@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { LearningLibrary } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 import { RepositoryBookStore } from '../repositoryBook'
 import { readResource } from '../resources'
+import { POLL_INTERVAL_MS } from '../runtimeSupport/constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
 import { captureStudy } from '../utils/captureStudy'
@@ -703,4 +705,117 @@ test('a completed run whose final save fails records the failure and seals its r
       },
     },
   )
+})
+
+// Value: protects=the answer an agent gets from its last continuation when the run's final save of its events and run record fails after the run completed: the agent is answered with the failure, which the run ends with (row 197), never with the result; fails_when=the run shows `completed` before its final save settled, so the continuation's wait answers `result` while that save is under way, and the run then fails with that save's error: the agent reports a demonstrated run whose study is saved as failed; why_new=Cycle 0047 row 241 (P2TEST-2): row 197's test continues without waiting for the next state and checks no answer; seam=the run evidence's save of runtime.json, which holds the save that follows the completion across more than one turn of the continuation's wait and then fails it; no_claim=a real full disk
+test('an agent waiting on the next state while a completed run’s final save is held and then fails is answered with the failure, not the result', async (context) => {
+  // Arrange: a run of the real coordinator; the save of its run record that follows its completion is held and then fails.
+  let service: StudyService | undefined, books: RepositoryBookStore | undefined
+  context.after(async () => {
+    await service?.shutdown()
+    books?.dispose()
+  })
+  const harness = await configuredRuntimeHarness(context),
+    directory = join(harness.directory, '.learning')
+  const library = new LearningLibrary(directory, '0'.repeat(64))
+  books = new RepositoryBookStore(harness.sources, library)
+  await books.publish({
+    bookId: 'interface',
+    expectedRevision: 0,
+    key: 'article',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: harness.definition.descriptor.anchors,
+          observations: [],
+        },
+      ],
+      edges: [],
+    },
+  })
+  service = new StudyService(
+    {
+      workspace: harness.directory,
+      host: {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+      },
+      build: {
+        revision: 'controlled-runtime',
+        dirty: false,
+        sourceHash: '0'.repeat(64),
+      },
+      prerequisites: async () => ({ ready: true, missing: [] }),
+      createRuntime: async () => harness.run,
+    },
+    join(harness.directory, '.service'),
+  )
+  service.repository = books
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'final-save-held',
+    configuration: harness.definition.configuration,
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  const evidence = harness.run.evidence,
+    save = evidence.save.bind(evidence)
+  let isFinalSaveHeld = false,
+    releaseFinalSave = (): void => {}
+  const finalSaveReleased = new Promise<void>((resolve) => {
+    releaseFinalSave = resolve
+  })
+  context.mock.method(
+    evidence,
+    'save',
+    async (...input: Parameters<typeof evidence.save>) => {
+      // Only the save that follows the completion is held and fails; the release saves the run record again.
+      if (harness.run.view().status === 'completed' && !isFinalSaveHeld) {
+        isFinalSaveHeld = true
+        await finalSaveReleased
+        throw new Error('ENOSPC: no space left on device, write')
+      }
+      return save(...input)
+    },
+  )
+  service.action({ ...receipt, key: 'click-once', action: 'repository-click' })
+  const snapshot = await waitUntil(
+    () => harness.run.view().snapshots[0],
+    'configured pause',
+  )
+
+  // Act: the agent continues and waits for the next state; the final save is held for more than one turn of that wait, then fails.
+  const answering = service.continueToNextState({
+    ...receipt,
+    participant: 'browser',
+    ...snapshot.pause,
+    answer: 'next',
+  })
+  await waitUntil(() => isFinalSaveHeld, 'the final save of the run')
+  await delay(POLL_INTERVAL_MS * 3)
+  releaseFinalSave()
+  const answer = await answering
+
+  // Assert
+  assert.deepEqual(
+    {
+      next: 'next' in answer ? answer.next : undefined,
+      runStatus: harness.run.view().status,
+      failures: [...harness.run.view().failures],
+    },
+    {
+      next: 'failure',
+      runStatus: 'failed',
+      failures: ['Error: ENOSPC: no space left on device, write'],
+    },
+  )
+  await service.stop(receipt)
 })

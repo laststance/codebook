@@ -1052,7 +1052,7 @@ export class StudyService {
    * @param signal - The request's cancellation; an abandoned request releases its wait.
    * @returns
    * - Without `answer` and for a Node test run: what {@link StudyService.continue} answers
-   * - With `answer: "next"`: `accepted`, `runUri`, the run's `state` (the run resource) and `next`, which names what ended the wait: `observation` (the next pause is committed and can be continued), `result` (the result was observed), `failure` (the run failed, also at its deadlines) or `stopped` (the run was stopped or the service is shutting down)
+   * - With `answer: "next"`: `accepted`, `runUri`, the run's `state` (the run resource) and `next`, which names what ended the wait: `observation` (the next pause is committed and can be continued), `result` (the result was observed and the run's final save succeeded), `failure` (the run failed, also at its deadlines) or `stopped` (the run was stopped or the service is shutting down)
    * - At the bound, and for an abandoned request: the same without `next`, with the latest state; the agent then polls
    * @throws What {@link StudyService.continue} throws; nothing is awaited after a refused continuation.
    * @example
@@ -1091,7 +1091,7 @@ export class StudyService {
    * @param committedBefore - The ids of the snapshots committed before the continuation.
    * @returns
    * - `'failure'` once the run has an error, a runtime or evidence failure, or passed its whole-run deadline ({@link StudyService.expireAtDeadline} applies it at once instead of at the next maintenance turn)
-   * - `'result'` once the runtime completed, also while the service already cleans the completed run up
+   * - `'result'` once the runtime completed and its final save succeeded, also while the service already cleans the completed run up
    * - `'stopped'` once a run that did not complete is being stopped or was cancelled, or the service is shutting down
    * - `'observation'` once a participant is paused at a snapshot committed after the continuation
    * - `undefined` while the run is still on its way; a snapshot that was committed and then failed its inspection is no observation to continue, and the failure that follows it is what ends the wait
@@ -1117,9 +1117,9 @@ export class StudyService {
    * @param status - The status of that view; `undefined` without a runtime.
    * @returns
    * - `'failure'` for a failed run ({@link StudyService.hasRunFailed})
-   * - `'result'` for a completed runtime, also while the service already cleans the completed run up
+   * - `'result'` for a completed runtime whose final save settled, also while the service already cleans the completed run up
    * - `'stopped'` for a run that is being stopped or was cancelled ({@link StudyService.isRunBeingStopped})
-   * - `undefined` while the run is still on its way
+   * - `undefined` while the run is still on its way, and while a completed runtime's final save is under way ({@link StudyRuntime.isSavingCompletion})
    * @example this.endedRunState(record, runtime, 'completed') // => 'result'
    */
   private endedRunState(
@@ -1128,8 +1128,9 @@ export class StudyService {
     status: RuntimeView['status'] | undefined,
   ): 'failure' | 'stopped' | 'result' | undefined {
     if (this.hasRunFailed(record, runtime, status)) return 'failure'
-    // Before the stop check: the service cleans a completed run up by itself, and that cleanup is no stop of the run.
-    if (status === 'completed') return 'result'
+    // Before the stop check: the service cleans a completed run up by itself, and that cleanup is no stop of the run. A completion whose final save is under way is no result yet: a failed save fails the run (Cycle 0047 row 241).
+    if (status === 'completed')
+      return record.runtime?.isSavingCompletion?.() ? undefined : 'result'
     return this.isRunBeingStopped(record, status) ? 'stopped' : undefined
   }
 
