@@ -13,7 +13,7 @@ const RECORDING_STARTS = new Intl.ListFormat('en', {
  * - One recording, `another-computer`: "Its recording was started on <host> at <start>. Codebook cannot tell from this computer whether an editor window still records it or still has to save it."
  * - One recording, `this-computer`: "Its recording was started on <host> at <start>. Codebook cannot tell whether an editor window of this computer still records it or still has to save it."
  * - Several: "Its recordings were started on <host> at <start> and on <host> at <start>." and the same second sentence about them; it names this computer only when every one of them is of this computer
- * The second sentence holds for a sealed recording too: its run holds it until it has saved its study ({@link isSealedRecordingReleased}), so a writer this computer cannot confirm may still have to save a recording that nobody records any more.
+ * The second sentence holds for a sealed recording too: its run holds it until it has saved the study it took after the seal ({@link isSealedRecordingReleased}), so a writer this computer cannot confirm may still have to save a recording that nobody records any more.
  * @example
  * unconfirmedWriterSentences([{ host: 'old-laptop.local', startedAt: '10/1/2026, 10:00:00 AM', place: 'another-computer' }])
  * // => 'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records it or still has to save it.'
