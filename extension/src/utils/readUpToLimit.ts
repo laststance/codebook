@@ -1,6 +1,6 @@
 import type { FileHandle } from 'node:fs/promises'
 
-import { WIKI_METADATA_READ_CHUNK_BYTES } from '../constants'
+import { WIKI_FILE_READ_CHUNK_BYTES } from '../constants'
 
 /**
  * Reads an open file from its start to its end, and never more than one byte past the limit; called after the file's size at `stat` was within the limit, because the file can grow while it is read.
@@ -27,7 +27,7 @@ export async function readUpToLimit(
     // The first read takes the whole file as it was at its stat; what arrived since is read in further chunks.
     const chunk = Buffer.allocUnsafe(
       Math.min(
-        Math.max(sizeAtStat + 1 - readBytes, WIKI_METADATA_READ_CHUNK_BYTES),
+        Math.max(sizeAtStat + 1 - readBytes, WIKI_FILE_READ_CHUNK_BYTES),
         limitBytes + 1 - readBytes,
       ),
     )
