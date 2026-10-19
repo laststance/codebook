@@ -1,6 +1,5 @@
-import { MS_PER_MINUTE } from '../constants'
-
 import { formatClockTime } from './formatClockTime'
+import { formatWaitEnd } from './formatWaitEnd'
 import { hasWikiPublishEndedWait } from './hasWikiPublishEndedWait'
 import {
   isAcknowledgedWikiLeftover,
@@ -24,22 +23,6 @@ type LeftoverLook = {
   lastRun: WikiLastRun | undefined
   acknowledged: readonly WikiLeftover[]
   listCandidates: (outputDirectory: string) => Promise<WikiCandidate[]>
-}
-
-/**
- * Writes the end of a start's wait as the clock time a refusal's "waits for it until" names; called for each refusal's sentence.
- * Why: a clock time names its minute only, so an end within a minute written as that minute would name a time at which a press is still refused, for up to 59 seconds, with the same time named again. The first whole minute at or after the end is a time at which the wait is over.
- * @param waitEndsAtMs - The end of the wait (epoch milliseconds): a watch's end or a candidate's writing, plus the bound.
- * @returns The hour and minute, with the zone ({@link formatClockTime}), of the first whole minute at or after that end; an end on a whole minute is named as itself.
- * @example
- * formatWaitEnd(Date.UTC(2026, 9, 3, 12, 23, 30)) // => '12:24 UTC' on a host in UTC
- * formatWaitEnd(Date.UTC(2026, 9, 3, 12, 23, 0)) // => '12:23 UTC' on a host in UTC
- */
-function formatWaitEnd(waitEndsAtMs: number): string {
-  return formatClockTime(
-    Math.ceil(waitEndsAtMs / MS_PER_MINUTE) * MS_PER_MINUTE,
-    {},
-  )
 }
 
 /**

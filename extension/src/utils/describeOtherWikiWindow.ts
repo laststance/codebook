@@ -1,7 +1,6 @@
-import { MS_PER_MINUTE } from '../constants'
-
 import type { WikiUpdateMarkerClaim } from './claimWikiUpdateMarker'
 import { formatClockTime } from './formatClockTime'
+import { formatWaitEnd } from './formatWaitEnd'
 
 /** What holds a Wiki against this window's start: another window's running update, a marker another window is writing or that stayed unreadable, or a marker another window is changing ({@link claimWikiUpdateMarker}). */
 type OtherWikiWindowHolder = Extract<
@@ -17,7 +16,7 @@ type OtherWikiWindowHolder = Extract<
  * @param holder - What holds the Wiki.
  * @returns
  * - A marker another window removes or replaces at this moment (it names no run): that a window is starting or ending an update, and to try again in a moment
- * - A marker file that stayed unreadable for longer than a write takes ({@link readLiveWikiUpdateMarker}): that another window may be updating the Wiki, the file, what can make it readable, and the first whole minute at which the refusal ends if the file stays as it is (the file still counts at its last moment, so that minute is the one after it)
+ * - A marker file that stayed unreadable for longer than a write takes ({@link readLiveWikiUpdateMarker}): that another window may be updating the Wiki, the file, what can make it readable, and the first whole minute at which the refusal ends if the file stays as it is ({@link formatWaitEnd}; the file still counts at its last moment, so that minute is the one after it)
  * - A marker another window is writing (it names no run yet): that a window is starting an update, and to try again in a moment
  * - Another window's running update: its editor and start time, and to press Update LLM Wiki again once it has finished
  * @example
@@ -34,10 +33,9 @@ export function describeOtherWikiWindow(holder: OtherWikiWindowHolder): string {
     return 'Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.'
   // A marker file that stayed unreadable past the moment a write takes may stand for a run until its last moment; a refusal for that long names the file and its end.
   if ('unreadableMarkerPath' in holder) {
-    // The file still counts at its last moment, so the refusal names the first whole minute after it.
-    const refusalEndsAtMs =
-      (Math.floor(holder.countsUntilMs / MS_PER_MINUTE) + 1) * MS_PER_MINUTE
-    return `Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (${holder.unreadableMarkerPath}), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at ${formatClockTime(refusalEndsAtMs, {})}.`
+    // The file still counts at its last moment, so the refusal ends in the millisecond after it.
+    const refusalEndsAtMs = holder.countsUntilMs + 1
+    return `Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (${holder.unreadableMarkerPath}), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at ${formatWaitEnd(refusalEndsAtMs)}.`
   }
   // A marker another window is writing names no run yet.
   if ('beingWrittenSinceMs' in holder)
