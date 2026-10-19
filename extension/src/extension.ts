@@ -1476,6 +1476,7 @@ export function activate(
       wikiOutput,
       host,
     )
+    // A check of the Wiki folder refused the start or found the Wiki current; it has recorded that and told the learner.
     if (!wikiToUpdate) return undefined
     const { tokenAtStart, publicationAtStart, before } = wikiToUpdate
     // Each window holds its own run state; the marker is the trace of another window's run before its agent has staged anything.
@@ -1584,6 +1585,7 @@ export function activate(
         host,
         acknowledgedLeftovers,
       )
+      // A start that may go ahead, or one that was refused or found nothing to update, ends the checks; only a publish that landed meanwhile asks for another look.
       if (look !== 'published-meanwhile') return look
       // A second publish while the checks ran leaves no generation to check.
       if (isLastAttempt)

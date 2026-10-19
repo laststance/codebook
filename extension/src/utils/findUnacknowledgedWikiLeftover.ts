@@ -114,6 +114,7 @@ function ownChatRefusals(
           },
         ]
       : []
+  // No candidate is in the way: what is left is this window's own stopped watch, if any, in a refusal of its own.
   if (!activeCandidate) return ownRunRefusal
   const candidateLeftover: WikiLeftover = {
     kind: 'candidate',
