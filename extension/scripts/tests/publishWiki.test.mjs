@@ -16689,7 +16689,7 @@ for (const step of [
   })
 }
 
-// The tests of Cycle 0047's second /ship, fixing cycle 2, rows 215 to 221, 244 and 245: the owner judgement, the recovery's reads, the copy's recheck, the publish lock and the candidate's look.
+// The tests of Cycle 0047's second /ship, fixing cycle 2, fixer PA (rows 215 to 221 and 244 to 246): the owner judgement and the computer's id, the recovery's reads, the copy's recheck, the publish lock, the journal and the candidate's look.
 
 /** What the stand-in systems of row 215 print for their computer's id: macOS's ioreg the Mac's hardware UUID, Windows's reg.exe the machine GUID; each answers its exact query alone. */
 const COMPUTER_ID_QUERIES = {
