@@ -25,7 +25,7 @@ const SLOW_PAGE = `<!doctype html><body>${'<x>'.repeat(10_000)}${'</p>'.repeat(1
  * Called by the tests of the workers' reuse, limit and stop.
  * @param constantOverrides - Constants the loaded module reads instead of the shipped ones.
  * @param whenStopIsAsked - Called with the worker each time the module asks a worker to stop (`terminate`), before the stop begins; when it answers a promise, the stop begins only once that promise settles, so a test can make a stop take long. By default nothing is done.
- * @returns The loaded module's {@link servedWikiPageOffThread}, the workers it started in their order, for each of them how many threads started before it had not ended at its start, the start of the worker started n-th (from 0): a promise that settles with `'online'` when its thread runs, or at once with `'never started'`, and that worker's end: a promise that settles with `'ended'` when its thread has ended, or at once with `'never started'`.
+ * @returns The loaded module's {@link servedWikiPageOffThread}, the workers it started in their order, for each of them how many threads started before it had not ended at its start, the start of the worker started n-th (from 0): a promise that settles with `'online'` when its thread runs, also for a worker the module starts only later (a test bounds the wait with {@link within}), and that worker's end: a promise that settles with `'ended'` when its thread has ended, or at once with `'never started'`.
  * @example
  * const pool = await loadPageWorkerRecordingThreads({})
  * await pool.servedWikiPageOffThread('<body></body>', PAGE_OPTIONS, limits)
@@ -41,13 +41,29 @@ async function loadPageWorkerRecordingThreads(
   servedWikiPageOffThread: typeof servedWikiPageOffThread
   startedWorkers: workerThreads.Worker[]
   threadsAliveAtEachStart: number[]
-  onlineOfWorker: (index: number) => Promise<'online' | 'never started'>
+  onlineOfWorker: (index: number) => Promise<'online'>
   endOfWorker: (index: number) => Promise<'ended' | 'never started'>
 }> {
   const startedWorkers: workerThreads.Worker[] = []
   const aliveWorkers = new Set<workerThreads.Worker>()
   const threadsAliveAtEachStart: number[] = []
-  const workerOnlines: Promise<'online'>[] = []
+  const workerOnlines: {
+    online: Promise<'online'>
+    noteOnline: (online: 'online') => void
+  }[] = []
+  /** The start of the worker started n-th, made when the test asks for it or when the worker starts, whichever comes first. */
+  const workerOnlineAt = (index: number): (typeof workerOnlines)[number] => {
+    // A test may wait for a worker the module starts only later: the starts up to it are made now.
+    for (;;) {
+      const known = workerOnlines[index]
+      if (known) return known
+      let noteOnline: (online: 'online') => void = () => undefined
+      const online = new Promise<'online'>((resolveOnline) => {
+        noteOnline = resolveOnline
+      })
+      workerOnlines.push({ online, noteOnline })
+    }
+  }
   const workerEnds: Promise<'ended'>[] = []
   /** The real Worker, noting each thread it starts, the threads alive then, the moment it runs, its end, and each stop asked of it. */
   class RecordedWorker extends workerThreads.Worker {
@@ -57,12 +73,9 @@ async function loadPageWorkerRecordingThreads(
       super(...parameters)
       threadsAliveAtEachStart.push(aliveWorkers.size)
       aliveWorkers.add(this)
+      const { noteOnline } = workerOnlineAt(startedWorkers.length)
       startedWorkers.push(this)
-      workerOnlines.push(
-        new Promise((resolveOnline) =>
-          this.once('online', () => resolveOnline('online')),
-        ),
-      )
+      this.once('online', () => noteOnline('online'))
       workerEnds.push(
         new Promise((resolveEnd) =>
           this.once('exit', () => {
@@ -92,8 +105,7 @@ async function loadPageWorkerRecordingThreads(
     servedWikiPageOffThread: loaded.servedWikiPageOffThread,
     startedWorkers,
     threadsAliveAtEachStart,
-    onlineOfWorker: (index) =>
-      workerOnlines[index] ?? Promise.resolve('never started'),
+    onlineOfWorker: (index) => workerOnlineAt(index).online,
     endOfWorker: (index) =>
       workerEnds[index] ?? Promise.resolve('never started'),
   }
@@ -546,6 +558,7 @@ test('while as many stopped threads are lost as page workers may run at once, a 
     { deadlineMs: 10_000, signal },
   )
   const slowAnswers = await within(slowPages, 5_000)
+  // gstack-timing-ok: the page behind waits here whatever the timing, as no stop has gone on yet; the 1.5 s let the second worker's stop limit, 300 ms after its answer, pass first, so the check holds a stop kept in its place past its limit, and that timer fired at most 6.1 ms late in 6 runs under coverage and two busy loops on two and four cores.
   const behindWhileTheStopsAreHeld = await within(behind, 1_500)
   letTheStopsGo()
   const behindAnswer = await within(behind, 5_000)
@@ -572,7 +585,7 @@ test('while as many stopped threads are lost as page workers may run at once, a 
   )
 })
 
-// Value: protects=every page that waits behind a stopped page worker whose thread does not end, after an earlier lost thread has ended: a lost thread that ends gives back its count among the lost ones, and the bound on lost threads (row 109) would otherwise hold every later stop that passes the stop limit in its place as if that thread were still lost; fails_when=a lost thread that ends is still counted as lost, so the next thread whose stop passes WIKI_PAGE_WORKER_STOP_LIMIT_MS keeps its place and the page behind it waits for good, or a lost thread's end gives back the place it gave back at its stop limit a second time, so the pool counts more free places than it has and two pages asked for at once start a worker beyond WIKI_PAGE_WORKER_CONCURRENCY_LIMIT; why_new=Cycle 0047 row 109 (ADV2-12); Cycle 0047 row 149 (P3COV-1) two pages asked for at once after both lost threads ended, as no test held that a place is given back once; seam=the page-worker module loaded with one worker at a time, a stop limit of 300 ms, and a Worker class that records the threads it starts and holds the stop of the first and of the second worker each until the test lets it go (the threads are real); no_claim=the shipped limit of two workers (the count is kept the same way)
+// Value: protects=every page that waits behind a stopped page worker whose thread does not end, after an earlier lost thread has ended: a lost thread that ends gives back its count among the lost ones, and the bound on lost threads (row 109) would otherwise hold every later stop that passes the stop limit in its place as if that thread were still lost; fails_when=a lost thread that ends is still counted as lost, so the next thread whose stop passes WIKI_PAGE_WORKER_STOP_LIMIT_MS keeps its place and the page behind it waits for good, or a lost thread's end gives back the place it gave back at its stop limit a second time, so the pool counts more free places than it has and two pages asked for at once start a worker beyond WIKI_PAGE_WORKER_CONCURRENCY_LIMIT; why_new=Cycle 0047 row 109 (ADV2-12); Cycle 0047 row 149 (P3COV-1) two pages asked for at once after both lost threads ended, as no test held that a place is given back once; Cycle 0047 row 163 (CORE3-4) the first stop goes on once the second worker runs, and the second slow page has a deadline of 2 s, so the lost thread ends before the second worker's stop limit whatever the scheduler; seam=the page-worker module loaded with one worker at a time, a stop limit of 300 ms, and a Worker class that records the threads it starts and holds the stop of the first and of the second worker each until the test lets it go (the threads are real); no_claim=the shipped limit of two workers (the count is kept the same way)
 test('once a lost thread has ended, the next stopped worker whose thread does not end gives its place back at the stop limit, the page behind it is served, and once both lost threads ended two pages asked for at once still get one worker between them', async () => {
   // Arrange: one worker at a time and a stop limit of 300 ms; the first and the second worker's stops are each held until the test lets them go.
   let letTheFirstStopGo: () => void = () => undefined
@@ -597,13 +610,13 @@ test('once a lost thread has ended, the next stopped worker whose thread does no
   )
   const signal = new AbortController().signal
 
-  // Act: two slow pages under a deadline of 500 ms and a small page behind them; once the first worker's thread is lost and the second slow page answered, the first stop goes on, so the lost thread ends before the second worker's stop limit passes.
+  // Act: two slow pages and a small page behind them. The first slow page passes its deadline of 500 ms, and its worker's thread is lost at the stop limit, so the second slow page gets a worker; once that worker runs, the first stop goes on, and the lost thread has ended before the second slow page's deadline of 2 s, so the order of the two does not depend on the scheduler. Then the second worker's stop passes its stop limit, and the second stop goes on.
   const firstSlow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
     deadlineMs: 500,
     signal,
   })
   const secondSlow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
-    deadlineMs: 500,
+    deadlineMs: 2_000,
     signal,
   })
   const behind = pool.servedWikiPageOffThread(
@@ -611,9 +624,11 @@ test('once a lost thread has ended, the next stopped worker whose thread does no
     PAGE_OPTIONS,
     { deadlineMs: 10_000, signal },
   )
-  const slowAnswers = await within(Promise.all([firstSlow, secondSlow]), 5_000)
+  const secondWorkerStart = await within(pool.onlineOfWorker(1), 5_000)
   letTheFirstStopGo()
+  // gstack-timing-ok: the lost thread's end is awaited, not timed, and the 2 s only bound it; it has to come before the second worker's stop limit, 2.3 s after that worker's start (its page's deadline of 2 s, which SLOW_PAGE at about 6 s passes, and the stop limit of 300 ms), and a held stop that went on ended its thread within 39 ms in 6 runs under coverage and two busy loops on two and four cores.
   const firstLostThreadEnd = await within(pool.endOfWorker(0), 2_000)
+  const slowAnswers = await within(Promise.all([firstSlow, secondSlow]), 5_000)
   const behindWhileTheSecondStopIsHeld = await within(behind, 2_000)
   letTheSecondStopGo()
   const secondLostThreadEnd = await within(pool.endOfWorker(1), 2_000)
@@ -636,16 +651,18 @@ test('once a lost thread has ended, the next stopped worker whose thread does no
   // Assert: the two pages asked together were prepared one after the other by the worker that served the page behind, in the pool's one place, and no fourth worker started; the answers are copied out of the loaded module's context.
   assert.deepEqual(
     structuredClone({
-      slowAnswers,
+      secondWorkerStart,
       firstLostThreadEnd,
+      slowAnswers,
       behindWhileTheSecondStopIsHeld,
       secondLostThreadEnd,
       pagesAskedTogether,
       startedWorkers: pool.startedWorkers.length,
     }),
     {
-      slowAnswers: [{ state: 'deadline' }, { state: 'deadline' }],
+      secondWorkerStart: 'online',
       firstLostThreadEnd: 'ended',
+      slowAnswers: [{ state: 'deadline' }, { state: 'deadline' }],
       behindWhileTheSecondStopIsHeld: {
         state: 'served',
         html: '<body><p>Page behind</p><script src="/w/t/codebook-qa.js"></script></body>',
@@ -706,6 +723,7 @@ test('a stopped worker that kept its place past the stop limit while the lost th
     { deadlineMs: 10_000, signal },
   )
   const slowAnswers = await within(Promise.all([firstSlow, secondSlow]), 5_000)
+  // gstack-timing-ok: the page behind waits here whatever the timing, as no stop has gone on yet; the 1 s let the second worker's stop limit, 300 ms after its answer, pass before the first stop goes on, so the second stop is held past its limit when the lost thread ends (a later timer would take the path of the test before this one, which ends alike), and that timer fired at most 6.1 ms late in 6 runs under coverage and two busy loops on two and four cores.
   const behindWhileTheFirstThreadIsLost = await within(behind, 1_000)
   letTheFirstStopGo()
   const firstLostThreadEnd = await within(pool.endOfWorker(0), 2_000)
