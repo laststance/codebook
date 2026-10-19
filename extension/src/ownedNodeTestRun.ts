@@ -882,6 +882,7 @@ export class OwnedNodeTestRun {
 
   /**
    * Stops the run's debug sessions and releases its CDP connection, breakpoint, output terminal, test process group and private report folder; the body of {@link release}, run again after a failure, so each step is one that can be repeated.
+   * A run again stops no session that has ended: the run hears of ended sessions until a release has succeeded, and an ended one leaves `active`. VS Code (1.120 to 1.142) stops an ended session that its debug model still lists without a refusal, but refuses one it no longer lists with "debug session not found", and it drops an ended session, and only an ended one, when a newer session of its name starts: a retry that stopped such a session again would fail for good, and every `codebook_start` would answer BUSY until a reload.
    * @throws The first debug session stop that failed, else the failure of the process release or of the report folder's removal.
    * @example await this.releaseOwned()
    */
@@ -902,7 +903,6 @@ export class OwnedNodeTestRun {
       processFailure = error
     } finally {
       this.tracker.dispose()
-      this.termination.dispose()
     }
     // The private Vitest report is evidence only until the result check; nothing else reads it.
     if (this.launch)
@@ -915,5 +915,7 @@ export class OwnedNodeTestRun {
     const failure = results.find((result) => result.status === 'rejected')
     if (failure?.status === 'rejected') throw failure.reason
     if (processFailure) throw processFailure
+    // Only a release that succeeded stops hearing of ended sessions: until then a session that ends leaves `active`, and a retry does not stop it.
+    this.termination.dispose()
   }
 }

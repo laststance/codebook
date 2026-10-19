@@ -44,6 +44,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.typedWhileRunning - The learner types this text into the cited source right after Codebook's continue request with this number (1 is the continue of the entry pause, 2 the first continuation of a declared stop), while the test runs to its next stop.
  * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts` from the start, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open until a test types into the source (`typeIntoCitedSource`).
  * @param options.closeFailures - How many first releases of the owned test process fail, each with "process group still running (close <n>)"; the later ones succeed.
+ * @param options.stopFailures - How many first stops of a debug session the editor rejects, each with "the debug adapter did not answer the terminate request (stop <n>)", as when the adapter does not answer; the later ones resolve.
  *
  * @example
  * ```ts
@@ -71,6 +72,7 @@ async function nodeRunHarness({
   openDocumentText,
   typedWhileRunning,
   closeFailures = 0,
+  stopFailures = 0,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -113,6 +115,7 @@ async function nodeRunHarness({
   openDocumentText?: string
   typedWhileRunning?: { continueRequest: number; text: string }
   closeFailures?: number
+  stopFailures?: number
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -175,6 +178,9 @@ async function nodeRunHarness({
   let continueRequests = 0
   // How many times the run asked to release its owned test process.
   let closeRequests = 0
+  // How many times the run asked the editor to stop a debug session, and the sessions the editor still lists, as VS Code's debug model does.
+  let stopRequests = 0
+  const listedSessions = new Set<string>()
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
     continued = 0,
@@ -467,7 +473,12 @@ async function nodeRunHarness({
         listener: (session: vscode.DebugSession) => void,
       ) => {
         terminate = listener
-        return { dispose(): void {} }
+        // A disposed listener hears of no later end of a session.
+        return {
+          dispose(): void {
+            if (terminate === listener) terminate = undefined
+          },
+        }
       },
       async startDebugging(
         _folder: unknown,
@@ -481,6 +492,7 @@ async function nodeRunHarness({
           ...session.configuration,
           name: configuration.name,
         }
+        listedSessions.add(session.id)
         const created = await trackerFactory?.createDebugAdapterTracker(session)
         tracker = created ?? undefined
         // The starting adapter receives the breakpoints the editor already holds.
@@ -488,8 +500,17 @@ async function nodeRunHarness({
         queueMicrotask(() => stopped('entry'))
         return true
       },
-      async stopDebugging(): Promise<void> {
+      async stopDebugging(stopped?: vscode.DebugSession): Promise<void> {
         calls.push('stop-debugging')
+        stopRequests += 1
+        // As VS Code 1.120 to 1.142 answer for a session their debug model no longer lists; an ended session it still lists is stopped again without a refusal.
+        if (stopped && !listedSessions.has(stopped.id))
+          throw new Error('debug session not found')
+        // The first stops fail as they do when the adapter does not answer.
+        if (stopRequests <= stopFailures)
+          throw new Error(
+            `the debug adapter did not answer the terminate request (stop ${stopRequests})`,
+          )
       },
     },
   }
@@ -621,6 +642,12 @@ async function nodeRunHarness({
     debugStartOptions,
     launchPreparations: (): number => launchPreparations,
     closeRequests: (): number => closeRequests,
+    stopRequests: (): number => stopRequests,
+    /** The owned debug session ends, and the editor drops it from its list, as VS Code does when a newer session of the same name starts: a listener still registered hears of the end, and a later stop of the session is refused with "debug session not found". */
+    endSessionAndDropIt: (): void => {
+      terminate?.(session)
+      listedSessions.delete(session.id)
+    },
     typeIntoCitedSource,
     launch,
     reportDirectory,
@@ -1278,6 +1305,83 @@ test('after a failed release of a Node test run, Codebook refuses to finish it a
     )
   } finally {
     await harness.run.stop().catch(() => undefined)
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the release of a Node test run whose first release failed at the owned test process after its debug session was stopped, when that session then ends and the editor drops it (VS Code 1.120 to 1.142 drop an ended session when a newer session of its name starts); fails_when=the retry stops every session the first attempt stopped again, the editor refuses the one it no longer lists with "debug session not found", every retry fails, and every codebook_start answers BUSY until a reload (row 40 back); why_new=Cycle 0047 row 96 (ADV-4 = CORE-4); seam=the editor's stop of a debug session, which refuses a session it no longer lists, and the owned test process's close, which fails the first time
+test('a Node test run whose release failed at its test process after its debug session was stopped is released by the next stop without stopping that session again, after the editor dropped it', async () => {
+  // Arrange: the first release stops the session and then fails at the owned test process; the session then ends and the editor drops it.
+  const harness = await nodeRunHarness({ closeFailures: 1 })
+  try {
+    await harness.run.prepare()
+    const firstStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+    harness.endSessionAndDropIt()
+
+    // Act
+    const secondStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        firstStop,
+        secondStop,
+        stopRequests: harness.stopRequests(),
+        closeRequests: harness.closeRequests(),
+      },
+      {
+        firstStop: 'Error: process group still running (close 1)',
+        secondStop: 'released',
+        stopRequests: 1,
+        closeRequests: 2,
+      },
+    )
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the release of a Node test run whose debug session the editor could not stop at the first release (the adapter did not answer), when that session ends afterwards and the editor drops it; fails_when=the run stops watching for ended sessions at its first failed release, so the retry stops the ended session, the editor refuses it with "debug session not found", every retry fails, and every codebook_start answers BUSY until a reload (row 40 back); why_new=Cycle 0047 row 96 (ADV-4 = CORE-4); seam=the editor's stop of a debug session, which fails the first time and refuses a session it no longer lists, and its end of the session, which reaches only a listener still registered
+test('a Node test run whose debug session could not be stopped at the first release, and which ends afterwards, is released by the next stop without stopping the ended session', async () => {
+  // Arrange: the first release cannot stop the session; the session then ends and the editor drops it.
+  const harness = await nodeRunHarness({ stopFailures: 1 })
+  try {
+    await harness.run.prepare()
+    const firstStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+    harness.endSessionAndDropIt()
+
+    // Act
+    const secondStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        firstStop,
+        secondStop,
+        stopRequests: harness.stopRequests(),
+        closeRequests: harness.closeRequests(),
+      },
+      {
+        firstStop:
+          'Error: the debug adapter did not answer the terminate request (stop 1)',
+        secondStop: 'released',
+        stopRequests: 1,
+        closeRequests: 2,
+      },
+    )
+  } finally {
     await harness.cleanup()
   }
 })
