@@ -13690,3 +13690,50 @@ for (const { names, rewrite } of [
     }
   })
 }
+
+// Cycle 0047, second /ship, fixing cycle 1, fixer P1: the publisher's write protocol (rows 172 to 178).
+
+// Value: protects=the learner who follows the refusal of a publish whose status read of a file it made beside its journal failed; fails_when=the publish removes the file beside the journal in every case after the refusal said it was kept, so the learner looks for a file that is gone, which may be another process's; why_new=Cycle 0047 row 177 (S2OCR1a-1); seam=a copy of the shipped publisher whose `node:fs/promises` fails the status read of that file with EIO (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=the same failure for a recovery's claim, which is written the same way
+test('a publish whose status read of the file it made beside its journal fails keeps that file, as its refusal says', async () => {
+  // Arrange: the status read of the file the publish writes its journal's bytes into, beside the journal, fails with EIO.
+  const { publishWiki: publishWhoseStatusReadFails } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const stopFailing = failStatOf(
+    (path) => path.startsWith(`${wiki.output}.publish-journal.json.pending-`),
+    'EIO',
+  )
+  try {
+    // Act
+    const refusal = await publishWhoseStatusReadFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    const namedFile =
+      /^The publisher made (.+) but could not read its status/.exec(
+        refusal,
+      )?.[1]
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal: refusal.replace(namedFile, '<the file>'),
+        isNamedFileKept: namedFile !== undefined && existsSync(namedFile),
+      },
+      {
+        refusal:
+          'The publisher made <the file> but could not read its status: EIO: the stat of the file failed. The file there may be another one now, so it was kept. Delete it if it holds nothing of yours, then try again.',
+        isNamedFileKept: true,
+      },
+    )
+  } finally {
+    stopFailing()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
