@@ -12504,6 +12504,8 @@ for (const place of [
   {
     names: 'a --prepare --adopt-existing beside a Wiki without a record',
     kind: 'no JSON',
+    refusal:
+      'The Wiki manifest is not a JSON object: its JSON syntax breaks at line 1, column 1; its text is not repeated here.',
     arrange: async ({ output, root }) => {
       await writeStage(output, root, '<h1>Legacy</h1>')
       await writeFile(join(output, 'codebook-wiki.json'), CRAFTED_MANIFEST_TEXT)
@@ -12520,6 +12522,8 @@ for (const place of [
   {
     names: 'a publish of a candidate',
     kind: 'no JSON',
+    refusal:
+      'The Wiki manifest is not a JSON object: its JSON syntax breaks at line 1, column 1; its text is not repeated here.',
     arrange: async ({ root, output, stage }) => {
       await prepareWikiStage({
         projectRoot: root,
@@ -12540,6 +12544,8 @@ for (const place of [
   {
     names: 'a publish of a candidate',
     kind: 'the JSON text null',
+    refusal:
+      'The Wiki manifest is not a JSON object; its text is not repeated here.',
     arrange: async ({ root, output, stage }) => {
       await prepareWikiStage({
         projectRoot: root,
@@ -12560,6 +12566,8 @@ for (const place of [
   {
     names: 'a --recover that would move the kept prior Wiki back',
     kind: 'no JSON',
+    refusal:
+      'The Wiki manifest is not a JSON object: its JSON syntax breaks at line 1, column 1; its text is not repeated here.',
     arrange: async ({ root, output }) => {
       const backup = `${output}.previous-00000000-0000-4000-8000-000000000001`
       await writeStage(backup, root, '<h1>Prior</h1>')
@@ -12616,8 +12624,7 @@ for (const place of [
         {
           status: 1,
           stdout: '',
-          stderr:
-            'Error: The Wiki manifest is not a JSON object; its text is not repeated here.\n',
+          stderr: `Error: ${place.refusal}\n`,
         },
       )
     } finally {
@@ -13737,3 +13744,62 @@ test('a publish whose status read of the file it made beside its journal fails k
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+for (const syntaxError of [
+  {
+    kind: 'a word where a value belongs',
+    text: '{\n  "schemaVersion": 1,\n  "pages": [CRAFTED-MARKER]\n}\n',
+    place: 'line 3, column 13',
+  },
+  {
+    kind: 'a comma before the end of a list',
+    text: '{\n  "schemaVersion": 1,\n  "pages": [\n    "CRAFTED-MARKER",\n  ]\n}\n',
+    place: 'line 5, column 3',
+  },
+]) {
+  // Value: protects=the agent that edits a candidate's manifest by hand and must find its own syntax error; fails_when=the refusal of a manifest that is no JSON names no place, so the agent cannot find the error, or it passes on the parser's message, which quotes the manifest's text; why_new=Cycle 0047 row 178 (S2OCR1a-2); seam=none (the shipped CLI as the agent runs it); no_claim=a manifest that is JSON but no object, whose refusal names no place
+  test(`a publish of a candidate whose manifest has a syntax error (${syntaxError.kind}) is refused through the CLI with the line and the column of the error and none of the manifest’s text`, async () => {
+    // Arrange: a prepared candidate whose manifest holds the row's text.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-manifest-syntax-error-')),
+    )
+    const output = join(root, '.codebook/wiki'),
+      stage = join(root, '.codebook/next')
+    try {
+      await mkdir(dirname(output), { recursive: true })
+      await prepareWikiStage({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: stage,
+      })
+      await writeFile(join(stage, 'codebook-wiki.json'), syntaxError.text)
+
+      // Act
+      const result = spawnSync(
+        process.execPath,
+        [
+          PUBLISHER_COMMAND,
+          '--project',
+          root,
+          '--output',
+          output,
+          '--stage',
+          stage,
+        ],
+        { encoding: 'utf8', timeout: 10_000 },
+      )
+
+      // Assert
+      assert.deepEqual(
+        { status: result.status, stdout: result.stdout, stderr: result.stderr },
+        {
+          status: 1,
+          stdout: '',
+          stderr: `Error: The Wiki manifest is not a JSON object: its JSON syntax breaks at ${syntaxError.place}; its text is not repeated here.\n`,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}

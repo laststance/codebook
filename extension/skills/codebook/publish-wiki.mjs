@@ -63,12 +63,68 @@ async function requireRasterAsset(stage, path) {
     throw new Error('Wiki asset ' + path + ' is not a PNG, JPEG, GIF, WebP or AVIF image by its name or its first bytes. Nothing was written. Convert it to one of these formats, or delete the file from the stage and its entry from assets, then publish again.');
 }
 
-/** The refusal of a Wiki manifest that is no JSON object: one a cloned repository carries may hold any text, which the parser's error would quote. Read by {@link parseManifest}. */
+/** The refusal of a Wiki manifest that is no JSON object: one a cloned repository carries may hold any text, which the parser's error would quote. Read by {@link parseManifest} and {@link manifestSyntaxRefusalOf}. */
 const INVALID_MANIFEST_REFUSAL = 'The Wiki manifest is not a JSON object; its text is not repeated here.';
 
-/** Parses inventory for {@link publishWiki} and recovery before any owned file can be replaced: the manifest of the Wiki, of the kept prior Wiki or of a candidate, and the one a record retains. A manifest that is no JSON, or JSON that is no object, is refused with {@link INVALID_MANIFEST_REFUSAL} ({@link parseRecordOf}), so none of its text reaches the agent. @throws That refusal, and the refusal of a manifest that names another project, no whole inventory or an unsafe path. @example parseManifest(bytes, '/repo') */
+/** The whitespace JSON allows between its tokens. Read by {@link jsonSyntaxErrorOffsetOf}. */
+const JSON_WHITESPACE = new Set([' ', '\t', '\n', '\r']);
+/** A JSON string and a JSON number, each from where it starts, as RFC 8259 writes them. Read by {@link jsonScalarEndOf}. */
+const JSON_STRING = /"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/y, JSON_NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+
+/** Where a JSON value without parts that starts at an offset ends: a string, a number, `true`, `false` or `null`. Called by {@link jsonSyntaxErrorOffsetOf}. @returns The offset after it; undefined where none starts there. @example jsonScalarEndOf('[true]', 1) // => 5 */
+function jsonScalarEndOf(text, at) {
+  for (const pattern of [JSON_STRING, JSON_NUMBER]) {
+    pattern.lastIndex = at;
+    if (pattern.test(text)) return pattern.lastIndex;
+  }
+  const literal = ['true', 'false', 'null'].find(word => text.startsWith(word, at));
+  return literal === undefined ? undefined : at + literal.length;
+}
+
+/** Where a text stops being JSON: the offset of the first token that cannot stand where it stands (the start of a string, a number or a word that is not whole there), or the text's length where it ends too early. It walks the text with a stack of the open objects and arrays, so no depth of nesting exhausts the call stack. Called by {@link manifestSyntaxRefusalOf} once the parser refused the text, since the parser's message names no position for every error and quotes the text for some. @returns The offset; undefined for a text that is JSON. @example jsonSyntaxErrorOffsetOf('[1,]') // => 3 */
+function jsonSyntaxErrorOffsetOf(text) {
+  const open = [];
+  // What may come next: a value, a value or the end of an array, a key, a key or the end of an object, a colon, a comma or the end of the open container, or the end of the text.
+  let at = 0, expected = 'value';
+  for (;;) {
+    while (JSON_WHITESPACE.has(text[at])) at++;
+    if (at >= text.length) return expected === 'end' ? undefined : at;
+    const char = text[at], closing = open.at(-1) === '{' ? '}' : ']';
+    if (expected === 'end') return at;
+    // A container closes where its end may come: at once after it opened, or after one of its values.
+    if (expected === 'value-or-end' && char === ']' || expected === 'key-or-end' && char === '}' || expected === 'comma-or-end' && char === closing) {
+      at++; open.pop(); expected = open.length > 0 ? 'comma-or-end' : 'end';
+    } else if (expected === 'comma-or-end') {
+      if (char !== ',') return at;
+      at++; expected = open.at(-1) === '{' ? 'key' : 'value';
+    } else if (expected === 'colon') {
+      if (char !== ':') return at;
+      at++; expected = 'value';
+    } else if (expected === 'key' || expected === 'key-or-end') {
+      const end = char === '"' ? jsonScalarEndOf(text, at) : undefined;
+      if (end === undefined) return at;
+      at = end; expected = 'colon';
+    } else if (char === '{' || char === '[') {
+      open.push(char); at++; expected = char === '{' ? 'key-or-end' : 'value-or-end';
+    } else {
+      const end = jsonScalarEndOf(text, at);
+      if (end === undefined) return at;
+      at = end; expected = open.length > 0 ? 'comma-or-end' : 'end';
+    }
+  }
+}
+
+/** The refusal of a Wiki manifest that is no JSON, with the line and the column where its syntax breaks ({@link jsonSyntaxErrorOffsetOf}), both numbers, so the agent finds its own error in a candidate it edits and no text of the manifest is repeated; {@link INVALID_MANIFEST_REFUSAL} where no place is found. Called by {@link parseRecordOf} for {@link parseManifest}. @param text - The manifest as the parser read it. @example manifestSyntaxRefusalOf('{\n  "pages": [1,]\n}') // => 'The Wiki manifest is not a JSON object: its JSON syntax breaks at line 2, column 16; its text is not repeated here.' */
+function manifestSyntaxRefusalOf(text) {
+  const offset = jsonSyntaxErrorOffsetOf(text);
+  if (offset === undefined) return INVALID_MANIFEST_REFUSAL;
+  const before = text.slice(0, offset);
+  return 'The Wiki manifest is not a JSON object: its JSON syntax breaks at line ' + before.split('\n').length + ', column ' + (offset - before.lastIndexOf('\n')) + '; its text is not repeated here.';
+}
+
+/** Parses inventory for {@link publishWiki} and recovery before any owned file can be replaced: the manifest of the Wiki, of the kept prior Wiki or of a candidate, and the one a record retains. A manifest that is no JSON is refused with the line and the column where its syntax breaks ({@link manifestSyntaxRefusalOf}), and JSON that is no object with {@link INVALID_MANIFEST_REFUSAL} ({@link parseRecordOf}), so none of its text reaches the agent. @throws Those refusals, and the refusal of a manifest that names another project, no whole inventory or an unsafe path. @example parseManifest(bytes, '/repo') */
 function parseManifest(bytes, projectRoot) {
-  const manifest = parseRecordOf(bytes, INVALID_MANIFEST_REFUSAL);
+  const manifest = parseRecordOf(bytes, INVALID_MANIFEST_REFUSAL, manifestSyntaxRefusalOf);
   if (manifest.schemaVersion !== 1 || manifest.repositoryRoot !== projectRoot || !Array.isArray(manifest.pages) || !Array.isArray(manifest.assets))
     throw new Error('The Wiki manifest does not identify this project and a complete page inventory.');
   const owned = new Set(['index.html', ...manifest.pages.map(page => page?.path), ...manifest.assets]);
@@ -452,10 +508,10 @@ async function writeWholeRecord(path, bytes) {
   } finally { await removeOwnFile(pending); }
 }
 
-/** Parses a journal or a recovery claim that a stopped step left, or a Wiki manifest, any of which a cloned repository may carry: text that is no JSON, or JSON that is no object, is refused with the fixed sentence given, the parser's error as its cause, so no text of the record reaches the agent (the parser's message quotes the record's start). Called by {@link resumeJournal}, {@link stoppedClaimAt} and {@link parseManifest}. @returns The record. @throws The refusal. @example parseRecordOf(Buffer.from('null'), 'The Wiki recovery claim is invalid; it was preserved.') // throws: The Wiki recovery claim is invalid; it was preserved. */
-function parseRecordOf(bytes, refusal) {
+/** Parses a journal or a recovery claim that a stopped step left, or a Wiki manifest, any of which a cloned repository may carry: text that is no JSON, or JSON that is no object, is refused with the fixed sentence given, the parser's error as its cause, so no text of the record reaches the agent (the parser's message quotes the record's start). @param refusalOfSyntax - Words the refusal of a text that is no JSON from that text, without repeating any of it ({@link manifestSyntaxRefusalOf} for a manifest); the fixed sentence when absent. @returns The record. @throws The refusal. Called by {@link resumeJournal}, {@link stoppedClaimAt} and {@link parseManifest}. @example parseRecordOf(Buffer.from('null'), 'The Wiki recovery claim is invalid; it was preserved.') // throws: The Wiki recovery claim is invalid; it was preserved. */
+function parseRecordOf(bytes, refusal, refusalOfSyntax = () => refusal) {
   let record;
-  try { record = JSON.parse(bytes); } catch (cause) { throw new Error(refusal, { cause }); }
+  try { record = JSON.parse(bytes); } catch (cause) { throw new Error(refusalOfSyntax(String(bytes)), { cause }); }
   if (record === null || typeof record !== 'object' || Array.isArray(record)) throw new Error(refusal);
   return record;
 }
