@@ -47,15 +47,17 @@ const idleWorkers: { worker: Worker; retirement: NodeJS.Timeout }[] = []
 let busyWorkerCount = 0
 /** How many of the busy workers are only ending: stopped, they prepare no page and hold their place until their thread has ended or was counted as lost ({@link stopInItsPlace}). Each holds a place among the busy ones but no page, so the line takes one more page for it, and the pages the pool holds stay as many as with every worker preparing one. */
 let endingWorkerCount = 0
-/** How many stopped workers are lost: their thread had not ended {@link WIKI_PAGE_WORKER_STOP_LIMIT_MS} after their stop, so they gave their place back and may still hold their heap; a lost thread that ends later is counted no more. Never more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT}: while that many are lost, a further stopped worker keeps its place until its thread has ended, so the threads alive at once are never more than twice that limit. */
+/** How many stopped workers are lost: their thread had not ended {@link WIKI_PAGE_WORKER_STOP_LIMIT_MS} after their stop, so they gave their place back and may still hold their heap; a lost thread that ends later is counted no more. Never more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT}: while that many are lost, a further stopped worker past its stop limit keeps its place ({@link stopsHeldPastTheirLimit}) until its thread has ended or a lost thread has ended, so the threads alive at once are never more than twice that limit. */
 let lostWorkerCount = 0
+/** The stopped workers whose thread had not ended at their stop limit while as many threads were lost as {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT}, oldest first, each as the step that counts it as lost and gives its place back; when a lost thread ends, the oldest is counted as lost in its stead, so a place is never held once the bound on lost threads allows it back ({@link stopInItsPlace}). */
+const stopsHeldPastTheirLimit: (() => void)[] = []
 /** Pages asked for while every worker was busy, oldest first; never more than {@link WIKI_PAGE_WAITING_LIMIT} and one more for each worker that is only ending, so the pages prepared and the pages waiting are never more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} and {@link WIKI_PAGE_WAITING_LIMIT} together, the pages the reader holds at once ({@link takeWikiPagePlace}). */
 const waitingPages: AskedWikiPage[] = []
 
 /**
  * Prepares one Wiki page for serving ({@link servedWikiPageHtml}) on a worker thread, so that the editor's extension host runs on while the page is read, and stops the worker when the deadline passes.
  * Why: the HTML parser takes time that grows with the square of the page on some crafted pages (from 13 s to minutes for 1 MB), well within the page file limit ({@link WIKI_PAGE_FILE_LIMIT_BYTES}); on the host's own thread such a page would stop every extension of the window. The worker's heap is limited ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}), because it runs in the host's process, which a crafted page would otherwise grow by many times its size (a page of 20 MB took 1.6 GB without a limit).
- * At most {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} workers prepare pages at once, so pages asked for together keep that many cores busy at most; a page asked for while every worker is busy waits for the first one free, and its deadline counts from then. A worker that is stopped keeps its place until its thread has ended, as it keeps its heap until then, so no new worker starts beside it; a thread that has not ended {@link WIKI_PAGE_WORKER_STOP_LIMIT_MS} after its stop is counted as lost and gives its place back, so the pages waiting behind it are not held for good (only a Node defect leaves a thread without its exit), and while as many threads are lost as workers may run at once, a further stopped worker keeps its place until its thread has ended. At most {@link WIKI_PAGE_WAITING_LIMIT} pages wait, each holding its page in the host's memory, and one more for each worker that is only ending, whose page was answered: the pages prepared and waiting are never more than the pages the reader holds at once ({@link takeWikiPagePlace}), so a page the reader admitted is never refused because a worker is still ending. A further page is answered at once as `busy`, so the wait is bounded too (the last waiting page gets a worker within two deadlines). A worker that answered its page with a heap of at most {@link WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES} waits {@link WIKI_PAGE_WORKER_IDLE_MS} for the next one and prepares it without loading the reader's code again ({@link servedWikiPageHtml} keeps nothing from one page to the next); a waiting worker keeps the heap its pages grew it to, so one whose heap grew past that bound is stopped after its answer. A worker stopped at the deadline, one that failed and one whose request went are stopped and never reused, so a stopped worker takes nothing of a later page with it.
+ * At most {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} workers prepare pages at once, so pages asked for together keep that many cores busy at most; a page asked for while every worker is busy waits for the first one free, and its deadline counts from then. A worker that is stopped keeps its place until its thread has ended, as it keeps its heap until then, so no new worker starts beside it; a thread that has not ended {@link WIKI_PAGE_WORKER_STOP_LIMIT_MS} after its stop is counted as lost and gives its place back, so the pages waiting behind it are not held for good (only a Node defect leaves a thread without its exit), and while as many threads are lost as workers may run at once, a further stopped worker keeps its place until its thread has ended or a lost thread has ended. At most {@link WIKI_PAGE_WAITING_LIMIT} pages wait, each holding its page in the host's memory, and one more for each worker that is only ending, whose page was answered: the pages prepared and waiting are never more than the pages the reader holds at once ({@link takeWikiPagePlace}), so a page the reader admitted is never refused because a worker is still ending. A further page is answered at once as `busy`, so the wait is bounded too (the last waiting page gets a worker within two deadlines). A worker that answered its page with a heap of at most {@link WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES} waits {@link WIKI_PAGE_WORKER_IDLE_MS} for the next one and prepares it without loading the reader's code again ({@link servedWikiPageHtml} keeps nothing from one page to the next); a waiting worker keeps the heap its pages grew it to, so one whose heap grew past that bound is stopped after its answer. A worker stopped at the deadline, one that failed and one whose request went are stopped and never reused, so a stopped worker takes nothing of a later page with it.
  * The worker is this module's compiled file, loaded from the folder of the running code (`dist`), where the package ships it as a bundle of its own.
  * Called by the Wiki reader for every HTML file it serves.
  * @param html - The page as the Wiki folder holds it.
@@ -208,7 +210,7 @@ function startPageWorker(): Worker | undefined {
 
 /**
  * Stops a worker that holds a place among the busy ones, and gives that place to the first waiting page only once the worker's thread has ended, or once it is counted as lost; meanwhile the worker counts as only ending ({@link endingWorkerCount}), and the line of waiting pages takes one more page.
- * Why: `terminate` only asks the thread to stop, and the thread keeps its heap (up to {@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}) until its `exit`; a place given back at once let a new worker start beside it, so pages stopped at the deadline one after another kept more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} heaps at once. A thread that never ended (only a Node defect leaves it without its exit) kept its place for good, and the pages behind it waited for good; so a thread that has not ended {@link WIKI_PAGE_WORKER_STOP_LIMIT_MS} after its stop is counted as lost ({@link lostWorkerCount}) and gives its place back, unless as many threads are lost as workers may run at once already, and then it keeps its place until it has ended.
+ * Why: `terminate` only asks the thread to stop, and the thread keeps its heap (up to {@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}) until its `exit`; a place given back at once let a new worker start beside it, so pages stopped at the deadline one after another kept more than {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} heaps at once. A thread that never ended (only a Node defect leaves it without its exit) kept its place for good, and the pages behind it waited for good; so a thread that has not ended {@link WIKI_PAGE_WORKER_STOP_LIMIT_MS} after its stop is counted as lost ({@link lostWorkerCount}) and gives its place back, unless as many threads are lost as workers may run at once already, and then it keeps its place until it has ended or a lost thread has ended, whichever comes first: at a lost thread's end the oldest stop that kept its place so ({@link stopsHeldPastTheirLimit}) is counted as lost in that thread's stead and gives its place back, so no page waits behind a place the bound would let go.
  * Called by {@link preparePage} for a worker that was stopped, failed, passed the deadline or lost its request, and by {@link keepIdle} for an idle worker whose time is up, which takes a place for its stop.
  * @param worker - The worker; its place is counted in {@link busyWorkerCount}.
  * @example stopInItsPlace(worker) // the place is free, and the next waiting page starts, once the thread has ended or is counted as lost
@@ -226,19 +228,33 @@ function stopInItsPlace(worker: Worker): void {
     busyWorkerCount -= 1
     startNextWaitingPage()
   }
-  // A thread that has not ended by the stop limit is lost: it gives its place back, unless as many threads are lost already as workers may run at once.
-  const stopLimit = setTimeout(() => {
-    if (lostWorkerCount >= WIKI_PAGE_WORKER_CONCURRENCY_LIMIT) return
+  /** Counts the thread as lost and gives its place back. */
+  const countAsLost = (): void => {
     lostWorkerCount += 1
     isLost = true
     freePlace()
+  }
+  // A thread that has not ended by the stop limit is lost: it gives its place back, unless as many threads are lost already as workers may run at once; then it waits, in its place, for a lost thread to end.
+  const stopLimit = setTimeout(() => {
+    if (lostWorkerCount >= WIKI_PAGE_WORKER_CONCURRENCY_LIMIT) {
+      stopsHeldPastTheirLimit.push(countAsLost)
+      return
+    }
+    countAsLost()
   }, WIKI_PAGE_WORKER_STOP_LIMIT_MS)
   // The stop limit alone holds neither the editor's process nor a test's open.
   stopLimit.unref()
-  /** Once the thread has ended: a lost thread is counted no more, and any other gives its place back. */
+  /** Once the thread has ended: it waits to be counted as lost no more, a lost thread is counted no more and hands its count to the oldest stop held past its limit, and any other gives its place back. */
   const end = (): void => {
     clearTimeout(stopLimit)
-    if (isLost) lostWorkerCount -= 1
+    // A thread that ends while it is held in its place past its limit waits to be counted as lost no more.
+    const heldAt = stopsHeldPastTheirLimit.indexOf(countAsLost)
+    if (heldAt !== -1) stopsHeldPastTheirLimit.splice(heldAt, 1)
+    // The lost threads are below their bound again: the oldest stop held in its place past its limit is lost in this thread's stead and gives its place back.
+    if (isLost) {
+      lostWorkerCount -= 1
+      stopsHeldPastTheirLimit.shift()?.()
+    }
     freePlace()
   }
   // The stop of a worker that ended already settles at once; a stop that fails frees the place too, so no page waits for good.
