@@ -224,6 +224,24 @@ test('the Windows listing of an editor whose own owner cannot be read lists a pr
   })
 })
 
+// Value: protects=the time of a Windows listing on a machine shared by several logon sessions (an RDS or Citrix host, fast user switching): the query reads the owner (GetOwnerSid, one call each) only of a process of another session whose command line names a Codebook profile folder (`codebook-browser-`, the start of every managed profile folder's name), so other users' Electron and WebView2 children, which pass `--user-data-dir` too, cost no call and the listing stays within its 10 s bound at every 500 ms look of a run's attach and close; fails_when=the other sessions are matched by the profile switch `user-data-dir`, which most Chromium-based apps pass, so a few hundred owner calls in a row pass the bound: the attach fails, the close records the exit unverified and the sweep removes nothing; why_new=Cycle 0047 row 235 (P2PERF-1 = P2CLA-9): row 196's query matched the switch; seam=the injected platform, environment and runner, which records the query; no_claim=the time of a real listing on a host with a second logon session, which this machine does not have (the query ran in full and in Constrained Language mode on this machine's Windows PowerShell 5.1)
+test('the Windows listing reads the owner of a process of another logon session only when its command line names a Codebook profile folder', async () => {
+  // Arrange
+  const listing = answeringListing({ stdout: 'editor 1 ?\r\n' })
+  await listProcesses({
+    platform: 'win32',
+    run: listing.run,
+    environment: { SystemRoot: 'C:\\Windows' },
+  })
+  const query = listing.calls[0]?.listingArguments.at(-1) ?? ''
+  // Act: every pattern a command line is compared with; the only comparison decides which processes of another session are printed and pay for an owner call.
+  const comparedPatterns = [...query.matchAll(/-like '([^']*)'/g)].map(
+    (match) => match[1],
+  )
+  // Assert: `-like` compares without case, as Chrome reads its switches on Windows.
+  assert.deepEqual(comparedPatterns, ['*codebook-browser-*'])
+})
+
 // Value: protects=the one program the listing starts on macOS and Linux: `ps` by an absolute path, /bin/ps and else /usr/bin/ps, never a `ps` found in the search path or the current folder, and with neither the listing is refused before any program is started, so a sweep removes nothing (AD30, /ship adversarial review Step 11, with SX2's rule that no lookup uses the current folder); fails_when=the listing starts the bare `ps`, which the search path names (a folder the user or a tool put first can hold another program of that name), or takes no second place where /bin has no ps; why_new=`ps` was started by its bare name; seam=the injected platform, runner and program check
 test('macOS and Linux start ps from /bin, else from /usr/bin, and refuse the listing without starting a program where neither holds it', async () => {
   // Arrange
@@ -292,7 +310,7 @@ test('Windows lists the processes with one bounded PowerShell query, started fro
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "$editor = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = {0}' -f $PID) -Property SessionId -ErrorAction Stop; try { $user = (Invoke-CimMethod -InputObject $editor -MethodName GetOwnerSid -ErrorAction Stop).Sid } catch { $user = '' }; if (-not $user) { $user = '?' }; 'editor {0} {1}' -f $editor.SessionId, $user; Get-CimInstance -ClassName Win32_Process -Property ProcessId,SessionId,CommandLine -ErrorAction Stop | ForEach-Object { $process = $_; if ($process.SessionId -eq $editor.SessionId -or $process.CommandLine -like '*user-data-dir*') { $owner = '?'; if ($process.SessionId -ne $editor.SessionId) { try { $sid = (Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop).Sid } catch { $sid = '' }; if ($sid) { $owner = $sid } }; try { $commandLine = [uri]::EscapeDataString([string]$process.CommandLine) } catch { $commandLine = '' }; '{0} {1} {2} {3}' -f $process.ProcessId, $process.SessionId, $owner, $commandLine } }",
+        "$editor = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = {0}' -f $PID) -Property SessionId -ErrorAction Stop; try { $user = (Invoke-CimMethod -InputObject $editor -MethodName GetOwnerSid -ErrorAction Stop).Sid } catch { $user = '' }; if (-not $user) { $user = '?' }; 'editor {0} {1}' -f $editor.SessionId, $user; Get-CimInstance -ClassName Win32_Process -Property ProcessId,SessionId,CommandLine -ErrorAction Stop | ForEach-Object { $process = $_; if ($process.SessionId -eq $editor.SessionId -or $process.CommandLine -like '*codebook-browser-*') { $owner = '?'; if ($process.SessionId -ne $editor.SessionId) { try { $sid = (Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop).Sid } catch { $sid = '' }; if ($sid) { $owner = $sid } }; try { $commandLine = [uri]::EscapeDataString([string]$process.CommandLine) } catch { $commandLine = '' }; '{0} {1} {2} {3}' -f $process.ProcessId, $process.SessionId, $owner, $commandLine } }",
       ],
       options: {
         timeout: 10_000,
