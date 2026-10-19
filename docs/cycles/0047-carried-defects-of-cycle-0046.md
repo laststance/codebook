@@ -88,7 +88,7 @@ The first review pass read that candidate with the core checklist (115 of 115 el
 
 ## Result and decision
 
-Result pending. Counts: 102 rows, 57 closed, 45 implementing (rows 58 to 102, the findings of the delivery's first review pass).
+Result pending. Counts: 102 rows, 60 closed, 42 implementing (rows 58 to 99, findings of the delivery's first review pass; the parent closed rows 100 to 102).
 
 ## Handoff
 
