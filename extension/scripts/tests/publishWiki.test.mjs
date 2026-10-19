@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import {
   access,
+  cp,
   link,
   lstat,
   mkdir,
@@ -7043,67 +7044,116 @@ for (const climb of [
   })
 }
 
-// Value: protects=the learner's own files in the Wiki folder when a cloned repository carries a publish journal whose stage is the Wiki folder's name in capitals, which names the Wiki folder itself where the file system ignores the case of names (macOS, Windows; or a short name or a trailing dot on Windows); fails_when=the recovery holds the journal's stage to its name alone, so it takes the Wiki folder for the candidate, and each learner's file there is the same bytes as itself, so it is removed; why_new=Cycle 0047 row 58 (SEC-1 = ADV-1, security: the stage that names the Wiki folder under another name); seam=a copy of the shipped publisher whose `node:fs/promises` lets the Wiki folder answer to its name in capitals too (scripts/tests/utils/markedCopyHooks.mjs, `?aliased-folder`); no_claim=which other names a real file system gives one folder
-test('a recovery whose journal names as its stage the Wiki folder under another name of the same folder is refused, and the learner’s file in the Wiki and the journal stay as they were', async () => {
-  // Arrange: a published Wiki with a learner's file, which also answers to its name in capitals; a journal of an earlier version (no operation), whose process is gone and whose stage is that name.
-  const { recoverWikiPublication: recoverWhereTheWikiHasTwoNames } =
-    await loadMarkedCopy('publish-wiki.mjs', '?aliased-folder')
-  const directory = await realpath(
-    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-stage-aliases-wiki-')),
-  )
-  const root = join(directory, 'project'),
-    output = join(root, '.codebook/wiki'),
-    first = join(root, '.codebook/first'),
-    otherName = join(root, '.codebook/WIKI'),
-    journal = `${output}.publish-journal.json`
-  try {
-    await mkdir(root)
-    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
-    await publishWiki({
-      projectRoot: root,
-      outputDirectory: output,
-      stageDirectory: first,
-    })
-    await writeFile(join(output, 'manual.txt'), 'The learner’s own notes')
-    const record = JSON.stringify({
-      projectRoot: root,
-      output,
-      stage: otherName,
-      pid: 99999999,
-    })
-    await writeFile(journal, record)
-    nameFolderAlso(otherName, output)
-
-    // Act
-    const recovery = await recoverWhereTheWikiHasTwoNames({
-      projectRoot: root,
-      outputDirectory: output,
-    }).then(
-      ({ status }) => status,
-      (error) => error.message,
+for (const alias of [
+  {
+    names: 'the Wiki folder',
+    otherName: '.codebook/WIKI',
+    isOfTheKeptPriorWiki: false,
+    hasNoFileIds: false,
+  },
+  {
+    names: 'the kept prior Wiki',
+    otherName: '.codebook/WIKI.PREVIOUS-1',
+    isOfTheKeptPriorWiki: true,
+    hasNoFileIds: false,
+  },
+  {
+    names:
+      'the Wiki folder, on a volume that answers a file id of 0 for every entry,',
+    otherName: '.codebook/WIKI',
+    isOfTheKeptPriorWiki: false,
+    hasNoFileIds: true,
+  },
+  {
+    names:
+      'the kept prior Wiki, on a volume that answers a file id of 0 for every entry,',
+    otherName: '.codebook/WIKI.PREVIOUS-1',
+    isOfTheKeptPriorWiki: true,
+    hasNoFileIds: true,
+  },
+]) {
+  // Value: protects=the learner's own files in the Wiki folder and in the kept prior Wiki when a cloned repository carries a publish journal whose stage is the name in capitals of one of them, which names that folder itself where the file system ignores the case of names (macOS, Windows; or a short name or a trailing dot on Windows), also on a volume that answers a file id of 0 for every entry; fails_when=the recovery holds the journal's stage to its name alone, compares it with the Wiki folder only, or by a file id alone, so it takes that folder for the candidate, and each learner's file there that the journal names as a copy is the same bytes as the Wiki's, so it is removed; why_new=Cycle 0047 row 58 (SEC-1 = ADV-1, security: the stage that names the Wiki folder under another name); the kept prior Wiki: Cycle 0047 row 119 (P2TEST-2 = P2COV-2); a file id of 0: Cycle 0047 row 121 (ADV2-9); seam=a copy of the shipped publisher whose `node:fs/promises` lets the folder answer to its name in capitals too, and answers a file id of 0 where the row says so (scripts/tests/utils/markedCopyHooks.mjs, `?aliased-folder`); no_claim=which other names a real file system gives one folder, and a volume that answers a file id of 0 and names a folder's real path in the case it was asked for
+  test(`a recovery whose journal names as its stage ${alias.names} under another name of the same folder is refused, and the learner’s files in the Wiki and in the kept prior Wiki and the journal stay as they were`, async () => {
+    // Arrange: a published Wiki with a learner's file and, beside it, the kept prior Wiki of a publish stopped after both its moves, a copy of it; the folder of the row also answers to its name in capitals; a journal of this version, whose process is gone, names that name as its stage and the learner's file as a copy that began.
+    const { recoverWikiPublication: recoverWhereAFolderHasTwoNames } =
+      await loadMarkedCopy('publish-wiki.mjs', '?aliased-folder')
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-stage-aliases-')),
     )
+    const root = join(directory, 'project'),
+      output = join(root, '.codebook/wiki'),
+      first = join(root, '.codebook/first'),
+      backup = join(root, '.codebook/wiki.previous-1'),
+      otherName = join(root, alias.otherName),
+      journal = `${output}.publish-journal.json`
+    try {
+      await mkdir(root)
+      await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+      await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: first,
+      })
+      await writeFile(join(output, 'manual.txt'), 'The learner’s own notes')
+      await cp(output, backup, { recursive: true })
+      const manifestSha256 = createHash('sha256')
+        .update(await readFile(join(output, 'codebook-wiki.json')))
+        .digest('hex')
+      const record = JSON.stringify({
+        projectRoot: root,
+        output,
+        stage: otherName,
+        backup,
+        pid: 99999999,
+        id: '00000000-0000-4000-8000-000000000000',
+        operation: 'publish',
+        manifestSha256,
+        priorManifestSha256: manifestSha256,
+        priorLegacy: false,
+        learnerCopies: ['manual.txt'],
+      })
+      await writeFile(journal, record)
+      nameFolderAlso(otherName, alias.isOfTheKeptPriorWiki ? backup : output, {
+        hasNoFileIds: alias.hasNoFileIds,
+      })
 
-    // Assert
-    assert.deepEqual(
-      {
-        recovery,
-        learnerFile: await readFile(join(output, 'manual.txt'), 'utf8').catch(
-          () => 'deleted',
-        ),
-        journal: await readFile(journal, 'utf8').catch(() => 'removed'),
-      },
-      {
-        recovery:
-          'The Wiki publication journal does not identify a sibling stage/backup.',
-        learnerFile: 'The learner’s own notes',
-        journal: record,
-      },
-    )
-  } finally {
-    nameFolderAlso(undefined)
-    await rm(directory, { recursive: true, force: true })
-  }
-})
+      // Act
+      const recovery = await recoverWhereAFolderHasTwoNames({
+        projectRoot: root,
+        outputDirectory: output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          recovery,
+          learnerFileInTheWiki: await readFile(
+            join(output, 'manual.txt'),
+            'utf8',
+          ).catch(() => 'deleted'),
+          learnerFileInTheKeptPriorWiki: await readFile(
+            join(backup, 'manual.txt'),
+            'utf8',
+          ).catch(() => 'deleted'),
+          journal: await readFile(journal, 'utf8').catch(() => 'removed'),
+        },
+        {
+          recovery:
+            'The Wiki publication journal does not identify a sibling stage/backup.',
+          learnerFileInTheWiki: 'The learner’s own notes',
+          learnerFileInTheKeptPriorWiki: 'The learner’s own notes',
+          journal: record,
+        },
+      )
+    } finally {
+      nameFolderAlso(undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+}
 
 // Value: protects=the learner's own files and the published manifest and record of a Wiki that a recovery has just moved back from its backup name, when a cloned repository carries a publish journal whose stage is the Wiki folder's name in capitals and the Wiki folder was missing at the recovery's first look (a publish stopped between its two moves); fails_when=the stage is held to the other names of the Wiki folder and of the kept prior Wiki only before the prior Wiki is moved back, when the other name names nothing, so the recovery then takes the restored Wiki for the candidate, writes the journal's prepared manifest and record over its own and removes each learner's file the journal names; why_new=Cycle 0047 row 131 (RT2-1, security); seam=a copy of the shipped publisher whose `node:fs/promises` lets the Wiki folder answer to its name in capitals too (scripts/tests/utils/markedCopyHooks.mjs, `?aliased-folder`); no_claim=a stage that is another folder of its own, whose candidate the recovery puts back
 test('a recovery whose journal names as its stage the Wiki folder under another name while the Wiki folder is missing is refused once the prior Wiki is back, and the Wiki’s manifest, record and learner’s file and the journal stay as they were', async () => {

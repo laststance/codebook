@@ -3,19 +3,38 @@ import { sep } from 'node:path'
 
 export * from 'node:fs/promises'
 
-/** The other name a test gave a folder and the folder it names; undefined while none is given. */
+/** The other name a test gave a folder, the folder it names, and whether every status answers a file id of 0; undefined while none is given. */
 let alias
 
 /**
  * Gives a folder another name beside it, as a file system does that ignores the case of names (macOS, Windows) or that takes a short name or a name with a trailing dot for the same entry (Windows): every call of this module for the other name, or for a path below it, goes to the folder, as one folder answers to both names there. Called by the publisher's tests before they recover a Wiki with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
  * @param {string | undefined} otherName - The other name, as a whole path; `undefined` to give none.
  * @param {string} [folder] - The folder it names.
+ * @param {{ hasNoFileIds?: boolean }} [volume] - `hasNoFileIds`: every `lstat` and `stat` of this module answers a file id (`ino`) of 0, as some SMB and FAT volumes do for every entry.
  * @returns {void}
  * @example
- * nameFolderAlso('/repo/.codebook/WIKI', '/repo/.codebook/wiki')
+ * nameFolderAlso('/repo/.codebook/WIKI', '/repo/.codebook/wiki', { hasNoFileIds: true })
  */
-export function nameFolderAlso(otherName, folder) {
-  alias = otherName === undefined ? undefined : { otherName, folder }
+export function nameFolderAlso(
+  otherName,
+  folder,
+  { hasNoFileIds = false } = {},
+) {
+  alias =
+    otherName === undefined ? undefined : { otherName, folder, hasNoFileIds }
+}
+
+/**
+ * The status a call of this module answers: the status itself, with a file id of 0 while {@link nameFolderAlso} gave a volume without file ids.
+ * @param {import('node:fs').Stats | import('node:fs').BigIntStats} status - What `lstat` or `stat` answered.
+ * @returns {import('node:fs').Stats | import('node:fs').BigIntStats} The status as this volume answers it.
+ * @example
+ * statusAsAnswered(await fileSystem.lstat('/repo/.codebook/wiki', { bigint: true })).ino // => 0n after nameFolderAlso(…, { hasNoFileIds: true })
+ */
+function statusAsAnswered(status) {
+  // A volume without file ids answers 0 for every entry, in the type the caller asked for.
+  if (alias?.hasNoFileIds) status.ino = typeof status.ino === 'bigint' ? 0n : 0
+  return status
 }
 
 /**
@@ -47,8 +66,10 @@ const throughOtherName =
   (path, ...rest) =>
     call(pathOf(path), ...rest)
 
-export const lstat = throughOtherName(fileSystem.lstat)
-export const stat = throughOtherName(fileSystem.stat)
+export const lstat = (path, ...rest) =>
+  throughOtherName(fileSystem.lstat)(path, ...rest).then(statusAsAnswered)
+export const stat = (path, ...rest) =>
+  throughOtherName(fileSystem.stat)(path, ...rest).then(statusAsAnswered)
 export const realpath = throughOtherName(fileSystem.realpath)
 export const readdir = throughOtherName(fileSystem.readdir)
 export const readFile = throughOtherName(fileSystem.readFile)

@@ -283,7 +283,7 @@ async function holdOfPath(paths, entries) {
   };
 }
 
-/** Whether a status and another status or the record of a written file ({@link writeOwnFile}), all with bigint ids, are of one file: the same device and file id. Called by {@link folderLookOf} and {@link isSameFileAt}. @example isSameFile(await stat(a, { bigint: true }), await stat(a, { bigint: true })) // => true */
+/** Whether a status and another status or the record of a written file ({@link writeOwnFile}), all with bigint ids, are of one file: the same device and file id. Called by {@link folderLookOf}, {@link isSameFileAt} and {@link isSameFileId}. @example isSameFile(await stat(a, { bigint: true }), await stat(a, { bigint: true })) // => true */
 const isSameFile = (status, other) => status.dev === other.dev && status.ino === other.ino;
 
 /** Takes the look a publish holds each folder of its stage to before it writes into it: the folder's real path must be the stage's real path with the folder's place in it, so no link stands on the way inside the stage, and its device and file id must stay those it had when the publish first wrote there. Called by {@link publishWiki} and {@link prepareWikiStage} for the candidate, and by {@link restoreManifestHeld} for the Wiki folder, once each. @returns The look, which answers whether a folder still holds; a folder that cannot be looked at does not, nor does any folder of a stage whose real path could not be named when the look was taken. @example const isFolderWhereItWas = await folderLookOf('/repo/.codebook/next'); await isFolderWhereItWas('/repo/.codebook/next/pages') // => false once pages was swapped for a link */
@@ -1103,12 +1103,17 @@ const isSiblingBackup = (backup, output) => backup === undefined || isSiblingPat
 /** Whether a publish journal names the generations it moves: the new manifest's digest, whether the prior Wiki was adopted as legacy and, with a backup, the prior manifest's digest. Called by {@link requirePublishJournal}. @example namesGenerations({ manifestSha256: '…', priorLegacy: false }) // => true for a journal without a backup */
 const namesGenerations = record => HASH.test(record.manifestSha256) && typeof record.priorLegacy === 'boolean' && (record.backup === undefined || HASH.test(record.priorManifestSha256));
 
-/** Whether a publish journal's stage is, on this file system, the Wiki folder or the kept prior Wiki under another name, by device and file id: a file system that ignores the case of names (macOS, Windows), or that takes a short name or a name with a trailing dot for the same entry (Windows), gives one folder several names beside the output, and the recovery would take the Wiki for the candidate and remove the learner's files from it, each the same bytes as itself. A file id of 0, which some file systems answer for every entry, tells nothing. Called by {@link requireStageOfItsOwn}. @example await isOtherNameOfAGeneration('/repo/.codebook/WIKI', '/repo/.codebook/wiki', undefined) // => true where names of another case name one folder */
+/** Whether a publish journal's stage is, on this file system, the Wiki folder or the kept prior Wiki under another name: a file system that ignores the case of names (macOS, Windows), or that takes a short name or a name with a trailing dot for the same entry (Windows), gives one folder several names beside the output, and the recovery would take the Wiki for the candidate and remove the learner's files from it, each the same bytes as itself. The stage is one of them by device and file id ({@link isSameFileId}), or by its real path, which `realpath` names as `realpath.native` does: in the case, the long name and the form without a trailing dot that the folder has on macOS and Windows, so a volume that answers a file id of 0 for every entry (some SMB and FAT volumes) is judged too. Called by {@link requireStageOfItsOwn}. @example await isOtherNameOfAGeneration('/repo/.codebook/WIKI', '/repo/.codebook/wiki', undefined) // => true where names of another case name one folder */
 async function isOtherNameOfAGeneration(stage, output, backup) {
-  const statusOf = path => path === undefined ? undefined : lstat(path, { bigint: true }).catch(() => undefined);
-  const [stageStatus, ...generations] = await Promise.all([stage, output, backup].map(statusOf));
-  return stageStatus !== undefined && stageStatus.ino !== 0n && generations.some(status => status !== undefined && isSameFile(stageStatus, status));
+  const [stageLook, ...generationLooks] = await Promise.all([stage, output, backup].map(entryLookOf));
+  return generationLooks.some(look => isSameFileId(stageLook.status, look.status) || stageLook.real !== undefined && stageLook.real === look.real);
 }
+
+/** How the file system names an entry: its status, read without following it and with bigint ids, and its real path; each undefined where it cannot be read, as for a missing entry, and both for no path. Called by {@link isOtherNameOfAGeneration}. @example await entryLookOf('/repo/.codebook/WIKI') // => { status: <BigIntStats>, real: '/repo/.codebook/wiki' } where names of another case name one folder */
+const entryLookOf = async path => path === undefined ? {} : { status: await lstat(path, { bigint: true }).catch(() => undefined), real: await realpath(path).catch(() => undefined) };
+
+/** Whether two statuses, both read, name one file by a file id that tells: the same device and file id ({@link isSameFile}), the id not 0, which some volumes answer for every entry. Called by {@link isOtherNameOfAGeneration}. @example isSameFileId({ dev: 1n, ino: 0n }, { dev: 1n, ino: 0n }) // => false */
+const isSameFileId = (status, other) => status !== undefined && other !== undefined && status.ino !== 0n && isSameFile(status, other);
 
 /** The refusal of a publish journal that names no sibling stage or backup of its own. Read by {@link requirePublishJournal} and {@link requireStageOfItsOwn}. */
 const SIBLING_JOURNAL_REFUSAL = 'The Wiki publication journal does not identify a sibling stage/backup.';
