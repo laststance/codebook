@@ -36,7 +36,7 @@ type WikiPublishWatch<Published> = {
   unreadableTokenSinceMs: number | undefined
 }
 
-/** What one look found: the watch's end, `nothing` (a complete look, or one skipped because nothing was written, found nothing new; a publish token that stayed unreadable for the grace is such a look), `incomplete` (the look could not finish: a new publish whose manifest is still being written, a publish token that cannot be read at this moment, or a probe for blocking files that failed; the next look is forced, and no look that is incomplete ends the watch) or `retry` (the site changed under the look, which is taken again at once). */
+/** What one look found: the watch's end, `nothing` (a complete look, or one skipped because nothing was written, found nothing new; a publish token that stayed unreadable for the grace is such a look, whose stamp is not kept, so the next look reads the token again), `incomplete` (the look could not finish: a new publish whose manifest is still being written, a publish token that cannot be read at this moment, or a probe for blocking files that failed; the next look is forced, and no look that is incomplete ends the watch) or `retry` (the site changed under the look, which is taken again at once). */
 type WikiPublishLook<Published> =
   WikiPublishWait<Published> | 'nothing' | 'incomplete' | 'retry'
 
@@ -181,7 +181,7 @@ function isTokenUnreadableNow<Published>(
  * Why: the publisher replaces the site with two renames, and between them no Wiki folder is there, so a token that cannot be read is first a site being replaced. A publisher that failed between its renames leaves no folder for good: after the chat's reply ended, waiting out the 15 minute bound for it would only keep the learner from the run's end, which names the missing Wiki and the request that recovers it ({@link classifyWikiUpdateEnd}).
  *
  * @param watch - The watch.
- * @returns `incomplete`, with the next look forced, until the token stayed unreadable for `unreadableGraceMs` since a look first found it so; `nothing` after that, a look that found no new publish, which ends the watch once the reply ended and keeps it going before.
+ * @returns `incomplete` until the token stayed unreadable for `unreadableGraceMs` since a look first found it so; `nothing` after that, a look that found no new publish, which ends the watch once the reply ended and keeps it going before. Either way the next look is forced, so a token that becomes readable while nothing the stamp names changed is read.
  * @example
  * waitForReadableToken(watch) // => 'incomplete' right after the token became unreadable
  */
@@ -189,6 +189,8 @@ function waitForReadableToken<Published>(
   watch: WikiPublishWatch<Published>,
 ): 'nothing' | 'incomplete' {
   watch.unreadableTokenSinceMs ??= watch.now()
+  // A token that could not be read says nothing of the site the stamp names, so the next look reads it again, also after the grace: a token that becomes readable with the same stamp is not skipped.
+  watch.lookedAtStamp = undefined
   // A token that stays unreadable for the grace is no swap under way any more.
   if (
     watch.now() - watch.unreadableTokenSinceMs >=
@@ -196,7 +198,6 @@ function waitForReadableToken<Published>(
   )
     return 'nothing'
   // A site that is being replaced at this moment is neither the old one nor a new one yet; look again next time.
-  watch.lookedAtStamp = undefined
   return 'incomplete'
 }
 
