@@ -61,7 +61,9 @@ const UNLINKED_NAME = 'data-codebook-unlinked'
 const SELECT_START = /<select/i
 /** A noscript start tag in any case: only a noscript element takes the scripting flag, so a page without one reads alike with scripting on and off. */
 const NOSCRIPT_START = /<noscript/i
-/** A start tag that leaves svg and MathML content and adds nothing a page shows: in such content every browser closes its elements at a meta and puts in the meta by the head's rules, which close it at once. The reader's script tag follows it where Chrome's reading leaves such content open at the tag's place, as a script tag there would be an svg or MathML element, which loads nothing. */
+/** An svg or a math start tag in any case: only such an element opens svg or MathML content, so where none comes before a place no reading has such content open there. */
+const FOREIGN_CONTENT_START = /<(?:svg|math)/i
+/** A start tag that leaves svg and MathML content and adds nothing a page shows: in such content every browser closes its elements at a meta and puts in the meta by the head's rules, which close it at once. The reader's script tag follows it where a reading the filter judges the page under leaves such content open at the tag's place ({@link isForeignContentOpenInAnyReading}), as a script tag there would be an svg or MathML element in that reading, which loads nothing. */
 const FOREIGN_CONTENT_EXIT = '<meta>'
 
 /**
@@ -262,7 +264,7 @@ function withEdits(page: string, edits: Iterable<Edit>): string {
 }
 
 /**
- * The readings ({@link HtmlReading}) of a page that a browser may take and the filter judges it under: Chrome 151's with scripting first, then, for a page that holds a select or a noscript start tag, each combination of the select rules before 2025 and scripting off by which it may read otherwise; called by {@link withNoLinkAnyReadingRefuses}.
+ * The readings ({@link HtmlReading}) of a page that a browser may take and the filter judges it under: Chrome 151's with scripting first, then, for a page that holds a select or a noscript start tag, each combination of the select rules before 2025 and scripting off by which it may read otherwise; called by {@link withNoLinkAnyReadingRefuses} for each round and by {@link isForeignContentOpenInAnyReading} for the place of the reader's script tag.
  * A page without a select start tag reads alike under both select rules, and one without a noscript start tag reads alike with scripting on and off ({@link SELECT_START}, {@link NOSCRIPT_START}), so such a page takes no reading beside Chrome's.
  * @param page - The page.
  * @returns The readings, Chrome's with scripting first.
@@ -310,6 +312,32 @@ function renamesUnder(page: string, readings: readonly HtmlReading[]): Edit[] {
 }
 
 /**
+ * Whether a reading the filter judges a page under ({@link readingsOf}) leaves svg or MathML content open at a place of the page, so that a script tag put in there would be an svg or MathML element in that reading, which loads nothing; called by {@link withServedAddresses} for the place of the reader's script tag, before it puts the tag in.
+ * Chrome's reading answers by the reading of the whole page the caller made. Each other reading reads the page up to the place, and its answer is whether a start tag put in at that end would take the rules of svg or MathML content ({@link readHtmlPage}): the tokens before the place build the stack a tag there meets. Where that reading reads the place inside a text, a comment or a tag, a tag put in there is no tag in it, and the answer only decides whether a meta, which adds nothing a page shows, goes in too. Without an svg or a math start tag before the place no reading is asked ({@link FOREIGN_CONTENT_START}), and a page without a select or a noscript start tag before it takes no reading beside Chrome's.
+ * @param page - The page as the Wiki folder holds it.
+ * @param place - Where the tag would go: the start of the `</body>` Chrome's reading took as the body's end, or the page's end.
+ * @param openInChromeReading - Whether Chrome's reading leaves such content open there.
+ * @returns Whether any reading leaves such content open at the place.
+ * @example
+ * isForeignContentOpenInAnyReading('<body><select><keygen><svg><g></select></body>', 39, false) // => true: by the select rules before 2025 the keygen closes the select, so the svg stays open
+ */
+function isForeignContentOpenInAnyReading(
+  page: string,
+  place: number,
+  openInChromeReading: boolean,
+): boolean {
+  if (openInChromeReading) return true
+  const beforePlace = page.slice(0, place)
+  if (!FOREIGN_CONTENT_START.test(beforePlace)) return false
+  // Chrome's reading answered; each other reading reads the page up to the place.
+  return readingsOf(beforePlace)
+    .slice(1)
+    .some(
+      (reading) => readHtmlPage(beforePlace, reading).pageEndInForeignContent,
+    )
+}
+
+/**
  * Takes the effect from every attribute that a reading of a page other than Chrome's refuses ({@link readingsOf}), until no reading finds one; called by {@link withServedAddresses} on the page Chrome's reading served.
  * Chrome's reading finds nothing more to take away on the page its own edits made: a rename or a rebound value changes only its own tag, and the reader's script tag stands between two tags of Chrome's reading ({@link withServedAddresses}). Another reading may find an attribute in what Chrome reads as the text of a style, an xmp, an iframe, a title, a plaintext, a CDATA section or a noscript. A rename in one reading can change another reading's end tags (a page may name an element like an attribute and end it: where the older select rules read a link, Chrome may read the end of an element named `href` that closes an svg in it, and once renamed that end closes nothing, so a script after it is an svg script whose text Chrome reads as tags), so after a round of renames every reading reads the page again. Each round renames at least one name, never one renamed before, so the rounds end; a page built to need many meets the worker's deadline ({@link servedWikiPageOffThread}).
  * @param servedByChrome - The page as Chrome's reading served it.
@@ -336,8 +364,8 @@ function withNoLinkAnyReadingRefuses(servedByChrome: string): string {
  * Refused are an address of another scheme (`javascript:`, `data:`, `file:`, `vscode-insiders:`, an editor address that is not Codebook's own …), a refresh (`<meta http-equiv="refresh">`), a frame's own page (`srcdoc`) and an svg animation of an address, each read as a browser reads its value ({@link isRefusedAttribute}). The attribute's name becomes `data-codebook-unlinked`, so the element and its value stay and a browser follows nothing. A Codebook address in a link, a form's action or a button's form action gets the serving editor's scheme, in whatever form a browser reads it ({@link reboundAddressOf}).
  *
  * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is the publisher's (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), so a page reads alike published today and served. One published site works in both editors, as each binds Codebook's addresses to itself.
- * How: the page is read as Chrome 151 reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. A refused attribute's name is replaced by letters and hyphens, and a rebound value keeps its place, so the page is read as before. The reader opens in the system's default browser, which may read a select by the rules before 2025 or run without scripting; so a page with a select or a noscript is then read under each of those readings too, and an attribute any of them refuses loses its effect as well, also where Chrome reads it as text ({@link withNoLinkAnyReadingRefuses}); Codebook's addresses are rebound by Chrome's reading alone. On an ordinary page the time grows with the page's size, and a page with a select and a noscript takes up to four readings. A page built for it can make the HTML parser's own rules take time that grows with the square of its nesting (13 s to minutes for 1 MB), which no reading of the tags avoids; so the Wiki reader runs this function only on a worker thread, which it stops after {@link WIKI_PAGE_SERVE_DEADLINE_MS} ({@link servedWikiPageOffThread}).
- * The reader's own script tag, when the caller hands one, goes in by the same pass, at the start of the `</body>` Chrome's reading took as the body's end ({@link readHtmlPage}): there Chrome reads between two tags, so the tag starts and ends a script element of its own and changes no other tag; a `</body>` in a comment, a value or a script's text, or written in capitals, is read as a browser reads it. A page without such an end gets the tag at its end, and the filter reads the page with the tag in it, as the tag may close a tag the page leaves open. Where svg or MathML content is open at the tag's place (an element of it other than an integration point is Chrome's current node), a script tag would be an svg or MathML element, which loads nothing; so a meta that leaves that content goes in before the tag ({@link FOREIGN_CONTENT_EXIT}), and the filter reads the page with both in it, as Chrome then reads what follows outside that content.
+ * How: the page is read as Chrome 151 reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. A refused attribute's name is replaced by letters and hyphens, and a rebound value keeps its place, so the page is read as before. The reader opens in the system's default browser, which may read a select by the rules before 2025 or run without scripting; so a page with a select or a noscript is then read under each of those readings too, and an attribute any of them refuses loses its effect as well, also where Chrome reads it as text ({@link withNoLinkAnyReadingRefuses}); Codebook's addresses are rebound by Chrome's reading alone. On an ordinary page the time grows with the page's size, and a page with a select and a noscript takes up to four readings, and up to three more of the page up to the reader's script tag where an svg or a math start tag comes before it ({@link isForeignContentOpenInAnyReading}). A page built for it can make the HTML parser's own rules take time that grows with the square of its nesting (13 s to minutes for 1 MB), which no reading of the tags avoids; so the Wiki reader runs this function only on a worker thread, which it stops after {@link WIKI_PAGE_SERVE_DEADLINE_MS} ({@link servedWikiPageOffThread}).
+ * The reader's own script tag, when the caller hands one, goes in by the same pass, at the start of the `</body>` Chrome's reading took as the body's end ({@link readHtmlPage}): there Chrome reads between two tags, so the tag starts and ends a script element of its own and changes no other tag; a `</body>` in a comment, a value or a script's text, or written in capitals, is read as a browser reads it. A page without such an end gets the tag at its end, and the filter reads the page with the tag in it, as the tag may close a tag the page leaves open. Where svg or MathML content is open at the tag's place in Chrome's reading or in another reading the filter judges the page under, by the select rules before 2025 or without scripting (an element of it other than an integration point is the current node there), a script tag would be an svg or MathML element in that reading, which loads nothing; so a meta that leaves that content goes in before the tag ({@link FOREIGN_CONTENT_EXIT}, {@link isForeignContentOpenInAnyReading}), and the filter reads the page with both in it, as that reading then reads what follows outside that content.
  * Called by {@link rebindDeepWikiEditorLinks} last, for every page the reader serves, so the page served is this function's output.
  *
  * @param html - The page as the Wiki folder holds it.
@@ -361,19 +389,29 @@ export function withServedAddresses(
     bodyEndInForeignContent,
     pageEndInForeignContent,
   } = readHtmlPage(html)
-  // Without a body end the tag goes at the page's end, after a tag that leaves svg or MathML content open there, and the filter reads the page with them.
+  // Without a body end the tag goes at the page's end, after a tag that leaves svg or MathML content where a reading leaves it open there, and the filter reads the page with them.
   if (tagAtBodyEnd !== undefined && bodyEndTagStart === undefined)
     return withServedAddresses(
       html +
-        (pageEndInForeignContent ? FOREIGN_CONTENT_EXIT : '') +
+        (isForeignContentOpenInAnyReading(
+          html,
+          html.length,
+          pageEndInForeignContent,
+        )
+          ? FOREIGN_CONTENT_EXIT
+          : '') +
         tagAtBodyEnd,
       editorScheme,
     )
-  // In svg or MathML content at the body's end the tag follows a tag that leaves that content, which changes how Chrome reads the rest of the page, so the filter reads the page with both in it.
+  // Where a reading leaves svg or MathML content open at the body's end, the tag follows a tag that leaves that content, which changes how that reading reads the rest of the page, so the filter reads the page with both in it.
   if (
     tagAtBodyEnd !== undefined &&
     bodyEndTagStart !== undefined &&
-    bodyEndInForeignContent
+    isForeignContentOpenInAnyReading(
+      html,
+      bodyEndTagStart,
+      bodyEndInForeignContent,
+    )
   )
     return withServedAddresses(
       html.slice(0, bodyEndTagStart) +

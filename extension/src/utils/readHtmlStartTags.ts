@@ -1088,7 +1088,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
 }
 
 /**
- * Reads a page as one reading of a browser does ({@link HtmlReading}): its original start tags, using full HTML tree feedback, where the end tag of its body starts, and whether svg or MathML content is open there and at the page's end; for the Wiki address filter, which also puts the reader's script tag at that end, or without one at the page's end, after a tag that leaves such content.
+ * Reads a page as one reading of a browser does ({@link HtmlReading}): its original start tags, using full HTML tree feedback, where the end tag of its body starts, and whether svg or MathML content is open there and at the page's end; for the Wiki address filter, which also puts the reader's script tag at that end, or without one at the page's end, after a tag that leaves such content where a reading leaves it open there; to learn that of a reading beside Chrome's, the filter reads the page up to the tag's place by that reading and asks whether such content is open at that end.
  * Raw attribute slices keep duplicates and untouched text; the tree parser decides where markup is active.
  * @param html - The unchanged page source.
  * @param reading - The select rules and the scripting flag to read the page with; Chrome 151's with scripting when omitted.

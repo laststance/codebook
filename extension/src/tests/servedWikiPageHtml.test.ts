@@ -3,7 +3,11 @@ import { test } from 'node:test'
 
 import type * as Parse5 from 'parse5' with { 'resolution-mode': 'import' }
 
-import { readHtmlStartTags } from '../utils/readHtmlStartTags'
+import {
+  type HtmlReading,
+  readHtmlPage,
+  readHtmlStartTags,
+} from '../utils/readHtmlStartTags'
 import { servedWikiPageHtml } from '../utils/servedWikiPageHtml'
 import { withServedAddresses } from '../utils/withServedAddresses'
 
@@ -11,13 +15,15 @@ import { withServedAddresses } from '../utils/withServedAddresses'
 const parse5: typeof Parse5 = require('parse5')
 
 /**
- * The namespaces of the script elements a browser builds from a page, in tree order: the HTML namespace for a script that loads its file, the svg or MathML one for a script of that content, which loads nothing; called by the tests of the reader's tag in svg and MathML content.
+ * The namespaces of the script elements a browser builds from a page, in tree order, as the pinned parser reads it (by the select rules before 2025): the HTML namespace for a script that loads its file, the svg or MathML one for a script of that content, which loads nothing; called by the tests of the reader's tag in svg and MathML content.
  * @param page - The page as served.
+ * @param scriptingEnabled - Whether the parser reads the page with scripting, so that a noscript holds text; without, it holds markup, as in a browser with JavaScript off.
  * @returns Each script element's namespace.
  * @example
  * scriptNamespaces('<svg><script></script></svg>') // => ['http://www.w3.org/2000/svg']
+ * scriptNamespaces('<noscript><svg><g></noscript><script></script>', false) // => ['http://www.w3.org/2000/svg']
  */
-function scriptNamespaces(page: string): string[] {
+function scriptNamespaces(page: string, scriptingEnabled = true): string[] {
   const found: string[] = []
   const visit = (node: Parse5.DefaultTreeAdapterMap['node']): void => {
     if ('tagName' in node && node.tagName === 'script')
@@ -25,8 +31,31 @@ function scriptNamespaces(page: string): string[] {
     if ('childNodes' in node) for (const child of node.childNodes) visit(child)
     if ('content' in node) visit(node.content)
   }
-  visit(parse5.parse(page))
+  visit(parse5.parse(page, { scriptingEnabled }))
   return found
+}
+
+/** The reader's script tag as {@link servedWikiPageHtml} prints it for the options of the tests of its place. */
+const READER_TAG = '<script src="/w/t/codebook-qa.js"></script>'
+
+/** Every reading the address filter may judge a page under: Chrome 151's with scripting, and each combination of the select rules before 2025 and scripting off. */
+const EVERY_READING: readonly HtmlReading[] = [
+  { selectRules: 'current', scriptingEnabled: true },
+  { selectRules: 'before-2025', scriptingEnabled: true },
+  { selectRules: 'current', scriptingEnabled: false },
+  { selectRules: 'before-2025', scriptingEnabled: false },
+]
+
+/**
+ * Whether Chrome 151's reading leaves svg or MathML content open where the reader's script tag of a served page stands, so that it would build the tag as an svg or MathML script, which loads nothing: the reader's model of that reading ({@link readHtmlPage}) reads the page up to the tag. The pinned parser reads a select by the rules before 2025 only, so this stands for Chrome's tree of a page with a select; called by the tests of the reader's tag in readings beside Chrome's.
+ * @param served - A served page that holds {@link READER_TAG}.
+ * @returns Whether a start tag at the tag's place takes the rules of svg or MathML content in Chrome's reading.
+ * @example
+ * chromeReadingLeavesForeignContentAtReaderTag('<svg><g>' + READER_TAG) // => true
+ */
+function chromeReadingLeavesForeignContentAtReaderTag(served: string): boolean {
+  return readHtmlPage(served.slice(0, served.indexOf(READER_TAG)))
+    .pageEndInForeignContent
 }
 
 // Value: protects=the reader's own script tag at the end of every served Wiki page; fails_when=the publication or the script's address is printed into the tag unescaped, so a quote ends its attribute early, or the text is read as a replacement pattern, so `$&` prints the page's `</body>` inside the tag; why_new=CR3-3; seam=none; no_claim=the reader today serves a publication of hex digits, `@` and decimal digits and an address under `/w/<hex token>/`, which hold neither character
@@ -173,13 +202,16 @@ test('the reader’s script tag loads where svg or MathML content is open at the
     '<body><p>Text</p><math><annotation-xml></body><meta><script src="/w/t/codebook-qa.js"></script>',
     '<body><p>Text</p><svg><foreignObject></body><script src="/w/t/codebook-qa.js"></script>',
   ])
-  assert.deepEqual(served.map(scriptNamespaces), [
-    ['http://www.w3.org/1999/xhtml'],
-    ['http://www.w3.org/1999/xhtml'],
-    ['http://www.w3.org/1999/xhtml'],
-    ['http://www.w3.org/1999/xhtml'],
-    ['http://www.w3.org/1999/xhtml'],
-  ])
+  assert.deepEqual(
+    served.map((page) => scriptNamespaces(page)),
+    [
+      ['http://www.w3.org/1999/xhtml'],
+      ['http://www.w3.org/1999/xhtml'],
+      ['http://www.w3.org/1999/xhtml'],
+      ['http://www.w3.org/1999/xhtml'],
+      ['http://www.w3.org/1999/xhtml'],
+    ],
+  )
 })
 
 // Value: protects=the rule that the page a learner receives is the address filter's output, also after the reader leaves svg content for its own script tag; fails_when=the meta and the tag are put in after the filter read the page, so a CDATA section that the open svg made text after the body's end becomes a bogus comment that ends at its first `>`, and the link after it is served live to Chrome; why_new=Cycle 0047 row 72 (ADV-12), the meta that leaves svg content changes how Chrome reads the rest of the page; seam=none; no_claim=native editor (no browser ran)
@@ -208,4 +240,118 @@ test('a link that leaving svg content for the reader’s tag lets out of a CDATA
     [['data-codebook-unlinked']],
   )
   assert.equal(withServedAddresses(served, 'vscode'), served)
+})
+
+// Value: protects=the reader's update state, its notice of newer pages and its stale-answer notice on a served Wiki page that a browser of the select rules before 2025 reads with svg content open where the reader's script tag goes, though Chrome 151 reads that content closed there; fails_when=only Chrome's reading decides whether a meta that leaves svg or MathML content goes before the tag, so a browser of the older select rules builds the tag as an svg script, which loads nothing, or the page with the meta is not filtered again, so a link it lets out stays live; why_new=Cycle 0047 row 108 (QA-1); seam=the pinned parser reads a select by the rules before 2025, and the reader's model of Chrome's reading of the page up to the tag stands for Chrome's tree; no_claim=native editor (no browser of the older select rules ran)
+test('the reader’s script tag loads in a browser of the select rules before 2025 that leaves svg content open at the tag’s place though Chrome closes it, after a meta that leaves that content, and no reading follows a link of the page', () => {
+  // Arrange: a hidden input in a table body, or a keygen in the body, closes the select by the older rules alone, so the svg after it stays open past the select's end there, to the end of a page without a body end or to a body end Chrome takes; a style after the select's end holds a link to another extension's address, which the older rules read as an svg link.
+  const options = {
+    editorScheme: 'vscode',
+    clientAddress: '/w/t/codebook-qa.js',
+    publication: undefined,
+  } as const
+  const pages = [
+    '<table><tbody><select><input type=hidden><svg><g></select><style><a href=vscode://file/x>x</a></style>',
+    '<body><p>Text</p><select><keygen><svg><g></select><style><a href=vscode://file/x>x</a></style></body>',
+  ]
+
+  // Act
+  const served = pages.map((page) => servedWikiPageHtml(page, options))
+
+  // Assert: a meta precedes the tag, each reading builds the tag as an HTML script, no reading reads a start tag with a link, and filtering again changes nothing.
+  assert.deepEqual(served, [
+    '<table><tbody><select><input type=hidden><svg><g></select><style><a data-codebook-unlinked=vscode://file/x>x</a></style><meta><script src="/w/t/codebook-qa.js"></script>',
+    '<body><p>Text</p><select><keygen><svg><g></select><style><a data-codebook-unlinked=vscode://file/x>x</a></style><meta><script src="/w/t/codebook-qa.js"></script></body>',
+  ])
+  assert.deepEqual(
+    served.map((page) => ({
+      olderSelectRules: scriptNamespaces(page),
+      olderSelectRulesWithoutScripting: scriptNamespaces(page, false),
+      chromeLeavesForeignContentOpen:
+        chromeReadingLeavesForeignContentAtReaderTag(page),
+    })),
+    [
+      {
+        olderSelectRules: ['http://www.w3.org/1999/xhtml'],
+        olderSelectRulesWithoutScripting: ['http://www.w3.org/1999/xhtml'],
+        chromeLeavesForeignContentOpen: false,
+      },
+      {
+        olderSelectRules: ['http://www.w3.org/1999/xhtml'],
+        olderSelectRulesWithoutScripting: ['http://www.w3.org/1999/xhtml'],
+        chromeLeavesForeignContentOpen: false,
+      },
+    ],
+  )
+  assert.deepEqual(
+    served.map((page) =>
+      EVERY_READING.flatMap((reading) =>
+        readHtmlStartTags(page, reading)
+          .flatMap(({ attributes }) => attributes)
+          .filter((attribute) => attribute.name === 'href'),
+      ),
+    ),
+    [[], []],
+  )
+  assert.deepEqual(
+    served.map((page) => withServedAddresses(page, 'vscode')),
+    served,
+  )
+})
+
+// Value: protects=the reader's update state, its notice of newer pages and its stale-answer notice on a served Wiki page that a browser without scripting reads with svg content open where the reader's script tag goes, though Chrome 151 with scripting reads that content as a noscript's text; fails_when=only Chrome's reading decides whether a meta that leaves svg or MathML content goes before the tag, or a reading beside Chrome's is asked only at a body end it takes itself, so a browser with JavaScript off, or a document of DOMParser, builds the tag as an svg script, which loads nothing; why_new=Cycle 0047 row 108 (QA-1), the scripting-off reading the filter also judges; seam=the pinned parser reads a page without scripting when asked, and the reader's model of Chrome's reading of the page up to the tag stands for Chrome's tree; no_claim=native editor (no browser ran), and whether the tag's script runs where scripting is off, which only a reading that later turns scripting on (a DOMParser document adopted by a page) needs
+test('the reader’s script tag is an HTML script in a reading without scripting that leaves svg content open at the tag’s place though Chrome reads it as a noscript’s text, after a meta that leaves that content, and no reading follows a link of the page', () => {
+  // Arrange: an svg in a noscript, which only a reading without scripting reads as markup; in the head it stays open past the noscript's end to the end of a page without a body end, and in the body a desc in it ends the body's scope, so that reading takes no body end where Chrome takes one; a style in the svg holds a link to another extension's address.
+  const options = {
+    editorScheme: 'vscode',
+    clientAddress: '/w/t/codebook-qa.js',
+    publication: undefined,
+  } as const
+  const pages = [
+    '<noscript><svg><g></noscript><style><a href=vscode://file/x>x</a></style>',
+    '<body><p>Text</p><noscript><svg><desc><svg><g><style><a href=vscode://file/x>x</a></style></noscript></body>',
+  ]
+
+  // Act
+  const served = pages.map((page) => servedWikiPageHtml(page, options))
+
+  // Assert: a meta precedes the tag, each reading builds the tag as an HTML script, no reading reads a start tag with a link, and filtering again changes nothing.
+  assert.deepEqual(served, [
+    '<noscript><svg><g></noscript><style><a data-codebook-unlinked=vscode://file/x>x</a></style><meta><script src="/w/t/codebook-qa.js"></script>',
+    '<body><p>Text</p><noscript><svg><desc><svg><g><style><a data-codebook-unlinked=vscode://file/x>x</a></style></noscript><meta><script src="/w/t/codebook-qa.js"></script></body>',
+  ])
+  assert.deepEqual(
+    served.map((page) => ({
+      withScripting: scriptNamespaces(page),
+      withoutScripting: scriptNamespaces(page, false),
+      chromeLeavesForeignContentOpen:
+        chromeReadingLeavesForeignContentAtReaderTag(page),
+    })),
+    [
+      {
+        withScripting: ['http://www.w3.org/1999/xhtml'],
+        withoutScripting: ['http://www.w3.org/1999/xhtml'],
+        chromeLeavesForeignContentOpen: false,
+      },
+      {
+        withScripting: ['http://www.w3.org/1999/xhtml'],
+        withoutScripting: ['http://www.w3.org/1999/xhtml'],
+        chromeLeavesForeignContentOpen: false,
+      },
+    ],
+  )
+  assert.deepEqual(
+    served.map((page) =>
+      EVERY_READING.flatMap((reading) =>
+        readHtmlStartTags(page, reading)
+          .flatMap(({ attributes }) => attributes)
+          .filter((attribute) => attribute.name === 'href'),
+      ),
+    ),
+    [[], []],
+  )
+  assert.deepEqual(
+    served.map((page) => withServedAddresses(page, 'vscode')),
+    served,
+  )
 })
