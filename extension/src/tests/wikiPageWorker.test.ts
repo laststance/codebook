@@ -8,6 +8,7 @@ import type * as wikiPageWorkerModule from '../wikiPageWorker'
 import { servedWikiPageOffThread } from '../wikiPageWorker'
 
 import { loadModule } from './utils/loadModule'
+import { pagesServedInChildProcess } from './utils/pagesServedInChildProcess'
 
 /** How the tests serve a page: for the editor `vscode`, with the reader's script at a fixed address and no publication. */
 const PAGE_OPTIONS = {
@@ -117,32 +118,26 @@ function within<Value>(
   ])
 }
 
-// Value: protects=the editor's extension host, in whose process the page worker runs, against a page in the Wiki folder large enough that its preparation takes gigabytes of memory before the deadline (a 20 MB page peaked at 1.6 GB, a 60 MB page at 4.1 GB); fails_when=the page worker starts without a heap limit again, so a page that needs more memory than the limit is prepared and served, or a worker past its heap limit is answered as a failure, whose sentence advises a reload that only runs another worker to the same end, or as a page file too large, whose sentence blames a hand edit; why_new=P2P2; Cycle 0047 row 22 (P3M2) the state too-large; Cycle 0047 row 104 a state of its own, memory-limit; seam=the page-worker module loaded with loadModule and a constants module whose WIKI_PAGE_WORKER_HEAP_LIMIT_MB is 32 MB, so a page of 3 MB stands for one too large for the shipped 256 MB (which refuses a page of 8 MB, see WIKI_PAGE_WORKER_HEAP_LIMIT_MB); no_claim=the peak memory of the editor's process (measured by hand, see the cycle record)
+// Value: protects=the editor's extension host, in whose process the page worker runs, against a page in the Wiki folder large enough that its preparation takes gigabytes of memory before the deadline (a 20 MB page peaked at 1.6 GB, a 60 MB page at 4.1 GB); fails_when=the page worker starts without a heap limit again, so a page that needs more memory than the limit is prepared and served, or a worker past its heap limit is answered as a failure, whose sentence advises a reload that only runs another worker to the same end, or as a page file too large, whose sentence blames a hand edit; why_new=P2P2; Cycle 0047 row 22 (P3M2) the state too-large; Cycle 0047 row 104 a state of its own, memory-limit; Cycle 0047 row 107 (ADV2-1) the workers run in a child process, as a worker at its heap limit can abort its whole process on a Node build without pointer compression; seam=a child process of this Node binary (pagesServedInChildProcess) that loads the page-worker module with loadModule and a constants module whose WIKI_PAGE_WORKER_HEAP_LIMIT_MB is 32 MB, so a page of 3 MB stands for one too large for the shipped 512 MB; no_claim=the peak memory of the editor's process (measured by hand, see WIKI_PAGE_WORKER_HEAP_LIMIT_MB)
 test('a page that needs more memory than a page worker may use is refused at the memory limit, while a small page is still served under the same limit', async () => {
-  // Arrange: a page worker that may use 32 MB of heap, a page of 3 MB of paragraphs and links, and a small page.
-  const { servedWikiPageOffThread: servedUnderSmallHeap } = await loadModule<
-    typeof wikiPageWorkerModule
-  >(join(__dirname, '..', 'wikiPageWorker.js'), {
-    './constants': { ...constants, WIKI_PAGE_WORKER_HEAP_LIMIT_MB: 32 },
-  })
+  // Arrange: a page of 3 MB of paragraphs and links, and a small page, for page workers that may use 32 MB of heap.
   const largePage = `<body>${'<p><a href="https://example.com/x">t</a><span>u</span></p>'.repeat(52_000)}</body>`
-  const limits = {
-    deadlineMs: 20_000,
-    signal: new AbortController().signal,
-  }
+  const smallPage = '<body><p>Small page</p></body>'
 
   // Act
-  const large = await servedUnderSmallHeap(largePage, PAGE_OPTIONS, limits)
-  const small = await servedUnderSmallHeap(
-    '<body><p>Small page</p></body>',
-    PAGE_OPTIONS,
-    limits,
-  )
+  const child = await pagesServedInChildProcess([largePage, smallPage], 32)
 
-  // Assert: only the large page's state is compared, so a page served by mistake is not printed in full; the small page's answer is copied out of the loaded module's context.
+  // Assert: only the large page's state is compared, so a page served by mistake is not printed in full.
   assert.deepEqual(
-    { large: large.state, small: { ...small } },
     {
+      exitCode: child.exitCode,
+      signal: child.signal,
+      large: child.output?.[0]?.state,
+      small: child.output?.[1],
+    },
+    {
+      exitCode: 0,
+      signal: null,
       large: 'memory-limit',
       small: {
         state: 'served',
@@ -152,10 +147,29 @@ test('a page that needs more memory than a page worker may use is refused at the
   )
 })
 
-// Value: protects=the editor's extension host, in whose process every page worker runs: under the former limit of 512 MB one worker took 0.5 to 0.75 GB before it was refused or served (Node 24), two at once twice that, and Electron's V8 may keep every isolate of the process in one pointer-compression area; fails_when=WIKI_PAGE_WORKER_HEAP_LIMIT_MB or WIKI_PAGE_WORKER_CONCURRENCY_LIMIT is raised so that the workers that may run at once may together hold more old-generation heap than one worker could before (512 MB); why_new=Cycle 0047 row 4 (S11-F3); seam=none (the shipped constants); no_claim=the memory of the real editor hosts (VS Code, Cursor), which are measured by hand; that an ordinary page still fits (the test below)
-test('the page workers that may run at once may together use no more heap than one page worker could before Cycle 0047', () => {
-  // Arrange: the heap limit of one page worker until Cycle 0046.
-  const formerHeapLimitOfOneWorkerMb = 512
+// Value: protects=the editor's extension host, and every extension of its window, against a page within the page file limit (2 MiB) whose nested formatting elements drive a page worker to its heap limit: on a Node build without pointer compression (the system Node, or a remote's Node, where the extension runs in a WSL or SSH window) a worker at the 256 MB of Cycle 0047 row 4 aborted the whole process (FATAL ERROR: Reached heap limit, exit 134) in 5 of 10 runs instead of ending its thread with ERR_WORKER_OUT_OF_MEMORY, and tabs restored after the reload ran into it again; fails_when=WIKI_PAGE_WORKER_HEAP_LIMIT_MB is lowered toward 256 MB again, so the child aborts with SIGABRT (in about half the runs at 256 MB on such a build), or a worker at its heap limit is answered otherwise than as memory-limit; why_new=Cycle 0047 row 107 (ADV2-1); seam=a child process of this Node binary (pagesServedInChildProcess) that serves the page through the compiled page-worker module under the shipped constants, so an abort fails this test instead of ending the test runner; no_claim=a Node build with pointer compression (Electron's, in the desktop editors), whose worker ends as memory-limit under either limit, so there the test passes either way; that every page of 2 MiB ends cleanly at 512 MB (29 crafted shapes ended cleanly in the parent's measurement); the time and memory of the run (about 3.4 s and 0.7 GB of the process on the development host)
+test('a 2 MiB page of nested formatting elements that drives a page worker to its heap limit is refused at the memory limit, and the process that runs the worker lives on', async () => {
+  // Arrange: 699,000 nested <b>, 2,097,000 bytes, within the page file limit.
+  const nestedFormattingPage = '<b>'.repeat(699_000)
+
+  // Act
+  const child = await pagesServedInChildProcess([nestedFormattingPage])
+
+  // Assert: an abort shows as the signal SIGABRT and no answer; only the page's state is compared, so a page served by mistake is not printed in full.
+  assert.deepEqual(
+    {
+      exitCode: child.exitCode,
+      signal: child.signal,
+      states: child.output?.map((answer) => answer.state),
+    },
+    { exitCode: 0, signal: null, states: ['memory-limit'] },
+  )
+})
+
+// Value: protects=the editor's extension host, in whose process every page worker runs: each worker may hold up to WIKI_PAGE_WORKER_HEAP_LIMIT_MB of heap, one worker took up to 0.69 GB of the process with a page of 2 MiB at 512 MB (Node 24), and Electron's V8 may keep every isolate of the process in one pointer-compression area; fails_when=WIKI_PAGE_WORKER_HEAP_LIMIT_MB or WIKI_PAGE_WORKER_CONCURRENCY_LIMIT is raised so that the workers that may run at once may together hold more old-generation heap than two workers of 512 MB; why_new=Cycle 0047 row 4 (S11-F3); Cycle 0047 row 107 (ADV2-1) the bound is two workers of 512 MB, not one: row 4's 256 MB per worker let a worker at its limit abort the whole process on a Node build without pointer compression, and the page file limit of 2 MiB that row 4 set too keeps what one page takes; seam=none (the shipped constants); no_claim=the memory of the real editor hosts (VS Code, Cursor), which are measured by hand; that the heap limit is high enough for a page of nested formatting elements (the child-process test above) or for an ordinary page (the test below)
+test('the page workers that may run at once may together use no more heap than two page workers of 512 MB', () => {
+  // Arrange: the heap of two workers of 512 MB, the bound since Cycle 0047 row 107.
+  const boundOfAllWorkersAtOnceMb = 1_024
 
   // Act
   const heapOfAllWorkersAtOnceMb =
@@ -164,7 +178,7 @@ test('the page workers that may run at once may together use no more heap than o
 
   // Assert
   assert.ok(
-    heapOfAllWorkersAtOnceMb <= formerHeapLimitOfOneWorkerMb,
+    heapOfAllWorkersAtOnceMb <= boundOfAllWorkersAtOnceMb,
     `the page workers may use ${heapOfAllWorkersAtOnceMb} MB of heap together`,
   )
 })

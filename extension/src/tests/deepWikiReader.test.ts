@@ -38,6 +38,7 @@ import {
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { fileSystemWhoseRealPathFails } from './utils/fileSystemWhoseRealPathFails'
 import { loadModule } from './utils/loadModule'
+import { readerAnswersInChildProcess } from './utils/readerAnswersInChildProcess'
 import { writeMinimalWiki } from './utils/writeMinimalWiki'
 
 test('generated Wiki reader serves published pages and answers an explicit same-origin question', async () => {
@@ -1043,9 +1044,9 @@ test('a page whose worker fails is answered with status 503 and a sentence for t
   })
 })
 
-// Value: protects=a learner whose page, within the page file limit (WIKI_PAGE_FILE_LIMIT_BYTES) and so maybe one the publisher wrote, needs more memory than a page worker may use: its refusal said the file was too large and may have been changed by hand, and asked for Update LLM Wiki, which renders the same page again; fails_when=a worker that ends at its heap limit (ERR_WORKER_OUT_OF_MEMORY) is answered with the sentence of a page file over the limit or of a failure, or with no refusal page, or an ordinary page is no longer served under the same limit; why_new=Cycle 0047 row 104 (the rest of RT-2); seam=the reader loaded with loadModule and the real page-worker module loaded with a constants module whose WIKI_PAGE_WORKER_HEAP_LIMIT_MB is 32 MB, so a page of 1.5 MB stands for one that needs more than the shipped 256 MB; no_claim=which pages need more than the shipped limit (the constants record measured ones)
+// Value: protects=a learner whose page, within the page file limit (WIKI_PAGE_FILE_LIMIT_BYTES) and so maybe one the publisher wrote, needs more memory than a page worker may use: its refusal said the file was too large and may have been changed by hand, and asked for Update LLM Wiki, which renders the same page again; fails_when=a worker that ends at its heap limit (ERR_WORKER_OUT_OF_MEMORY) is answered with the sentence of a page file over the limit or of a failure, or with no refusal page, or an ordinary page is no longer served under the same limit; why_new=Cycle 0047 row 104 (the rest of RT-2); Cycle 0047 row 107 (ADV2-1) the reader runs in a child process, as a page worker at its heap limit can abort its whole process on a Node build without pointer compression; seam=a child process of this Node binary (readerAnswersInChildProcess) that loads the reader with loadModule and the real page-worker module with a constants module whose WIKI_PAGE_WORKER_HEAP_LIMIT_MB is 32 MB, so a page of 1.5 MB stands for one that needs more than the shipped 512 MB; no_claim=which pages need more than the shipped limit (the constants record measured ones)
 test('a page within the file limit that needs more memory than a page worker may use is answered with 503 and a sentence that asks the editor chat to split it, while a small page is served', async (context) => {
-  // Arrange: a dense page of 1,508,013 bytes and a small page, and a reader whose page workers may use 32 MB of heap.
+  // Arrange: a Wiki with a dense page of 1,508,013 bytes and a small page.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-dense-page-')),
   )
@@ -1069,49 +1070,38 @@ test('a page within the file limit that needs more memory than a page worker may
       includedSources: [],
     }),
   )
-  const workerUnderSmallHeap = await loadModule<typeof wikiPageWorkerModule>(
-    join(__dirname, '..', 'wikiPageWorker.js'),
-    { './constants': { ...constants, WIKI_PAGE_WORKER_HEAP_LIMIT_MB: 32 } },
-  )
-  const { startDeepWikiReader: startReaderUnderSmallHeap } = await loadModule<
-    typeof deepWikiReaderModule
-  >(
-    join(__dirname, '..', 'deepWikiReader.js'),
-    { './wikiPageWorker': workerUnderSmallHeap },
-    { URL },
-  )
-  const reader = await startReaderUnderSmallHeap(
+
+  // Act: the reader, whose page workers may use 32 MB of heap, asked for the dense page and then the small page.
+  const child = await readerAnswersInChildProcess(
     outputDirectory,
     projectRoot,
-    async () => ({ handoff: 'not asked' }),
+    ['dense.html', 'small.html'],
+    32,
   )
-  context.after(() => reader.close())
-
-  // Act
-  const denseResponse = await fetch(new URL('dense.html', reader.url))
+  // The overview's address under the reader's random prefix is written as OVERVIEW, and the prefix itself as READER/.
+  const overviewPath = child.output
+    ? new URL(child.output.readerUrl).pathname
+    : 'no reader'
+  const prefixPath = child.output
+    ? new URL('.', child.output.readerUrl).pathname
+    : 'no reader'
+  const [denseResponse, smallResponse] = child.output?.responses ?? []
   const dense = {
-    status: denseResponse.status,
-    policy: denseResponse.headers.get('content-security-policy'),
-    // The overview's address under this reader's random prefix, written as OVERVIEW.
-    body: (await denseResponse.text()).replaceAll(
-      new URL(reader.url).pathname,
-      'OVERVIEW',
-    ),
+    status: denseResponse?.status,
+    policy: denseResponse?.policy,
+    body: denseResponse?.body.replaceAll(overviewPath, 'OVERVIEW'),
   }
-  const smallResponse = await fetch(new URL('small.html', reader.url))
   const small = {
-    status: smallResponse.status,
-    // This reader's random prefix, written as READER/.
-    body: (await smallResponse.text()).replaceAll(
-      new URL('.', reader.url).pathname,
-      'READER/',
-    ),
+    status: smallResponse?.status,
+    body: smallResponse?.body.replaceAll(prefixPath, 'READER/'),
   }
 
-  // Assert
+  // Assert: the child that ran the reader ended by itself; an abort shows as the signal SIGABRT and no answer.
   assert.deepEqual(
-    { dense, small },
+    { exitCode: child.exitCode, signal: child.signal, dense, small },
     {
+      exitCode: 0,
+      signal: null,
       dense: {
         status: 503,
         policy: SERVED_PAGE_POLICY,

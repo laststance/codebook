@@ -187,7 +187,7 @@ function startPageWorker(): Worker | undefined {
   const data: WikiPageWorkerData = { role: WIKI_PAGE_WORKER_ROLE }
   let worker: Worker
   try {
-    // The heap limit bounds the memory a large page takes in the editor's process; a worker past it ends with ERR_WORKER_OUT_OF_MEMORY, and its page is answered as `memory-limit`.
+    // The heap limit bounds the memory a large page takes in the editor's process; a worker past it ends with ERR_WORKER_OUT_OF_MEMORY, and its page is answered as `memory-limit`. A lower limit let a worker abort the whole process instead on a Node build without pointer compression (see WIKI_PAGE_WORKER_HEAP_LIMIT_MB).
     worker = new Worker(join(__dirname, 'wikiPageWorker.js'), {
       workerData: data,
       resourceLimits: {
