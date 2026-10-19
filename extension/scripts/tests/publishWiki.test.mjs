@@ -11032,3 +11032,71 @@ test('a publish killed after it finalized the candidate is recovered with the ca
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the recovery of a publish killed after it copied the learner's file into its candidate, a folder of its own beside the Wiki folder, on a volume that answers a file id of 0 for every entry (some SMB and FAT volumes); fails_when=the recovery takes two entries of one device with a file id of 0 for one folder, so it refuses the candidate as the Wiki folder under another name, keeps the journal, and the Wiki stays locked; why_new=Cycle 0047 row 164 (CORE3-5); seam=a publisher process killed after it copied the learner's file (scripts/tests/utils/killedPublisherProbe.mjs), then a copy of the shipped publisher whose `node:fs/promises` answers a file id of 0 for every entry and lets the Wiki folder answer to its name in capitals too (scripts/tests/utils/markedCopyHooks.mjs, `?aliased-folder`); no_claim=a real SMB or FAT volume, and a candidate that is the Wiki folder or the kept prior Wiki under another name, which the recovery refuses (the tests of row 121)
+test('a recovery on a volume that answers a file id of 0 for every entry puts back a candidate of its own beside the Wiki folder without the copy of the learner’s file a killed publish left there, and ends the journal', async () => {
+  // Arrange: the published Wiki holds a file of the learner's; the publish of the candidate is killed after it copied that file into the candidate; then every entry answers a file id of 0, and the Wiki folder answers to its name in capitals too, a name the journal does not use.
+  const { recoverWikiPublication: recoverWhereNoEntryHasAFileId } =
+    await loadMarkedCopy('publish-wiki.mjs', '?aliased-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    await writeFile(
+      join(wiki.output, 'manual.txt'),
+      'The learner kept these notes',
+    )
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+      ],
+    })
+    const copyLeftByTheKill = await readFile(
+      join(wiki.next, 'manual.txt'),
+      'utf8',
+    ).catch(() => 'no copy')
+    nameFolderAlso(join(wiki.root, '.codebook/WIKI'), wiki.output, {
+      hasNoFileIds: true,
+    })
+
+    // Act
+    const recovery = await recoverWhereNoEntryHasAFileId({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        copyLeftByTheKill,
+        recovery,
+        copyAfterRecovery: await readFile(
+          join(wiki.next, 'manual.txt'),
+          'utf8',
+        ).catch(() => 'no copy'),
+        journal: existsSync(journal) ? 'kept' : 'removed',
+        learnerFile: await readFile(join(wiki.output, 'manual.txt'), 'utf8'),
+      },
+      {
+        killed: '',
+        copyLeftByTheKill: 'The learner kept these notes',
+        recovery: 'published-or-restored',
+        copyAfterRecovery: 'no copy',
+        journal: 'removed',
+        learnerFile: 'The learner kept these notes',
+      },
+    )
+  } finally {
+    nameFolderAlso(undefined)
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
