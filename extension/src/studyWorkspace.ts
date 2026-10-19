@@ -536,10 +536,12 @@ type LeftoverProofKeyboard = Extract<
   ChatKeyboardReturnCause,
   'leftoverProof' | 'unprovenLeftoverProof'
 >
-/** The learner's text editor that had the keyboard before a proof of the groups an earlier window recorded, with the columns of the groups the editor may name while the keyboard is still where the first proof left it: that proof's group, and the group named before it, which the editor can go on naming (Cursor names its chat part's group over a file of the main editor, Cycle 0046 row 712); read by {@link StudyWorkspace.keyboardOwnerBeforeLeftoverProof} and asked by {@link StudyWorkspace.movedKeyboardSinceLeftoverProof} (Cycle 0047 row 44). */
+/** The learner's text editor that had the keyboard before a proof of the groups an earlier window recorded, with the columns of the groups the editor may name while the keyboard is still where the first proof left it: that proof's group, and the group named before it, which the editor can go on naming (Cursor names its chat part's group over a file of the main editor, Cycle 0046 row 712), and the document the first proof's group showed in front, which its focus command shows; read by {@link StudyWorkspace.keyboardOwnerBeforeLeftoverProof} and asked by {@link StudyWorkspace.movedKeyboardSinceLeftoverProof} (Cycle 0047 rows 44 and 99). */
 type LeftoverProofKeyboardOwner = {
   editor: vscode.TextEditor
   proofColumns: ReadonlySet<number>
+  /** The first proof's column and the URI of the text tab in front of its group then (the earlier session's restored captured source); `undefined` when that group showed no text tab in front. */
+  leftoverFront?: { column: number; uri: string }
 }
 
 /** The key of one keyboard notice in {@link keyboardNoticesTold}. */
@@ -3981,7 +3983,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a text editor that became the active one is a file of the learner's choice: the second sign of {@link noteLearnersSignAtFrame}, and the learner's text editor {@link movedKeyboardSinceLeftoverProof} looks for (Cycle 0047 row 44).
+   * Says whether a text editor that became the active one is a file of the learner's choice: the second sign of {@link noteLearnersSignAtFrame}, and what tells {@link movedKeyboardSinceLeftoverProof} a captured source from the learner's files (Cycle 0047 rows 44 and 99).
    * The editor opens a frame's file before it reports the frame, so a text editor that becomes active after the frame was opened by something else: the learner's click on a tab or into another group, or a file the learner opened. The reader's own captured source is none of that: the reader shows it at every render, with or without the keyboard. The price: a file the learner opens from the Explorer with one click becomes active without the keyboard and counts too.
    * @param editor - The text editor the editor reports as the active one now, if any.
    * @returns `true` for a text editor that shows no captured source; `false` for the captured source and for none.
@@ -15302,9 +15304,10 @@ export class StudyWorkspace {
 
   /**
    * Reads, before the first proof of {@link retireProvenLeftoverGroups} moves the keyboard, the learner's text editor that has it and the columns of the groups the editor may name while the keyboard is still where that proof leaves it: the first proof's group and the group named now. {@link returnKeyboardAfterUnprovenLeftover} gives that editor its keyboard back only while {@link movedKeyboardSinceLeftoverProof} sees no move of the learner's since (Cycle 0047 row 44).
+   * The text tab in front of the first proof's group is read too: the captured source the leftover shows there comes to the keyboard with the proof's focus command, and its text editor is no move of the learner's (Cycle 0047 row 99).
    * @param firstProof - The first leftover the proofs focus; `undefined` for none.
    * @returns The owner; `undefined` when no text editor has the keyboard (a chat of another editor part, whose give-back is its callers', {@link retainForeignTabFocus}).
-   * @example const keyboardOwner = this.keyboardOwnerBeforeLeftoverProof(leftovers[0]) // => { editor: notesEditor, proofColumns: Set { 2, 1 } } while the learner's notes in the second group have the keyboard
+   * @example const keyboardOwner = this.keyboardOwnerBeforeLeftoverProof(leftovers[0]) // => { editor: notesEditor, proofColumns: Set { 2, 1 }, leftoverFront: { column: 1, uri: 'codebook-source://…/Captured-login-form.tsx' } } while the learner's notes in the second group have the keyboard
    */
   private keyboardOwnerBeforeLeftoverProof(
     firstProof: RecordedLeftoverGroup | undefined,
@@ -15314,8 +15317,20 @@ export class StudyWorkspace {
     const proofColumns = new Set<number>([
       vscode.window.tabGroups.activeTabGroup.viewColumn,
     ])
-    if (firstProof) proofColumns.add(firstProof.column)
-    return { editor, proofColumns }
+    if (!firstProof) return { editor, proofColumns }
+    proofColumns.add(firstProof.column)
+    const frontUri = this.textTabUri(
+      vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === firstProof.column,
+      )?.activeTab,
+    )
+    return {
+      editor,
+      proofColumns,
+      ...(frontUri !== undefined && {
+        leftoverFront: { column: firstProof.column, uri: frontUri },
+      }),
+    }
   }
 
   /**
@@ -15390,7 +15405,7 @@ export class StudyWorkspace {
 
   /**
    * Says whether the learner moved the keyboard after a leftover proof took it from the learner's text editor, as the learner can while the editor's answer to the leftover's close is pending; asked by {@link returnKeyboardAfterUnprovenLeftover} before it gives the keyboard back (Cycle 0047 row 44).
-   * Two reports show such a move: another of the learner's text editors is the active one (a click into a file of another group, which the editor reports also where Cursor goes on naming its chat part's group, Cycle 0046 row 712), or the editor names a group that the first proof did not focus and that it did not name before that proof (a click on a page of another group that is no text editor, or into another empty group). The editor reports no move to the terminal or a view, so such a move is not seen.
+   * Two reports show such a move: another text editor is the active one (a click into a file of another group, which the editor reports also where Cursor goes on naming its chat part's group, Cycle 0046 row 712, or a captured source the learner selected, also in a group the proof may name, Cycle 0047 row 99), or the editor names a group that the first proof did not focus and that it did not name before that proof (a click on a page of another group that is no text editor, or into another empty group). The captured source the first proof's group showed in front is no such move: it came to the keyboard with the proof's focus command. The editor reports no move to the terminal or a view, so such a move is not seen.
    * @param keyboardOwner - The text editor that had the keyboard before the proof, with the columns the editor may name while the keyboard is where the proof left it ({@link keyboardOwnerBeforeLeftoverProof}).
    * @returns `true` once such a move is seen; `false` while the keyboard is where the proof left it, and after the learner went back to that same text editor.
    * @example this.movedKeyboardSinceLeftoverProof(keyboardOwner) // => true after the learner clicked into auth.ts while the editor's answer to the leftover's close was pending
@@ -15398,12 +15413,20 @@ export class StudyWorkspace {
   private movedKeyboardSinceLeftoverProof({
     editor,
     proofColumns,
+    leftoverFront,
   }: LeftoverProofKeyboardOwner): boolean {
     const active = vscode.window.activeTextEditor
-    // Another of the learner's text editors has the keyboard; a captured source the focused leftover shows is none of the learner's.
+    // The captured source the focused leftover shows in front came with the proof's focus command; any other captured source the learner selected.
+    const showsLeftoversFront =
+      active !== undefined &&
+      leftoverFront !== undefined &&
+      !this.isLearnersEditor(active) &&
+      active.viewColumn === leftoverFront.column &&
+      active.document.uri.toString() === leftoverFront.uri
+    // Another text editor has the keyboard: one of the learner's files, or a captured source the learner selected.
     if (
       active &&
-      this.isLearnersEditor(active) &&
+      !showsLeftoversFront &&
       (active.document.uri.toString() !== editor.document.uri.toString() ||
         active.viewColumn !== editor.viewColumn)
     )

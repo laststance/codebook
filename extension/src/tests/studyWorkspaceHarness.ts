@@ -453,6 +453,11 @@ export async function workspaceHarness(
   let partialFocusEditor: { value: SourceEditor | undefined } | undefined
   // Captured-source tabs a previous host session left behind; only their close changes the active tab, so other close paths keep their recorded behavior.
   const leftoverCapturedTabs = new Set<Tab>()
+  // The text editors of restored captured-source tabs that no text editor shows yet, by tab, for `resolveRestoredCapturedSource`.
+  const unresolvedRestoredSources = new Map<
+    Tab,
+    SourceEditor & { group: (typeof groups)[number] }
+  >()
   let lateEditorAfterLeftoverClose = false
   // The captured document the active text editor still reports for a moment after its leftover tab closed.
   let staleEditorAfterLeftoverClose: SourceEditor | undefined
@@ -6563,12 +6568,13 @@ export async function workspaceHarness(
         },
       }
     },
-    /** Leaves a captured-source tab in a group as the host restores one after a restart: a text tab without a text editor. `textEditor` gives it a live editor instead, as a first open that failed leaves this host's own tab; `staleTextEditor` lets the editor report its document for a moment after the tab closed. @example const leftover = harness.restoreLeftoverCapturedSource(); harness.restoreLeftoverCapturedSource({ active: false, authority: 'f'.repeat(64) }) */
+    /** Leaves a captured-source tab in a group as the host restores one after a restart: a text tab without a text editor. `textEditor` gives it a live editor instead, as a first open that failed leaves this host's own tab; `staleTextEditor` lets the editor report its document for a moment after the tab closed; `file` names another captured file of the earlier study than Captured-login-form.tsx, for a second such tab. @example const leftover = harness.restoreLeftoverCapturedSource(); harness.restoreLeftoverCapturedSource({ active: false, authority: 'f'.repeat(64) }) */
     restoreLeftoverCapturedSource(
       options: {
         active?: boolean
         authority?: string
         column?: number
+        file?: string
         refuseClose?: boolean
         lateTextEditor?: boolean
         staleTextEditor?: boolean
@@ -6584,7 +6590,7 @@ export async function workspaceHarness(
           scheme: 'codebook-source',
           authority:
             options.authority ?? sha256(realpathSync(harness.directory)),
-          path: '/earlier-study/repository%2Finterface%2Ftheme/hash/Captured-login-form.tsx',
+          path: `/earlier-study/repository%2Finterface%2Ftheme/hash/${options.file ?? 'Captured-login-form.tsx'}`,
         }),
         version: 1,
         getText: () => 'Captured source of an earlier study.\n',
@@ -6603,6 +6609,7 @@ export async function workspaceHarness(
         ? editor
         : undefined
       if (options.textEditor) visibleSourceEditors.push(editor)
+      else unresolvedRestoredSources.set(tab, editor)
       group.tabs.push(tab)
       if (options.active ?? true) {
         group.activeTab = tab
@@ -6722,7 +6729,19 @@ export async function workspaceHarness(
       heldGroupClose = { entered, wait }
       return { started, release }
     },
-    /** Gives focus to a non-text page of the editor that is already open, as a learner's click on its tab does. @example harness.focusOpaqueTab(harness.addOpaqueTab('Extension page', 2)) */
+    /**
+     * Shows the document of a captured-source tab that `restoreLeftoverCapturedSource` restored without a text editor in a text editor, as the editor would once it resolves that document with this host's provider: the text editor is visible while the tab is in front of its group, and it is the active text editor while that group is the active one. No native trace shows when an editor does this for a restored tab; a test uses it for the captured source a group shows by itself, with no click of the learner's.
+     * @param tab - The restored tab, which has no text editor yet.
+     * @example harness.resolveRestoredCapturedSource(harness.restoreLeftoverCapturedSource({ column: 1 }))
+     */
+    resolveRestoredCapturedSource(tab: Tab): void {
+      const editor = unresolvedRestoredSources.get(tab)
+      assert.ok(editor)
+      unresolvedRestoredSources.delete(tab)
+      visibleSourceEditors.push(editor)
+      activeTextEditorChanged(focusedSourceEditor())
+    },
+    /** Gives focus to a tab of the editor that is already open, as a learner's click on its tab does: a non-text page, or a captured source's tab, whose text editor, when it has one, is then the active text editor. @example harness.focusOpaqueTab(harness.addOpaqueTab('Extension page', 2)) */
     focusOpaqueTab(tab: Tab): void {
       const group = groups.find((group) => group.tabs.includes(tab))
       assert.ok(group)
