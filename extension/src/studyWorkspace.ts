@@ -15271,6 +15271,7 @@ export class StudyWorkspace {
           signal,
         )
         if (!left) {
+          // Awaited also where it returns at once (after a retirement, or without a focus command): that one microtask turn more changes nothing, since no report of the editor arrives inside a microtask turn and the same steps follow in the same order (Cycle 0047 row 45).
           tookKeyboard = await this.keyboardOwedAfterFailedLeftoverProof(
             retired,
             tookKeyboard,
@@ -15282,6 +15283,7 @@ export class StudyWorkspace {
         retired = true
       }
     } catch (error) {
+      // Awaited also where it returns at once, as above (Cycle 0047 row 45).
       await this.returnKeyboardAfterThrownLeftoverProof(
         retired,
         tookKeyboard,

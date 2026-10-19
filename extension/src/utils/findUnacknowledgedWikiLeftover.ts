@@ -197,6 +197,7 @@ export async function findUnacknowledgedWikiLeftover(
   outputDirectory: string,
   look: LeftoverLook,
 ): Promise<WikiLeftoverRefusal | undefined> {
+  // Both looks are awaited also where they return at once (no stopped watch of another window, none of this window's waited for): that one microtask turn more changes nothing, since the look's values were read before the call and the candidates' listing between them waits on the file system anyway (Cycle 0047 row 45).
   const reservation = await reservationRefusal(outputDirectory, look)
   const activeCandidate = selectActiveWikiCandidate(
     await look.listCandidates(outputDirectory),
