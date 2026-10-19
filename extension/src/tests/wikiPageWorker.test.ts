@@ -461,6 +461,182 @@ test('while both page workers are ending, the two pages the reader admits in the
   })
 })
 
+// Value: protects=every page that waits behind a stopped page worker whose thread does not end: a stopped worker keeps its place until its thread has ended (row 79), and a thread that never emitted its exit (only a Node defect does so) kept its place for good, so the pages behind it waited for good; fails_when=a stopped worker whose thread has not ended within WIKI_PAGE_WORKER_STOP_LIMIT_MS keeps its place, so the waiting page gets no worker, or the lost thread is never stopped once its stop can go on; why_new=Cycle 0047 row 109 (ADV2-12); seam=the page-worker module loaded with one worker at a time, a stop limit of 300 ms, and a Worker class that records how many earlier threads were alive at each start and holds every stop until the test lets it go (the threads are real); no_claim=a real thread that never ends (the held stop stands for it); the shipped stop limit of 5 s
+test('a page that waits behind a stopped worker whose thread does not end gets a worker once the stop limit has passed, and is served', async () => {
+  // Arrange: one worker at a time and a stop limit of 300 ms; every stop is held until the test lets it go.
+  let letTheStopsGo: () => void = () => undefined
+  const stopsLetGo = new Promise<void>((resolveStops) => {
+    letTheStopsGo = resolveStops
+  })
+  const pool = await loadPageWorkerRecordingThreads(
+    {
+      WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+      WIKI_PAGE_WORKER_STOP_LIMIT_MS: 300,
+    },
+    () => stopsLetGo,
+  )
+  const signal = new AbortController().signal
+
+  // Act: the slow page under a deadline of 500 ms, whose stop is held, and a small page asked for while the slow page is prepared; then the stops go on.
+  const slow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+    deadlineMs: 500,
+    signal,
+  })
+  const waiting = pool.servedWikiPageOffThread(
+    '<body><p>Waiting page</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  const answers = await within(Promise.all([slow, waiting]), 5_000)
+  letTheStopsGo()
+  const lostThreadEnd = await within(pool.endOfWorker(0), 2_000)
+
+  // Assert: the waiting page's worker started while the lost thread was still alive; the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({
+      answers,
+      threadsAliveAtEachStart: pool.threadsAliveAtEachStart,
+      lostThreadEnd,
+    }),
+    {
+      answers: [
+        { state: 'deadline' },
+        {
+          state: 'served',
+          html: '<body><p>Waiting page</p><script src="/w/t/codebook-qa.js"></script></body>',
+        },
+      ],
+      threadsAliveAtEachStart: [0, 1],
+      lostThreadEnd: 'ended',
+    },
+  )
+})
+
+// Value: protects=the editor's extension host, in whose process every page worker runs, against stopped threads that do not end, one after another: each lost thread gives its place back (row 109) and may still hold its heap, so without a bound on the lost ones a Node defect that leaves every stop unended would start a new thread beside each, without end; fails_when=a stop that passes WIKI_PAGE_WORKER_STOP_LIMIT_MS gives its place back while as many threads are lost as WIKI_PAGE_WORKER_CONCURRENCY_LIMIT, or a stop that kept its place never gives it back once its thread has ended; why_new=Cycle 0047 row 109 (ADV2-12); seam=the page-worker module loaded with one worker at a time, a stop limit of 300 ms, and a Worker class that records how many earlier threads were alive at each start and holds every stop until the test lets it go (the threads are real); no_claim=the shipped limit of two workers (the bound is that limit the same way)
+test('while as many stopped threads are lost as page workers may run at once, a further stopped worker keeps its place until its thread has ended', async () => {
+  // Arrange: one worker at a time and a stop limit of 300 ms; every stop is held until the test lets it go.
+  let letTheStopsGo: () => void = () => undefined
+  const stopsLetGo = new Promise<void>((resolveStops) => {
+    letTheStopsGo = resolveStops
+  })
+  const pool = await loadPageWorkerRecordingThreads(
+    {
+      WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+      WIKI_PAGE_WORKER_STOP_LIMIT_MS: 300,
+    },
+    () => stopsLetGo,
+  )
+  const signal = new AbortController().signal
+
+  // Act: two slow pages under a deadline of 500 ms, the second of which gets the place the first one's lost thread gave back, and a small page behind them; once the second's stop limit has passed, the stops go on.
+  const slowPages = Promise.all([
+    pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+      deadlineMs: 500,
+      signal,
+    }),
+    pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+      deadlineMs: 500,
+      signal,
+    }),
+  ])
+  const behind = pool.servedWikiPageOffThread(
+    '<body><p>Page behind</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  const slowAnswers = await within(slowPages, 5_000)
+  const behindWhileTheStopsAreHeld = await within(behind, 1_500)
+  letTheStopsGo()
+  const behindAnswer = await within(behind, 5_000)
+
+  // Assert: the second slow page's worker started beside the lost thread, and the page behind waited until the stops went on; the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({
+      slowAnswers,
+      behindWhileTheStopsAreHeld,
+      behindAnswer,
+      firstTwoStarts: pool.threadsAliveAtEachStart.slice(0, 2),
+      startedWorkers: pool.startedWorkers.length,
+    }),
+    {
+      slowAnswers: [{ state: 'deadline' }, { state: 'deadline' }],
+      behindWhileTheStopsAreHeld: 'still waiting',
+      behindAnswer: {
+        state: 'served',
+        html: '<body><p>Page behind</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      firstTwoStarts: [0, 1],
+      startedWorkers: 3,
+    },
+  )
+})
+
+// Value: protects=every page that waits behind a stopped page worker whose thread does not end, after an earlier lost thread has ended: a lost thread that ends gives back its count among the lost ones, and the bound on lost threads (row 109) would otherwise hold every later stop that passes the stop limit in its place as if that thread were still lost; fails_when=a lost thread that ends is still counted as lost, so the next thread whose stop passes WIKI_PAGE_WORKER_STOP_LIMIT_MS keeps its place and the page behind it waits for good; why_new=Cycle 0047 row 109 (ADV2-12); seam=the page-worker module loaded with one worker at a time, a stop limit of 300 ms, and a Worker class that records the threads it starts and holds the stop of the first and of the second worker each until the test lets it go (the threads are real); no_claim=the shipped limit of two workers (the count is kept the same way)
+test('once a lost thread has ended, the next stopped worker whose thread does not end gives its place back at the stop limit, and the page behind it is served', async () => {
+  // Arrange: one worker at a time and a stop limit of 300 ms; the first and the second worker's stops are each held until the test lets them go.
+  let letTheFirstStopGo: () => void = () => undefined
+  const firstStopLetGo = new Promise<void>((resolveStop) => {
+    letTheFirstStopGo = resolveStop
+  })
+  let letTheSecondStopGo: () => void = () => undefined
+  const secondStopLetGo = new Promise<void>((resolveStop) => {
+    letTheSecondStopGo = resolveStop
+  })
+  const pool = await loadPageWorkerRecordingThreads(
+    {
+      WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
+      WIKI_PAGE_WORKER_STOP_LIMIT_MS: 300,
+    },
+    (worker) => {
+      const startedAs = pool.startedWorkers.indexOf(worker)
+      if (startedAs === 0) return firstStopLetGo
+      if (startedAs === 1) return secondStopLetGo
+      return undefined
+    },
+  )
+  const signal = new AbortController().signal
+
+  // Act: two slow pages under a deadline of 500 ms and a small page behind them; once the first worker's thread is lost and the second slow page answered, the first stop goes on, so the lost thread ends before the second worker's stop limit passes.
+  const firstSlow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+    deadlineMs: 500,
+    signal,
+  })
+  const secondSlow = pool.servedWikiPageOffThread(SLOW_PAGE, PAGE_OPTIONS, {
+    deadlineMs: 500,
+    signal,
+  })
+  const behind = pool.servedWikiPageOffThread(
+    '<body><p>Page behind</p></body>',
+    PAGE_OPTIONS,
+    { deadlineMs: 10_000, signal },
+  )
+  const slowAnswers = await within(Promise.all([firstSlow, secondSlow]), 5_000)
+  letTheFirstStopGo()
+  const firstLostThreadEnd = await within(pool.endOfWorker(0), 2_000)
+  const behindWhileTheSecondStopIsHeld = await within(behind, 2_000)
+  letTheSecondStopGo()
+  const secondLostThreadEnd = await within(pool.endOfWorker(1), 2_000)
+
+  // Assert: the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({
+      slowAnswers,
+      firstLostThreadEnd,
+      behindWhileTheSecondStopIsHeld,
+      secondLostThreadEnd,
+    }),
+    {
+      slowAnswers: [{ state: 'deadline' }, { state: 'deadline' }],
+      firstLostThreadEnd: 'ended',
+      behindWhileTheSecondStopIsHeld: {
+        state: 'served',
+        html: '<body><p>Page behind</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      secondLostThreadEnd: 'ended',
+    },
+  )
+})
+
 // Value: protects=the editor's machine against many pages asked for at once (tabs, or a page that names others), each of which may keep a core busy until the deadline; fails_when=the reader starts a worker for every page asked for at once, or a page waiting for a worker is never served, or a page whose request went while it waited still gets a worker or keeps its answer until a worker is free; why_new=P2RT3; seam=the page-worker module loaded with a Worker class that records the threads it starts (the threads are real); no_claim=the number of cores of the learner's machine (the limit is the same everywhere)
 test('no more than two pages are prepared at once: a third page waits for a free worker, and a page whose request goes while it waits is answered at once without a worker', async () => {
   // Arrange
