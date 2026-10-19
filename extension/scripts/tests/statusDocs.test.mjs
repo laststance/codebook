@@ -104,6 +104,51 @@ test('no state file stands at the repository root, and no live document names on
   assert.deepEqual(namingDocuments, [])
 })
 
+// Value: protects=a reader who follows a link to the current state from any document of the repository; fails_when=a Markdown file links PROJECT_STATE.md by a relative path, which no longer exists since the owner removed it on 2026-10-19; why_new=Cycle 0047 row 203 (S2RT-1): three documents and every closed cycle record still linked the removed file; seam=none; no_claim=links to the state file's last published form on GitHub, which are kept on purpose
+test('no Markdown document links the removed state file by a relative path, apart from the snapshots kept byte for byte', async () => {
+  // Arrange: the Markdown files at the root and under docs/; a snapshot whose bytes a record pins with its SHA-256 (docs/history, the evidence checkpoints of a cycle) keeps its links as they were.
+  const rootNames = await readdir(new URL('../../../', import.meta.url))
+  const docsNames = await readdir(new URL('../../../docs/', import.meta.url), {
+    recursive: true,
+  })
+  const documents = [
+    ...rootNames.filter((name) => name.endsWith('.md')),
+    ...docsNames
+      .filter((name) => name.endsWith('.md'))
+      .map((name) => `docs/${name.split('\\').join('/')}`),
+  ].filter(
+    (path) =>
+      !path.startsWith('docs/history/') &&
+      !/^docs\/cycles\/\d{4}-evidence-checkpoint-/.test(path),
+  )
+
+  // Act
+  const linkingDocuments = []
+  for (const path of documents)
+    if (/\]\((?:\.\.\/)*PROJECT_STATE\.md[#)]/.test(await readDocument(path)))
+      linkingDocuments.push(path)
+
+  // Assert
+  assert.deepEqual(linkingDocuments, [])
+})
+
+// Value: protects=the hosted reviewer, which reads the active cycle record as a guideline for every file; fails_when=another cycle record takes the current state and .coderabbit.yaml still maps the earlier record, which only a comment kept in step; why_new=Cycle 0047 row 202 (S2OCR3-2); seam=none; no_claim=the hosted review itself, which this repository does not run
+test('the review policy maps, for every file, exactly the cycle record that holds the current state', async () => {
+  // Arrange
+  const policy = await readDocument('.coderabbit.yaml')
+  const { path } = await readCurrentState()
+
+  // Act: every cycle record the policy applies to every file.
+  const mappedRecords = [
+    ...policy.matchAll(
+      /- files: '(docs\/cycles\/\d{4}-[^']+\.md)'\n\s+applyTo: '\*\*\/\*'/g,
+    ),
+  ].map((match) => match[1])
+
+  // Assert
+  assert.deepEqual(mappedRecords, [path])
+})
+
 // Value: protects=an agent that reads the current state at every session entry and after every context compaction; fails_when=no record or two records hold a `## Current state` section, or the section stays in an older record while a newer cycle's record exists; why_new=owner direction of 2026-10-19: AGENTS.md names the active cycle record by its section, and a section left behind in a closed record would be read as current; seam=none
 test('exactly one cycle record holds the current state, and it is the record of the highest-numbered cycle', async () => {
   // Arrange

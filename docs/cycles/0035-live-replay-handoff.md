@@ -8,7 +8,7 @@ Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/63\
 Goal issue: https://github.com/laststance/codebook/issues/1\
 Goal links: G01, G03, G04, G11\
-Source state: [Cycle 0034 delivery closure](0034-replay-ownership.md#delivery-closure-2026-10-01), [PROJECT_STATE](../../PROJECT_STATE.md)
+Source state: [Cycle 0034 delivery closure](0034-replay-ownership.md#delivery-closure-2026-10-01), [PROJECT_STATE](https://github.com/laststance/codebook/blob/ef38585a32a1632c5af5d89ae5c4e08cf866fefc/PROJECT_STATE.md)
 
 Owner authority:
 - D043: continue to completion; protected Mac use is allowed while the owner is away.

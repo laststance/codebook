@@ -8,7 +8,7 @@ Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/80 \
 Goal issue: https://github.com/laststance/codebook/issues/1 \
 Goal links: G01, G03, G11\
-Source state: [Cycle 0042 result and decision](0042-adapter-resumed-pause.md#result-and-decision), [PROJECT_STATE](../../PROJECT_STATE.md)
+Source state: [Cycle 0042 result and decision](0042-adapter-resumed-pause.md#result-and-decision), [PROJECT_STATE](https://github.com/laststance/codebook/blob/ef38585a32a1632c5af5d89ae5c4e08cf866fefc/PROJECT_STATE.md)
 
 Owner authority:
 
