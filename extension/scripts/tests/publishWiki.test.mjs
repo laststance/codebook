@@ -15172,3 +15172,86 @@ test('a swap or a failure armed halfway through the write of a file runs at the 
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+/**
+ * A module a recovery's process loads first (`--import`) so that one call through the handle of each clock file the publisher creates beside a record fails with a system error, as a full disk fails a write, or a disk error a status read, of a file just made.
+ * @param {'writeFile' | 'stat'} call - The call through the handle that fails.
+ * @param {'ENOSPC' | 'EIO'} code - The system error.
+ * @returns {string} The module, as a `data:` URL.
+ * @example
+ * spawnSync(process.execPath, ['--import', clockFileCallFailing('stat', 'EIO'), PUBLISHER_COMMAND, '--recover', '--project', root, '--output', output])
+ */
+const clockFileCallFailing = (call, code) =>
+  `data:text/javascript,${encodeURIComponent(
+    `import fileSystem from 'node:fs/promises'; import { syncBuiltinESMExports } from 'node:module'; const open = fileSystem.open; fileSystem.open = async (path, ...rest) => { const handle = await open(path, ...rest); if (/\\.clock-[0-9a-f-]{36}$/.test(String(path))) handle.${call} = async () => { throw Object.assign(new Error('${code}: the ${call} of the clock file failed'), { code: '${code}' }) }; return handle }; syncBuiltinESMExports();`,
+  )}`
+
+for (const failure of [
+  {
+    names: 'its write',
+    call: 'writeFile',
+    code: 'ENOSPC',
+    stderr:
+      'Error: The Wiki publication journal is empty, and its age cannot be judged: the file through which the publisher reads the clock of the file system that holds it was created beside it, but could not be written (ENOSPC). It was kept, and nothing was moved. Free space there, or check that volume for errors, then run --recover again.\n',
+    besideTheWiki: ['wiki.publish-journal.json'],
+  },
+  {
+    names: 'its status read',
+    call: 'stat',
+    code: 'EIO',
+    stderr:
+      'Error: The Wiki publication journal is empty, and its age cannot be judged: the file through which the publisher reads the clock of the file system that holds it was created and written beside it, but its status could not be read (EIO). It was kept, and nothing was moved. Check that volume for errors, then run --recover again; a later recovery removes that file.\n',
+    besideTheWiki: [
+      'wiki.publish-journal.json',
+      'wiki.publish-journal.json.clock-<id>',
+    ],
+  },
+]) {
+  // Value: protects=the learner whose --recover meets a journal without a byte and creates the clock file beside it, whose write or status read then fails (a full disk, a disk error); fails_when=the refusal says the clock file could not be created, which it was, and gives advice for a folder this user may not write, so the learner frees space or changes rights for nothing; why_new=Cycle 0047 row 223 (P2MAINT-3, P2SM-17); seam=a module loaded first (`--import`) that has that call through the clock file's handle fail; no_claim=a real full disk or disk error
+  test(`a --recover beside a journal without a byte that has stood a minute, whose clock file was created but ${failure.names} failed, is refused through the CLI with the step that failed and the system's reason, and keeps the journal`, async () => {
+    // Arrange: a journal without a byte, last changed a minute ago, and a publisher whose clock file's call fails.
+    const wiki = await publishedWikiWithACandidate()
+    const journal = `${wiki.output}.publish-journal.json`
+    try {
+      await writeFile(journal, '')
+      const aMinuteAgo = new Date(Date.now() - 60_000)
+      await utimes(journal, aMinuteAgo, aMinuteAgo)
+
+      // Act
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--import',
+          clockFileCallFailing(failure.call, failure.code),
+          PUBLISHER_COMMAND,
+          '--recover',
+          '--project',
+          wiki.root,
+          '--output',
+          wiki.output,
+        ],
+        { encoding: 'utf8', timeout: 10_000 },
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          status: result.status,
+          stderr: result.stderr,
+          journal: await readFile(journal, 'utf8').catch(() => 'removed'),
+          besideTheWiki: (await publisherFilesBeside(wiki.output)).map((name) =>
+            name.replace(/\.clock-[0-9a-f-]{36}$/, '.clock-<id>'),
+          ),
+        },
+        {
+          status: 1,
+          stderr: failure.stderr,
+          journal: '',
+          besideTheWiki: failure.besideTheWiki,
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
