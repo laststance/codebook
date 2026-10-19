@@ -788,10 +788,16 @@ async function bootHere(system) {
   return id ? { id } : { atMs };
 }
 
-/** The space of process ids this process probes: its system (the platform of `system`), and on Linux its pid namespace, which two containers or two WSL distributions of one kernel do not share; `linux@` when the namespace cannot be read, which then counts as one space with every other record of this host and boot that could not read it either. Called by {@link ownerHere}. @example await processSpaceHere(SYSTEM_HERE) // => 'linux@4026531836' */
+/** The space of process ids a Linux process records where it may not read its pid namespace (`/proc/self/ns/pid`), and the start of every Linux space, which the namespace's number follows. Read by {@link processSpaceHere} and {@link namesItsSpace}. */
+const LINUX_SPACE_WITHOUT_NAMESPACE = 'linux@';
+
+/** Whether a recorded space of process ids names one space: a platform's name does, and so does `linux@` with the number of a pid namespace, while {@link LINUX_SPACE_WITHOUT_NAMESPACE} alone may be any pid namespace of its machine (two containers of one kernel and one host name may each record it), so a record of it is never judged by its process id, also by a recovery that may not read its own namespace either, as the extension judges a Linux start without a namespace ({@link canJudgeOwnerHere}). Called by {@link placeStateOf} and {@link requireExited}. @example namesItsSpace('linux@') // => false, and namesItsSpace('linux@4026531836') // => true */
+const namesItsSpace = space => space !== LINUX_SPACE_WITHOUT_NAMESPACE;
+
+/** The space of process ids this process probes: its system (the platform of `system`), and on Linux its pid namespace, which two containers or two WSL distributions of one kernel do not share; {@link LINUX_SPACE_WITHOUT_NAMESPACE} when the namespace cannot be read, which names no space ({@link namesItsSpace}). Called by {@link ownerHere}. @example await processSpaceHere(SYSTEM_HERE) // => 'linux@4026531836' */
 async function processSpaceHere(system) {
   if (system.platform !== 'linux') return system.platform;
-  return 'linux@' + (/^pid:\[(\d+)\]$/.exec(await readlink('/proc/self/ns/pid').catch(() => ''))?.[1] ?? '');
+  return LINUX_SPACE_WITHOUT_NAMESPACE + (/^pid:\[(\d+)\]$/.exec(await readlink('/proc/self/ns/pid').catch(() => ''))?.[1] ?? '');
 }
 
 /** The form of the host name an owner records ({@link ownerHostOf}): letters, digits, dots, hyphens and underscores, from a letter or a digit on, at most 253 characters, as a machine's name is in DNS. A refusal names it and the learner passes it back on a command line (`--gone-host`), so no other text may stand in it. Read by {@link ownerHostOf} and {@link isOwnerForm}. */
@@ -832,19 +838,20 @@ function isProcessIdFree(pid) {
   try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; }
 }
 
-/** Judges the owner a journal or a recovery claim records: `gone` when it cannot be at work any more, `running` while it may run here, `elsewhere` when it ran on another machine or in another space of process ids, which no probe here reaches. A record of an earlier version names its process id alone and is judged by that id here, as then. A record with its owner: one of another host name is of another machine, unless both name one boot id; an earlier boot ended every process of it, by its boot id, or, where neither names one and the record has no start, by a boot time that lies apart by more than {@link BOOT_TIME_TOLERANCE_MS}; a process id no process has is gone; a process id another process has now, which began at another time than the recorded start, is gone too. Called by {@link requireExited}, with the owner `system` tells of this process ({@link ownerHere}). @example await ownerStateOf({ pid: 4242, owner: { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } } }, { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-2' } }, SYSTEM_HERE) // => 'gone' */
+/** Judges the owner a journal or a recovery claim records: `gone` when it cannot be at work any more, `running` while it may run here, `elsewhere` when it ran on another machine, in another space of process ids or in a Linux space that names no pid namespace ({@link namesItsSpace}), which no probe here reaches. A record of an earlier version names its process id alone and is judged by that id here, as then. A record with its owner: one of another host name is of another machine, unless both name one boot id; an earlier boot ended every process of it, by its boot id, or, where neither names one and the record has no start, by a boot time that lies apart by more than {@link BOOT_TIME_TOLERANCE_MS}; a process id no process has is gone; a process id another process has now, which began at another time than the recorded start, is gone too. Called by {@link requireExited}, with the owner `system` tells of this process ({@link ownerHere}). @example await ownerStateOf({ pid: 4242, owner: { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-1' } } }, { host: 'workstation', space: 'linux@4026531836', boot: { id: 'boot-2' } }, SYSTEM_HERE) // => 'gone' */
 async function ownerStateOf({ pid, owner }, here, system) {
   if (owner === undefined) return isProcessIdFree(pid) ? 'gone' : 'running';
   return placeStateOf(owner, here) ?? processStateOf(pid, owner, system);
 }
 
-/** Judges a recorded owner by where it ran, before its process id is probed: `elsewhere` for another machine (another host name, unless both name one boot id) or another space of process ids, `gone` for an earlier boot of this machine ({@link isOfEarlierBootTime} where neither names a boot id). Called by {@link ownerStateOf}. @returns The state; undefined when the owner ran under this boot, in this space, and its process id decides ({@link processStateOf}). @example placeStateOf({ host: 'other', space: 'linux@1', boot: { id: 'boot-1' } }, { host: 'workstation', space: 'linux@1', boot: { id: 'boot-2' } }) // => 'elsewhere' */
+/** Judges a recorded owner by where it ran, before its process id is probed: `elsewhere` for another machine (another host name, unless both name one boot id), another space of process ids or a space that names none ({@link namesItsSpace}), `gone` for an earlier boot of this machine ({@link isOfEarlierBootTime} where neither names a boot id). Called by {@link ownerStateOf}. @returns The state; undefined when the owner ran under this boot, in this space, and its process id decides ({@link processStateOf}). @example placeStateOf({ host: 'other', space: 'linux@1', boot: { id: 'boot-1' } }, { host: 'workstation', space: 'linux@1', boot: { id: 'boot-2' } }) // => 'elsewhere' */
 function placeStateOf(owner, here) {
   const hasBootIds = owner.boot.id !== undefined && here.boot.id !== undefined;
   // A machine is known by its host name, or, under another one, by its exact boot.
   if (owner.host !== here.host && !(hasBootIds && owner.boot.id === here.boot.id)) return 'elsewhere';
   if (hasBootIds && owner.boot.id !== here.boot.id) return 'gone';
-  if (owner.space !== here.space) return 'elsewhere';
+  // A space that names no pid namespace may be any space of this machine, also where this recovery's names none either.
+  if (owner.space !== here.space || !namesItsSpace(owner.space)) return 'elsewhere';
   return isOfEarlierBootTime(owner, here, hasBootIds) ? 'gone' : undefined;
 }
 
@@ -859,7 +866,7 @@ async function processStateOf(pid, owner, system) {
   return liveStart !== undefined && liveStart !== owner.start ? 'gone' : 'running';
 }
 
-/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwners`, the places the learner named with `--gone-host` and `--gone-space`, one pair for each (none when absent): an owner judged `elsewhere` at one of those host names and spaces counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids, which names the way out for a place that cannot come back: the two options set to that place, or, where the learner named places already, one more pair. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
+/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal and by {@link claimRecovery} for an earlier claim. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwners`, the places the learner named with `--gone-host` and `--gone-space`, one pair for each (none when absent): an owner judged `elsewhere` at one of those host names and spaces counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one of another machine or space of process ids, which names the way out for a place that cannot come back: the two options set to that place, or, where the learner named places already, one more pair; for a space that names no pid namespace, which no recovery can look at, that pair is the only way out. @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
 async function requireExited(recorded, { system, goneOwners = [] }) {
   requireOwnerForm(recorded);
   const { pid, owner } = recorded;
@@ -868,6 +875,8 @@ async function requireExited(recorded, { system, goneOwners = [] }) {
   if (state === 'gone' || state === 'elsewhere' && isOwnerAt(owner, goneOwners)) return;
   // Where the learner named places already, the place of this owner is one more pair beside them: a stopped recovery may have run in a second place that cannot come back.
   const wayOut = goneOwners.length === 0 ? '--gone-host and --gone-space set to that host name and space' : 'one more --gone-host and --gone-space pair set to that host name and space, keeping the pairs already named';
+  // No recovery anywhere can look at a process of a space that names no pid namespace, so the learner's confirmation is the only way out.
+  if (state === 'elsewhere' && !namesItsSpace(owner.space)) throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ', a space of process ids whose pid namespace it could not read, where no recovery can look at it. Run --recover here with ' + wayOut + ', only after the learner confirms that no publisher runs there.');
   if (state === 'elsewhere') throw new Error('The prior Wiki publisher process ' + pid + ' ran on ' + placeOf(owner) + ', where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with ' + wayOut + ', only after the learner confirms that no publisher runs there.');
   throw new Error('The prior Wiki publisher process ' + pid + ' may still be running; inspect it before recovery.');
 }
