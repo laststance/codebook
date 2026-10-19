@@ -25,7 +25,7 @@ type WikiPublishWatchOptions<Published> = {
   sleep?: (delayMs: number, signal: AbortSignal) => Promise<void>
 }
 
-/** One watch as its looks share it: the options with their defaults resolved, the bound, the stamp of the last complete look (undefined forces the next look), and the new publish whose manifest could not be read, with the time that was first seen. */
+/** One watch as its looks share it: the options with their defaults resolved, the bound, the stamp of the last complete look (undefined forces the next look), the new publish whose manifest could not be read, with the time that was first seen, and the time since which the publish token could not be read where the start's could. */
 type WikiPublishWatch<Published> = {
   options: WikiPublishWatchOptions<Published>
   now: () => number
@@ -33,9 +33,10 @@ type WikiPublishWatch<Published> = {
   deadline: number
   lookedAtStamp: string | undefined
   unreadable: { token: string; sinceMs: number } | undefined
+  unreadableTokenSinceMs: number | undefined
 }
 
-/** What one look found: the watch's end, `nothing` (a complete look, or one skipped because nothing was written, found nothing new), `incomplete` (the look could not finish: a new publish whose manifest is still being written, a publish token that cannot be read at this moment, or a probe for blocking files that failed; the next look is forced, and no look that is incomplete ends the watch) or `retry` (the site changed under the look, which is taken again at once). */
+/** What one look found: the watch's end, `nothing` (a complete look, or one skipped because nothing was written, found nothing new; a publish token that stayed unreadable for the grace is such a look), `incomplete` (the look could not finish: a new publish whose manifest is still being written, a publish token that cannot be read at this moment, or a probe for blocking files that failed; the next look is forced, and no look that is incomplete ends the watch) or `retry` (the site changed under the look, which is taken again at once). */
 type WikiPublishLook<Published> =
   WikiPublishWait<Published> | 'nothing' | 'incomplete' | 'retry'
 
@@ -175,9 +176,34 @@ function isTokenUnreadableNow<Published>(
 }
 
 /**
+ * Gives a publish token that cannot be read where the start's could its grace; called by {@link look}.
+ *
+ * Why: the publisher replaces the site with two renames, and between them no Wiki folder is there, so a token that cannot be read is first a site being replaced. A publisher that failed between its renames leaves no folder for good: after the chat's reply ended, waiting out the 15 minute bound for it would only keep the learner from the run's end, which names the missing Wiki and the request that recovers it ({@link classifyWikiUpdateEnd}).
+ *
+ * @param watch - The watch.
+ * @returns `incomplete`, with the next look forced, until the token stayed unreadable for `unreadableGraceMs` since a look first found it so; `nothing` after that, a look that found no new publish, which ends the watch once the reply ended and keeps it going before.
+ * @example
+ * waitForReadableToken(watch) // => 'incomplete' right after the token became unreadable
+ */
+function waitForReadableToken<Published>(
+  watch: WikiPublishWatch<Published>,
+): 'nothing' | 'incomplete' {
+  watch.unreadableTokenSinceMs ??= watch.now()
+  // A token that stays unreadable for the grace is no swap under way any more.
+  if (
+    watch.now() - watch.unreadableTokenSinceMs >=
+    watch.options.unreadableGraceMs
+  )
+    return 'nothing'
+  // A site that is being replaced at this moment is neither the old one nor a new one yet; look again next time.
+  watch.lookedAtStamp = undefined
+  return 'incomplete'
+}
+
+/**
  * Takes one look at the Wiki's output; called by {@link lookOrEnd} at every turn of the watch.
  * @param watch - The watch.
- * @returns `nothing` for a look that was not due; `incomplete`, with the next look forced, when the publish token cannot be read at this moment; otherwise the answer of {@link lookAtNewPublish} for a new publish token and of {@link lookForBlockingFiles} for the start's.
+ * @returns `nothing` for a look that was not due; the answer of {@link waitForReadableToken} when the publish token cannot be read at this moment; otherwise the answer of {@link lookAtNewPublish} for a new publish token and of {@link lookForBlockingFiles} for the start's.
  * @example
  * await look(watch) // => 'nothing' while the agent has published nothing
  */
@@ -186,11 +212,9 @@ async function look<Published>(
 ): Promise<WikiPublishLook<Published>> {
   if (!(await isLookDue(watch))) return 'nothing'
   const token = await watch.options.readToken()
-  // A site that is being replaced at this moment is neither the old one nor a new one yet.
-  if (isTokenUnreadableNow(watch, token)) {
-    watch.lookedAtStamp = undefined
-    return 'incomplete'
-  }
+  if (isTokenUnreadableNow(watch, token)) return waitForReadableToken(watch)
+  // A token that can be read again starts the grace anew the next time it cannot.
+  watch.unreadableTokenSinceMs = undefined
   return isNewPublish(watch, token)
     ? lookAtNewPublish(watch, token)
     : lookForBlockingFiles(watch, token)
@@ -201,7 +225,7 @@ async function look<Published>(
  * @param watch - The watch.
  * @param found - What the look found.
  * @param isLastLook - Whether the chat's reply had ended before the look began.
- * @returns `reply-ended` after a complete look that followed the reply's end; `timed-out` at the bound; otherwise `wait`. An incomplete look never ends the watch before the bound, also after the reply's end.
+ * @returns `reply-ended` after a complete look that followed the reply's end, also one that found the publish token unreadable past its grace ({@link waitForReadableToken}); `timed-out` at the bound; otherwise `wait`. An incomplete look never ends the watch before the bound, also after the reply's end.
  * @example
  * endOrWait(watch, 'nothing', true) // => { outcome: 'reply-ended' }
  */
@@ -210,7 +234,7 @@ function endOrWait<Published>(
   found: 'nothing' | 'incomplete',
   isLastLook: boolean,
 ): WikiPublishWait<Published> | 'wait' {
-  // A look that could not finish (a manifest still being written, an unreadable token, a failed probe) is taken again also after the reply ended.
+  // A look that could not finish (a manifest still being written, a token unreadable within its grace, a failed probe) is taken again also after the reply ended.
   if (found === 'nothing' && isLastLook) return { outcome: 'reply-ended' }
   return watch.now() >= watch.deadline ? { outcome: 'timed-out' } : 'wait'
 }
@@ -280,6 +304,7 @@ function startWatch<Published>(
     deadline: now() + options.timeoutMs,
     lookedAtStamp: undefined,
     unreadable: undefined,
+    unreadableTokenSinceMs: undefined,
   }
 }
 
@@ -290,9 +315,9 @@ function startWatch<Published>(
  * Trigger: the extension starts it right after opening the chat for a VS Code Wiki update; {@link classifyWikiUpdateEnd} turns its outcome into the result the reader shows.
  *
  * @param options.startToken - Publish token ({@link readWikiPublishToken}) before the update; undefined when the manifest was unreadable.
- * @param options.readToken - Reads the publish token now; undefined while the manifest is missing or mid-replacement. A token that cannot be read where the start's could leaves the look incomplete, like a failed probe.
+ * @param options.readToken - Reads the publish token now; undefined while the manifest is missing or mid-replacement. A token that cannot be read where the start's could leaves the look incomplete, like a failed probe, for `unreadableGraceMs`; after that the look counts as one that found no new publish, so a watch whose reply ended does not wait out the bound for a Wiki folder a failed publisher left missing.
  * @param options.readPublished - Reads what the caller needs from the newly published manifest; undefined while it is invalid, which keeps the watch going for `unreadableGraceMs`.
- * @param options.unreadableGraceMs - How long a new publish may stay unreadable before the watch ends as `unreadable`; a manifest that is still being written becomes readable within it.
+ * @param options.unreadableGraceMs - How long a new publish may stay unreadable before the watch ends as `unreadable`, and a publish token that cannot be read where the start's could before a look takes it for no new publish; a manifest that is still being written, and a site that is being replaced, become readable within it.
  * @param options.readStamp - Reads a cheap stamp of what a look reads ({@link readWikiWatchStamp}); a look is skipped while the stamp is the same as at the last complete look. Omitted: every look reads everything.
  * @param options.findBlockingFiles - Names learner-owned files that make the publisher refuse the candidate; optional. Its answer counts only when the publish token is still the same after it; a rejection leaves the look incomplete: it is taken again and never ends the watch, also after the chat's reply ended.
  * @param options.replyEnded - Aborts when the chat's reply ended ({@link watchWikiChatReply}); the sleep under way ends, and the look that follows decides. Omitted: the watch ends only by a publish, a refusal, the cancel or the bound.
@@ -305,7 +330,7 @@ function startWatch<Published>(
  * - `published`: the publish token changed and the new manifest is readable
  * - `unreadable`: the publish token changed and the new manifest was still not readable `unreadableGraceMs` after that was first seen
  * - `blocked`: the publisher would refuse the candidate because of those learner-owned files
- * - `reply-ended`: the chat's reply ended, and a complete look that began after that found no publish and no refusal
+ * - `reply-ended`: the chat's reply ended, and a complete look that began after that found no publish and no refusal (also a publish token that stayed unreadable for `unreadableGraceMs`)
  * - `cancelled`: the signal aborted first, also while the new manifest was being read
  * - `timed-out`: nothing was published within `timeoutMs`
  *
