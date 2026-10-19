@@ -544,6 +544,114 @@ test('Update anyway on each refusal, first for a candidate the stopped watch nev
   }
 })
 
+/** Waits until a window's stopped watch has turned its marker into the watch's reservation, which another window's start reads. */
+async function waitForReservation(
+  window: {
+    markerChanges: Array<{ kind: string; answer?: boolean | 'threw' }>
+  },
+  limitMs = 6_000,
+): Promise<void> {
+  const deadline = Date.now() + limitMs
+  while (
+    !window.markerChanges.some(
+      (change) => change.kind === 'reserve' && change.answer === true,
+    ) &&
+    Date.now() < deadline
+  )
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+}
+
+// Value: protects=the one agent per Wiki, and the way on, for a learner whose start is in the way of another window's stopped watch and of this window's own stopped chat together with the candidate that chat's watch saw; fails_when=a press of Update anyway drops what the press before it passed, so the refusal for the other window's chat and the one for this window's chat take turns without end, or the candidate and this window's chat are named in two refusals, so one chat needs Update anyway twice, or the start goes on past a leftover no refusal named; why_new=Cycle 0047 row 10 (P3SM2: the one refusal for a candidate the stopped watch saw (the second ship's P2SM2) had no test beside another window's reservation); seam=none (two windows of the real extension, the real publisher stages the candidate); no_claim=which chat wrote the candidate
+test('Update anyway on each refusal of a start that another window’s stopped watch and this window’s own stopped chat with the candidate its watch saw are in the way of names the other window’s chat first and this window’s candidate second, then starts the update with one new chat request and keeps the candidate', async () => {
+  // Arrange: this window's chat stages a candidate its watch sees, and the learner stops that watch; another window then passes both with Update anyway, starts, and its learner stops that watch too.
+  const progress: CancellableProgress[] = []
+  let isOverrideChosen = false
+  let pressesOfUpdateAnyway = 0
+  const wiki = await openPublishedWikiWindow({
+    cancellable: progress,
+    // The learner chooses Update anyway on each refusal; after five presses the test stops, so refusals that take turns come to an end.
+    chooseAction: (_message, actions) => {
+      if (
+        !isOverrideChosen ||
+        !actions.includes('Update anyway') ||
+        pressesOfUpdateAnyway >= 5
+      )
+        return undefined
+      pressesOfUpdateAnyway += 1
+      return 'Update anyway'
+    },
+  })
+  const otherProgress: CancellableProgress[] = []
+  let otherPressesOfUpdateAnyway = 0
+  const otherWindow = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+    cancellable: otherProgress,
+    // The other window's learner chooses Update anyway on each of its refusals, at most five times.
+    chooseAction: (_message, actions) => {
+      if (!actions.includes('Update anyway') || otherPressesOfUpdateAnyway >= 5)
+        return undefined
+      otherPressesOfUpdateAnyway += 1
+      return 'Update anyway'
+    },
+  })
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+    const candidate = await wiki.prepare()
+    await waitForStatus(
+      wiki.status,
+      (current) => current.state === 'running' && current.candidateStaged,
+    )
+    progress[0]!.cancel()
+    await waitForStatus(wiki.status, hasEnded)
+    await waitForReservation(wiki)
+    await otherWindow.clickUpdate()
+    const otherRun = await waitForStatus(
+      otherWindow.status,
+      (current) => current.state === 'running',
+    )
+    otherProgress[0]?.cancel()
+    await waitForStatus(otherWindow.status, hasEnded)
+    await waitForReservation(otherWindow)
+    const requestsBefore = wiki.chatRequests.length
+    const refusalsBefore = wiki.offeredActions.length
+
+    // Act
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    const started = await waitForStatus(
+      wiki.status,
+      (current) => current.state === 'running',
+      3_000,
+    )
+    await agentTakesAMoment()
+
+    // Assert
+    assert.equal(otherRun.state, 'running')
+    const refusals = wiki.offeredActions
+      .slice(refusalsBefore)
+      .filter(({ actions }) => actions.includes('Update anyway'))
+      .map(({ message }) => message)
+    assert.equal(refusals.length, 2)
+    assert.match(
+      refusals[0] ?? '',
+      /The VS Code chat another editor window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; that window stopped watching it at /,
+    )
+    assert.match(
+      refusals[1] ?? '',
+      new RegExp(
+        `An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(candidate)}, written `,
+      ),
+    )
+    assert.equal(started.state, 'running')
+    assert.equal(wiki.chatRequests.length, requestsBefore + 1)
+    assert.equal((await stat(candidate)).isDirectory(), true)
+  } finally {
+    await otherWindow.close()
+    await wiki.close()
+  }
+})
+
 test('a candidate the earlier chat keeps writing after this window stopped watching refuses the retry', async () => {
   // Arrange
   const progress: CancellableProgress[] = []
