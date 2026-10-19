@@ -45,6 +45,10 @@ export const LINUX_PID_NAMESPACE_PATH = '/proc/self/ns/pid'
 export const MACHINE_KEY_HEX_LENGTH = 16
 /** How long an empty lock file or an empty prepared takeover claim must have stayed empty before it counts as left by a killed window; a running window is in that state for an instant. */
 export const STORAGE_LOCK_UNWRITTEN_GRACE_MS = 10_000
+/** How often the release of this window's storage lock reads and removes the lock before it leaves the lock for this window's next write ({@link withStorageLock}); on Windows a scanner or an indexer can hold the file for a moment, so its read or its removal fails. */
+export const STORAGE_LOCK_RELEASE_ATTEMPTS = 20
+/** How long the release of this window's storage lock waits between two attempts; with {@link STORAGE_LOCK_RELEASE_ATTEMPTS} about half a second. */
+export const STORAGE_LOCK_RELEASE_RETRY_DELAY_MS = 25
 /** What an editor that runs without its telemetry service answers as `vscode.env.machineId` on every computer; it identifies none. */
 export const EDITOR_MACHINE_ID_PLACEHOLDER = 'someValue.machineId'
 export const CURSOR_MCP_CATALOG_REFRESH_STEP_MS = 1

@@ -19,7 +19,11 @@ import { before, test, type TestContext } from 'node:test'
 
 import { currentStorageOwner } from '../utils/currentStorageOwner'
 import type * as placementModule from '../utils/placeStorageLock'
-import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
+import {
+  readRecordedOwner,
+  type StorageOwnerIdentity,
+} from '../utils/readRecordedOwner'
+import type * as lockModule from '../utils/withStorageLock'
 import { withStorageLock } from '../utils/withStorageLock'
 
 import { answerKernelBootId } from './utils/answerKernelBootId'
@@ -1021,6 +1025,152 @@ test('a link that leads nowhere where a private storage folder should be is refu
       writesAtTheRefusal: 0,
       writeAfterwards: 'written',
       entriesOfTheRoot: ['link-to-nowhere'],
+    },
+  )
+})
+
+/**
+ * Loads {@link withStorageLock} as one window that has its own queue, whose read of its lock's owner and whose removal of its lock fail while a test says so, as on Windows while a scanner or an indexer holds the file (`EBUSY`) or the system refuses the removal (`EPERM`).
+ * @param lockPath - The `writer.lock` file whose read and removal may be refused.
+ * @returns The loaded write and the switches: `readsToRefuse` counts the reads of the lock's owner that answer nothing, `isRemovalRefused` refuses every removal of the lock while it is set.
+ * @example const window = await windowWithRefusedRelease(lockPath); window.readsToRefuse = 1
+ */
+async function windowWithRefusedRelease(lockPath: string): Promise<{
+  withStorageLock: typeof withStorageLock
+  readsToRefuse: number
+  isRemovalRefused: boolean
+}> {
+  const switches = {
+    readsToRefuse: 0,
+    isRemovalRefused: false,
+  }
+  const loaded = await loadModule<typeof lockModule>(
+    resolve(__dirname, '../utils/withStorageLock.js'),
+    {
+      './readRecordedOwner': {
+        readRecordedOwner: async (path: string) => {
+          if (path === lockPath && switches.readsToRefuse > 0) {
+            switches.readsToRefuse -= 1
+            return undefined
+          }
+          return readRecordedOwner(path)
+        },
+      },
+      'node:fs/promises': {
+        ...fsPromises,
+        unlink: async (path: string) => {
+          if (path === lockPath && switches.isRemovalRefused)
+            throw Object.assign(
+              new Error('EPERM: operation not permitted, unlink'),
+              { code: 'EPERM' },
+            )
+          return fsPromises.unlink(path)
+        },
+      },
+    },
+  )
+  return Object.assign(switches, { withStorageLock: loaded.withStorageLock })
+}
+
+// Value: protects=the learner's writes when the read of this window's own lock fails once at its release (on Windows a scanner or an indexer holds the file: EBUSY); fails_when=one failed read leaves the lock that names this window in place, so every later write of this window and of every other window is refused with "Learning storage is locked …" until this window closes; why_new=Cycle 0047 row 31 (P3RT9); seam=the read of the lock's owner in a loaded withStorageLock, which answers nothing once
+test('a release whose first read of the lock fails reads it again and removes the lock', async (context) => {
+  // Arrange: a window whose next read of its lock's owner answers nothing.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+
+  // Act
+  const outcome = await window
+    .withStorageLock(directory, async () => {
+      window.readsToRefuse = 1
+      return 'written'
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    { outcome, entriesAfterTheWrite: await readdir(directory) },
+    { outcome: 'written', entriesAfterTheWrite: [] },
+  )
+})
+
+// Value: protects=the learner's later writes in a window whose lock could not be read at all while it was released; fails_when=the lock that names this window stays, and this window refuses its own next write with "Learning storage is locked …" until it closes; why_new=Cycle 0047 row 31 (P3RT9); seam=the read of the lock's owner in a loaded withStorageLock, which answers nothing for the whole first release
+test('a lock this window could not read while it released it is taken back by this window’s next write, which goes ahead and leaves no lock', async (context) => {
+  // Arrange: a window whose reads of its lock's owner answer nothing for the whole first release.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+  const firstOutcome = await window
+    .withStorageLock(directory, async () => {
+      window.readsToRefuse = 1_000
+      return 'written'
+    })
+    .catch((error: unknown) => String(error))
+  const entriesAfterTheFirstWrite = await readdir(directory)
+  window.readsToRefuse = 0
+
+  // Act
+  const nextOutcome = await window
+    .withStorageLock(directory, async () => 'written')
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstOutcome,
+      entriesAfterTheFirstWrite,
+      nextOutcome,
+      entriesAfterTheNextWrite: await readdir(directory),
+    },
+    {
+      firstOutcome: 'written',
+      entriesAfterTheFirstWrite: ['writer.lock'],
+      nextOutcome: 'written',
+      entriesAfterTheNextWrite: [],
+    },
+  )
+})
+
+// Value: protects=the learner's later writes in a window whose lock the system refused to remove after a write (on Windows EPERM or EBUSY while another program holds the file); fails_when=the lock that names this window stays, and this window refuses its own next write with "Learning storage is locked …" until it closes; why_new=Cycle 0047 row 31 (P3RT9); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=the refusal of the first release is still reported to its caller, as a study removal names it (studyRemoval.test.ts)
+test('a write whose lock the system refuses to remove is made and reports the refusal, and this window’s next write takes the lock back, goes ahead and leaves no lock', async (context) => {
+  // Arrange: a window that may not remove its lock during its first release.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+  let writesMade = 0
+  const firstOutcome = await window
+    .withStorageLock(directory, async () => {
+      writesMade += 1
+      window.isRemovalRefused = true
+      return 'written'
+    })
+    .catch((error: unknown) => String(error))
+  const entriesAfterTheFirstWrite = await readdir(directory)
+  window.isRemovalRefused = false
+
+  // Act
+  const nextOutcome = await window
+    .withStorageLock(directory, async () => {
+      writesMade += 1
+      return 'written'
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstOutcome,
+      entriesAfterTheFirstWrite,
+      nextOutcome,
+      writesMade,
+      entriesAfterTheNextWrite: await readdir(directory),
+    },
+    {
+      firstOutcome: 'Error: EPERM: operation not permitted, unlink',
+      entriesAfterTheFirstWrite: ['writer.lock'],
+      nextOutcome: 'written',
+      writesMade: 2,
+      entriesAfterTheNextWrite: [],
     },
   )
 })
