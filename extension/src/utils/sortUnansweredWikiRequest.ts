@@ -1,35 +1,6 @@
 /** What became of a Wiki update request the chat had not answered at the bound of the first sign: `not-sent` when the hand-over command had returned without a reply, so the chat never held the request; `replied` when it had already returned a reply, so the chat answered the request: a complete reply, with which the request ended by itself, or one that waits for a confirmation, with which the chat works on it; `left` when it is still pending, so the request may still be in the chat, where the learner stops or removes it. No value names a request taken back: {@link sortUnansweredWikiRequest} runs none of the chat's commands. */
 export type UnansweredWikiRequest = 'not-sent' | 'replied' | 'left'
 
-/** The hand-over command as {@link sortUnansweredWikiRequest} watches it: whether it has returned (resolved or thrown) and whether it resolved with a reply (a response was made). */
-type HandOverWatch = {
-  hasReturned: boolean
-  hadReply: boolean
-}
-
-/**
- * Notes when the hand-over command returns and whether it returned a reply; called once by {@link sortUnansweredWikiRequest}.
- * @param handOver - The promise of `workbench.action.chat.open` with `blockOnResponse`.
- * @returns The watch: `hasReturned` turns `true` in the turn the command resolves or throws, and `hadReply` when it resolved with a value.
- * @example
- * const watch = watchHandOver(Promise.resolve({}))
- * await Promise.resolve()
- * watch.hadReply // => true
- */
-function watchHandOver(handOver: Promise<unknown>): HandOverWatch {
-  const watch: HandOverWatch = { hasReturned: false, hadReply: false }
-  void handOver.then(
-    (reply) => {
-      watch.hasReturned = true
-      watch.hadReply = reply !== undefined
-    },
-    () => {
-      watch.hasReturned = true
-    },
-  )
-  return watch
-}
-
 /**
  * Sorts the Wiki update request an unanswering VS Code chat was handed into not sent, replied or left, before Codebook says the update showed no sign; it takes nothing back.
  *
@@ -51,11 +22,18 @@ function watchHandOver(handOver: Promise<unknown>): HandOverWatch {
 export async function sortUnansweredWikiRequest(options: {
   handOver: Promise<unknown>
 }): Promise<UnansweredWikiRequest> {
-  const handOver = watchHandOver(options.handOver)
-  // A hand-over command that returned before this call is seen one turn after the watch was set.
-  await Promise.resolve()
+  // No command of the chat can be pointed at a request still pending, so it is left to the learner, whom the end's sentence tells how to stop it.
+  let request: UnansweredWikiRequest = 'left'
   // A command that returned without a reply made no response: the chat refused the request, or the command threw. A reply that came in the moment after the bound answers the request: a complete one ended it, and one that waits for a confirmation is the chat at work.
-  if (handOver.hasReturned) return handOver.hadReply ? 'replied' : 'not-sent'
-  // No command of the chat can be pointed at this request, so it is left to the learner, whom the end's sentence tells how to stop it.
-  return 'left'
+  void options.handOver.then(
+    (reply) => {
+      request = reply === undefined ? 'not-sent' : 'replied'
+    },
+    () => {
+      request = 'not-sent'
+    },
+  )
+  // A hand-over command that returned before this call is seen one turn after its handlers were set.
+  await Promise.resolve()
+  return request
 }
