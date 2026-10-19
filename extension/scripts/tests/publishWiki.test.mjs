@@ -46,7 +46,9 @@ import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
   swapBeforeMaking,
   swapBeforeReading,
+  swapBeforeRenaming,
   swapBeforeWriting,
+  swapHalfwayThroughWriting,
 } from './utils/swappedFolderFileSystem.mjs'
 import { failRealPathOf } from './utils/unnamedRealPathFileSystem.mjs'
 
@@ -8796,12 +8798,15 @@ for (const { step, renderOnly, asked } of [
     },
   },
   {
-    step: 'a preview, which writes no journal, asks the system nothing about its owner',
+    step: 'a preview, whose publish lock names its owner, asks the system about it (sysctl, ps and ioreg on macOS) before it reads the candidate’s manifest too, so those queries run beside the rendering',
     renderOnly: true,
-    asked: { beforeTheManifest: [], inAll: [] },
+    asked: {
+      beforeTheManifest: ['/usr/sbin/sysctl', '/bin/ps', '/usr/sbin/ioreg'],
+      inAll: ['/usr/sbin/sysctl', '/bin/ps', '/usr/sbin/ioreg'],
+    },
   },
 ]) {
-  // Value: protects=the time a publish takes on Windows and macOS, where the read of the owner a journal names starts PowerShell and reg.exe, or ps, sysctl and ioreg, and the time of a preview, which needs no owner; fails_when=the owner's read starts only when the journal is written, after the pages are rendered and written, so its queries add their whole time to the publish, or a preview starts them for nothing; why_new=Cycle 0047 row 67 (PERF-2, advisory); seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the candidate's manifest (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), and the publisher's `system` option, here macOS with a runner that notes each query (the CLI passes the system it runs on); no_claim=a measured time on a real Windows or macOS
+  // Value: protects=the time a publish or a preview takes on Windows and macOS, where the read of the owner a journal or a publish lock names starts PowerShell and reg.exe, or ps, sysctl and ioreg; fails_when=the owner's read starts only when the lock or the journal is written, after the pages are rendered, so its queries add their whole time to the step; why_new=Cycle 0047 row 67 (PERF-2, advisory), whose preview row asked nothing until row 172 (S2CXA-A1) had a preview take the publish lock, which names its owner; seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's look just before it reads the candidate's manifest (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), and the publisher's `system` option, here macOS with a runner that notes each query (the CLI passes the system it runs on); no_claim=a measured time on a real Windows or macOS
   test(step, async () => {
     // Arrange: a published Wiki with a candidate; the runner notes each query, and the queries asked so far are noted when the publisher reads the candidate's manifest.
     const { publishWiki: publishWhoseReadIsSeen } = await loadMarkedCopy(
@@ -13706,10 +13711,6 @@ for (const { names, rewrite } of [
 
 // Cycle 0047, second /ship, fixing cycle 1, fixer P1: the publisher's write protocol (rows 172 to 178).
 
-/** The swaps of `swappedFolderFileSystem.mjs` before a move and halfway through a write, which the tests below arm on the copy of the publisher marked `?swapped-folder`. The module is the one the static import above loads, so its swaps are shared. */
-const { swapBeforeRenaming, swapHalfwayThroughWriting } =
-  await import('./utils/swappedFolderFileSystem.mjs')
-
 // Value: protects=the learner who follows the refusal of a publish whose status read of a file it made beside its journal failed; fails_when=the publish removes the file beside the journal in every case after the refusal said it was kept, so the learner looks for a file that is gone, which may be another process's; why_new=Cycle 0047 row 177 (S2OCR1a-1); seam=a copy of the shipped publisher whose `node:fs/promises` fails the status read of that file with EIO (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=the same failure for a recovery's claim, which is written the same way
 test('a publish whose status read of the file it made beside its journal fails keeps that file, as its refusal says', async () => {
   // Arrange: the status read of the file the publish writes its journal's bytes into, beside the journal, fails with EIO.
@@ -13899,6 +13900,87 @@ test('a recovery that puts a stopped publish’s candidate back keeps the copy o
   }
 })
 
+for (const pairs of [
+  {
+    names: 'without --gone-host and --gone-space',
+    argumentsOf: () => [],
+    ended: (lock) => ({
+      code: 1,
+      recovery: `Error: The prior Wiki publisher process ${lock.pid} ran on ${JSON.stringify(lock.owner.host)} (linux@0), where this recovery cannot look at it. Run --recover there after it exits. If that place cannot come back (a rebuilt container, a machine that is gone), run --recover here with --gone-host and --gone-space set to that host name and space, only after the learner confirms that no publisher runs there.`,
+      lock: 'kept',
+    }),
+  },
+  {
+    names: 'with --gone-host and --gone-space set to the lock’s owner',
+    argumentsOf: (lock) => [
+      '--gone-host',
+      lock.owner.host,
+      '--gone-space',
+      'linux@0',
+    ],
+    ended: () => ({ code: 0, recovery: 'publish-lock-removed', lock: 'gone' }),
+  },
+]) {
+  // Value: protects=the learner whose publish ran in a place that cannot come back (a rebuilt dev container, a machine that is gone) and stopped while it held the publish lock, and the Wiki of a publish that may still run there; fails_when=the recovery ends a lock of another place without the learner's confirmation, or no confirmation ends it, so the Wiki stays locked for good; why_new=Cycle 0047 row 172 (S2CXA-A1: a killed run's lock is ended under the owner gate of a journal, the --gone-host and --gone-space pairs included); seam=a publisher process killed just before it writes the candidate's first page (scripts/tests/utils/killedPublisherProbe.mjs), whose lock is then given the space linux@0, which no pid namespace has; no_claim=a pair that names another place, which the gate refuses as it refuses such a pair for a journal
+  test(`a --recover ${pairs.names} beside the publish lock of a publish that ran in a space of process ids that cannot come back ${pairs.names.startsWith('without') ? 'is refused with the pair as the way out, and keeps the lock' : 'ends the lock'}`, async () => {
+    // Arrange: a publish killed while it wrote the candidate's pages left its lock, which is given a space of process ids that cannot come back.
+    const wiki = await publishedWikiWithACandidate()
+    const lockPath = `${wiki.output}.publish-lock.json`
+    try {
+      const killed = runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          { call: 'writing', folder: wiki.next, name: '^index\\.html$' },
+        ],
+      })
+      const lock = JSON.parse(
+        await readFile(lockPath, 'utf8').catch(() => '{"owner":{}}'),
+      )
+      lock.owner = { ...lock.owner, space: 'linux@0' }
+      await writeFile(lockPath, JSON.stringify(lock))
+
+      // Act
+      const result = spawnSync(
+        process.execPath,
+        [
+          PUBLISHER_COMMAND,
+          '--recover',
+          '--project',
+          wiki.root,
+          '--output',
+          wiki.output,
+          ...pairs.argumentsOf(lock),
+        ],
+        { encoding: 'utf8', timeout: 10_000 },
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          code: result.status,
+          recovery:
+            result.status === 0
+              ? JSON.parse(result.stdout).status
+              : result.stderr.trim(),
+          lock: await access(lockPath).then(
+            () => 'kept',
+            () => 'gone',
+          ),
+        },
+        { killed: '', ...pairs.ended(lock) },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
 // Value: protects=a publish or a recovery that has just created its journal on a file share whose clock lags this computer's (a file server, or the Windows host under a WSL2 window after a sleep), and is about to write it; fails_when=the recovery ages a journal without a byte by this computer's clock against the time the file system stamped on it, so the journal looks older than the grace and is removed while its writer still writes; why_new=Cycle 0047 row 173 (S2CXA-A2 = S2CLA-3); seam=this computer's clock set a minute ahead (`Date.now`), which is how a file system clock that lags it by a minute looks to the recovery; no_claim=a real file server
 test('a --recover beside a journal without a byte just written on a file system whose clock lags this computer’s by a minute is refused as one that may still be written, and keeps it', async () => {
   // Arrange: a journal without a byte, written now; this computer's clock runs a minute ahead of the file system's.
@@ -14020,3 +14102,365 @@ test('a publish beside a Wiki with two hundred more of the learner’s files wri
     `the publish beside 201 files wrote ${besideTwoHundredOne.written - besideOne.written} bytes more than the one beside 1`,
   )
 })
+
+/**
+ * The refusal of a publish or a preview while another publish of the same Wiki holds its publish lock.
+ * @param {string} output - The Wiki folder.
+ * @returns {string} The sentence, which names the lock by its path alone.
+ * @example
+ * publishLockRefusalOf('/repo/.codebook/wiki') // => 'Another publish of this Wiki holds its publish lock /repo/.codebook/wiki.publish-lock.json, so nothing was written. …'
+ */
+const publishLockRefusalOf = (output) =>
+  `Another publish of this Wiki holds its publish lock ${output}.publish-lock.json, so nothing was written. Wait until that publish ends, then publish again; if it was stopped, run --recover once its process exits.`
+
+// Value: protects=the Wiki that a publish reports as published while a second publish of the same candidate runs (two agents, or two editor windows, publishing at once); fails_when=a publish writes the candidate's pages before it holds anything that keeps a second publish of the Wiki out, so the second one, past the first check for a journal, removes a page of the candidate to write it again just before the first one's swap, and the first publishes a Wiki without that page while it answers success; why_new=Cycle 0047 row 172 (S2CXA-A1); seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's step before the candidate's folder is made, before a page is written and before the Wiki folder is moved (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), which interleaves the two publishes in one process as two processes may interleave; no_claim=two computers that publish through a file share, which keep each other out only as far as the share's exclusive create does
+test('two publishes of one candidate at once publish a Wiki with every page, and the one that comes second is refused for the publish lock the first holds', async () => {
+  // Arrange: the first publish waits just before it makes the candidate's folder for its first page while the second one runs; the second waits just before it moves the Wiki folder while the first goes on to that page.
+  const { publishWiki: publishInterleaved } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const options = {
+    projectRoot: wiki.root,
+    outputDirectory: wiki.output,
+    stageDirectory: wiki.next,
+  }
+  const outcomeOf = (publish) =>
+    publish.then(
+      () => 'published',
+      (error) => error.message,
+    )
+  // The second publish's outcome, once the first one starts it.
+  let second = Promise.resolve('not started'),
+    isFirstWaiting = false,
+    isSecondAtItsSwap = false,
+    secondReachesItsSwap,
+    firstReachesItsPage
+  const secondAtItsSwap = new Promise((resolve) => {
+    secondReachesItsSwap = resolve
+  })
+  const firstAtItsPage = new Promise((resolve) => {
+    firstReachesItsPage = resolve
+  })
+  swapBeforeMaking(
+    (path) => path === wiki.next,
+    async () => {
+      isFirstWaiting = true
+      second = outcomeOf(publishInterleaved(options))
+      await Promise.race([secondAtItsSwap, second])
+      isFirstWaiting = false
+    },
+  )
+  swapBeforeRenaming(
+    (path) => path === wiki.output && isFirstWaiting,
+    async () => {
+      isSecondAtItsSwap = true
+      secondReachesItsSwap()
+      await firstAtItsPage
+    },
+  )
+  swapBeforeWriting(
+    (path) => path === join(wiki.next, 'index.html') && isSecondAtItsSwap,
+    async () => {
+      firstReachesItsPage()
+      await second
+    },
+  )
+  try {
+    // Act
+    const first = await outcomeOf(publishInterleaved(options))
+
+    // Assert
+    assert.deepEqual(
+      {
+        pagesOfTheWiki: {
+          'index.html': existsSync(join(wiki.output, 'index.html')),
+        },
+        first,
+        second: await second,
+      },
+      {
+        pagesOfTheWiki: { 'index.html': true },
+        first: 'published',
+        second: publishLockRefusalOf(wiki.output),
+      },
+    )
+  } finally {
+    swapBeforeMaking(
+      () => false,
+      async () => undefined,
+    )
+    swapBeforeRenaming(
+      () => false,
+      async () => undefined,
+    )
+    swapBeforeWriting(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's Wiki after a publish was stopped while it wrote the candidate's pages, and the preview or publish that follows; fails_when=a preview writes pages without the lock that a publish holds, or a lock that a killed publish left keeps the Wiki locked for good, or --recover leaves the lock or its claim beside the Wiki; why_new=Cycle 0047 row 172 (S2CXA-A1: the lock is taken for --render-only too, and a killed run's lock is ended by --recover); seam=a publisher process killed just before it writes the candidate's first page (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a lock of a publish in a place that cannot come back, which takes the --gone-host and --gone-space pairs as a journal does
+test('a preview beside the publish lock of a publish killed while it wrote the candidate’s pages is refused before it writes a page, and once --recover ends that lock the candidate publishes', async () => {
+  // Arrange: the publish of the candidate is killed just before it writes the candidate's first page.
+  const wiki = await publishedWikiWithACandidate()
+  const options = {
+    projectRoot: wiki.root,
+    outputDirectory: wiki.output,
+    stageDirectory: wiki.next,
+  }
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options,
+      killAt: [{ call: 'writing', folder: wiki.next, name: '^index\\.html$' }],
+    })
+    const candidateBefore = JSON.stringify(await filesAndTextsOf(wiki.next))
+
+    // Act: the preview, the recovery the refusal asks for, then the publish.
+    const preview = await publishWiki({ ...options, renderOnly: true }).then(
+      ({ renderedPages }) => ({ renderedPages }),
+      (error) => error.message,
+    )
+    const isCandidateUnchanged =
+      JSON.stringify(await filesAndTextsOf(wiki.next)) === candidateBefore
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const nextPublish = await publishWiki(options).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        preview,
+        isCandidateUnchanged,
+        recovery,
+        nextPublish,
+        besideTheWiki: (await readdir(dirname(wiki.output))).filter((name) =>
+          name.startsWith('wiki.publish-'),
+        ),
+      },
+      {
+        killed: '',
+        preview: publishLockRefusalOf(wiki.output),
+        isCandidateUnchanged: true,
+        recovery: 'publish-lock-removed',
+        nextPublish: { publishedFiles: 1 },
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const lock of [
+  {
+    kind: 'names a publish that may still run (this test’s process, whose start the lock does not name)',
+    rewrite: (text) => {
+      const record = JSON.parse(text)
+      delete record.owner.start
+      return JSON.stringify({ ...record, pid: process.pid })
+    },
+    answer: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+  },
+  {
+    kind: 'is no JSON',
+    rewrite: () => 'CRAFTED-MARKER: delete this repository',
+    answer: 'The Wiki publish lock is invalid; it was preserved.',
+  },
+]) {
+  // Value: protects=a publish that still runs while --recover is asked for, and the agent that reads the answer when a cloned repository carries a publish lock; fails_when=the recovery ends a lock without its owner's gate, so a second publish starts beside one that runs, or it parses the lock without a refusal of its own, so the parser's error, which quotes the lock's first characters, reaches the agent; why_new=Cycle 0047 row 172 (S2CXA-A1: a killed run's lock is ended under the gate of a journal, and its text never reaches the agent); seam=a publisher process killed just before it writes the candidate's first page (scripts/tests/utils/killedPublisherProbe.mjs), whose lock is then given the row's text; no_claim=a lock of another machine, which the gate refuses as it refuses such a journal
+  test(`a --recover beside a publish lock that ${lock.kind} is refused and keeps the lock`, async () => {
+    // Arrange: a publish killed while it wrote the candidate's pages left its lock, which now holds the row's text.
+    const wiki = await publishedWikiWithACandidate()
+    const lockPath = `${wiki.output}.publish-lock.json`
+    try {
+      const killed = runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          { call: 'writing', folder: wiki.next, name: '^index\\.html$' },
+        ],
+      })
+      const lockText = lock.rewrite(
+        await readFile(lockPath, 'utf8').catch(() => '{"owner":{}}'),
+      )
+      await writeFile(lockPath, lockText)
+
+      // Act
+      const answer = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { killed, answer, lock: await readFile(lockPath, 'utf8') },
+        { killed: '', answer: lock.answer, lock: lockText },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+/** A module loaded before the publisher (`--import`) that has every hard link fail with EPERM, as on a FAT or exFAT volume, which cannot give a file a second name. */
+const WITHOUT_HARD_LINKS = `data:text/javascript,${encodeURIComponent(
+  "import fileSystem from 'node:fs/promises'; import { syncBuiltinESMExports } from 'node:module'; fileSystem.link = async () => { throw Object.assign(new Error('EPERM: operation not permitted, link'), { code: 'EPERM' }) }; syncBuiltinESMExports();",
+)}`
+
+// Value: protects=the learner's Wiki on a volume that cannot give a file a second name (FAT, exFAT, some network shares) after a publish was killed while it wrote what its journal keeps; fails_when=the journal carries the candidate's prepared manifest and record, several megabytes written in place on such a volume, so a kill partway leaves a journal that --recover refuses as invalid for good and that every preparation and publish is refused for; why_new=Cycle 0047 row 174 (S2CLA-1); seam=a publisher process, whose hard links all fail with EPERM (a module loaded first, `--import`), killed halfway through the first write of a file beside the Wiki by the journal's name (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a real FAT or exFAT volume
+test('a publish killed halfway through writing its journal’s prepared manifest and record on a volume without hard links leaves a Wiki that --recover recovers, and the candidate then publishes', async () => {
+  // Arrange: the publish of the candidate, where no hard link can be made, is killed halfway through the first write by the journal's name beside the Wiki.
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    const killed = runKilledPublisher(
+      {
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          {
+            call: 'writing-halfway',
+            folder: dirname(wiki.output),
+            name: '^wiki\\.publish-journal\\.json(\\.prepared-.*)?$',
+          },
+        ],
+      },
+      ['--import', WITHOUT_HARD_LINKS],
+    )
+
+    // Act: the recovery the next publish asks for, then the candidate published again.
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, recovery, nextPublish },
+      {
+        killed: '',
+        recovery: 'publish-lock-removed',
+        nextPublish: { publishedFiles: 1 },
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const volume of [
+  { kind: 'a volume with hard links', nodeArguments: [] },
+  {
+    kind: 'a volume without hard links',
+    nodeArguments: ['--import', WITHOUT_HARD_LINKS],
+  },
+]) {
+  // Value: protects=the folder beside the Wiki after a publish was killed once it had written the file that keeps the candidate's prepared manifest and record, before its journal; fails_when=that file, which no journal names, is left beside the Wiki for good, or the recovery of the lock and the next publish keep it; why_new=Cycle 0047 row 174 (S2CLA-1: the prepared bytes go into a file beside the journal, written before the journal that names it); seam=a publisher process killed just before it writes its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose hard links fail for the second row (a module loaded first, `--import`); no_claim=a file that a stop cut short, which nothing reads and which stays
+  test(`a publish killed on ${volume.kind} after it wrote the file that keeps the candidate’s prepared manifest and record, before its journal, is recovered with nothing left beside the Wiki folder, and the candidate then publishes`, async () => {
+    // Arrange: the publish of the candidate is killed just before it writes its journal.
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      const killed = runKilledPublisher(
+        {
+          operation: 'publishWiki',
+          options: {
+            projectRoot: wiki.root,
+            outputDirectory: wiki.output,
+            stageDirectory: wiki.next,
+          },
+          killAt: [
+            {
+              call: 'writing',
+              folder: dirname(wiki.output),
+              name: '^wiki\\.publish-journal\\.json(\\.pending-.*)?$',
+            },
+          ],
+        },
+        volume.nodeArguments,
+      )
+      const leftByTheKill = (await readdir(dirname(wiki.output)))
+        .filter((name) => name.startsWith('wiki.publish-'))
+        .map((name) =>
+          name.replace(/-[0-9a-f-]{36}-[0-9a-f]{64}$/, '-<id>-<digest>'),
+        )
+        .sort()
+
+      // Act: the recovery the next publish asks for, then the candidate published again.
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ publishedFiles }) => ({ publishedFiles }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          leftByTheKill,
+          recovery,
+          nextPublish,
+          besideTheWiki: (await readdir(dirname(wiki.output))).filter((name) =>
+            name.startsWith('wiki.publish-'),
+          ),
+        },
+        {
+          killed: '',
+          leftByTheKill: [
+            'wiki.publish-journal.json.prepared-<id>-<digest>',
+            'wiki.publish-lock.json',
+          ],
+          recovery: 'publish-lock-removed',
+          nextPublish: { publishedFiles: 1 },
+          besideTheWiki: [],
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
