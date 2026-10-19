@@ -1149,6 +1149,68 @@ test('a staged Cursor MCP config that a killed window left in ~/.cursor without 
   )
 })
 
+// Value: protects=the setup of a Cursor window that sleeps longer than a minute between staging Codebook's first config and putting it in place (a closed laptop lid, a debugger pause), while a window of another Cursor profile, with a storage folder and a lock of its own, sweeps ~/.cursor: the sleeping window stages its config again and its setup completes; fails_when=the other window's sweep removes the staged file as one a killed window left, and the sleeping window's link fails with ENOENT, so its setup ends with "Cursor MCP config could not be created: … (ENOENT)" although nothing is wrong with the folder (Cycle 0047 row 198); why_new=Cycle 0047 row 198 (S2CLA-6): the sweep's tests had only files of killed windows; seam=node:fs/promises link of the loaded catalog, at whose first call the staged file is dated back two minutes and the other profile's removal of the managed catalog runs, with its sweep; no_claim=a real sleep of the machine
+test('a window that sleeps between staging its first Cursor MCP config and putting it in place, while another profile’s window sweeps ~/.cursor, stages the config again and its setup completes', async (context) => {
+  // Arrange: no config yet; this window stages its config, and before it links the file another Cursor profile's window removes its managed catalog, which sweeps the staged files older than a minute.
+  const folders = await catalogFolders(context)
+  const storageOfAnotherProfile = join(
+    folders.cursorDirectory,
+    'storage-of-another-profile',
+  )
+  let hasSlept = false,
+    sweepOfTheOtherWindow: string | undefined
+  const catalog = await loadCatalogWith({
+    ...fileSystem,
+    link: async (existingPath: string, newPath: string) => {
+      // Only the window's first link sleeps past the sweep's minute.
+      if (!hasSlept) {
+        hasSlept = true
+        const twoMinutesAgo = new Date(Date.now() - 120_000)
+        await utimes(existingPath, twoMinutesAgo, twoMinutesAgo)
+        sweepOfTheOtherWindow = await outcomeOf(
+          removeOwnedCursorMcpCatalog(
+            storageOfAnotherProfile,
+            folders.cursorDirectory,
+          ),
+        )
+      }
+      return fileSystem.link(existingPath, newPath)
+    },
+  })
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      sweepOfTheOtherWindow,
+      refreshGaveAGeneration: /^answered [a-f0-9-]{36}$/.test(refresh),
+      config: await readFile(folders.configPath, 'utf8').catch(
+        (error: unknown) => `no config (${systemErrorCode(error)})`,
+      ),
+      entriesOfTheCursorFolder: (await readdir(folders.cursorDirectory)).sort(),
+      records: (await readdir(folders.recordDirectory)).sort(),
+    },
+    {
+      sweepOfTheOtherWindow: 'answered not-owned',
+      refreshGaveAGeneration: true,
+      config: EMPTY_CONFIG,
+      entriesOfTheCursorFolder: [
+        'mcp.json',
+        'storage',
+        'storage-of-another-profile',
+      ],
+      records: ['receipt.json'],
+    },
+  )
+})
+
 // Value: protects=a learner's ~/.cursor after a Cursor window was killed while it staged Codebook's first config: the file the refresh itself staged, under the name it gives such a file, is one the next refresh removes; fails_when=the name the refresh gives its staged config and the name the sweep of left staged configs removes drift apart (a rename of either), so such files stay in ~/.cursor for good while every test that writes its staged names by hand still passes (Cycle 0047 row 153); why_new=Cycle 0047 row 153 (P3MAINT-2): the two names were linked only by a docstring; seam=./atomicPrivateWrite of the loaded catalog, which refuses the creation record with ENOSPC, and its node:fs/promises, whose removals in Cursor's settings folder fail, so the refresh leaves its staged file as a window killed before its record does; the file is dated back two minutes; no_claim=a real kill of a window
 test('a staged Cursor MCP config that a refresh left under its own name is removed by the next refresh once it is older than a minute', async (context) => {
   // Arrange: a refresh whose creation record cannot be written, and whose removal of its staged file then fails too, leaves that file in ~/.cursor; the file is dated back two minutes.
