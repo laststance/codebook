@@ -536,7 +536,7 @@ type LeftoverProofKeyboard = Extract<
   ChatKeyboardReturnCause,
   'leftoverProof' | 'unprovenLeftoverProof'
 >
-/** The learner's text editor that had the keyboard before a proof of the groups an earlier window recorded, with the columns of the groups the editor may name while the keyboard is still where the first proof left it: that proof's group, and the group named before it, which the editor can go on naming (Cursor names its chat part's group over a file of the main editor, Cycle 0046 row 712), and the document the first proof's group showed in front, which its focus command shows; read by {@link StudyWorkspace.keyboardOwnerBeforeLeftoverProof} and asked by {@link StudyWorkspace.movedKeyboardSinceLeftoverProof} (Cycle 0047 rows 44 and 99). */
+/** The learner's text editor that had the keyboard before a proof of the groups an earlier window recorded, with the columns of the groups the editor may name while the keyboard is still where the first proof left it: that proof's group, and the group named before it, which the editor can go on naming (Cursor names its chat part's group over a file of the main editor, Cycle 0046 row 712), and the first proof's group as it stood at the proof's start: its column, how many groups the editor named, and the tab of any kind in front of it (`none` for a group without a tab), which its focus command shows; read by {@link StudyWorkspace.keyboardOwnerBeforeLeftoverProof}, and asked by {@link StudyWorkspace.movedKeyboardSinceLeftoverProof} and {@link StudyWorkspace.showsAnotherLeftoverFront} (Cycle 0047 rows 44, 99 and 128). */
 type LeftoverProofKeyboardOwner = {
   editor: vscode.TextEditor
   proofColumns: ReadonlySet<number>
