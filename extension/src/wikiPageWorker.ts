@@ -118,16 +118,14 @@ export function servedWikiPageOffThread(
       () => leaveLineWith({ state: 'busy' }),
       WIKI_PAGE_WAIT_LIMIT_MS,
     )
-    // The wait limit alone holds neither the editor's process nor a test's open: a worker holds it while the page waits.
-    page.waitLimit.unref()
   })
 }
 
 /**
- * Hands one page to an idle worker, or to a new one, and answers it once: with the page, at the deadline, at a failure or when the request goes. Afterwards the worker waits for the next page only when it answered a page, and the first page waiting then gets a worker; otherwise it is stopped, and the first page waiting gets a worker once the stopped one's thread has ended or was counted as lost ({@link stopInItsPlace}). A page whose new worker cannot start is answered as failed at once, and the first page waiting then tries a worker of its own; a page that waited keeps its cancellation from the line until its worker took it.
+ * Hands one page to an idle worker, or to a new one, and answers it once: with the page, at the deadline, at a failure or when the request goes. Afterwards the worker waits for the next page only when it answered a page, and the first page waiting then gets a worker; otherwise it is stopped, and the first page waiting gets a worker once the stopped one's thread has ended or was counted as lost ({@link stopInItsPlace}). A page whose new worker cannot start is answered as failed at once, and the first page waiting then tries a worker of its own; a page that waited keeps its cancellation from the line until its worker took it, and its wait limit ({@link WIKI_PAGE_WAIT_LIMIT_MS}) ends here.
  * Called by {@link servedWikiPageOffThread} when a place among the busy workers is free, and by {@link startNextWaitingPage} for the oldest waiting page when a place is free again.
  * @param page - The page asked for; its request has not gone.
- * @example preparePage({ request: { html, options }, limits, answer: resolve, leaveLine })
+ * @example preparePage({ request: { html, options }, limits, answer: resolve, leaveLine, waitLimit: undefined })
  */
 function preparePage(page: AskedWikiPage): void {
   const worker = takeIdleWorker() ?? startPageWorker()
