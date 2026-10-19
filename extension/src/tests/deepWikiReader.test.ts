@@ -565,12 +565,10 @@ test('closing the reader while a question is in flight stops the question and en
     await questionArrived
 
     // Act: "Open DeepWiki" closes the old reader before it starts a new one.
-    const closing = await Promise.race([
+    const closing = await within(
       reader.close().then(() => 'closed'),
-      new Promise((resolveWait) =>
-        setTimeout(() => resolveWait('still waiting for the question'), 2_000),
-      ),
-    ])
+      2_000,
+    )
 
     // Assert
     assert.equal(closing, 'closed')
@@ -1371,7 +1369,7 @@ test('while six pages are in hand, a further page is refused at once with 503 an
   await sixPagesInHand
 
   // Act: a seventh page, then the six held pages are let go, then a page after them.
-  const further = await Promise.race([
+  const further = await within(
     fetch(new URL('later.html', reader.url)).then(async (response) => ({
       status: response.status,
       // The overview's address under this reader's random prefix, written as OVERVIEW.
@@ -1380,10 +1378,8 @@ test('while six pages are in hand, a further page is refused at once with 503 an
         'OVERVIEW',
       ),
     })),
-    new Promise<'still waiting'>((resolveWait) =>
-      setTimeout(() => resolveWait('still waiting'), 1_000),
-    ),
-  ])
+    1_000,
+  )
   letPagesGo()
   const heldAnswers = await Promise.all(heldPages)
   const afterResponse = await fetch(new URL('later.html', reader.url))
@@ -1678,7 +1674,7 @@ test('while six pages are in hand, a further page request is refused at once wit
   const readForTheHeldPages = metadataRead.splice(0)
 
   // Act: a seventh page, then the six held pages are let go.
-  const further = await Promise.race([
+  const further = await within(
     fetch(new URL('later.html', reader.url)).then(async (response) => ({
       status: response.status,
       // The overview's address under this reader's random prefix, written as OVERVIEW.
@@ -1687,10 +1683,8 @@ test('while six pages are in hand, a further page request is refused at once wit
         'OVERVIEW',
       ),
     })),
-    new Promise<'still waiting'>((resolveWait) =>
-      setTimeout(() => resolveWait('still waiting'), 1_000),
-    ),
-  ])
+    1_000,
+  )
   const readForTheFurtherPage = metadataRead.splice(0)
   letPagesGo()
   await Promise.all(heldPages)
@@ -2286,17 +2280,15 @@ test(
     context.after(() => reader.close())
 
     // Act
-    const answer = await Promise.race([
+    const answer = await within(
       fetch(new URL('pipe.html', reader.url), {
         signal: browserTab.signal,
       }).then(async (response) => ({
         status: response.status,
         body: await response.text(),
       })),
-      new Promise<'still waiting'>((resolveWait) =>
-        setTimeout(() => resolveWait('still waiting'), 2_000),
-      ),
-    ])
+      2_000,
+    )
 
     // Assert
     assert.deepEqual(answer, {
@@ -2634,7 +2626,7 @@ test(
     context.after(() => reader.close())
 
     // Act
-    const answer = await Promise.race([
+    const answer = await within(
       fetch(new URL('wiki.css', reader.url), {
         headers: { 'Sec-Fetch-Dest': 'style' },
         signal: browserTab.signal,
@@ -2642,10 +2634,8 @@ test(
         status: response.status,
         body: await response.text(),
       })),
-      new Promise<'still waiting'>((resolveWait) =>
-        setTimeout(() => resolveWait('still waiting'), 2_000),
-      ),
-    ])
+      2_000,
+    )
 
     // Assert
     assert.deepEqual(answer, {
@@ -2882,15 +2872,13 @@ test('a page whose browser tab goes while the page is prepared has its preparati
   // Act: the tab goes while the page is prepared.
   browserTab.abort()
   await opening
-  const preparationEnd = await Promise.race([
+  const preparationEnd = await within(
     new Promise<'stopped'>((resolveStop) => {
       if (preparationSignal?.aborted) resolveStop('stopped')
       preparationSignal?.addEventListener('abort', () => resolveStop('stopped'))
     }),
-    new Promise<'still running'>((resolveWait) =>
-      setTimeout(() => resolveWait('still running'), 2_000),
-    ),
-  ])
+    2_000,
+  )
 
   // Assert
   assert.equal(preparationEnd, 'stopped')
@@ -2973,15 +2961,13 @@ test('a page whose browser tab goes while the reader reads its file has its prep
   await new Promise((resolveWait) => setTimeout(resolveWait, 200))
   letOpenGoOn()
   await preparationStarted
-  const preparationEnd = await Promise.race([
+  const preparationEnd = await within(
     new Promise<'stopped'>((resolveStop) => {
       if (preparationSignal?.aborted) resolveStop('stopped')
       preparationSignal?.addEventListener('abort', () => resolveStop('stopped'))
     }),
-    new Promise<'still running'>((resolveWait) =>
-      setTimeout(() => resolveWait('still running'), 2_000),
-    ),
-  ])
+    2_000,
+  )
 
   // Assert
   assert.equal(preparationEnd, 'stopped')
