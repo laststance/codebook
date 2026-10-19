@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { getHeapStatistics } from 'node:v8'
 import {
   isMainThread,
   parentPort,
@@ -10,6 +11,7 @@ import {
   WIKI_PAGE_WORKER_CONCURRENCY_LIMIT,
   WIKI_PAGE_WORKER_HEAP_LIMIT_MB,
   WIKI_PAGE_WORKER_IDLE_MS,
+  WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES,
 } from './constants'
 import { servedWikiPageHtml } from './utils/servedWikiPageHtml'
 import type { WikiPageRefusalReason } from './utils/wikiPageRefusalHtml'
@@ -21,6 +23,8 @@ type ServedWikiPage =
   { state: 'served'; html: string } | { state: WikiPageRefusalReason }
 /** What the reader hands a worker for each page: the page as the Wiki folder holds it and the options it is served with. */
 type WikiPageRequest = { html: string; options: ServedWikiPageOptions }
+/** What a worker answers for a page it prepared: the page as served, and the heap its thread holds then (V8's `total_heap_size`), by which the reader tells whether to keep the worker for the next page. */
+type PreparedWikiPage = { html: string; heapBytes: number }
 /** What a worker is started with: the mark of a worker this module started. */
 type WikiPageWorkerData = { role: typeof WIKI_PAGE_WORKER_ROLE }
 /** A page asked for: what its worker is handed, the request's deadline and signal, how it is answered, and how it leaves the line of waiting pages when its request goes. */
@@ -44,7 +48,7 @@ const waitingPages: AskedWikiPage[] = []
 /**
  * Prepares one Wiki page for serving ({@link servedWikiPageHtml}) on a worker thread, so that the editor's extension host runs on while the page is read, and stops the worker when the deadline passes.
  * Why: the HTML parser takes time that grows with the square of the page on some crafted pages (from 13 s to minutes for 1 MB), and nothing limits the size of a page in the Wiki folder; on the host's own thread such a page would stop every extension of the window. The worker's heap is limited ({@link WIKI_PAGE_WORKER_HEAP_LIMIT_MB}), because it runs in the host's process, which a page of tens of megabytes would otherwise grow by gigabytes.
- * At most {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} workers prepare pages at once, so pages asked for together keep that many cores busy at most; a page asked for while every worker is busy waits for the first one free, and its deadline counts from then. A worker that answered its page waits {@link WIKI_PAGE_WORKER_IDLE_MS} for the next one and prepares it without loading the reader's code again ({@link servedWikiPageHtml} keeps nothing from one page to the next); a worker stopped at the deadline, one that failed and one whose request went are stopped and never reused, so a stopped worker takes nothing of a later page with it.
+ * At most {@link WIKI_PAGE_WORKER_CONCURRENCY_LIMIT} workers prepare pages at once, so pages asked for together keep that many cores busy at most; a page asked for while every worker is busy waits for the first one free, and its deadline counts from then. A worker that answered its page with a heap of at most {@link WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES} waits {@link WIKI_PAGE_WORKER_IDLE_MS} for the next one and prepares it without loading the reader's code again ({@link servedWikiPageHtml} keeps nothing from one page to the next); a waiting worker keeps the heap its pages grew it to, so one whose heap grew past that bound is stopped after its answer. A worker stopped at the deadline, one that failed and one whose request went are stopped and never reused, so a stopped worker takes nothing of a later page with it.
  * The worker is this module's compiled file, loaded from the folder of the running code (`dist`), where the package ships it as a bundle of its own.
  * Called by the Wiki reader for every HTML file it serves.
  * @param html - The page as the Wiki folder holds it.
@@ -126,9 +130,13 @@ function preparePage(page: AskedWikiPage): void {
     page.answer(result)
     startNextWaitingPage()
   }
+  // A worker waits for the next page only while its heap is small: a waiting worker keeps the heap its pages grew it to, and every page it serves starts its idle time again.
   const receive = (message: unknown): void =>
-    typeof message === 'string'
-      ? settle({ state: 'served', html: message }, true)
+    isPreparedWikiPage(message)
+      ? settle(
+          { state: 'served', html: message.html },
+          message.heapBytes <= WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES,
+        )
       : settle({ state: 'failed' }, false)
   const fail = (): void => settle({ state: 'failed' }, false)
   // A worker past its heap limit ends with ERR_WORKER_OUT_OF_MEMORY: the page needs more memory than a worker may use, which no reload changes.
@@ -174,7 +182,7 @@ function startPageWorker(): Worker | undefined {
 }
 
 /**
- * Lets a worker that answered its page wait for the next one, and stops it when none comes within {@link WIKI_PAGE_WORKER_IDLE_MS}; called by {@link preparePage} after a page was served.
+ * Lets a worker that answered its page wait for the next one, and stops it when none comes within {@link WIKI_PAGE_WORKER_IDLE_MS}; called by {@link preparePage} after a page was served by a worker whose heap is within {@link WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES}.
  * @param worker - The worker, which is idle now.
  * @example keepIdle(worker)
  */
@@ -253,6 +261,23 @@ function isOwnWorkerData(data: unknown): data is WikiPageWorkerData {
 }
 
 /**
+ * Tells whether a worker's answer is a prepared page and the heap the worker holds, as the worker below posts them; anything else is answered as a failure.
+ * @param message - The worker's answer.
+ * @returns Whether it carries the page as served and a heap size.
+ * @example isPreparedWikiPage({ html: '<p></p>', heapBytes: 20_000_000 }) // => true
+ */
+function isPreparedWikiPage(message: unknown): message is PreparedWikiPage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    'html' in message &&
+    typeof message.html === 'string' &&
+    'heapBytes' in message &&
+    typeof message.heapBytes === 'number'
+  )
+}
+
+/**
  * Tells whether a message a worker received is a page and the options it is served with, as {@link preparePage} hands them over.
  * @param message - The message.
  * @returns Whether it carries a page and its options.
@@ -270,14 +295,18 @@ function isWikiPageRequest(message: unknown): message is WikiPageRequest {
   )
 }
 
-// In a worker this module started, prepare each page handed over and answer it, then wait for the next; anything but a page is answered with no page, and an error ends the worker; the reader answers both as a failure.
+// In a worker this module started, prepare each page handed over and answer it with the heap the thread holds then, then wait for the next; anything but a page is answered with no page, and an error ends the worker; the reader answers both as a failure.
 if (!isMainThread && parentPort && isOwnWorkerData(workerData)) {
   const port = parentPort
-  port.on('message', (message: unknown) =>
-    port.postMessage(
-      isWikiPageRequest(message)
-        ? servedWikiPageHtml(message.html, message.options)
-        : null,
-    ),
-  )
+  port.on('message', (message: unknown) => {
+    if (!isWikiPageRequest(message)) {
+      port.postMessage(null)
+      return
+    }
+    const prepared: PreparedWikiPage = {
+      html: servedWikiPageHtml(message.html, message.options),
+      heapBytes: getHeapStatistics().total_heap_size,
+    }
+    port.postMessage(prepared)
+  })
 }

@@ -285,7 +285,7 @@ test('no more than two pages are prepared at once: a third page waits for a free
   )
 })
 
-// Value: protects=the editor's process against worker threads held for a reader nobody reads: each idle worker keeps its isolate and the heap of its last page; fails_when=a worker that answered its page is kept idle for good, or is stopped at once so no page reuses it; why_new=P2P3 (workers are reused after an answer); seam=the page-worker module loaded with a Worker class that records the threads it starts, and a constants module whose WIKI_PAGE_WORKER_IDLE_MS is 300 ms; no_claim=the memory an idle worker holds
+// Value: protects=the editor's process against worker threads held for a reader nobody reads: each idle worker keeps its isolate and the heap that the pages it prepared grew it to, up to WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES; fails_when=a worker that answered its page is kept idle for good, or is stopped at once so no page reuses it; why_new=P2P3 (workers are reused after an answer); Cycle 0047 row 17 (P3P1) the heap an idle worker keeps is the one its pages grew it to, not its last page's; seam=the page-worker module loaded with a Worker class that records the threads it starts, and a constants module whose WIKI_PAGE_WORKER_IDLE_MS is 300 ms; no_claim=the memory an idle worker holds (the bound on it has its own test)
 test('a worker left without a page for longer than its idle time ends, and the next page gets a new worker', async () => {
   // Arrange
   const pool = await loadPageWorkerRecordingThreads({
@@ -326,6 +326,49 @@ test('a worker left without a page for longer than its idle time ends, and the n
       third: {
         state: 'served',
         html: '<body><p>Third page</p><script src="/w/t/codebook-qa.js"></script></body>',
+      },
+      startedWorkers: 2,
+    },
+  )
+})
+
+// Value: protects=the editor's process against an idle page worker that holds the heap its largest page grew it to (after the ordinary page of 1.14 MB 150 to 190 MB on the development host, after an 8 MB page about 0.64 GB) for as long as pages keep coming, since every page it serves starts its idle time again; fails_when=a worker whose heap grew past WIKI_PAGE_WORKER_REUSE_HEAP_LIMIT_BYTES while it prepared its page is kept for the next page; why_new=Cycle 0047 row 17 (P3P1 = P3RT1); seam=the page-worker module loaded with a Worker class that records the threads it starts (the threads are real); no_claim=the exact heap a page leaves, which differs between V8 versions (this page leaves more than twice the bound on the development host)
+test('a worker whose heap grew large while it prepared an ordinary page of more than 1 MB ends after its answer, and the next page gets a new worker', async () => {
+  // Arrange: a body of 9,000 sections of a heading, text, a link and code, 1,143,000 bytes.
+  const pool = await loadPageWorkerRecordingThreads({})
+  const sections =
+    '<section><h2 id="s">Title</h2><p>Some text with <a href="https://example.com/x">a link</a> and <code>code</code>.</p></section>'.repeat(
+      9_000,
+    )
+  const limits = { deadlineMs: 20_000, signal: new AbortController().signal }
+
+  // Act
+  const large = await pool.servedWikiPageOffThread(
+    `<body>${sections}</body>`,
+    PAGE_OPTIONS,
+    limits,
+  )
+  const largePageWorkerEnd = await within(pool.endOfWorker(0), 2_000)
+  const next = await pool.servedWikiPageOffThread(
+    '<body><p>Next page</p></body>',
+    PAGE_OPTIONS,
+    limits,
+  )
+
+  // Assert: only the large page's state is compared, so its page is not printed in full; the answers are copied out of the loaded module's context.
+  assert.deepEqual(
+    structuredClone({
+      large: large.state,
+      largePageWorkerEnd,
+      next,
+      startedWorkers: pool.startedWorkers.length,
+    }),
+    {
+      large: 'served',
+      largePageWorkerEnd: 'ended',
+      next: {
+        state: 'served',
+        html: '<body><p>Next page</p><script src="/w/t/codebook-qa.js"></script></body>',
       },
       startedWorkers: 2,
     },
