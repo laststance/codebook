@@ -121,7 +121,7 @@ test('Node.js that checks, evaluates or prints code, or shows its help or its ve
   ])
 })
 
-// Value: protects=the first sign of an update whose chat writes the publisher's path from the home folder, or changes into a folder before it runs the publisher or names the Wiki's folder; fails_when=`~`, `$HOME` or `${HOME}` at the start of an argument is read as text, or a `cd <folder>` before `&&` or `;` is not followed, so a relative script or `--output .codebook/wiki` resolves against nothing, no sign comes, and the request is taken back at 30 s while the chat works; why_new=Cycle 0046 /ship adversarial review AD19; seam=none
+// Value: protects=the first sign of an update whose chat writes the publisher's path from the home folder, or changes into a folder before it runs the publisher or names the Wiki's folder; fails_when=`~`, `$HOME` or `${HOME}` at the start of an argument is read as text, or a `cd <folder>` before `&&` or `;` is not followed, so a relative script or `--output .codebook/wiki` resolves against nothing, no sign comes, and the update ends as failed at 30 s while the chat works; why_new=Cycle 0046 /ship adversarial review AD19; seam=none
 test('the publisher written from the home folder with ~, $HOME or ${HOME}, or run after cd into its folder, and the Wiki’s folder written relative to the folder of a cd before it, are steps of an update', () => {
   // Arrange: the skill of an editor installed in the learner's home folder.
   const home = '/home/learner'

@@ -2006,8 +2006,8 @@ test('at the 30 second bound Codebook runs none of the chat’s commands: its un
   }
 })
 
-// Value: protects=the truth of the sentence when the chat completes its reply in the moment the 30 second bound passes, before Codebook takes its request back; fails_when=that end says that Codebook "took its request back" and tells the learner to check that Copilot Chat is enabled, although Codebook ran no command and the chat answered; why_new=Cycle 0046 second ship, state-machine review P2SM3 (the OCR8-2 fix reported this end as a withdrawal); seam=the sleep of the wait for the chat's answer, on a manual clock, and the chat's reply, which the test completes right after the clock passed the bound
-test('a chat that completes its reply in the moment the 30 second bound passes ends the update with the sentence that the chat finished its reply without publishing, not that Codebook took its request back, and no chat command runs', async () => {
+// Value: protects=the truth of the sentence when the chat completes its reply in the moment the 30 second bound passes, before Codebook looks at what became of its request; fails_when=that end says that the request may still be in the chat and tells the learner to stop it and check that Copilot Chat is enabled, although Codebook ran no command and the chat answered; why_new=Cycle 0046 second ship, state-machine review P2SM3 (the OCR8-2 fix reported this end as a withdrawal); seam=the sleep of the wait for the chat's answer, on a manual clock, and the chat's reply, which the test completes right after the clock passed the bound
+test('a chat that completes its reply in the moment the 30 second bound passes ends the update with the sentence that the chat finished its reply without publishing, not that its request may still be in the chat, and no chat command runs', async () => {
   // Arrange: the chat takes the request and shows no sign of the update.
   const { clock, sleep } = manualAnswerClock()
   const request = heldChatRequest()
@@ -2040,7 +2040,7 @@ test('a chat that completes its reply in the moment the 30 second bound passes e
   }
 })
 
-// Value: protects=the learner whose chat answers the update request with an error in the moment the 30 second bound passes, before Codebook takes its request back; fails_when=that error reply is read as a complete reply, so the end says that the chat finished its reply without publishing and drops the chat's error message, which a reply with an error within the bound shows; why_new=Cycle 0046 second ship, coverage audit of fixing cycle 2 (G8, the P2SM3 fix took every reply after the bound for a complete one); seam=the sleep of the wait for the chat's answer, on a manual clock, and the chat's reply, which the test completes with an error right after the clock passed the bound
+// Value: protects=the learner whose chat answers the update request with an error in the moment the 30 second bound passes, before Codebook looks at what became of its request; fails_when=that error reply is read as a complete reply, so the end says that the chat finished its reply without publishing and drops the chat's error message, which a reply with an error within the bound shows; why_new=Cycle 0046 second ship, coverage audit of fixing cycle 2 (G8, the P2SM3 fix took every reply after the bound for a complete one); seam=the sleep of the wait for the chat's answer, on a manual clock, and the chat's reply, which the test completes with an error right after the clock passed the bound
 test('a chat that answers with an error in the moment the 30 second bound passes ends the update with the sentence of a reply with an error and its message, as within the bound, and no chat command runs', async () => {
   // Arrange: the chat takes the request and shows no sign of the update.
   const { clock, sleep } = manualAnswerClock()

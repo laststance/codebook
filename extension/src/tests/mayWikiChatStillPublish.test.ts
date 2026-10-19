@@ -59,8 +59,8 @@ test('only the chat of a VS Code watch that was cancelled or timed out in a wind
   })
 })
 
-// Value: protects=the learner and every other window after the watch of a VS Code update broke off with an error while its chat worked, or after the 30 seconds with a request Codebook could not take back (row 358): the chat was not stopped; fails_when=such a run counts as one whose chat is gone, so the next press starts a second chat beside the first and no reservation tells other windows, or a broken watch whose run still ended with the chat's publish, a closing window or a Cursor run is held back; why_new=Cycle 0046 row 341 (the watch's catch ended the run as failed with no reservation); seam=none
-test('the chat of a VS Code update whose end says the chat was left at work (a watch that broke off, a request that could not be taken back) may still publish when the run ended as failed in a window that stays open, and not when the run ended with the publish, the window closes or the host is Cursor', () => {
+// Value: protects=the learner and every other window after the watch of a VS Code update broke off with an error while its chat worked, or after the 30 seconds with a request Codebook left in the chat (row 358): the chat was not stopped; fails_when=such a run counts as one whose chat is gone, so the next press starts a second chat beside the first and no reservation tells other windows, or a broken watch whose run still ended with the chat's publish, a closing window or a Cursor run is held back; why_new=Cycle 0046 row 341 (the watch's catch ended the run as failed with no reservation); seam=none
+test('the chat of a VS Code update whose end says the chat was left at work (a watch that broke off, a request Codebook left in the chat) may still publish when the run ended as failed in a window that stays open, and not when the run ended with the publish, the window closes or the host is Cursor', () => {
   // Act
   const answers = {
     brokenWatch: mayWikiChatStillPublish('vscode', 'failed', false, true),

@@ -1138,14 +1138,14 @@ export function activate(
     )
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
-    // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off or a request that could not be taken back; a Cursor agent is stopped with its run, and a closing window takes its chat with it. A chat whose publish is on disk has done its work, also when the watch was stopped while it read that publish or just before its next look: it leaves no chat that may still publish and no reservation.
+    // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off or a request Codebook left in the chat at the 30 seconds; a Cursor agent is stopped with its run, and a closing window takes its chat with it. A chat whose publish is on disk has done its work, also when the watch was stopped while it read that publish or just before its next look: it leaves no chat that may still publish and no reservation.
     const mayAgentStillWork =
       !hasNewPublication &&
       mayWikiChatStillPublish(
         run.host,
         stoppedAs,
         isExtensionStopping,
-        // An end the run itself marks as one its chat can publish after (a watch that broke off, a request not taken back) leaves the reservation a stopped watch leaves.
+        // An end the run itself marks as one its chat can publish after (a watch that broke off, a request left in the chat) leaves the reservation a stopped watch leaves.
         observed.mayBeReplacedLater ?? false,
       )
     const recordWritten = rememberLastWikiRun({
