@@ -7105,6 +7105,106 @@ test('a recovery whose journal names as its stage the Wiki folder under another 
   }
 })
 
+// Value: protects=the learner's own files and the published manifest and record of a Wiki that a recovery has just moved back from its backup name, when a cloned repository carries a publish journal whose stage is the Wiki folder's name in capitals and the Wiki folder was missing at the recovery's first look (a publish stopped between its two moves); fails_when=the stage is held to the other names of the Wiki folder and of the kept prior Wiki only before the prior Wiki is moved back, when the other name names nothing, so the recovery then takes the restored Wiki for the candidate, writes the journal's prepared manifest and record over its own and removes each learner's file the journal names; why_new=Cycle 0047 row 131 (RT2-1, security); seam=a copy of the shipped publisher whose `node:fs/promises` lets the Wiki folder answer to its name in capitals too (scripts/tests/utils/markedCopyHooks.mjs, `?aliased-folder`); no_claim=a stage that is another folder of its own, whose candidate the recovery puts back
+test('a recovery whose journal names as its stage the Wiki folder under another name while the Wiki folder is missing is refused once the prior Wiki is back, and the Wiki’s manifest, record and learner’s file and the journal stay as they were', async () => {
+  // Arrange: a published Wiki with a learner's file, moved to its backup name as a publish stopped between its two moves leaves it; the Wiki folder's name in capitals names the Wiki folder too; a journal of this version, whose process is gone, names that name as its stage, the Wiki's manifest and record as the finalized ones with other prepared bytes, and the learner's file as a copy that began.
+  const { recoverWikiPublication: recoverWhereTheWikiHasTwoNames } =
+    await loadMarkedCopy('publish-wiki.mjs', '?aliased-folder')
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-stage-aliases-moved-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    backup = join(root, '.codebook/wiki.previous-1'),
+    otherName = join(root, '.codebook/WIKI'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'manual.txt'), 'The learner’s own notes')
+    const manifest = await readFile(join(output, 'codebook-wiki.json'), 'utf8')
+    const publicationRecord = await readFile(
+      join(output, 'codebook-publication.json'),
+      'utf8',
+    )
+    await rename(output, backup)
+    const record = JSON.stringify({
+      projectRoot: root,
+      output,
+      stage: otherName,
+      backup,
+      pid: 99999999,
+      id: '00000000-0000-4000-8000-000000000000',
+      operation: 'publish',
+      manifestSha256: createHash('sha256').update(manifest).digest('hex'),
+      priorManifestSha256: createHash('sha256').update(manifest).digest('hex'),
+      priorLegacy: false,
+      finalizedReceiptSha256: createHash('sha256')
+        .update(publicationRecord)
+        .digest('hex'),
+      prepared: {
+        manifest: Buffer.from(
+          JSON.stringify({
+            schemaVersion: 1,
+            repositoryRoot: root,
+            pages: [],
+            assets: [],
+          }),
+        ).toString('base64'),
+        receipt: Buffer.from('{"crafted":"record"}').toString('base64'),
+      },
+      learnerCopies: ['manual.txt'],
+    })
+    await writeFile(journal, record)
+    nameFolderAlso(otherName, output)
+
+    // Act
+    const recovery = await recoverWhereTheWikiHasTwoNames({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recovery,
+        wikiManifest: await readFile(
+          join(output, 'codebook-wiki.json'),
+          'utf8',
+        ),
+        wikiRecord: await readFile(
+          join(output, 'codebook-publication.json'),
+          'utf8',
+        ),
+        learnerFile: await readFile(join(output, 'manual.txt'), 'utf8').catch(
+          () => 'deleted',
+        ),
+        journal: await readFile(journal, 'utf8').catch(() => 'removed'),
+      },
+      {
+        recovery:
+          'The Wiki publication journal does not identify a sibling stage/backup.',
+        wikiManifest: manifest,
+        wikiRecord: publicationRecord,
+        learnerFile: 'The learner’s own notes',
+        journal: record,
+      },
+    )
+  } finally {
+    nameFolderAlso(undefined)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 /** The probe that runs one step of the shipped publisher in a process of its own and kills that process at a point a test names (`scripts/tests/utils/killedPublisherProbe.mjs`). */
 const KILLED_PUBLISHER_PROBE = fileURLToPath(
   new URL('./utils/killedPublisherProbe.mjs', import.meta.url),
