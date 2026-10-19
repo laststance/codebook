@@ -1758,16 +1758,17 @@ test('the reader’s own script, a style sheet and an image of the Wiki are serv
   })
 })
 
-// Value: protects=the editor's extension host against a large file the manifest lists as an asset (a style sheet, a script, an image), asked for several times at once: each request read it whole into the host's memory, with no size limit; fails_when=the reader reads a file that is no page whole (readFile) instead of sending it from its opened file in parts, or no longer sends it byte for byte; why_new=Cycle 0047 row 18 (P3SEC1 = S11-F2); seam=the reader loaded with loadModule and a file system module that records which files the reader reads whole; no_claim=the memory the host saves (each request holds one part of the file at a time)
-test('an asset of the Wiki is sent byte for byte from its opened file in parts, and no file is read whole into the editor’s process', async (context) => {
-  // Arrange: an image of 300,000 bytes that the manifest names, and a file system that notes the files the reader reads whole.
+// Value: protects=the editor's extension host against a large file the manifest lists as an asset (a style sheet, a script, an image), asked for several times at once: each request read it whole into the host's memory, with no size limit; fails_when=the reader reads a file that is no page whole (the module's readFile, or readFile through the file it opened) instead of sending it from its opened file in parts, follows bytes the file gained after its stat, or no longer sends it byte for byte; why_new=Cycle 0047 row 18 (P3SEC1 = S11-F2); Cycle 0047 row 74 (TEST-1) a whole read through the opened file passed the test; seam=the reader loaded with loadModule, a file system module that records which files the reader reads whole, and an opener whose opened image records a whole read through it and grows right after its stat; no_claim=the memory the host saves (each request holds one part of the file at a time)
+test('an asset of the Wiki is sent byte for byte from its opened file in parts, only as far as its size at its stat, and no file is read whole into the editor’s process', async (context) => {
+  // Arrange: an image of 300,000 bytes that the manifest names, a file system that notes the files the reader reads whole, and an opener whose opened image notes a whole read through it and grows right after its stat.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-streamed-asset-')),
   )
   context.after(() => rm(projectRoot, { recursive: true, force: true }))
   const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  const imagePath = join(outputDirectory, 'diagram.png')
   const imageBytes = Buffer.alloc(300_000, 'diagram ')
-  await writeFile(join(outputDirectory, 'diagram.png'), imageBytes)
+  await writeFile(imagePath, imageBytes)
   await writeFile(
     manifestPath,
     JSON.stringify({
@@ -1786,10 +1787,40 @@ test('an asset of the Wiki is sent byte for byte from its opened file in parts, 
       return readFile(...parameters)
     },
   }
+  const openerWhoseImageGrowsAfterItsStat: typeof openWithoutFollowingModule = {
+    openWithoutFollowing: async (
+      ...parameters: Parameters<typeof openWithoutFollowing>
+    ) => {
+      const file = await openWithoutFollowing(...parameters)
+      // Only the image is watched: the manifest and the pages are opened as always.
+      if (basename(parameters[0]) !== 'diagram.png') return file
+      const statOfTheImage = file.stat.bind(file)
+      const wholeReadOfTheImage = file.readFile.bind(file)
+      return Object.assign(file, {
+        stat: async (...statParameters: Parameters<typeof file.stat>) => {
+          const status = await statOfTheImage(...statParameters)
+          await appendFile(
+            imagePath,
+            'bytes the image gained after the reader’s stat',
+          )
+          return status
+        },
+        readFile: (
+          ...readParameters: Parameters<typeof file.readFile>
+        ): ReturnType<typeof file.readFile> => {
+          filesReadWhole.push('diagram.png through its opened file')
+          return wholeReadOfTheImage(...readParameters)
+        },
+      })
+    },
+  }
   const { startDeepWikiReader: startReaderWithRecordingFileSystem } =
     await loadModule<typeof deepWikiReaderModule>(
       join(__dirname, '..', 'deepWikiReader.js'),
-      { 'node:fs/promises': recordingFileSystem },
+      {
+        'node:fs/promises': recordingFileSystem,
+        './utils/openWithoutFollowing': openerWhoseImageGrowsAfterItsStat,
+      },
       { URL },
     )
   const reader = await startReaderWithRecordingFileSystem(
@@ -1805,18 +1836,20 @@ test('an asset of the Wiki is sent byte for byte from its opened file in parts, 
   })
   const body = Buffer.from(await response.arrayBuffer())
 
-  // Assert
+  // Assert: the body is the image as its stat found it, 300,000 bytes, without the bytes it gained after.
   assert.deepEqual(
     {
       status: response.status,
       type: response.headers.get('content-type'),
-      bodyIsTheImage: body.equals(imageBytes),
+      bodyBytes: body.length,
+      bodyIsTheImageAtItsStat: body.equals(imageBytes),
       filesReadWhole,
     },
     {
       status: 200,
       type: 'application/octet-stream',
-      bodyIsTheImage: true,
+      bodyBytes: 300_000,
+      bodyIsTheImageAtItsStat: true,
       filesReadWhole: [],
     },
   )
