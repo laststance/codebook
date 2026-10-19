@@ -11,6 +11,7 @@ import type { StorageOwnerIdentity } from './readRecordedOwner'
  * @param lockPath - The `writer.lock` file that is present.
  * @param identity - The machine and the boot of this process, by which the lock's owner is judged ({@link isStaleStorageLock}).
  * @param readStart - Reads the start of the process that has the owner's id now; {@link readProcessStart} unless a test names its own. The two looks share one cache, and a kept start can only confirm an owner alive: a lock is called stale only by a start read at that look, so a process id that went to another process between the looks is not judged by the earlier one's start.
+ * @param holderStarts - That cache: the starts read so far, by process id. A new one for this call unless the caller keeps one for all its tries of one write ({@link withStorageLock} hands on the one of the Cursor catalog's retries, {@link withCatalogLockRetry}), so that a live holder that keeps the lock through them is read once; a kept start still only confirms an owner alive.
  * @returns
  * - `true` when this caller held the claim: a lock that was still stale is removed, so acquiring the path may succeed now
  * - `false` when the lock is not stale, or another window is taking it over right now; the lock stays
@@ -21,10 +22,10 @@ export async function removeStaleStorageLock(
   lockPath: string,
   identity: StorageOwnerIdentity,
   readStart: ProcessStartReader = readProcessStart,
+  holderStarts = new Map<number, Promise<string | undefined>>(),
 ): Promise<boolean> {
-  const cache = new Map<number, Promise<string | undefined>>()
   const readForBothLooks: ProcessStartReader = (pid, inputs) =>
-    readStart(pid, { ...inputs, cache })
+    readStart(pid, { ...inputs, cache: holderStarts })
   // The lock of a running or foreign writer needs no claim.
   if (!(await isStaleStorageLock(lockPath, identity, readForBothLooks)))
     return false
