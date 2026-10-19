@@ -4,6 +4,7 @@ import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
+  WIKI_METADATA_FILE_LIMIT_BYTES,
   WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS,
   WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
@@ -177,29 +178,34 @@ function claimOfHolder(
   return isLastAttempt ? { heldBy: { isMarkerInChange: true } } : undefined
 }
 
-/** What one read of the marker file under the claim found: the file's text, `missing` when nothing is at its path, or `unreadable` when something is there that this read could not take as the marker. */
-type MarkerTextRead = { text: string } | 'missing' | 'unreadable'
+/** What one read of the marker file under the claim found: the file's text, `missing` when nothing is at its path, `foreign` when an entry is there that cannot hold what this window wrote, or `unreadable` when a regular file is there that this read could not take as the marker. */
+type MarkerTextRead = { text: string } | 'missing' | 'foreign' | 'unreadable'
 
 /**
  * Reads what the marker file holds right now; called by {@link changeOwnMarker} under the claim, before this window's marker is removed or replaced.
  *
- * Why: a marker that is gone or holds another window's text leaves this window nothing to change, but a marker that could not be read at this moment may still be this window's, and its change must be asked for again. {@link readWikiRegularFile} answers `undefined` for a missing file and for one it could not read (on Windows a scanner or an indexer can hold the file open, so its open fails with `EBUSY` or `EPERM`), so a look at the path that does not follow it tells the two apart.
+ * Why: a marker that is gone or holds another window's text leaves this window nothing to change, but a marker that could not be read at this moment may still be this window's, and its change must be asked for again. {@link readWikiRegularFile} answers `undefined` for a missing file, for an entry that is no regular file within its limit and for a file it could not read (on Windows a scanner or an indexer can hold the file open, so its open fails with `EBUSY` or `EPERM`), so a look at the path that does not follow it tells them apart. This window wrote a regular file far below {@link WIKI_METADATA_FILE_LIMIT_BYTES}, so only such a file can still be its marker: an entry of another kind or size was put there by someone else, and asking again would never change it.
  *
  * @param markerPath - `<output>.update-run.json`.
  * @returns
  * - A regular file that was read: its text
  * - Nothing at the path (`ENOENT`): `missing`
- * - Anything else: `unreadable`, for a file whose open, read or close failed, for an entry that is no regular file within the read's limit (a link, a folder), and for a look at the path that failed
+ * - An entry that is no regular file (a link, a folder), or a regular file larger than {@link WIKI_METADATA_FILE_LIMIT_BYTES}: `foreign`
+ * - A regular file within the limit whose open, read or close failed, and a look at the path that failed: `unreadable`
  * @example
- * await readMarkerText('/repo/.codebook/wiki.update-run.json') // => { text: '{"pid":4242,"windowId":"3f6c","host":"vscode","startedAtMs":1790000000000}' }
- * await readMarkerText('/repo/.codebook/gone.update-run.json') // => 'missing'
+ * await readMarkerText('/repo/.codebook/wiki.update-run.json')   // => { text: '{"pid":4242,"windowId":"3f6c","host":"vscode","startedAtMs":1790000000000}' }
+ * await readMarkerText('/repo/.codebook/gone.update-run.json')   // => 'missing'
+ * await readMarkerText('/repo/.codebook/folder.update-run.json') // => 'foreign'
  */
 async function readMarkerText(markerPath: string): Promise<MarkerTextRead> {
   const file = await readWikiRegularFile(markerPath)
   if (file) return { text: file.bytes.toString('utf8') }
   try {
-    await lstat(markerPath)
-    return 'unreadable'
+    const entry = await lstat(markerPath)
+    // Only a regular file within the read's limit can be what this window wrote; anything else at the path is another's.
+    return entry.isFile() && entry.size <= WIKI_METADATA_FILE_LIMIT_BYTES
+      ? 'unreadable'
+      : 'foreign'
   } catch (error) {
     // Only a path with nothing at it is a marker that is gone; any other failure of the look says nothing about the marker.
     return systemErrorCode(error) === 'ENOENT' ? 'missing' : 'unreadable'
@@ -433,7 +439,7 @@ async function removeUnownedMarker(
  * @param ownText - What this window last wrote into the marker file.
  * @param change - The removal or the replacement; it runs while the claim is held.
  * @param judgement - The identity of this process, the reader of process starts and the clock.
- * @returns `true` when the change was made, and when the file was read and no longer holds this window's text (another window took the marker over) or is gone, which leaves nothing of this window's to change; `false` when the marker could not be read at this moment ({@link readMarkerText}), when this window's claim was removed meanwhile, or when the claim could not be had at any of {@link WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS} attempts (another window held it, or the system refused it): the marker then stays as it is, and the same change may be asked for again.
+ * @returns `true` when the change was made, and when the file was read and no longer holds this window's text (another window took the marker over), is gone, or was replaced by an entry that cannot be this window's marker (a folder, a link, a file larger than any marker), which leaves nothing of this window's to change; `false` when a regular file that may be the marker could not be read at this moment ({@link readMarkerText}), when this window's claim was removed meanwhile, or when the claim could not be had at any of {@link WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS} attempts (another window held it, or the system refused it): the marker then stays as it is, and the same change may be asked for again.
  * @throws What `change` throws; the claim is released first.
  * @example
  * await changeOwnMarker(markerPath, written, () => removeWithoutFollowing(markerPath), judgement) // => true
@@ -454,8 +460,13 @@ async function changeOwnMarker(
     const markerText = await readMarkerText(markerPath)
     // A marker that could not be read at this moment may still be this window's: the change is asked for again.
     if (markerText === 'unreadable') return false
-    // A marker that is gone or is no longer this window's text leaves this window nothing to change.
-    if (markerText === 'missing' || markerText.text !== ownText) return true
+    // A marker that is gone, an entry that cannot be this window's marker, or a marker that is no longer this window's text leaves this window nothing to change.
+    if (
+      markerText === 'missing' ||
+      markerText === 'foreign' ||
+      markerText.text !== ownText
+    )
+      return true
     // The claim is this window's only while its claim file is in place.
     if (!(await claim.isStillHeld())) return false
     await change()

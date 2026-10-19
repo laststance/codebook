@@ -11,6 +11,7 @@ import {
   rm,
   stat,
   symlink,
+  truncate,
   unlink,
   utimes,
   writeFile,
@@ -1654,6 +1655,74 @@ test('the end of a run whose marker file is gone says that nothing of this run i
     // Assert
     assert.equal(ended, true)
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the end of a run whose marker path came to hold a folder (put there by hand, or by a checkout); fails_when=an entry that is no regular file counts as a marker that could not be read at this moment, so the end answers that its marker stayed and the window asks again every 10 seconds for a change it can never make; why_new=Cycle 0047 row 13 (P3CR-2); seam=none; no_claim=a link at the path, which the same look at the entry decides
+test('the end of a run whose marker path came to hold a folder says at once that nothing of this run is left, and leaves the folder', async () => {
+  // Arrange: a run whose marker was replaced by a folder while it ran.
+  const wiki = await createWikiFolder()
+  try {
+    const claim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in claim)
+    await unlink(wiki.markerPath)
+    await mkdir(wiki.markerPath)
+
+    // Act
+    const ended = await claim.release()
+
+    // Assert
+    assert.deepEqual(
+      {
+        ended,
+        isFolderAtTheMarkerPath: (await lstat(wiki.markerPath)).isDirectory(),
+      },
+      { ended: true, isFolderAtTheMarkerPath: true },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the end of a run whose marker path came to hold a file larger than any marker (64 MiB and one byte); fails_when=a file over the read's limit counts as a marker that could not be read at this moment, so the end answers that its marker stayed and the window asks again every 10 seconds for a change it can never make; why_new=Cycle 0047 row 13 (P3CR-2); seam=none (a sparse file, so no 64 MiB are written)
+test('the end of a run whose marker path came to hold a file larger than any marker says at once that nothing of this run is left, and leaves the file', async () => {
+  // Arrange: a run whose marker was replaced by a file of 67_108_865 bytes while it ran.
+  const wiki = await createWikiFolder()
+  try {
+    const claim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in claim)
+    await unlink(wiki.markerPath)
+    await writeFile(wiki.markerPath, '')
+    await truncate(wiki.markerPath, 67_108_865)
+
+    // Act
+    const ended = await claim.release()
+
+    // Assert
+    assert.deepEqual(
+      { ended, sizeAtTheMarkerPath: (await lstat(wiki.markerPath)).size },
+      { ended: true, sizeAtTheMarkerPath: 67_108_865 },
+    )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
   }
