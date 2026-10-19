@@ -1426,6 +1426,30 @@ function chromeLinkAddresses(page: string): string[] {
 const OTHER_EDITOR_ADDRESS = 'vscode://file/x'
 
 /**
+ * The addresses of the links the pinned parser alone puts in its tree of a page, a template's content included: those a browser of the select rules before 2025 follows, with scripting on or off; called by {@link followedEditorAddresses} and the differential of the older select rules.
+ * @param page - The page.
+ * @param scriptingEnabled - Whether the parser reads it with scripting, so that a noscript holds text.
+ * @returns The `href` values of the tree's elements, in tree order.
+ * @example
+ * pinnedParserLinkAddresses('<select><style></select><a href="y">', true) // => ['y']
+ */
+function pinnedParserLinkAddresses(
+  page: string,
+  scriptingEnabled: boolean,
+): string[] {
+  const found: string[] = []
+  const visit = (node: Parse5.DefaultTreeAdapterMap['node']): void => {
+    if ('attrs' in node)
+      for (const attribute of node.attrs)
+        if (attribute.name === 'href') found.push(attribute.value)
+    if ('childNodes' in node) for (const child of node.childNodes) visit(child)
+    if ('content' in node) visit(node.content)
+  }
+  visit(parse5.parse(page, { scriptingEnabled }))
+  return found
+}
+
+/**
  * The editor addresses a browser would follow in a page, under each reading the cross-reading tests compare: Chrome 151's with scripting (the reader's own reading of start tags) and the pinned parser alone with scripting on and off, whose select rules are those before 2025; called by the cross-reading tests.
  * @param page - The page as served.
  * @returns For each reading, the `href` values of its links that name {@link OTHER_EDITOR_ADDRESS}.
@@ -1433,25 +1457,16 @@ const OTHER_EDITOR_ADDRESS = 'vscode://file/x'
  * followedEditorAddresses('<p>text</p>') // => { chrome: [], beforeSelectRulesOf2025: [], withoutScripting: [] }
  */
 function followedEditorAddresses(page: string): Record<string, string[]> {
-  const linksOfTree = (scriptingEnabled: boolean): string[] => {
-    const found: string[] = []
-    const visit = (node: Parse5.DefaultTreeAdapterMap['node']): void => {
-      if ('attrs' in node)
-        for (const attribute of node.attrs)
-          if (attribute.name === 'href') found.push(attribute.value)
-      if ('childNodes' in node)
-        for (const child of node.childNodes) visit(child)
-      if ('content' in node) visit(node.content)
-    }
-    visit(parse5.parse(page, { scriptingEnabled }))
-    return found.filter((address) => address === OTHER_EDITOR_ADDRESS)
-  }
+  const isOtherEditorAddress = (address: string): boolean =>
+    address === OTHER_EDITOR_ADDRESS
   return {
-    chrome: chromeLinkAddresses(page).filter(
-      (address) => address === OTHER_EDITOR_ADDRESS,
+    chrome: chromeLinkAddresses(page).filter(isOtherEditorAddress),
+    beforeSelectRulesOf2025: pinnedParserLinkAddresses(page, true).filter(
+      isOtherEditorAddress,
     ),
-    beforeSelectRulesOf2025: linksOfTree(true),
-    withoutScripting: linksOfTree(false),
+    withoutScripting: pinnedParserLinkAddresses(page, false).filter(
+      isOtherEditorAddress,
+    ),
   }
 }
 
@@ -1537,6 +1552,105 @@ test('a style inside a select is text in Chrome’s reading, and the link in it 
     '<select><style></select><a data-codebook-unlinked="vscode://file/example">marker</a>',
   )
   assert.deepEqual(chromeLinkAddresses(page), [])
+})
+
+/** Where the select corpus of the older select rules puts its select: in the body, in each part of a table, in a template and a template's cell, in svg's and MathML's integration points, and nested in each other, a template in a select among them. */
+const SELECT_PLACES: Readonly<Record<string, string>> = {
+  body: '',
+  table: '<table>',
+  'table body': '<table><tbody>',
+  row: '<table><tr>',
+  cell: '<table><tr><td>',
+  caption: '<table><caption>',
+  template: '<template>',
+  'template cell': '<template><td>',
+  'svg foreignObject': '<svg><foreignObject>',
+  'MathML mi': '<math><mi>',
+  'template in a cell': '<table><tr><td><template>',
+  'cell in a template': '<template><table><tr><td>',
+  'caption in a cell': '<table><tr><td><table><caption>',
+  'caption in svg foreignObject': '<svg><foreignObject><table><caption>',
+  'svg foreignObject in a cell': '<table><tr><td><svg><foreignObject>',
+  'template in a select': '<select><template>',
+  'template cell in a select': '<select><template><td>',
+}
+/** What the select corpus puts in its select: nothing, an option, an option group, svg markup with a style, which the older select rules ignore, and a template with a link. */
+const SELECT_CONTENTS: Readonly<Record<string, string>> = {
+  nothing: '',
+  option: '<option>o',
+  'option group': '<optgroup><option>o',
+  'svg style': '<svg><style>s',
+  'template with a link': '<template><a href="in-template">t</a></template>',
+}
+/** The tokens that close the corpus's select under the older select rules: its end, a select, an input, a keygen and a textarea anywhere, and the table's tokens where the select is in a table. */
+const SELECT_CLOSERS: Readonly<Record<string, string>> = {
+  'select end': '</select>',
+  select: '<select>',
+  input: '<input>',
+  keygen: '<keygen>',
+  textarea: '<textarea></textarea>',
+  table: '<table>',
+  cell: '<td>',
+  row: '<tr>',
+  caption: '<caption>',
+  'table body': '<tbody>',
+  'table end': '</table>',
+  'cell end': '</td>',
+  'caption end': '</caption>',
+}
+/** What follows the closed select in the corpus: markup whose reading turns on the mode the select leaves (a style in svg content holds markup, an HTML one text), each with links of its own. */
+const AFTER_SELECT: Readonly<Record<string, string>> = {
+  'svg style': '<svg><style><a href="svg-style">x</a></style></svg>',
+  'svg style after a template':
+    '<svg><template></template><style><a href="svg-style-after-template">x</a></style></svg>',
+  xmp: '<xmp><a href="in-xmp"></xmp><a href="after-xmp">x</a>',
+  'svg CDATA':
+    '<svg><![CDATA[x><a href="in-cdata">]]></svg><a href="after-cdata">x</a>',
+  'svg style in a new cell':
+    '<td><svg><style><a href="svg-style-in-cell">x</a></style></svg>',
+}
+
+// Value: protects=the learner whose browser reads a select by the HTML standard's rules before 2025, against a link that browser follows after a select closed and the filter's reading of those rules takes for text; fails_when=that reading gives the place of a closed select a mode other than the one it came in (restoreModeOfClosedSelect keeps the select's own mode), so svg content after it is ignored, a later style is read as raw text and its link as text, while such a browser keeps the link; why_new=Cycle 0047 row 70 (TEST-6), the restore of row 2 had only a timing test; seam=none (the pinned parser alone stands for a browser of the older select rules); no_claim=a wrong mode that makes the reading take more tags than such a browser (it then judges more, and no link stays live), and the restore's speed, which the timing test of select pairs holds
+test('after a select in a table part, a template, svg or MathML, nested or not, closes by its end, an input, a keygen, a textarea or a table token, the reading by the older select rules takes as a tag every link a browser of those rules keeps', () => {
+  // Arrange: every combination of the corpus's places, contents, closers and what follows.
+  const pages = Object.entries(SELECT_PLACES).flatMap(([place, opening]) =>
+    Object.entries(SELECT_CONTENTS).flatMap(([content, inside]) =>
+      Object.entries(SELECT_CLOSERS).flatMap(([closer, closing]) =>
+        Object.entries(AFTER_SELECT).map(([after, following]) => ({
+          name: `${place} | ${content} | ${closer} | ${after}`,
+          page: `${opening}<select>${inside}${closing}${following}`,
+        })),
+      ),
+    ),
+  )
+
+  // Act
+  const results = pages.map(({ name, page }) => {
+    const takenAsTags = readHtmlStartTags(page, {
+      selectRules: 'before-2025',
+      scriptingEnabled: true,
+    })
+      .flatMap(({ attributes }) => attributes)
+      .filter((attribute) => attribute.name === 'href')
+      .map((attribute) => attribute.written)
+    const kept = pinnedParserLinkAddresses(page, true)
+    return {
+      name,
+      keptCount: kept.length,
+      missed: kept.filter((address) => !takenAsTags.includes(address)),
+    }
+  })
+
+  // Assert: the corpus holds 5,525 pages whose trees keep 5,046 links, and the reading takes each of them as a tag.
+  assert.equal(results.length, 5_525)
+  assert.equal(
+    results.reduce((sum, { keptCount }) => sum + keptCount, 0),
+    5_046,
+  )
+  assert.deepEqual(
+    results.filter(({ missed }) => missed.length > 0),
+    [],
+  )
 })
 
 // Value: protects=the text of a served page that shows markup (a comment, a style's or a script's text, an attribute's quoted value) and the reader's own script, whose hash its policy names; fails_when=the filter reads a tag inside what a browser reads as text and renames text there, or loses its place after such text and leaves a tag after it unjudged; why_new=Cycle 0046 /ship third review W1 (the page is read once, as a browser reads it); seam=none, the served page is compared as text
