@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto'
-import { lstat, readFile, realpath, type FileHandle } from 'node:fs/promises'
+import { lstat, realpath, type FileHandle } from 'node:fs/promises'
 import {
   createServer,
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http'
 import { join, relative, sep } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 
 import {
   MS_PER_MINUTE,
@@ -499,6 +500,13 @@ export async function startDeepWikiReader(
       })
       return
     }
+    // A page file larger than any page costs the editor's process nothing of its size: its size is looked at on the resolved path before it is opened, and the read stops one byte past the limit, also when the file grew since.
+    const look = await lstat(filePath)
+    // Only a regular file is opened, a page or any other file: the open of a named pipe would hold a thread of the host's file system until a writer comes, a device may never end, and a folder has no bytes.
+    if (!look.isFile()) {
+      sendNoRegularFile(response)
+      return
+    }
     // Read before the page itself: a publish between the two reads then leaves the page with the older identity, and it offers a reload instead of hiding one.
     const publication = relativePath.endsWith('.html')
       ? await readWikiPublicationIdentity(outputDirectory)
@@ -510,13 +518,6 @@ export async function startDeepWikiReader(
         'Content-Security-Policy',
         `${SERVED_PAGE_FETCH_DIRECTIVES}; script-src 'self' ${WIKI_SHELL_SCRIPT_HASHES.map((hash) => `'sha256-${hash}'`).join(' ')}; object-src 'none'; base-uri 'none'`,
       )
-      // A page file larger than any page costs the editor's process nothing of its size: its size is looked at on the resolved path before it is opened, and the read stops one byte past the limit, also when the file grew since.
-      const look = await lstat(filePath)
-      // Only a regular file is opened: the open of a named pipe would hold a thread of the host's file system until a writer comes.
-      if (!look.isFile()) {
-        sendNoRegularFile(response)
-        return
-      }
       let content: Buffer | undefined
       if (look.size <= WIKI_PAGE_FILE_LIMIT_BYTES) {
         const pageFile = await openServedWikiFile(filePath)
@@ -592,7 +593,13 @@ export async function startDeepWikiReader(
           ? 'text/plain; charset=utf-8'
           : 'application/octet-stream',
     )
-    response.end(await readFile(filePath))
+    const servedFile = await openServedWikiFile(filePath)
+    // Another entry took the path between the look and the open.
+    if (!servedFile) {
+      sendNoRegularFile(response)
+      return
+    }
+    await sendOpenedWikiFile(servedFile, response)
   }
   try {
     await new Promise<void>((resolve, reject) => {
@@ -638,7 +645,7 @@ export async function startDeepWikiReader(
 
 /**
  * Opens a file the Wiki reader serves without following a link at its path and without waiting on a named pipe ({@link openWithoutFollowing}), and keeps it open only when it is a regular file.
- * Called by the reader for every page file it reads, after its look at the path found a regular file; the opened file is looked at again, because another entry can take the path between the look and the open.
+ * Called by the reader for every file it serves, a page file or any other, after its look at the path found a regular file; the opened file is looked at again, because another entry can take the path between the look and the open.
  * @param path - The file's real path in the Wiki folder.
  * @returns The open regular file and its size at its `stat`; `undefined` when the opened entry is no regular file, after it was closed.
  * @throws What the open or the status throws: a missing file, or a link that took the path (`ELOOP`).
@@ -656,6 +663,35 @@ async function openServedWikiFile(
   if (status.isFile()) return { file, sizeBytes: status.size }
   await file.close()
   return undefined
+}
+
+/**
+ * Sends a file of the Wiki folder that is no page (a style sheet, a script as plain text, an image) from its one opened file in parts, never read whole, and only as far as its size at its `stat`: the editor's process holds one part of it at a time, however large the file is and however often it is asked for at once, and a file that grows meanwhile is not followed.
+ * Called by the reader for every file it serves that is no page, after {@link openServedWikiFile} opened it.
+ * @param servedFile - The open regular file and its size at its `stat`; the file is closed when the send ends, also when it fails.
+ * @param response - The answer, whose headers are set.
+ * @throws What the read or the send throws, such as a browser that went before the end; the reader's request handler ends the answer then.
+ * @example
+ * await sendOpenedWikiFile(await openServedWikiFile('/repo/.codebook/wiki/wiki.css'), response)
+ */
+async function sendOpenedWikiFile(
+  servedFile: { file: FileHandle; sizeBytes: number },
+  response: ServerResponse,
+): Promise<void> {
+  // An empty file has no part to send, and a read stream ends one byte before its end.
+  if (servedFile.sizeBytes === 0) {
+    await servedFile.file.close()
+    response.end()
+    return
+  }
+  // The stream closes the file when it ends or fails.
+  await pipeline(
+    servedFile.file.createReadStream({
+      start: 0,
+      end: servedFile.sizeBytes - 1,
+    }),
+    response,
+  )
 }
 
 /** Refuses a Wiki file that is no regular file: a named pipe, a device or a folder at a path the manifest lists is never opened or read. @param response - The answer to the refused request. @example sendNoRegularFile(response) // 403 */

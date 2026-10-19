@@ -1541,6 +1541,141 @@ test('the reader’s own script, a style sheet and an image of the Wiki are serv
   })
 })
 
+// Value: protects=the editor's extension host against a large file the manifest lists as an asset (a style sheet, a script, an image), asked for several times at once: each request read it whole into the host's memory, with no size limit; fails_when=the reader reads a file that is no page whole (readFile) instead of sending it from its opened file in parts, or no longer sends it byte for byte; why_new=Cycle 0047 row 18 (P3SEC1 = S11-F2); seam=the reader loaded with loadModule and a file system module that records which files the reader reads whole; no_claim=the memory the host saves (each request holds one part of the file at a time)
+test('an asset of the Wiki is sent byte for byte from its opened file in parts, and no file is read whole into the editor’s process', async (context) => {
+  // Arrange: an image of 300,000 bytes that the manifest names, and a file system that notes the files the reader reads whole.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-streamed-asset-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  const imageBytes = Buffer.alloc(300_000, 'diagram ')
+  await writeFile(join(outputDirectory, 'diagram.png'), imageBytes)
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const filesReadWhole: string[] = []
+  const recordingFileSystem = {
+    ...fileSystemPromises,
+    readFile: (...parameters: Parameters<typeof readFile>) => {
+      filesReadWhole.push(basename(String(parameters[0])))
+      return readFile(...parameters)
+    },
+  }
+  const { startDeepWikiReader: startReaderWithRecordingFileSystem } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { 'node:fs/promises': recordingFileSystem },
+      { URL },
+    )
+  const reader = await startReaderWithRecordingFileSystem(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(new URL('diagram.png', reader.url), {
+    headers: { 'Sec-Fetch-Dest': 'image' },
+  })
+  const body = Buffer.from(await response.arrayBuffer())
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: response.status,
+      type: response.headers.get('content-type'),
+      bodyIsTheImage: body.equals(imageBytes),
+      filesReadWhole,
+    },
+    {
+      status: 200,
+      type: 'application/octet-stream',
+      bodyIsTheImage: true,
+      filesReadWhole: [],
+    },
+  )
+})
+
+// Value: protects=every request of the open Wiki reader, and the few threads of the editor host's file system, against a named pipe at the path of an asset the manifest lists; fails_when=the reader reads a file that is no page without looking at what it is, so the read of the pipe holds a thread of the host's file system until a writer comes, which may be never; why_new=Cycle 0047 row 18 (P3SEC1 = S11-F2); seam=none (a real named pipe, whose waiting reader the test releases when it ends); no_claim=Windows, which has no named pipe in a folder
+test(
+  'an asset whose path holds a named pipe is refused at once with 403, and no read of it waits for a writer',
+  {
+    timeout: 5_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
+        : false,
+  },
+  async (context) => {
+    // Arrange: a Wiki whose manifest lists a style sheet that is a named pipe nobody writes to.
+    const projectRoot = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-pipe-asset-')),
+    )
+    const { outputDirectory, manifestPath } =
+      await writeMinimalWiki(projectRoot)
+    const pipePath = join(outputDirectory, 'wiki.css')
+    await promisify(execFile)('mkfifo', [pipePath])
+    const browserTab = new AbortController()
+    // A read that waits on the pipe would keep this process alive: a writer that opens and closes ends it, also when the body was stopped at its time bound.
+    context.after(async () => {
+      browserTab.abort()
+      await open(
+        pipePath,
+        openConstants.O_WRONLY | openConstants.O_NONBLOCK,
+      ).then(
+        (writer) => writer.close(),
+        () => undefined,
+      )
+      await rm(projectRoot, { recursive: true, force: true })
+    })
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        repositoryRoot: projectRoot,
+        pages: [],
+        assets: ['wiki.css'],
+        includedSources: [],
+      }),
+    )
+    const reader = await startDeepWikiReader(
+      outputDirectory,
+      projectRoot,
+      async () => ({ handoff: 'not asked' }),
+    )
+    context.after(() => reader.close())
+
+    // Act
+    const answer = await Promise.race([
+      fetch(new URL('wiki.css', reader.url), {
+        headers: { 'Sec-Fetch-Dest': 'style' },
+        signal: browserTab.signal,
+      }).then(async (response) => ({
+        status: response.status,
+        body: await response.text(),
+      })),
+      new Promise<'still waiting'>((resolveWait) =>
+        setTimeout(() => resolveWait('still waiting'), 2_000),
+      ),
+    ])
+
+    // Assert
+    assert.deepEqual(answer, {
+      status: 403,
+      body: '{"error":"The Wiki file is no regular file; a pipe, a device or a folder at its path is not served."}',
+    })
+  },
+)
+
 // Value: protects=the editor's machine against a crafted page that is reloaded or whose tab is closed: the page's worker must stop with the request instead of keeping a core busy until the deadline; fails_when=the reader no longer aborts the page's preparation when the response closes before it is finished, so the worker is abandoned and runs on; why_new=P2T5; seam=the reader loaded with loadModule and a stand-in page-worker module that keeps the signal it is handed and answers only when that signal aborts; no_claim=the real worker's stop at an abort (the page-worker tests cover it)
 test('a page whose browser tab goes while the page is prepared has its preparation stopped', async (context) => {
   // Arrange: the one-page Wiki and a reader whose page worker answers only when its request goes.
