@@ -389,37 +389,26 @@ export function withServedAddresses(
     bodyEndInForeignContent,
     pageEndInForeignContent,
   } = readHtmlPage(html)
-  // Without a body end the tag goes at the page's end, after a tag that leaves svg or MathML content where a reading leaves it open there, and the filter reads the page with them.
-  if (tagAtBodyEnd !== undefined && bodyEndTagStart === undefined)
-    return withServedAddresses(
-      html +
-        (isForeignContentOpenInAnyReading(
-          html,
-          html.length,
-          pageEndInForeignContent,
-        )
-          ? FOREIGN_CONTENT_EXIT
-          : '') +
-        tagAtBodyEnd,
-      editorScheme,
-    )
-  // Where a reading leaves svg or MathML content open at the body's end, the tag follows a tag that leaves that content, which changes how that reading reads the rest of the page, so the filter reads the page with both in it.
-  if (
-    tagAtBodyEnd !== undefined &&
-    bodyEndTagStart !== undefined &&
-    isForeignContentOpenInAnyReading(
+  if (tagAtBodyEnd !== undefined) {
+    // Without a body end the tag goes at the page's end.
+    const place = bodyEndTagStart ?? html.length
+    const isForeignContentOpen = isForeignContentOpenInAnyReading(
       html,
-      bodyEndTagStart,
-      bodyEndInForeignContent,
+      place,
+      bodyEndTagStart === undefined
+        ? pageEndInForeignContent
+        : bodyEndInForeignContent,
     )
-  )
-    return withServedAddresses(
-      html.slice(0, bodyEndTagStart) +
-        FOREIGN_CONTENT_EXIT +
-        tagAtBodyEnd +
-        html.slice(bodyEndTagStart),
-      editorScheme,
-    )
+    // At the page's end the tag may close a tag the page leaves open, and where a reading leaves svg or MathML content open at the place, the tag follows a tag that leaves that content, which changes how that reading reads the rest of the page: the filter reads the page with them in it.
+    if (bodyEndTagStart === undefined || isForeignContentOpen)
+      return withServedAddresses(
+        html.slice(0, place) +
+          (isForeignContentOpen ? FOREIGN_CONTENT_EXIT : '') +
+          tagAtBodyEnd +
+          html.slice(place),
+        editorScheme,
+      )
+  }
   const edits = startTags.flatMap(({ attributes }) =>
     attributes.flatMap((attribute) => editOf(attribute, editorScheme)),
   )
