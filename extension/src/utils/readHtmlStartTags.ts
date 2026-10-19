@@ -41,7 +41,7 @@ export type HtmlReading = {
 }
 
 /** Chrome 151's reading with scripting enabled: the one by which the reader rebinds Codebook's addresses and finds a page's ids, its rail's link and its body's end. */
-export const CHROME_READING: HtmlReading = {
+const CHROME_READING: HtmlReading = {
   selectRules: 'current',
   scriptingEnabled: true,
 }
