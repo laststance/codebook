@@ -40,10 +40,16 @@ export type HtmlReading = {
   scriptingEnabled: boolean
 }
 
-/** Chrome 151's reading with scripting enabled: the one by which the reader rebinds Codebook's addresses and finds a page's ids and its rail's link. */
+/** Chrome 151's reading with scripting enabled: the one by which the reader rebinds Codebook's addresses and finds a page's ids, its rail's link and its body's end. */
 export const CHROME_READING: HtmlReading = {
   selectRules: 'current',
   scriptingEnabled: true,
+}
+
+/** A page as one reading reads it: its start tags in source order, and where the end tag of its body starts, when the parser took one as the body's end (`undefined` for a page without, and for a frameset). */
+export type HtmlPageReading = {
+  startTags: HtmlStartTag[]
+  bodyEndTagStart: number | undefined
 }
 
 /** White space between the parts of a tag: the five characters a browser separates them at. */
@@ -258,7 +264,7 @@ function readTagAt(html: string, nameAt: number): HtmlStartTag | undefined {
 }
 
 /**
- * Keeps original start-tag spans while parse5 owns the complete HTML tree; created by {@link readHtmlStartTags} for each page and reading ({@link HtmlReading}).
+ * Keeps original start-tag spans while parse5 owns the complete HTML tree; created by {@link readHtmlPage} for each page and reading ({@link HtmlReading}).
  * Under the reading's `current` select rules its select adapters apply them (a select changes no insertion mode, so table tokens close it by the table rules, and an input closes it by the body rule; an open select ends every scope but the table scope); under `before-2025` it leaves a select to the pinned parser, whose select rules are those of the HTML standard before 2025. In either reading it requires a matching table section before closing a row; it resets the insertion mode by HTML elements alone, skips each end tag that provably changes nothing, writes an end's name in svg case under an svg element and compares a foreign element's name with it as Chrome does, and ignores a body-rule end at an svg or MathML integration point. Other tree construction stays with the pinned parser.
  * It depends on parse5 8.0.1 internals, which an upgrade must recheck one by one: the protected hooks it overrides (`_startTagOutsideForeignContent`, `_endTagOutsideForeignContent`, `_resetInsertionMode`, `_resetInsertionModeForSelect`, `onItemPush`, `onItemPop`, `onStartTag`, `onEndTag`) and the order the pinned parser calls them in; the pinned reset's walk, which reads `openElements.tagIDs` from the current node down and stops at the first tag id of `RESET_MODE_TAG_IDS`, whatever the namespace, so that the reader's reset may hide a foreign element's tag id for one pass; the @internal fields it reads or changes (`openElements` with `items`, `tagIDs`, `stackTop` and `tmplCount`, `insertionMode` with the mode numbers in constants.ts, `formElement`, `currentNotInHTML`, `skipNextNewLine`, `currentToken`); the methods of `activeFormattingElements` it wraps, which must stay the only ones that add or remove entries; the four scope checks of `openElements` it wraps (`hasInScope`, `hasInListItemScope`, `hasInButtonScope`, `hasNumberedHeaderInScope`), whose scope ends `SCOPE_END_TAG_IDS`, `LIST_ITEM_SCOPE_END_TAG_IDS`, `BUTTON_SCOPE_END_TAG_IDS` and `FOREIGN_SCOPE_END_TAG_IDS` repeat from parse5's open-element-stack.js; `_isSpecialElement` and the body rule for an end of an unknown name, which matches by tag id before it asks whether an element is special; and `foreignContent.adjustTokenSVGTagName` with its svg case table, which lacks the names of `HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS` (recheck the table against the HTML standard's at an upgrade), the hook `shouldProcessStartTagTokenInForeignContent` it overrides to add them for start tags, and `_getAdjustedCurrentElement`.
  * @example new HtmlPageReader('<p>text</p>').tokenizer.write('<p>text</p>', true)
@@ -292,7 +298,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private readonly followsCurrentSelectRules: boolean
 
   /**
-   * Retains the original page for attribute offsets; called only by {@link readHtmlStartTags}.
+   * Retains the original page for attribute offsets; called only by {@link readHtmlPage}.
    * @param page - The unmodified HTML source.
    * @param reading - The select rules and the scripting flag the page is read with.
    * @example new HtmlPageReader('<p title="a">text</p>', CHROME_READING)
@@ -309,6 +315,34 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     this.countFormattingEntries()
     // The rules before 2025 keep the ordinary scopes in a select, as the pinned parser's own checks do.
     if (this.followsCurrentSelectRules) this.endScopesAtOpenSelect()
+  }
+
+  /**
+   * Tells where the end tag of the page's body starts, as the parser took it: the last `</body>` the body rules met while the body was in scope, which the pinned parser records as the body's end tag; called by {@link readHtmlPage} after the whole page is read.
+   * @returns The offset of that `</body>`'s `<`; `undefined` when the parser took no `</body>` as the body's end, or the page has no body (a frameset).
+   * @example reader.bodyEndTagStart() // => 20 for '<!-- </body> --><p>x</BODY>' read whole
+   */
+  bodyEndTagStart(): number | undefined {
+    const root = this.treeAdapter
+      .getChildNodes(this.document)
+      .find(
+        (node) =>
+          this.treeAdapter.isElementNode(node) &&
+          this.treeAdapter.getTagName(node) === 'html',
+      )
+    const body =
+      root &&
+      this.treeAdapter.isElementNode(root) &&
+      this.treeAdapter
+        .getChildNodes(root)
+        .find(
+          (node) =>
+            this.treeAdapter.isElementNode(node) &&
+            this.treeAdapter.getTagName(node) === 'body',
+        )
+    return body
+      ? this.treeAdapter.getNodeSourceCodeLocation(body)?.endTag?.startOffset
+      : undefined
   }
 
   /**
@@ -1003,7 +1037,28 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
 }
 
 /**
- * Reads original start tags using full HTML tree feedback, for the Wiki address filter and local-editor link binder.
+ * Reads a page as one reading of a browser does ({@link HtmlReading}): its original start tags, using full HTML tree feedback, and where the end tag of its body starts; for the Wiki address filter, which also puts the reader's script tag at that end.
+ * Raw attribute slices keep duplicates and untouched text; the tree parser decides where markup is active.
+ * @param html - The unchanged page source.
+ * @param reading - The select rules and the scripting flag to read the page with; Chrome 151's with scripting when omitted.
+ * @returns The start tags in source order, with every original attribute's exact positions and values, and the start of the body's end tag ({@link HtmlPageReading}).
+ * @example
+ * readHtmlPage('<!-- </body> --><p>x</BODY>').bodyEndTagStart // => 20
+ */
+export function readHtmlPage(
+  html: string,
+  reading: HtmlReading = CHROME_READING,
+): HtmlPageReading {
+  const reader = new HtmlPageReader(html, reading)
+  reader.tokenizer.write(html, true)
+  return {
+    startTags: reader.startTags,
+    bodyEndTagStart: reader.bodyEndTagStart(),
+  }
+}
+
+/**
+ * Reads original start tags using full HTML tree feedback, for the Wiki address filter and local-editor link binder ({@link readHtmlPage}).
  * Raw attribute slices keep duplicates and untouched text; the tree parser decides where markup is active.
  * The address filter reads a page under each reading a browser may take ({@link HtmlReading}); every other caller reads it as Chrome 151 does with scripting ({@link CHROME_READING}).
  * @param html - The unchanged page source.
@@ -1016,7 +1071,5 @@ export function readHtmlStartTags(
   html: string,
   reading: HtmlReading = CHROME_READING,
 ): HtmlStartTag[] {
-  const reader = new HtmlPageReader(html, reading)
-  reader.tokenizer.write(html, true)
-  return reader.startTags
+  return readHtmlPage(html, reading).startTags
 }

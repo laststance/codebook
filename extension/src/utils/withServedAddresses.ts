@@ -6,6 +6,7 @@ import { escapeHtml } from './escapeHtml'
 import {
   type HtmlAttribute,
   type HtmlReading,
+  readHtmlPage,
   readHtmlStartTags,
 } from './readHtmlStartTags'
 import { trimMatchingEnds } from './trimMatchingEnds'
@@ -308,7 +309,7 @@ function renamesUnder(page: string, readings: readonly HtmlReading[]): Edit[] {
 
 /**
  * Takes the effect from every attribute that a reading of a page other than Chrome's refuses ({@link readingsOf}), until no reading finds one; called by {@link withServedAddresses} on the page Chrome's reading served.
- * Chrome's reading finds nothing more to take away on the page its own edits made: a rename or a rebound value changes only its own tag. Another reading may find an attribute in what Chrome reads as the text of a style, an xmp, an iframe, a title, a plaintext, a CDATA section or a noscript. A rename in one reading can change another reading's end tags (a page may name an element like an attribute and end it), so after a round of renames every reading reads the page again. Each round renames at least one name, never one renamed before, so the rounds end; a page built to need many meets the worker's deadline ({@link servedWikiPageOffThread}).
+ * Chrome's reading finds nothing more to take away on the page its own edits made: a rename or a rebound value changes only its own tag, and the reader's script tag stands between two tags of Chrome's reading ({@link withServedAddresses}). Another reading may find an attribute in what Chrome reads as the text of a style, an xmp, an iframe, a title, a plaintext, a CDATA section or a noscript. A rename in one reading can change another reading's end tags (a page may name an element like an attribute and end it), so after a round of renames every reading reads the page again. Each round renames at least one name, never one renamed before, so the rounds end; a page built to need many meets the worker's deadline ({@link servedWikiPageOffThread}).
  * @param servedByChrome - The page as Chrome's reading served it.
  * @returns The page with no attribute any reading refuses.
  * @example
@@ -334,24 +335,39 @@ function withNoLinkAnyReadingRefuses(servedByChrome: string): string {
  *
  * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is the publisher's (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), so a page reads alike published today and served. One published site works in both editors, as each binds Codebook's addresses to itself.
  * How: the page is read as Chrome 151 reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. A refused attribute's name is replaced by letters and hyphens, and a rebound value keeps its place, so the page is read as before. The reader opens in the system's default browser, which may read a select by the rules before 2025 or run without scripting; so a page with a select or a noscript is then read under each of those readings too, and an attribute any of them refuses loses its effect as well, also where Chrome reads it as text ({@link withNoLinkAnyReadingRefuses}); Codebook's addresses are rebound by Chrome's reading alone. On an ordinary page the time grows with the page's size, and a page with a select and a noscript takes up to four readings. A page built for it can make the HTML parser's own rules take time that grows with the square of its nesting (13 s to minutes for 1 MB), which no reading of the tags avoids; so the Wiki reader runs this function only on a worker thread, which it stops after {@link WIKI_PAGE_SERVE_DEADLINE_MS} ({@link servedWikiPageOffThread}).
+ * The reader's own script tag, when the caller hands one, goes in by the same pass, at the start of the `</body>` Chrome's reading took as the body's end ({@link readHtmlPage}): there Chrome reads between two tags, so the tag starts and ends a script element of its own and changes no other tag; a `</body>` in a comment, a value or a script's text, or written in capitals, is read as a browser reads it. A page without such an end gets the tag at its end, and the filter reads the page with the tag in it, as the tag may close a tag the page leaves open.
  * Called by {@link rebindDeepWikiEditorLinks} last, for every page the reader serves, so the page served is this function's output.
  *
  * @param html - The page as the Wiki folder holds it.
  * @param editorScheme - The scheme registered by the editor serving this request.
- * @returns The page with each refused attribute renamed and each Codebook address bound to the serving editor.
+ * @param tagAtBodyEnd - The reader's script tag, escaped, to put at the body's end; nothing is put in when omitted.
+ * @returns The page with each refused attribute renamed, each Codebook address bound to the serving editor, and the tag at its body's end.
  * @example
  * withServedAddresses('<a href="vscode://file/etc/hosts">hosts</a><a href="vscode://laststance.codebook/update?root=%2Fr">Update</a>', 'cursor')
  * // => '<a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a><a href="cursor://laststance.codebook/update?root=%2Fr">Update</a>'
+ * withServedAddresses('<body><p>x</p></BODY>', 'vscode', '<script src="/w/t/codebook-qa.js"></script>')
+ * // => '<body><p>x</p><script src="/w/t/codebook-qa.js"></script></BODY>'
  */
 export function withServedAddresses(
   html: string,
   editorScheme: 'vscode' | 'cursor',
+  tagAtBodyEnd?: string,
 ): string {
-  const servedByChrome = withEdits(
-    html,
-    readHtmlStartTags(html).flatMap(({ attributes }) =>
-      attributes.flatMap((attribute) => editOf(attribute, editorScheme)),
-    ),
+  const { startTags, bodyEndTagStart } = readHtmlPage(html)
+  // Without a body end the tag goes at the page's end, and the filter reads the page with it.
+  if (tagAtBodyEnd !== undefined && bodyEndTagStart === undefined)
+    return withServedAddresses(html + tagAtBodyEnd, editorScheme)
+  const edits = startTags.flatMap(({ attributes }) =>
+    attributes.flatMap((attribute) => editOf(attribute, editorScheme)),
   )
-  return withNoLinkAnyReadingRefuses(servedByChrome)
+  // The body's end tag starts between two tags, so the insertion stands apart from every attribute's edit.
+  if (tagAtBodyEnd !== undefined && bodyEndTagStart !== undefined) {
+    const place = edits.findIndex((edit) => edit.start > bodyEndTagStart)
+    edits.splice(place === -1 ? edits.length : place, 0, {
+      start: bodyEndTagStart,
+      end: bodyEndTagStart,
+      text: tagAtBodyEnd,
+    })
+  }
+  return withNoLinkAnyReadingRefuses(withEdits(html, edits))
 }
