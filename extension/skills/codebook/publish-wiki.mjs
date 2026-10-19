@@ -644,11 +644,11 @@ async function restorePreparedFiles(record, stage, requireHeld) {
   }
 }
 
-/** How far apart two boot times, each the wall clock minus the uptime, may lie and still name one boot of a machine that names its boot by no id (Windows, and a Mac whose boot session could not be read): a correction of the clock moves them. Read by {@link ownerStateOf}. */
+/** How far apart two boot times, each the wall clock minus the uptime, may lie and still name one boot of a machine that names its boot by no id (Windows, and a Mac whose boot session could not be read): a correction of the clock moves them. Read by {@link isOfEarlierBootTime}. */
 const BOOT_TIME_TOLERANCE_MS = 60_000;
 /** How long a query of a process's start (`ps` on macOS, PowerShell on Windows) or of the boot session (`sysctl` on macOS) may run before it is ended, and how many bytes it may print. Read by {@link queryText}. */
 const START_QUERY_TIMEOUT_MS = 3_000, START_QUERY_MAX_BYTES = 1024;
-/** The field of `/proc/<pid>/stat`, counted from the first after the command name, that holds the process's start in clock ticks since the boot (field 22). Read by {@link processStartOf}. */
+/** The field of `/proc/<pid>/stat`, counted from the first after the command name, that holds the process's start in clock ticks since the boot (field 22). Read by {@link linuxStartOf}. */
 const LINUX_STAT_START_INDEX = 19;
 
 /** Runs a query program by its full path, without a shell, bounded in time and in output ({@link START_QUERY_TIMEOUT_MS}): the runner of {@link SYSTEM_HERE}, which {@link macStartOf} and {@link windowsStartOf} run their queries with. @returns What it printed, trimmed; undefined when it fails, runs too long, prints too much or prints nothing. @example await queryText('/bin/ps', ['-o', 'lstart=', '-p', '4242'], { LC_ALL: 'C', TZ: 'UTC' }) // => 'Mon Oct  5 09:12:33 2026' */
