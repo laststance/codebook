@@ -275,23 +275,24 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private readonly openNames = new Map<string, number>()
   /** How many HTML select elements are open, so that a start tag finds no open select without a scan of the stack. */
   private openHtmlSelectCount = 0
-  /** The insertion mode each open HTML select was pushed in: current rules give a select no mode of its own, so the mode stays while it is open and comes back when it closes. */
-  private readonly selectPushModes = new WeakMap<
-    Parse5.DefaultTreeAdapterMap['element'],
-    number
-  >()
-  /** The HTML select that left the stack last, whose push mode {@link HtmlPageReader.closeSelect} restores. */
-  private lastPoppedSelect: Parse5.DefaultTreeAdapterMap['element'] | undefined
-  /** Where each open HTML select was pushed: its place on the stack and the element below it, by which the reading by the select rules before 2025 knows that the stack below a closed select is the one it was pushed on. */
-  private readonly selectPushPlaces = new WeakMap<
+  /**
+   * How each HTML select was pushed, recorded by {@link HtmlPageReader.recordSelectPush}:
+   * - `mode`: the insertion mode it came in; current rules give a select no mode of its own, so the mode stays while it is open and comes back when it closes;
+   * - `index` and `below`: its place on the stack and the element below it, by which the reading by the select rules before 2025 knows that the stack below a closed select is the one it was pushed on.
+   */
+  private readonly selectPushes = new WeakMap<
     Parse5.DefaultTreeAdapterMap['element'],
     {
+      mode: number
       index: number
       below: Parse5.DefaultTreeAdapterMap['parentNode'] | undefined
     }
   >()
-  /** The HTML select when it is the last element that left the stack and none entered since: the moment the pinned parser's select rules reset the mode after they closed it. */
-  private selectPoppedLast: Parse5.DefaultTreeAdapterMap['element'] | undefined
+  /** The HTML select that left the stack last, whose push mode {@link HtmlPageReader.closeSelect} restores. */
+  private lastPoppedSelect: Parse5.DefaultTreeAdapterMap['element'] | undefined
+  /** The HTML select whose pop was the last change of the stack, `undefined` once any element entered or left it since: the moment the pinned parser's select rules reset the mode after they closed it. */
+  private selectPoppedByLastStackChange:
+    Parse5.DefaultTreeAdapterMap['element'] | undefined
   /** The element names of the list of active formatting elements, each with how many entries of that name it holds, markers aside. */
   private readonly formattingEntryNames = new Map<string, number>()
   /** Whether the reading takes the select rules of 2025 ({@link HtmlReading}), which the select adapters apply; otherwise the pinned parser's own select rules stand. */
@@ -525,17 +526,15 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
    * @example reader.restoreModeOfClosedSelect() // => true right after '<x><select></select>' closed the select, the mode IN_BODY
    */
   private restoreModeOfClosedSelect(): boolean {
-    const select = this.selectPoppedLast
-    const place = select && this.selectPushPlaces.get(select)
-    const pushMode = select && this.selectPushModes.get(select)
+    const select = this.selectPoppedByLastStackChange
+    const push = select && this.selectPushes.get(select)
     if (
-      place === undefined ||
-      pushMode === undefined ||
-      this.openElements.stackTop !== place.index - 1 ||
-      this.openElements.current !== place.below
+      push === undefined ||
+      this.openElements.stackTop !== push.index - 1 ||
+      this.openElements.current !== push.below
     )
       return false
-    this.insertionMode = pushMode
+    this.insertionMode = push.mode
     return true
   }
 
@@ -555,7 +554,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     const select = this.openElements.items[selectIndex]
     const pushMode =
       select && this.treeAdapter.isElementNode(select)
-        ? this.selectPushModes.get(select)
+        ? this.selectPushes.get(select)?.mode
         : undefined
     if (pushMode !== undefined) {
       this.insertionMode = pushMode
@@ -635,7 +634,8 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private closeSelect(): void {
     this.openElements.popUntilTagNamePopped(htmlTree.TAG_ID.SELECT)
     const pushMode =
-      this.lastPoppedSelect && this.selectPushModes.get(this.lastPoppedSelect)
+      this.lastPoppedSelect &&
+      this.selectPushes.get(this.lastPoppedSelect)?.mode
     // A select without a recorded push takes the mode the elements below it give.
     if (pushMode === undefined) this._resetInsertionMode()
     else this.insertionMode = pushMode
@@ -657,7 +657,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     const { current } = this.openElements
     const pushMode =
       current && this.treeAdapter.isElementNode(current)
-        ? this.selectPushModes.get(current)
+        ? this.selectPushes.get(current)?.mode
         : undefined
     if (pushMode === undefined) this._resetInsertionMode()
     else this.insertionMode = pushMode
@@ -676,7 +676,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     tagId: number,
     isTop: boolean,
   ): void {
-    this.selectPoppedLast = undefined
+    this.selectPoppedByLastStackChange = undefined
     if (isTop) {
       this.addOpenName(node)
       this.recordSelectPush(node)
@@ -704,7 +704,9 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
         this.openHtmlSelectCount -= 1
         this.lastPoppedSelect = node
       }
-      this.selectPoppedLast = this.isHtmlSelect(node) ? node : undefined
+      this.selectPoppedByLastStackChange = this.isHtmlSelect(node)
+        ? node
+        : undefined
     }
     super.onItemPop(node, isTop)
   }
@@ -734,8 +736,8 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     if (!this.treeAdapter.isElementNode(node) || !this.isHtmlSelect(node))
       return
     const { items, stackTop } = this.openElements
-    this.selectPushModes.set(node, this.insertionMode)
-    this.selectPushPlaces.set(node, {
+    this.selectPushes.set(node, {
+      mode: this.insertionMode,
       index: stackTop,
       below: items[stackTop - 1],
     })
