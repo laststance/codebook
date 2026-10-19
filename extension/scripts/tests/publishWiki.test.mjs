@@ -14481,3 +14481,81 @@ test('the bundled skill tells the agent to wait for the publish that holds the W
     true,
   )
 })
+
+// Cycle 0047, second /ship, fixing cycle 1, fixer P1's follow-up: rows 206 to 210, found while rows 172 to 178 were fixed.
+
+for (const lock of [
+  {
+    names:
+      'a pair for another host name beside the lock of a publish that ran in a space that cannot come back',
+    arrange: async (wiki) => {
+      const lockPath = `${wiki.output}.publish-lock.json`
+      const killed = runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          { call: 'writing', folder: wiki.next, name: '^index\\.html$' },
+        ],
+      })
+      const record = JSON.parse(
+        await readFile(lockPath, 'utf8').catch(() => '{"owner":{}}'),
+      )
+      record.owner = { ...record.owner, space: 'linux@0' }
+      await writeFile(lockPath, JSON.stringify(record))
+      return { killed, host: record.owner.host }
+    },
+    goneOwners: [{ host: 'another-machine', space: 'linux@0' }],
+    refusal: (host) =>
+      `--gone-host and --gone-space name "another-machine" (linux@0), but the Wiki publish lock names ${JSON.stringify(host)} (linux@0). Nothing was moved. Name the host name and the space that the refusal of --recover names, or run --recover without them.`,
+  },
+  {
+    names: 'a pair beside a lock without a byte that has stood a minute',
+    arrange: async (wiki) => {
+      const lockPath = `${wiki.output}.publish-lock.json`
+      await writeFile(lockPath, '')
+      const aMinuteAgo = new Date(Date.now() - 60_000)
+      await utimes(lockPath, aMinuteAgo, aMinuteAgo)
+      return { killed: '', host: undefined }
+    },
+    goneOwners: [{ host: 'devbox', space: 'linux@1' }],
+    refusal: () =>
+      '--gone-host and --gone-space name "devbox" (linux@1), but no Wiki publish lock with an owner stands. Nothing was moved. Run --recover without them.',
+  },
+]) {
+  // Value: protects=the agent that reads the refusal of a --recover whose --gone-host and --gone-space pairs do not name the owner of the publish lock that stands; fails_when=the refusal names a publication journal, which does not stand, so the agent looks for a journal or tells the learner of one; why_new=Cycle 0047 row 207 (found while fixing row 172: the lock is judged by the gate of a journal, whose refusals name a journal); seam=for the first row, a publisher process killed just before it writes the candidate's first page (scripts/tests/utils/killedPublisherProbe.mjs), whose lock is then given the space linux@0, which no pid namespace has; no_claim=the refusals beside a journal, which other tests pin
+  test(`a --recover with ${lock.names} is refused with a sentence that names the publish lock, and keeps the lock`, async () => {
+    // Arrange: the row's lock beside the published Wiki.
+    const wiki = await publishedWikiWithACandidate()
+    const lockPath = `${wiki.output}.publish-lock.json`
+    try {
+      const { killed, host } = await lock.arrange(wiki)
+      const lockBefore = await readFile(lockPath, 'utf8')
+
+      // Act
+      const refusal = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        goneOwners: lock.goneOwners,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          refusal,
+          lock: await readFile(lockPath, 'utf8').catch(() => 'removed'),
+        },
+        { killed: '', refusal: lock.refusal(host), lock: lockBefore },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}

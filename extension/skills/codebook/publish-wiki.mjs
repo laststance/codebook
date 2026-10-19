@@ -1210,22 +1210,22 @@ const placeOf = owner => JSON.stringify(owner.host) + ' (' + owner.space + ')';
 /** Whether a recorded owner ran at one of the places, each a host name and a space of process ids, that the learner confirmed gone (`--gone-host`, `--gone-space`, one pair for each place). Called by {@link requireExited} and {@link requireGoneOwnersOf}. @param owner - The owner a journal or a claim records; undefined for a record of an earlier version, which names none and is at no place. @param goneOwners - The places, each `{ host, space }`. @example isOwnerAt({ host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } }, [{ host: 'devbox', space: 'linux@1' }]) // => true */
 const isOwnerAt = (owner, goneOwners) => owner !== undefined && goneOwners.some(place => owner.host === place.host && owner.space === place.space);
 
-/** The refusal of a `--gone-host` and `--gone-space` pair that names no owner's place: another host name or space than those the journal's owner and the stopped recovery claims of its chain record, or no journal with an owner at all. Called by {@link requireGoneOwnersOf}, {@link recoverWikiPublication} and {@link endUnwrittenRecord}. @param goneOwner - The place named that no owner records. @param owner - The journal's owner, held to its form; undefined for a journal of an earlier version, which names none, and where no journal stands. @param claimOwners - The owners the stopped recovery claims of the journal's chain record, held to their form ({@link claimOwnersOf}); a place the journal's owner names too is named once. @example goneOwnerRefusalOf({ host: 'devbox', space: 'linux@1' }, undefined, []) // => '--gone-host and --gone-space name "devbox" (linux@1), but no Wiki publication journal with an owner stands. …' */
-function goneOwnerRefusalOf(goneOwner, owner, claimOwners) {
+/** The refusal of a `--gone-host` and `--gone-space` pair that names no owner's place: another host name or space than those the journal's or the publish lock's owner and the stopped recovery claims of its chain record, or no journal or lock with an owner at all; it names the record that stands. Called by {@link requireGoneOwnersOf}, {@link recoverWikiPublication} and {@link endUnwrittenRecord}. @param goneOwner - The place named that no owner records. @param owner - The journal's owner, held to its form; undefined for a journal of an earlier version, which names none, and where no journal stands. @param recordName - The record the owner is read from, as the refusal names it: the Wiki publication journal, or the Wiki publish lock where no journal stands ({@link endStoppedLock}). @param claimOwners - The owners the stopped recovery claims of the journal's chain record, held to their form ({@link claimOwnersOf}); a place the journal's owner names too is named once. @example goneOwnerRefusalOf({ host: 'devbox', space: 'linux@1' }, undefined, []) // => '--gone-host and --gone-space name "devbox" (linux@1), but no Wiki publication journal with an owner stands. …' */
+function goneOwnerRefusalOf(goneOwner, owner, claimOwners, recordName = 'Wiki publication journal') {
   const claimPlaces = [...new Set(claimOwners.map(placeOf))].filter(place => owner === undefined || place !== placeOf(owner));
   // A journal of an earlier version names no owner, while a claim beside it may.
-  if (owner === undefined && claimPlaces.length === 0) return '--gone-host and --gone-space name ' + placeOf(goneOwner) + ', but no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.';
-  return '--gone-host and --gone-space name ' + placeOf(goneOwner) + ', but the Wiki publication journal names ' + (owner === undefined ? 'no owner' : placeOf(owner)) +
+  if (owner === undefined && claimPlaces.length === 0) return '--gone-host and --gone-space name ' + placeOf(goneOwner) + ', but no ' + recordName + ' with an owner stands. Nothing was moved. Run --recover without them.';
+  return '--gone-host and --gone-space name ' + placeOf(goneOwner) + ', but the ' + recordName + ' names ' + (owner === undefined ? 'no owner' : placeOf(owner)) +
     (claimPlaces.length === 0 ? '' : ' and its stopped recoveries name ' + claimPlaces.join(', ')) + '. Nothing was moved. Name the host name and the space that the refusal of --recover names, or run --recover without them.';
 }
 
-/** Refuses a place the learner confirmed gone (`--gone-host`, `--gone-space`, one pair for each place) unless it is the host name and the space of the owner the journal records or of an owner a stopped recovery claim of its chain records ({@link claimOwnersOf}), before any owner is judged, so the options never end a publish or a recovery they do not name; the journal's owner and the claims' are held to their form first ({@link requireOwnerForm}), so the refusal never names an owner of another form; without the options nothing is read or refused here. Called by {@link resumeJournal} for a journal and by {@link endStoppedLock} for a publish lock. @param record - The parsed journal. @param journal - The journal's path, beside which its claims stand. @param bytes - The journal's bytes, whose digest names its first claim. @param goneOwners - The places, each `{ host, space }`; none when absent. @throws The refusal of an invalid owner or claim, of claims that form a cycle, and that of {@link goneOwnerRefusalOf}. @example await requireGoneOwnersOf({ pid: 4242, owner: { host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } } }, journal, bytes, [{ host: 'devbox', space: 'linux@2' }]) // throws where no claim of 'devbox' (linux@2) stands */
-async function requireGoneOwnersOf(record, journal, bytes, goneOwners = []) {
+/** Refuses a place the learner confirmed gone (`--gone-host`, `--gone-space`, one pair for each place) unless it is the host name and the space of the owner the journal records or of an owner a stopped recovery claim of its chain records ({@link claimOwnersOf}), before any owner is judged, so the options never end a publish or a recovery they do not name; the journal's owner and the claims' are held to their form first ({@link requireOwnerForm}), so the refusal never names an owner of another form; without the options nothing is read or refused here. Called by {@link resumeJournal} for a journal and by {@link endStoppedLock} for a publish lock. @param record - The parsed journal. @param journal - The journal's path, beside which its claims stand. @param bytes - The journal's bytes, whose digest names its first claim. @param goneOwners - The places, each `{ host, space }`; none when absent. @param recordName - The record, as a refusal names it ({@link goneOwnerRefusalOf}); the journal when absent. @throws The refusal of an invalid owner or claim, of claims that form a cycle, and that of {@link goneOwnerRefusalOf}. @example await requireGoneOwnersOf({ pid: 4242, owner: { host: 'devbox', space: 'linux@1', boot: { id: 'boot-1' } } }, journal, bytes, [{ host: 'devbox', space: 'linux@2' }]) // throws where no claim of 'devbox' (linux@2) stands */
+async function requireGoneOwnersOf(record, journal, bytes, goneOwners = [], recordName) {
   if (goneOwners.length === 0) return;
   requireOwnerForm(record);
   const claimOwners = await claimOwnersOf(journal, bytes), owners = [record.owner, ...claimOwners];
   const unnamed = goneOwners.find(place => !owners.some(owner => isOwnerAt(owner, [place])));
-  if (unnamed !== undefined) throw new Error(goneOwnerRefusalOf(unnamed, record.owner, claimOwners));
+  if (unnamed !== undefined) throw new Error(goneOwnerRefusalOf(unnamed, record.owner, claimOwners, recordName));
 }
 
 /** The refusal of a recovery claim that is no record the publisher writes: no JSON object, or one without a valid id. Read by {@link stoppedClaimAt}. */
@@ -1434,13 +1434,13 @@ const UNWRITTEN_JOURNAL_REFUSAL = 'The Wiki publication journal is empty, and th
 
 /** Ends a journal without a byte: one an earlier version leaves when it stops between the exclusive create of its journal and the write of it, which it does before a publish copies, finalizes or moves anything and before a recovery writes anything, and one this version leaves so on a file system that cannot link ({@link writeWholeRecord}). It names no owner and no step, and nothing it guards was changed yet, so it is removed once it has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS} ({@link endUnwrittenRecord}), past which no step that runs is still between the two; without that, every preparation and publish would stay refused for it while the skill forbids deleting a journal. Places confirmed gone are refused, as such a journal names no owner. Called by {@link recoverWikiPublication}. @returns `unwritten-journal-removed`. @throws The refusal of places confirmed gone, that of a journal changed within the grace ({@link UNWRITTEN_JOURNAL_REFUSAL}), and that of a changed path. @example await endUnwrittenJournal(paths, requirePathHeld, []) // => { status: 'unwritten-journal-removed', output: '/repo/.codebook/wiki' } */
 async function endUnwrittenJournal({ output, journal }, requirePathHeld, goneOwners) {
-  await endUnwrittenRecord(journal, UNWRITTEN_JOURNAL_REFUSAL, requirePathHeld, goneOwners);
+  await endUnwrittenRecord(journal, UNWRITTEN_JOURNAL_REFUSAL, requirePathHeld, goneOwners, 'Wiki publication journal');
   return { status: 'unwritten-journal-removed', output };
 }
 
-/** Ends a journal or a publish lock without a byte once it has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS} ({@link hasStoodUnwritten}): it names no owner, so places confirmed gone are refused, and a younger one is refused with the sentence given, as its writer may be writing it now. Called by {@link endUnwrittenJournal} and {@link endStoppedLock}. @param refusal - The refusal of a record changed within the grace. @throws The refusal of places confirmed gone, that refusal, that of a changed path, and that of a record that got bytes meanwhile ({@link removeOwnedRecord}). @example await endUnwrittenRecord('/repo/.codebook/wiki.publish-lock.json', UNWRITTEN_LOCK_REFUSAL, requirePathHeld, []) */
-async function endUnwrittenRecord(path, refusal, requirePathHeld, goneOwners) {
-  if (goneOwners.length > 0) throw new Error(goneOwnerRefusalOf(goneOwners[0], undefined, []));
+/** Ends a journal or a publish lock without a byte once it has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS} ({@link hasStoodUnwritten}): it names no owner, so places confirmed gone are refused, and a younger one is refused with the sentence given, as its writer may be writing it now. Called by {@link endUnwrittenJournal} and {@link endStoppedLock}. @param refusal - The refusal of a record changed within the grace. @param recordName - The record, as the refusal of places confirmed gone names it ({@link goneOwnerRefusalOf}). @throws The refusal of places confirmed gone, that refusal, that of a changed path, and that of a record that got bytes meanwhile ({@link removeOwnedRecord}). @example await endUnwrittenRecord('/repo/.codebook/wiki.publish-lock.json', UNWRITTEN_LOCK_REFUSAL, requirePathHeld, []) */
+async function endUnwrittenRecord(path, refusal, requirePathHeld, goneOwners, recordName) {
+  if (goneOwners.length > 0) throw new Error(goneOwnerRefusalOf(goneOwners[0], undefined, [], recordName));
   if (!(await hasStoodUnwritten(path))) throw new Error(refusal);
   await requirePathHeld();
   await removeOwnedRecord(path, Buffer.alloc(0));
@@ -1450,6 +1450,9 @@ async function endUnwrittenRecord(path, refusal, requirePathHeld, goneOwners) {
 async function releaseClaims(claims, completed) {
   for (const claim of completed ? [...claims].reverse() : claims.slice(-1)) await removeOwnedRecord(claim.path, claim.bytes);
 }
+
+/** The publish lock as the refusals of `--gone-host` and `--gone-space` name it ({@link goneOwnerRefusalOf}). Read by {@link endStoppedLock}. */
+const PUBLISH_LOCK_NAME = 'Wiki publish lock';
 
 /** The refusal of a publish lock that is no record the publisher writes: no JSON object, or one without a valid id or an owner; a lock a cloned repository carries may hold any text, which is not repeated. Read by {@link endStoppedLock}. */
 const INVALID_LOCK_REFUSAL = 'The Wiki publish lock is invalid; it was preserved.';
@@ -1462,13 +1465,13 @@ async function endStoppedLock(bytes, paths, requirePathHeld, ownerJudgement) {
   const { lock, output } = paths;
   // A lock without a byte names no owner: its publish stopped between creating and writing it, or is writing it now.
   if (bytes.length === 0) {
-    await endUnwrittenRecord(lock, UNWRITTEN_LOCK_REFUSAL, requirePathHeld, ownerJudgement.goneOwners);
+    await endUnwrittenRecord(lock, UNWRITTEN_LOCK_REFUSAL, requirePathHeld, ownerJudgement.goneOwners, PUBLISH_LOCK_NAME);
     return { status: 'publish-lock-removed', output };
   }
   const record = parseRecordOf(bytes, INVALID_LOCK_REFUSAL);
   // No earlier version writes a lock, so one without an owner is none of the publisher's.
   if (!isRecordId(record.id) || record.owner === undefined) throw new Error(INVALID_LOCK_REFUSAL);
-  await requireGoneOwnersOf(record, lock, bytes, ownerJudgement.goneOwners);
+  await requireGoneOwnersOf(record, lock, bytes, ownerJudgement.goneOwners, PUBLISH_LOCK_NAME);
   await requireExited(record, ownerJudgement);
   await requirePathHeld();
   const claims = await claimRecovery(lock, bytes, ownerJudgement);
