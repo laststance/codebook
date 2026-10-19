@@ -252,7 +252,7 @@ test('the preview and the publish of a candidate whose page renders larger than 
   }
 })
 
-// Value: protects=the editor agent that writes a Wiki with the bundled skill, which reads there how to write pages before it writes: without the reader's page limits it learns the 2 MiB limit only from a refused publish, and that a dense page needs more memory than the reader gives one page only from the learner's refusal page; fails_when=the skill no longer names the publisher's refusal of a page that renders to more than 2 MiB, or the reader's refusal of a page too dense to prepare, or no longer says to split such a page; why_new=Cycle 0047 row 104 (the rest of RT-2); seam=none; no_claim=the publisher's and the reader's refusals themselves (the tests above, deepWikiReader.test.ts)
+// Value: protects=the editor agent that writes a Wiki with the bundled skill, which reads there how to write pages before it writes: without the reader's page limits it learns the 2 MiB limit only from a refused publish, and that a dense page needs more memory than the reader gives one page only from the learner's refusal page; fails_when=the skill no longer names the publisher's refusal of a page that renders to more than 2 MiB, or how it counts that size (with CRLF line ends), or the reader's refusal of a page too dense to prepare, or no longer says to split such a page; why_new=Cycle 0047 row 104 (the rest of RT-2), and row 248 for the count with CRLF line ends (row 233); seam=none; no_claim=the publisher's and the reader's refusals themselves (the tests above, deepWikiReader.test.ts)
 test('the bundled skill tells the agent that the publisher refuses a page over 2 MiB and the reader a page too dense to prepare, and to split such a page', async () => {
   // Arrange / Act
   const skill = await readFile(
@@ -263,7 +263,7 @@ test('the bundled skill tells the agent that the publisher refuses a page over 2
   // Assert
   assert.equal(
     skill.includes(
-      'Keep every page small enough for the reader: the publisher refuses a page that renders to more than 2 MiB, and the reader refuses a page whose markup is so dense that preparing it needs more memory than Codebook gives one page. Split a long or dense article into several pages of its section instead.',
+      'Keep every page small enough for the reader: the publisher refuses a page that renders to more than 2 MiB, counted with CRLF line ends as a Windows checkout may hold it (one byte more for each line), and the reader refuses a page whose markup is so dense that preparing it needs more memory than Codebook gives one page. Split a long or dense article into several pages of its section instead.',
     ),
     true,
   )
