@@ -928,7 +928,7 @@ test('a failed end after which somebody can still publish says that nothing had 
     ...place,
   } as const
   const stillInTheChat =
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.'
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.'
   const takenBack =
     'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.'
 
@@ -966,10 +966,10 @@ test('a failed end after which somebody can still publish says that nothing had 
 
   // Assert
   assert.deepEqual(sentences, [
-    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat. Nothing had been replaced by then.',
+    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat. Nothing had been replaced by then.',
     'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry. The last usable site is kept.',
-    'Update needs another run (21:10): Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat. This run replaced the site on disk.',
-    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    'Update needs another run (21:10): Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat. This run replaced the site on disk.',
+    'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   ])
 })
 

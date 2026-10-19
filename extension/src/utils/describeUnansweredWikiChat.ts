@@ -13,12 +13,12 @@ const UNANSWERED_ENDINGS: Record<
   own: {
     'not-sent':
       ' and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
-    left: ' and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    left: ' and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   },
   shared: {
     'not-sent':
       ' and the chat holds no request of it, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
-    left: ' and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    left: ' and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   },
 }
 
@@ -32,13 +32,13 @@ const UNANSWERED_ENDINGS: Record<
  * @param timeoutMs - The bound of the first sign, a whole number of seconds.
  * @returns
  * - `not-sent`: no sign, the chat holds no request of the update, no update running
- * - `left` in a session of its own: no sign, the request not taken back, so it may still be in the chat and is stopped there before a retry; Codebook waits for that chat as after a stopped watch, so the retry is answered with Update anyway, which the sentence names in words that are true whether the request is in the chat or not
+ * - `left` in a session of its own: no sign, the request left in the chat with no chat command run on it, so it may still be there and is stopped there before a retry; Codebook waits for that chat as after a stopped watch, so the retry is answered with Update anyway, which the sentence names in words that are true whether the request is in the chat or not
  * - in a shared session: the same two outcomes, with the next step that the chat may be working on another request
  * @example
  * describeUnansweredWikiChat('not-sent', 'own', 30_000)
  * // => 'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.'
  * describeUnansweredWikiChat('left', 'own', 30_000)
- * // => 'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.'
+ * // => 'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.'
  */
 export function describeUnansweredWikiChat(
   request: UnrepliedWikiRequest,

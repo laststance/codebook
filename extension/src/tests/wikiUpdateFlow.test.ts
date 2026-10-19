@@ -1766,7 +1766,7 @@ test('a Cursor update during which another repository was opened ends as failed 
   }
 })
 
-// Value: protects=the learner and the Wiki after the 30 seconds passed with a request Codebook could not take back, which may still be in the chat; fails_when=a start that waits for the chat forever hangs the press, or that end leaves no reservation, so the retry the sentence names sends a second request into a new chat beside the first, or the refused retry offers no Update anyway; why_new=Cycle 0045 (the press that must not hang), Cycle 0046 row 358 (the retry: it used to start at once, which row 147 had recorded as decided); seam=the chat's command, which is held so that it never returns
+// Value: protects=the learner and the Wiki after the 30 seconds passed with a request Codebook left in the chat, where it may still be; fails_when=a start that waits for the chat forever hangs the press, or that end leaves no reservation, so the retry the sentence names sends a second request into a new chat beside the first, or the refused retry offers no Update anyway; why_new=Cycle 0045 (the press that must not hang), Cycle 0046 row 358 (the retry: it used to start at once, which row 147 had recorded as decided); seam=the chat's command, which is held so that it never returns
 test('a chat command that never returns ends the update as failed at its bound with the sentence that the request may still be in the chat; the retry sends no second request and is answered with the wait for that chat and Update anyway, which then starts the update', async () => {
   // Arrange: the bound is 0.1 seconds.
   let isOverrideChosen = false
@@ -1812,7 +1812,7 @@ test('a chat command that never returns ends the update as failed at its bound w
     assert.equal(afterFirstPress.state, 'failed')
     assert.equal(
       afterFirstPress.state === 'failed' ? afterFirstPress.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 0.1 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 0.1 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     // The retry: no second request beside the one that may still be in the chat, and the override is offered.
     assert.deepEqual([requestsAfterFirstPress, requestsAfterTheRetry], [1, 1])
@@ -1919,13 +1919,13 @@ test('a chat that takes the request and never answers ends the update after 30 s
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat\\. Nothing had been replaced by then\\.$`,
+        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat\\. Nothing had been replaced by then\\.$`,
       ),
     )
     assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
@@ -1991,13 +1991,13 @@ test('at the 30 second bound Codebook runs none of the chat’s commands: its un
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat\\. Nothing had been replaced by then\\.$`,
+        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat\\. Nothing had been replaced by then\\.$`,
       ),
     )
   } finally {
@@ -2132,13 +2132,13 @@ test('a chat whose Cancel fails ends the update with the sentence that the reque
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat\\. Nothing had been replaced by then\\.$`,
+        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat\\. Nothing had been replaced by then\\.$`,
       ),
     )
   } finally {
@@ -2176,7 +2176,7 @@ test('a learner who moved to another chat during the 30 seconds keeps the reques
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
   } finally {
     await wiki.close()
@@ -2209,7 +2209,7 @@ test('a chat that asks for its first approval right after Codebook left its requ
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     assert.equal(wiki.errors.length, 1)
     assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
@@ -2252,7 +2252,7 @@ test('in an editor without the New Chat command the request goes into the open c
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
   } finally {
     await wiki.close()
@@ -2294,7 +2294,7 @@ test('in an editor without the New Chat command an unanswered request in progres
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
   } finally {
     await wiki.close()
@@ -2336,7 +2336,7 @@ test('in an editor without the New Chat command a queue command that would fail 
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
   } finally {
     await wiki.close()
@@ -2480,7 +2480,7 @@ test('a file the learner opens, a terminal that opens and a command the learner 
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
   } finally {
@@ -2526,7 +2526,7 @@ test('a chat whose first answer comes after 40 seconds is left to the learner at
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     )
     assert.deepEqual([wiki.progressTitles, wiki.statusBarTexts], [[], []])
   } finally {

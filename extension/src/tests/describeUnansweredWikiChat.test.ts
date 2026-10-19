@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import { describeUnansweredWikiChat } from '../utils/describeUnansweredWikiChat'
 
-// Value: protects=the learner whose unanswered update request Codebook could not take back; fails_when=the sentence says that no update is running, or no longer ends with the step that makes a retry safe (stop the request in the Chat view); why_new=Cycle 0046 row 82; seam=none
+// Value: protects=the learner whose unanswered update request Codebook left in the chat; fails_when=the sentence says that no update is running, or no longer ends with the step that makes a retry safe (stop the request in the Chat view), or says again that Codebook could not take its request back although it runs none of the chat's commands on it; why_new=Cycle 0046 row 82; Cycle 0047 row 82 (MAINT-4): the sentence says that Codebook left its request in the chat; seam=none
 test('an update without a sign whose request Codebook did not see leave the chat says that it may still be there and is stopped in the Chat view before a retry', () => {
   // Act
   const sentence = describeUnansweredWikiChat('left', 'own', 30_000)
@@ -11,11 +11,11 @@ test('an update without a sign whose request Codebook did not see leave the chat
   // Assert
   assert.equal(
     sentence,
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   )
 })
 
-// Value: protects=the learner whose editor sent the update request into the chat they were using, where it waits behind a request in progress; fails_when=the sentence tells them only to check Copilot Chat, which is enabled and signed in, and not that the chat may be busy; why_new=Cycle 0046 row 129 (the shared session of an editor without the New Chat command); seam=none
+// Value: protects=the learner whose editor sent the update request into the chat they were using, where it waits behind a request in progress; fails_when=the sentence tells them only to check Copilot Chat, which is enabled and signed in, and not that the chat may be busy, or says that Codebook could not take its request back although it runs none of the chat's commands on it; why_new=Cycle 0046 row 129 (the shared session of an editor without the New Chat command); Cycle 0047 row 82 (MAINT-4): the sentence says that Codebook left its request in the chat; seam=none
 test('an update without a sign in a chat session shared with the learner says that the chat may be working on another request, before the check of Copilot Chat', () => {
   // Act
   const left = describeUnansweredWikiChat('left', 'shared', 30_000)
@@ -23,7 +23,7 @@ test('an update without a sign in a chat session shared with the learner says th
   // Assert
   assert.equal(
     left,
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   )
 })
 
