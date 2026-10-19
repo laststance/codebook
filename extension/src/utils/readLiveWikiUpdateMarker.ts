@@ -4,6 +4,7 @@ import { z } from 'zod'
 
 import {
   WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_METADATA_FILE_LIMIT_BYTES,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS,
   WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS,
@@ -46,12 +47,12 @@ const wikiUpdateMarkerSchema = z.object({
 /** The marker of a Wiki update that is running in some editor window, or the reservation its stopped watch left. */
 export type WikiUpdateMarker = z.infer<typeof wikiUpdateMarkerSchema>
 
-/** A marker file that has no readable content yet: another window created it a moment ago (epoch milliseconds) and is writing it. @example const starting: WikiUpdateMarkerBeingWritten = { beingWrittenSinceMs: 1790000000000 } */
+/** A marker file that has no readable content yet: another window created it a moment ago (epoch milliseconds) and is writing it, or the marker file of a run that cannot be read at this moment (since its last write). @example const starting: WikiUpdateMarkerBeingWritten = { beingWrittenSinceMs: 1790000000000 } */
 export type WikiUpdateMarkerBeingWritten = { beingWrittenSinceMs: number }
 
 /**
  * What one look at the marker file found, by its kind, so that a caller removes only what the look read as nobody's:
- * `none` (no entry at the marker's path), `unowned` (a marker nobody's update owns), `being-written` (a file whose content another window is writing right now) and `live` (another window's running update, or the reservation its stopped watch left).
+ * `none` (no entry at the marker's path), `unowned` (a marker nobody's update owns), `being-written` (a file whose content another window is writing right now, or a marker file that cannot be read at this moment) and `live` (another window's running update, or the reservation its stopped watch left).
  * @example const look: WikiUpdateMarkerLook = { kind: 'live', heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } }
  */
 export type WikiUpdateMarkerLook =
@@ -313,11 +314,40 @@ function lookAtMarkerWithoutContent(
 }
 
 /**
- * Tells a marker path that holds nothing from one that holds an entry no marker can be read from (a link, a folder, a file that cannot be opened or is too large); called by {@link readLiveWikiUpdateMarker} when the marker file could not be read.
- * Why: nothing is removed where no marker is, because another window may write its marker there at that moment; an entry that is in the way and is no marker is still removed as nobody's, so a path a repository supplies cannot refuse every start.
+ * Names what a regular marker file within the read's limit is that could not be read at this moment; called by {@link lookAtUnreadableEntry}.
+ * Why: such a file can be a running window's marker that another program holds open (on Windows a scanner or an indexer: `EBUSY`, `EPERM`) or that this user may not read (`EACCES`), and the end of that run treats it as possibly its own ({@link claimWikiUpdateMarker}). A start that took it for nobody's would remove it and run beside that update. It counts for as long as a marker written at that time can count: the longer of the two hosts' longest runs, with {@link WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS} and {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS}, which also outlasts a stopped watch's reservation; after that it is nobody's, so a file that stays unreadable cannot refuse every start.
+ * @param modifiedAtMs - When the file was last written (epoch milliseconds).
+ * @param nowMs - The present (epoch milliseconds).
+ * @returns `being-written` with that time while the file was written less than 21 min 30 s ago and not more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now; `unowned` for an older one and for one written further ahead.
+ * @example
+ * lookAtUnreadableMarkerFile(1_790_000_000_000, 1_790_000_003_000) // => { kind: 'being-written', heldBy: { beingWrittenSinceMs: 1_790_000_000_000 } }
+ * lookAtUnreadableMarkerFile(1_790_000_000_000, 1_790_001_290_001) // => { kind: 'unowned' }
+ */
+function lookAtUnreadableMarkerFile(
+  modifiedAtMs: number,
+  nowMs: number,
+): WikiUpdateMarkerLook {
+  const longestMarkerLifeMs =
+    Math.max(
+      WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+      WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_UPDATE_WATCH_TIMEOUT_MS,
+    ) +
+    WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS +
+    WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
+  const mayStillCount =
+    nowMs - modifiedAtMs <= longestMarkerLifeMs &&
+    modifiedAtMs <= nowMs + WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
+  return mayStillCount
+    ? { kind: 'being-written', heldBy: { beingWrittenSinceMs: modifiedAtMs } }
+    : { kind: 'unowned' }
+}
+
+/**
+ * Tells a marker path that holds nothing from one that holds an entry no marker can be read from (a link, a folder, a file that is too large) and from a marker file that could not be read at this moment; called by {@link readLiveWikiUpdateMarker} when the marker file could not be read.
+ * Why: nothing is removed where no marker is, because another window may write its marker there at that moment; an entry that is in the way and is no marker is still removed as nobody's, so a path a repository supplies cannot refuse every start. A regular file within {@link WIKI_METADATA_FILE_LIMIT_BYTES} may be a running window's marker that cannot be read right now, so it is not removed while a marker can count ({@link lookAtUnreadableMarkerFile}).
  * @param markerPath - `<output>.update-run.json`.
  * @param nowMs - The present (epoch milliseconds).
- * @returns `none` when no entry is at the path, or the path cannot be inspected; otherwise what the entry's age says ({@link lookAtMarkerWithoutContent}).
+ * @returns `none` when no entry is at the path, or the path cannot be inspected; for a regular file within the limit what {@link lookAtUnreadableMarkerFile} says; for any other entry what its age says ({@link lookAtMarkerWithoutContent}).
  * @example
  * await lookAtUnreadableEntry('/repo/.codebook/wiki.update-run.json', Date.now()) // => { kind: 'none' }
  */
@@ -326,9 +356,11 @@ async function lookAtUnreadableEntry(
   nowMs: number,
 ): Promise<WikiUpdateMarkerLook> {
   const entry = await lstat(markerPath).catch(() => undefined)
-  return entry
-    ? lookAtMarkerWithoutContent(entry.mtimeMs, nowMs)
-    : { kind: 'none' }
+  if (!entry) return { kind: 'none' }
+  // Only a regular file within the read's limit can be a marker; it could not be read at this moment.
+  if (entry.isFile() && entry.size <= WIKI_METADATA_FILE_LIMIT_BYTES)
+    return lookAtUnreadableMarkerFile(entry.mtimeMs, nowMs)
+  return lookAtMarkerWithoutContent(entry.mtimeMs, nowMs)
 }
 
 /**
@@ -343,8 +375,8 @@ async function lookAtUnreadableEntry(
  * @param judgement - What the owner is judged by; this process's identity ({@link currentStorageOwner}), {@link readProcessStart} and the clock unless a caller or a test names its own.
  * @returns
  * - `live`: another window's marker that still counts ({@link isLiveMarkerOfAnotherWindow}), including a stopped VS Code watch's reservation inside its bound after its process ended; in `heldBy`, with `watchEndedAtMs` for the caller's reservation check
- * - `being-written`: a file without readable content that was written a moment ago, with that time in `heldBy`
- * - `unowned`: this window's own marker, an ended owner's marker without a valid bounded reservation, a run's marker older than any run can be, one whose run starts or whose stopped watch ended too far ahead, and an entry without a readable marker that is older than a write takes
+ * - `being-written`: a file without readable content that was written a moment ago, and a regular marker file that cannot be read at this moment and was written less than any marker counts ({@link lookAtUnreadableMarkerFile}), with that time in `heldBy`
+ * - `unowned`: this window's own marker, an ended owner's marker without a valid bounded reservation, a run's marker older than any run can be, one whose run starts or whose stopped watch ended too far ahead, an entry without a readable marker that is older than a write takes, and a marker file that cannot be read and is older than any marker counts
  * - `none`: no entry at the marker's path
  *
  * @example

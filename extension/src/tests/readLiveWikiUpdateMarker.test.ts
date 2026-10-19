@@ -8,15 +8,19 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { openWithoutFollowing } from '../utils/openWithoutFollowing'
+import type * as lookModule from '../utils/readLiveWikiUpdateMarker'
 import {
   readLiveWikiUpdateMarker,
   type WikiUpdateMarkerLook,
 } from '../utils/readLiveWikiUpdateMarker'
+import type * as readerModule from '../utils/readWikiRegularFile'
 
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { loadModule } from './utils/loadModule'
 
 const MINUTE_MS = 60_000
 
@@ -247,6 +251,84 @@ test('a look tells a marker path that holds nothing from one that holds an entry
       heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
     },
     folderAfter2000Ms: { kind: 'unowned' },
+  })
+})
+
+// Value: protects=a running update whose marker file another program holds open at the moment a second window starts (on Windows a scanner or an indexer: EBUSY, EPERM; a file this user may not read: EACCES); fails_when=a regular marker file that cannot be read counts as nobody's 2 s after its write, so the second window's start removes it and two agents update one Wiki, while the run's own end treats the same file as possibly its marker; why_new=Cycle 0047 row 32 (P3RT10); seam=the open of the marker file under a loaded readWikiRegularFile, which fails with EBUSY, and the clock handed to the look; no_claim=Windows' real error codes
+test('a marker file that cannot be read at this moment counts as one being written for as long as any run’s marker counts after its write (21 min 30 s), and is nobody’s afterwards', async (context) => {
+  // Arrange: a marker file of another window's run, last written at the fixed present, whose every open fails as for a file another program holds open.
+  const outputDirectory = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS,
+    }),
+    NOW_MS,
+  )
+  const markerPath = `${outputDirectory}.update-run.json`
+  const readerWhoseMarkerOpenIsRefused = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...openInputs: Parameters<typeof openWithoutFollowing>
+        ) => {
+          if (openInputs[0] === markerPath)
+            throw Object.assign(
+              new Error('EBUSY: resource busy or locked, open'),
+              { code: 'EBUSY' },
+            )
+          return openWithoutFollowing(...openInputs)
+        },
+      },
+    },
+  )
+  const { readLiveWikiUpdateMarker: lookInThatWindow } = await loadModule<
+    typeof lookModule
+  >(resolve(__dirname, '../utils/readLiveWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerWhoseMarkerOpenIsRefused,
+  })
+  // The loaded module answers objects of its own context; a copy makes them comparable here.
+  const lookAtTheHeldMarker = async (
+    nowMs: number,
+  ): Promise<WikiUpdateMarkerLook> =>
+    structuredClone(
+      await lookInThatWindow(outputDirectory, 'own-window', {
+        identity: THIS_WINDOW,
+        nowMs,
+        readStart: async () => undefined,
+      }),
+    )
+
+  // Act
+  const looks = {
+    after3Seconds: await lookAtTheHeldMarker(NOW_MS + 3_000),
+    after21Minutes30Seconds: await lookAtTheHeldMarker(NOW_MS + 1_290_000),
+    after21Minutes30SecondsAnd1Ms: await lookAtTheHeldMarker(
+      NOW_MS + 1_290_001,
+    ),
+    written5MinutesAhead: await lookAtTheHeldMarker(NOW_MS - 300_000),
+    writtenFurtherAhead: await lookAtTheHeldMarker(NOW_MS - 300_001),
+  }
+
+  // Assert
+  assert.deepEqual(looks, {
+    after3Seconds: {
+      kind: 'being-written',
+      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+    },
+    after21Minutes30Seconds: {
+      kind: 'being-written',
+      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+    },
+    after21Minutes30SecondsAnd1Ms: { kind: 'unowned' },
+    written5MinutesAhead: {
+      kind: 'being-written',
+      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+    },
+    writtenFurtherAhead: { kind: 'unowned' },
   })
 })
 

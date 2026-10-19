@@ -29,6 +29,7 @@ import type * as lookModule from '../utils/isFolderOfItsOwn'
 import { openWithoutFollowing } from '../utils/openWithoutFollowing'
 import type * as placeModule from '../utils/placeStorageLock'
 import { placeStorageLock } from '../utils/placeStorageLock'
+import type * as markerLookModule from '../utils/readLiveWikiUpdateMarker'
 import {
   readLiveWikiUpdateMarker,
   type WikiUpdateMarkerJudgement,
@@ -1722,6 +1723,89 @@ test('the end of a run whose marker path came to hold a file larger than any mar
     assert.deepEqual(
       { ended, sizeAtTheMarkerPath: (await lstat(wiki.markerPath)).size },
       { ended: true, sizeAtTheMarkerPath: 67_108_865 },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the rule that only one window updates a Wiki, when the running window's marker cannot be read at the moment a second window starts (on Windows a scanner or an indexer holds it open: EBUSY, EPERM); fails_when=the second window's start takes a regular marker file it cannot read for nobody's once it is 2 s old, removes it under its claim and starts beside the running update; why_new=Cycle 0047 row 32 (P3RT10); seam=the second window's claim loaded with loadModule, whose every open of the marker file fails with EBUSY, and the clock handed to it; no_claim=Windows' real error codes
+test('a start in a second window whose open of the running window’s marker fails leaves that marker in place 3 s after its write and is refused', async () => {
+  // Arrange: window A runs; its marker was last written at a fixed time, and window B cannot open the marker file.
+  const wiki = await createWikiFolder()
+  const refuseMarkerOpen = {
+    './openWithoutFollowing': {
+      openWithoutFollowing: async (
+        ...openInputs: Parameters<typeof openWithoutFollowing>
+      ) => {
+        if (openInputs[0] === wiki.markerPath)
+          throw Object.assign(
+            new Error('EBUSY: resource busy or locked, open'),
+            { code: 'EBUSY' },
+          )
+        return openWithoutFollowing(...openInputs)
+      },
+    },
+  }
+  const readerOfWindowB = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    refuseMarkerOpen,
+  )
+  const lookOfWindowB = await loadModule<typeof markerLookModule>(
+    resolve(__dirname, '../utils/readLiveWikiUpdateMarker.js'),
+    {
+      './readWikiRegularFile': readerOfWindowB,
+    },
+  )
+  const { claimWikiUpdateMarker: claimInWindowB } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerOfWindowB,
+    './readLiveWikiUpdateMarker': lookOfWindowB,
+  })
+  try {
+    const runOfWindowA = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: 1_790_000_000_000,
+      },
+      { ...AS_THIS_WINDOW, now: () => 1_790_000_000_000 },
+    )
+    assert.ok('release' in runOfWindowA)
+    const writtenAt = new Date(1_790_000_000_000)
+    await utimes(wiki.markerPath, writtenAt, writtenAt)
+
+    // Act
+    const startOfWindowB = await claimInWindowB(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-b',
+        host: 'vscode',
+        startedAtMs: 1_790_000_003_000,
+      },
+      { ...AS_THIS_WINDOW, now: () => 1_790_000_003_000 },
+    )
+
+    // Assert: the loaded module answers objects of its own context; a copy makes them comparable here.
+    assert.deepEqual(
+      {
+        startOfWindowB:
+          'heldBy' in startOfWindowB
+            ? { heldBy: { ...startOfWindowB.heldBy } }
+            : 'holds the claim',
+        markerAfterTheStart: JSON.parse(await readFile(wiki.markerPath, 'utf8'))
+          .windowId,
+      },
+      {
+        startOfWindowB: {
+          heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+        },
+        markerAfterTheStart: 'window-a',
+      },
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
