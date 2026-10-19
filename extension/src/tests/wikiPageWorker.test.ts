@@ -23,7 +23,7 @@ const SLOW_PAGE = `<!doctype html><body>${'<x>'.repeat(10_000)}${'</p>'.repeat(1
  * Loads the page-worker module with a `Worker` class that records each worker thread it starts and when that thread ends, so a test can tell how many workers prepared its pages; the threads themselves are the real ones, running the compiled worker file.
  * Called by the tests of the workers' reuse, limit and stop.
  * @param constantOverrides - Constants the loaded module reads instead of the shipped ones.
- * @returns The loaded module's {@link servedWikiPageOffThread}, the workers it started in their order, and the end of the worker started n-th (from 0): a promise that settles with `'ended'` when its thread has ended, or at once with `'never started'`.
+ * @returns The loaded module's {@link servedWikiPageOffThread}, the workers it started in their order, the start of the worker started n-th (from 0): a promise that settles with `'online'` when its thread runs, or at once with `'never started'`, and that worker's end: a promise that settles with `'ended'` when its thread has ended, or at once with `'never started'`.
  * @example
  * const pool = await loadPageWorkerRecordingThreads({})
  * await pool.servedWikiPageOffThread('<body></body>', PAGE_OPTIONS, limits)
@@ -34,17 +34,24 @@ async function loadPageWorkerRecordingThreads(
 ): Promise<{
   servedWikiPageOffThread: typeof servedWikiPageOffThread
   startedWorkers: workerThreads.Worker[]
+  onlineOfWorker: (index: number) => Promise<'online' | 'never started'>
   endOfWorker: (index: number) => Promise<'ended' | 'never started'>
 }> {
   const startedWorkers: workerThreads.Worker[] = []
+  const workerOnlines: Promise<'online'>[] = []
   const workerEnds: Promise<'ended'>[] = []
-  /** The real Worker, noting each thread it starts and its end. */
+  /** The real Worker, noting each thread it starts, the moment it runs and its end. */
   class RecordedWorker extends workerThreads.Worker {
     constructor(
       ...parameters: ConstructorParameters<typeof workerThreads.Worker>
     ) {
       super(...parameters)
       startedWorkers.push(this)
+      workerOnlines.push(
+        new Promise((resolveOnline) =>
+          this.once('online', () => resolveOnline('online')),
+        ),
+      )
       workerEnds.push(
         new Promise((resolveEnd) =>
           this.once('exit', () => resolveEnd('ended')),
@@ -62,6 +69,8 @@ async function loadPageWorkerRecordingThreads(
   return {
     servedWikiPageOffThread: loaded.servedWikiPageOffThread,
     startedWorkers,
+    onlineOfWorker: (index) =>
+      workerOnlines[index] ?? Promise.resolve('never started'),
     endOfWorker: (index) =>
       workerEnds[index] ?? Promise.resolve('never started'),
   }
@@ -457,9 +466,9 @@ test('a worker whose heap grew large while it prepared an ordinary page of more 
   )
 })
 
-// Value: protects=the editor's machine and every later page against a request that goes while its page is prepared (a reload, a closed tab): its worker must stop at once and its place go to the next page; fails_when=an aborted page leaves its worker running until the deadline, or keeps its place among the busy workers, so the next page waits for the deadline or for good; why_new=P2T5; seam=the page-worker module loaded with a Worker class that records the threads it starts (the threads are real), and a constants module whose WIKI_PAGE_WORKER_CONCURRENCY_LIMIT is 1, so the one place is the aborted page's; no_claim=the reader's abort when the response closes (the reader test covers it)
+// Value: protects=the editor's machine and every later page against a request that goes while its page is prepared (a reload, a closed tab): its worker must stop at once and its place go to the next page; fails_when=an aborted page leaves its worker running until the deadline, or keeps its place among the busy workers, so the next page waits for the deadline or for good; why_new=P2T5; Cycle 0047 row 75 (P5-T1) the request goes once the slow page's thread runs, not after a sleep of 200 ms; seam=the page-worker module loaded with a Worker class that records the threads it starts and when each runs (the threads are real), and a constants module whose WIKI_PAGE_WORKER_CONCURRENCY_LIMIT is 1, so the one place is the aborted page's; no_claim=the reader's abort when the response closes (the reader test covers it)
 test('a page whose request goes while it is prepared stops its worker, and the next page gets its place at once', async () => {
-  // Arrange: one worker at a time, and the slow page under a deadline of 30 s.
+  // Arrange: one worker at a time, and the slow page under a deadline of 30 s, whose worker's thread runs before the Act.
   const pool = await loadPageWorkerRecordingThreads({
     WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
   })
@@ -468,7 +477,7 @@ test('a page whose request goes while it is prepared stops its worker, and the n
     deadlineMs: 30_000,
     signal: slowRequest.signal,
   })
-  await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+  const slowPageWorkerStart = await within(pool.onlineOfWorker(0), 2_000)
 
   // Act: the slow page's request goes, then the next page is asked for.
   slowRequest.abort()
@@ -489,12 +498,14 @@ test('a page whose request goes while it is prepared stops its worker, and the n
   // Assert: the answers are copied out of the loaded module's context.
   assert.deepEqual(
     structuredClone({
+      slowPageWorkerStart,
       slowAnswer,
       next,
       abortedWorkerEnd,
       startedWorkers: pool.startedWorkers.length,
     }),
     {
+      slowPageWorkerStart: 'online',
       slowAnswer: { state: 'failed' },
       next: {
         state: 'served',
@@ -565,11 +576,12 @@ test('a page whose request went before it was asked for is answered as failed at
  * Called by the tests of a worker that cannot start.
  * @param failingStarts - Which starts throw, counted from 0 in the order the module asks for workers.
  * @param constantOverrides - Constants the loaded module reads instead of the shipped ones.
- * @returns The loaded module's {@link servedWikiPageOffThread} and how many starts it asked for, the failed ones included.
+ * @returns The loaded module's {@link servedWikiPageOffThread}, how many starts it asked for, the failed ones included, and the start of the thread of the n-th start (from 0): a promise that settles with `'online'` when that thread runs, or at once with `'never started'` for a start that threw or was not asked for.
  * @example
  * const pool = await loadPageWorkerWhoseStartsFail([0], {})
  * await pool.servedWikiPageOffThread('<body></body>', PAGE_OPTIONS, limits) // => { state: 'failed' }
  * pool.startAttempts() // => 1
+ * await pool.onlineOfStart(0) // => 'never started'
  */
 async function loadPageWorkerWhoseStartsFail(
   failingStarts: number[],
@@ -577,9 +589,11 @@ async function loadPageWorkerWhoseStartsFail(
 ): Promise<{
   servedWikiPageOffThread: typeof servedWikiPageOffThread
   startAttempts: () => number
+  onlineOfStart: (attempt: number) => Promise<'online' | 'never started'>
 }> {
   let startAttempts = 0
-  /** The real Worker, except at the chosen starts, where it throws before any thread starts. */
+  const onlines = new Map<number, Promise<'online'>>()
+  /** The real Worker, except at the chosen starts, where it throws before any thread starts; each thread that starts notes the moment it runs. */
   class WorkerWhoseStartsFail extends workerThreads.Worker {
     constructor(
       ...parameters: ConstructorParameters<typeof workerThreads.Worker>
@@ -591,6 +605,12 @@ async function loadPageWorkerWhoseStartsFail(
           code: 'ERR_WORKER_INIT_FAILED',
         })
       super(...parameters)
+      onlines.set(
+        attempt,
+        new Promise((resolveOnline) =>
+          this.once('online', () => resolveOnline('online')),
+        ),
+      )
     }
   }
   const loaded = await loadModule<typeof wikiPageWorkerModule>(
@@ -606,6 +626,8 @@ async function loadPageWorkerWhoseStartsFail(
   return {
     servedWikiPageOffThread: loaded.servedWikiPageOffThread,
     startAttempts: () => startAttempts,
+    onlineOfStart: (attempt) =>
+      onlines.get(attempt) ?? Promise.resolve('never started'),
   }
 }
 
@@ -649,9 +671,9 @@ test('a page whose worker cannot start is answered as failed, not with an error,
   )
 })
 
-// Value: protects=every page that waited for a worker when the worker it gets cannot start: it must be answered, and the pages behind it must still start; fails_when=the throw of `new Worker` escapes from the event that freed the worker (an abort, an exit, the deadline) as an uncaught error in the editor's host, the page that waited is never answered because its entry and its cancellation were dropped before its worker started, or the pages behind it never start; why_new=Cycle 0047 row 5 (S11-X3 = S11-F4); seam=the page-worker module loaded with one worker at a time and a Worker class whose second start throws (the first and the third run real threads); no_claim=a worker that fails after its start (the reader test of a failing worker covers it)
+// Value: protects=every page that waited for a worker when the worker it gets cannot start: it must be answered, and the pages behind it must still start; fails_when=the throw of `new Worker` escapes from the event that freed the worker (an abort, an exit, the deadline) as an uncaught error in the editor's host, the page that waited is never answered because its entry and its cancellation were dropped before its worker started, or the pages behind it never start; why_new=Cycle 0047 row 5 (S11-X3 = S11-F4); Cycle 0047 row 75 (P5-T1) the slow page's request goes once its thread runs, not after a sleep of 200 ms; seam=the page-worker module loaded with one worker at a time and a Worker class whose second start throws (the first and the third run real threads, each noting when it runs); no_claim=a worker that fails after its start (the reader test of a failing worker covers it)
 test('when the worker of a page that waited cannot start, that page is answered as failed and the page behind it still gets a worker', async () => {
-  // Arrange: one worker at a time; the slow page holds it, and two pages wait behind it.
+  // Arrange: one worker at a time; the slow page holds it, its worker's thread runs, and two pages wait behind it.
   const pool = await loadPageWorkerWhoseStartsFail([1], {
     WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
   })
@@ -671,7 +693,7 @@ test('when the worker of a page that waited cannot start, that page is answered 
     PAGE_OPTIONS,
     { deadlineMs: 10_000, signal },
   )
-  await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+  const slowPageWorkerStart = await within(pool.onlineOfStart(0), 2_000)
 
   // Act: the slow page's request goes, so the waiting page needs a new worker, and that start throws.
   slowRequest.abort()
@@ -679,8 +701,13 @@ test('when the worker of a page that waited cannot start, that page is answered 
 
   // Assert: the answers are copied out of the loaded module's context.
   assert.deepEqual(
-    structuredClone({ answers, startAttempts: pool.startAttempts() }),
+    structuredClone({
+      slowPageWorkerStart,
+      answers,
+      startAttempts: pool.startAttempts(),
+    }),
     {
+      slowPageWorkerStart: 'online',
       answers: [
         { state: 'failed' },
         { state: 'failed' },
