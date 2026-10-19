@@ -7054,3 +7054,178 @@ for (const stop of [
     }
   })
 }
+
+/**
+ * Publishes a Wiki, prepares a candidate and has the publish of the candidate killed just after it wrote its journal, then rewrites that journal with `rewrite`, as a journal reads that a publisher left behind before its process id went to another process, before a restart, or on another machine.
+ * @param {(record: Record<string, unknown>) => void} rewrite - Changes the parsed journal in place.
+ * @returns {Promise<{ wiki: Awaited<ReturnType<typeof publishedWikiWithACandidate>>, killed: string, record: Record<string, unknown> }>} The Wiki, what the probe printed (empty once killed), and the journal as rewritten.
+ * @example
+ * const { wiki, record } = await publishKilledAfterItsJournal((record) => { record.pid = process.pid })
+ */
+async function publishKilledAfterItsJournal(rewrite) {
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  const killed = runKilledPublisher({
+    operation: 'publishWiki',
+    options: {
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    },
+    killAt: [
+      { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+    ],
+  })
+  const record = JSON.parse(await readFile(journal, 'utf8'))
+  rewrite(record)
+  await writeFile(journal, JSON.stringify(record))
+  return { wiki, killed, record }
+}
+
+// Value: protects=the learner's --recover after a publish whose journal names a process of another user that runs, such as process 1; fails_when=the recovery probes the process id with a signal and passes on the system's EPERM as it is, instead of the sentence that the publisher may still be running; why_new=Cycle 0047 row 42 (P3RT20); seam=none; no_claim=which process has the id on the machine that runs the test, beyond one this user may not signal
+test('a recovery whose journal names a running process of another user refuses with the sentence that the publisher may still be running', async () => {
+  // Arrange: a journal of an earlier version, which names the process id alone: process 1 (process 4, System, on Windows).
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-of-process-one-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    pid = process.platform === 'win32' ? 4 : 1
+  try {
+    await mkdir(dirname(output), { recursive: true })
+    await writeFile(
+      `${output}.publish-journal.json`,
+      JSON.stringify({
+        projectRoot: root,
+        output,
+        stage: `${output}.stage-update`,
+        pid,
+      }),
+    )
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      recovery,
+      `The prior Wiki publisher process ${pid} may still be running; inspect it before recovery.`,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's --recover after a killed publish whose process id another process took since; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running" until it ends; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given the test process's own id, which a process of another start has; no_claim=a process id that went to another process on a system whose process starts cannot be read, which stays "may still be running"
+test('a recovery of a killed publish whose process id another process has now recovers the Wiki', async () => {
+  // Arrange: the killed publisher's process id is given to the running test process, which began at another time.
+  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+    record.pid = process.pid
+  })
+  try {
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, recovery },
+      { killed: '', recovery: 'published-or-restored' },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's --recover after a killed publish before a restart of the machine, whose process id a process of the new boot has; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running"; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another boot (another boot id, or a boot time an hour earlier where the system names none), no process start and the test process's own id; no_claim=a boot time moved by a correction of the clock within the tolerance
+test('a recovery of a killed publish whose journal names an earlier boot of this machine recovers the Wiki whatever process has its id now', async () => {
+  // Arrange
+  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+    record.pid = process.pid
+    const { boot } = record.owner ?? { boot: {} }
+    record.owner = {
+      ...record.owner,
+      start: undefined,
+      boot:
+        boot.id === undefined
+          ? { atMs: boot.atMs - 3_600_000 }
+          : { id: '00000000-0000-4000-8000-000000000000' },
+    }
+  })
+  try {
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, recovery },
+      { killed: '', recovery: 'published-or-restored' },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a Wiki whose publish runs on another machine that opens the same project folder (a shared or synced folder): a recovery here does not move its files; fails_when=the recovery probes the recorded process id on this machine, where no process has it, and goes on while the publisher on the other machine may still run; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given another machine's host name and boot id; no_claim=a machine renamed and restarted since the journal was written, which is judged as another machine
+test('a recovery of a publish whose journal names another machine is refused with that machine named, and the journal is kept', async () => {
+  // Arrange
+  const { wiki, killed, record } = await publishKilledAfterItsJournal(
+    (record) => {
+      // Another machine has a host name and, where its system names one, a boot id of its own.
+      const { boot } = record.owner ?? {}
+      record.owner = {
+        ...record.owner,
+        host: 'another-machine',
+        boot:
+          boot?.id === undefined
+            ? boot
+            : { id: '00000000-0000-4000-8000-000000000000' },
+      }
+    },
+  )
+  try {
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        journal: await access(`${wiki.output}.publish-journal.json`).then(
+          () => 'kept',
+          () => 'gone',
+        ),
+      },
+      {
+        killed: '',
+        recovery: `The prior Wiki publisher process ${record.pid} ran on "another-machine" (${record.owner.space}), where this recovery cannot look at it. Run --recover there after it exits.`,
+        journal: 'kept',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
