@@ -23,8 +23,11 @@ export type RecordingWriterOfHeader = {
 /** Whether a recording this very process started counts like any other (`counts`) or is left to the caller's own run state (`ignored`); see {@link recordingWriterState}. */
 export type OwnProcessRule = 'counts' | 'ignored'
 
-/** The process starts one list of recordings has read, by process id, so that each process is read once in that list, also when several judgements ask for it at once; the caller makes one for each list and drops it with the list. */
-export type ProcessStartsOfList = Map<number, Promise<string | undefined>>
+/**
+ * The process starts one list of recordings has read, by process id and the start a record expects of it, so that each writer's process is read once in that list for each start it is expected to have, also when several judgements ask for it at once; the caller makes one for each list and drops it with the list.
+ * A key is the process id alone for a read that expects no start, and the process id, a space and the expected start otherwise ({@link listReadKeyOf}): on Windows the answer depends on the expected start, which the process table's time confirms only when it is the one asked for ({@link readProcessStart}), so a read for one record's start cannot answer another record of the same process id (Cycle 0047 row 236).
+ */
+export type ProcessStartsOfList = Map<string, Promise<string | undefined>>
 
 /**
  * What a judgement found of a recording's writer.
@@ -45,18 +48,32 @@ export type RecordingWriterState =
 const goneWriters = new Set<string>()
 
 /**
- * Gives the reader of process starts for one list: each process id is read once, and every judgement of that list that asks for it shares the read, also one under way; called by {@link recordingWriterState} for the reads of {@link isRecordedOwnerGone} and {@link hasIdGoneToALaterProcess}.
- * Within one list a process's start is read once and answers every recording of that list, whatever start a record expects: the caller compares. A later list reads again ({@link readProcessStart} keeps no start of another process by itself).
+ * Names the read of one process's start in a list's starts ({@link ProcessStartsOfList}); called by {@link readStartOncePerList} for every read.
+ * @param pid - The process id.
+ * @param expectedStart - The start the record expects the process to have; `undefined` for a read that expects none.
+ * @returns The process id alone without an expected start; otherwise the process id, a space and that start.
+ * @example
+ * listReadKeyOf(4242, undefined)                            // => '4242'
+ * listReadKeyOf(4242, 'win:2026-10-05T09:12:33.1234567Z') // => '4242 win:2026-10-05T09:12:33.1234567Z'
+ */
+function listReadKeyOf(pid: number, expectedStart: string | undefined): string {
+  return expectedStart === undefined ? `${pid}` : `${pid} ${expectedStart}`
+}
+
+/**
+ * Gives the reader of process starts for one list: each process id is read once for each start a record expects of it (and once for the reads that expect none), and every judgement of that list that asks the same shares the read, also one under way; called by {@link recordingWriterState} and {@link sealedRecordingWriterState} for the reads of {@link isRecordedOwnerGone}, {@link isUnreadableProcessOfAnotherUser} and {@link hasIdGoneToALaterProcess}.
+ * Why by the expected start too: on Windows a start this user may not read is answered by the process table's time, which confirms only the start it is asked for ({@link readProcessStart}); a read kept by process id alone would answer a live window's record by the read of an earlier record of the same id, and call that live writer gone (Cycle 0047 row 236). A later list reads again ({@link readProcessStart} keeps no start of another process by itself).
  * @param starts - The starts of the list.
  * @returns A reader with the signature of {@link readProcessStart}.
  * @example const readStart = readStartOncePerList(new Map()); await readStart(4242); await readStart(4242) // one query
  */
 function readStartOncePerList(starts: ProcessStartsOfList): ProcessStartReader {
   return (pid, inputs) => {
-    const kept = starts.get(pid)
+    const key = listReadKeyOf(pid, inputs?.expectedStart)
+    const kept = starts.get(key)
     if (kept) return kept
     const read = readProcessStart(pid, inputs)
-    starts.set(pid, read)
+    starts.set(key, read)
     return read
   }
 }
@@ -204,7 +221,7 @@ async function writerStateByHeader(
 /**
  * Judges the editor process that writes an unsealed recording, the one rule for every judgment of a recording's writer: {@link recordingWriterOf}, through which the library's list ({@link LearningLibrary.entryWithoutArchive}) and the removal of a study ({@link LearningLibrary.writerVerdictsOf}, before its storage lock) tell a writer of this machine from one it cannot confirm, and {@link isRecordingWriterLive}, through which only the status {@link RecordingStore.ownerState} gives a recording another session wrote.
  * This process's own recording ({@link isOwnRecording}: its header names this process and one of its writer sessions) is told first, before any machine or host check. Otherwise the record of the writer's full identity that this build keeps outside the recording decides when it exists and names this recording ({@link readRecordingWriterRecord}: the record is kept by the study id, which recordings of several formats can share); a recording without such a record (made by 0.2.29.0, or another format's recording of the same id) is judged by its header's host name and process id, a process id that a process of another user or a process begun after the recording has leaving the learner the choice (`unconfirmed-here`, {@link writerStateByHeader}); a record without the writer's start is judged as its header is, once its process id is in use.
- * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
+ * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list for each start a record expects of it; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
  * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`; its writer record ({@link recordingOwnerRecordPath}) may not exist, or may name another recording.
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.

@@ -263,17 +263,24 @@ test('a recording whose writer’s process id a process of another user has, who
     byHeader: await writerOf(
       byHeader.folder,
       'counts',
-      new Map([[ID_OF_NO_PROCESS, Promise.resolve(undefined)]]),
+      new Map([[`${ID_OF_NO_PROCESS}`, Promise.resolve(undefined)]]),
     ),
     byRecord: await writerOf(
       byRecord.folder,
       'counts',
-      new Map([[ID_OF_NO_PROCESS, Promise.resolve(undefined)]]),
+      new Map([
+        [`${ID_OF_NO_PROCESS} ${recordedStart}`, Promise.resolve(undefined)],
+      ]),
     ),
     byRecordWithItsStart: await writerOf(
       byRecord.folder,
       'counts',
-      new Map([[ID_OF_NO_PROCESS, Promise.resolve(recordedStart)]]),
+      new Map([
+        [
+          `${ID_OF_NO_PROCESS} ${recordedStart}`,
+          Promise.resolve(recordedStart),
+        ],
+      ]),
     ),
   }
 
@@ -676,7 +683,7 @@ test('this window’s recording under a changed host name is still its own while
     owner: { pid: process.pid, hostname: 'laptop.home-network' },
   })
   const startsWithoutOwn = (): ProcessStartsOfList =>
-    new Map([[process.pid, Promise.resolve(undefined)]])
+    new Map([[`${process.pid}`, Promise.resolve(undefined)]])
 
   // Act
   const answers = {
@@ -708,16 +715,19 @@ test('a live writer of this user whose recorded start cannot be read here may st
       sessionId: randomUUID(),
     },
   })
+  const recordedStart = await readProcessStart(otherWindow.pid!)
   await rewriteWriterRecord(storage.directory, recording.studyId, {
     pid: otherWindow.pid!,
-    processStart: await readProcessStart(otherWindow.pid!),
+    processStart: recordedStart,
   })
 
   // Act
   const writer = await writerOf(
     recording.folder,
     'ignored',
-    new Map([[otherWindow.pid!, Promise.resolve(undefined)]]),
+    new Map([
+      [`${otherWindow.pid!} ${recordedStart}`, Promise.resolve(undefined)],
+    ]),
   )
 
   // Assert
@@ -740,7 +750,7 @@ test('a live writer whose start lies 30 s after the recording was created may st
     createdAt: '2026-10-18T09:00:00.000Z',
   })
   const startedAt = (start: string): ProcessStartsOfList =>
-    new Map([[liveProcess.pid!, Promise.resolve(`win:${start}`)]])
+    new Map([[`${liveProcess.pid!}`, Promise.resolve(`win:${start}`)]])
 
   // Act
   const writers = {
@@ -1300,6 +1310,74 @@ test('the saved studies list reads the start of each writer process once per lis
       listed: [[writers.ofCrashedWindow], [writers.ofCrashedWindow]],
       readsOfTheFirstList: [writers.liveWindow, writers.laterProcess].sort(),
       readsOfTheSecondList: [writers.liveWindow],
+    },
+  )
+})
+
+// Value: protects=the live recording of a window whose process id an earlier, crashed window's recording names too, on Windows, where the start of a process this user may not read (one run as administrator) comes from the process table and confirms only the start it is asked for (row 33); fails_when=the list keeps one read per process id whatever start a record expects, so the earlier record's read (the table's time, which confirms no other start) answers the live window's record too: its writer is judged gone, a gone writer is not judged again while this window runs, and this window's Delete moves the live recording to the Trash, so the live window's next save throws StudyRemovedWithItsRecordingError; why_new=Cycle 0047 row 236 (P2CLA-2): the list's reads were kept by process id alone; seam=the reader of process starts of the loaded judgement, which answers for the live window's process as the Windows table does: the record's start when it is the one asked for, the table's time otherwise; no_claim=a real process table on Windows (row 33's tests read it)
+test('a live window’s recording is judged by its own recorded start when an earlier recording of the same list names its process id with another start', async (context) => {
+  // Arrange: a recording of a crashed window and one of a live window, both naming the live window's process id; the crashed one's record keeps an earlier start.
+  const storage = await recordingStorage(context)
+  const liveWindow = await idleChild(context)
+  const liveStart = (await readProcessStart(liveWindow.pid!))!
+  const startForm = liveStart.slice(0, liveStart.indexOf(':'))
+  const crashedStart = `${startForm}:the start of the crashed window`
+  const tableTime = `${startForm}:the creation time of the process table`
+  const ofCrashedWindow = await startRecording(storage)
+  const ofLiveWindow = await startRecording(storage)
+  for (const [recording, processStart] of [
+    [ofCrashedWindow, crashedStart],
+    [ofLiveWindow, liveStart],
+  ] as const) {
+    await rewriteHeader(recording.folder, {
+      owner: { pid: liveWindow.pid!, hostname: hostname() },
+    })
+    await rewriteWriterRecord(storage.directory, recording.studyId, {
+      pid: liveWindow.pid!,
+      processStart,
+    })
+  }
+  const judge = await loadModule<typeof judgeModule>(
+    resolve(__dirname, '../utils/isRecordingWriterLive.js'),
+    {
+      './readProcessStart': {
+        readProcessStart: async (
+          ...[pid, inputs]: Parameters<typeof readProcessStart>
+        ): ReturnType<typeof readProcessStart> => {
+          if (pid !== liveWindow.pid) return readProcessStart(pid, inputs)
+          // The process table confirms only the start it is asked for; any other start is answered by the table's own time.
+          return inputs?.expectedStart === liveStart ? liveStart : tableTime
+        },
+      },
+    },
+    { Error },
+  )
+  const { recordingWriterOf: judgedWriterOf } = await loadModule<
+    typeof writerModule
+  >(
+    resolve(__dirname, '../utils/recordingWriterOf.js'),
+    { './isRecordingWriterLive': judge },
+    { Error },
+  )
+  const kindOf = async (
+    folder: string,
+    starts: ProcessStartsOfList,
+  ): Promise<string> => (await judgedWriterOf(folder, 'counts', starts)).kind
+
+  // Act: one list judges the crashed window's recording first; a later list, as a removal makes, judges the live one again.
+  const oneList: ProcessStartsOfList = new Map()
+  const inOneList = {
+    ofCrashedWindow: await kindOf(ofCrashedWindow.folder, oneList),
+    ofLiveWindow: await kindOf(ofLiveWindow.folder, oneList),
+  }
+  const ofLiveWindowInALaterList = await kindOf(ofLiveWindow.folder, new Map())
+
+  // Assert
+  assert.deepEqual(
+    { inOneList, ofLiveWindowInALaterList },
+    {
+      inOneList: { ofCrashedWindow: 'gone', ofLiveWindow: 'may-run' },
+      ofLiveWindowInALaterList: 'may-run',
     },
   )
 })

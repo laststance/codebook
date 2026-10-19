@@ -225,7 +225,7 @@ function utcTimeOfWmiCreation(creation: string): string | undefined {
 /**
  * Names a process by the creation time the Windows process table gave for it; called by {@link windowsStartOf} when PowerShell may not read the process's start (a process of another user, or one run as administrator) and fell back to Win32_Process.
  * Why: the table names the time to the microsecond, while every start a record keeps was read to the 100 ns, by its own process. The table's time therefore confirms a recorded start that lies less than {@link WINDOWS_PROCESS_TABLE_PRECISION_TICKS} ticks from it, and is answered as that start, so the comparison of the caller finds it equal; any other start is answered as the table names it, which no recorded start equals.
- * Limit: a caller that keeps one read for several records of one process id (a recordings list) compares the others with the start the first record expected.
+ * A caller that keeps reads for several records of one process id therefore keeps them by the start each record expects too, as a recordings list does ({@link ProcessStartsOfList}): a read for one record's start would answer another record by the table's time, which confirms no other start (Cycle 0047 row 236). {@link readThroughCache} reads again for a start that differs from a kept one.
  * @param creation - The creation time in round-trip UTC form, as {@link utcTimeOfWmiCreation} converted it.
  * @param expectedStart - The start a record names for this process id, when the caller has one.
  * @returns `expectedStart` when it is a Windows start of the same microsecond; otherwise `win:<creation>`.
