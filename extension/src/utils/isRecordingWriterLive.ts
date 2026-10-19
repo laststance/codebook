@@ -242,7 +242,7 @@ export async function recordingWriterState(
 
 /**
  * Judges what holds a sealed recording: the run that wrote it, while that run has not saved its study from a checkpoint taken after the seal, so that another window takes the recording neither for what is left of a removed study nor for something a removal may move; called by {@link recordingWriterOf} for a sealed recording with a readable header whose run has not released it ({@link isSealedRecordingReleased}); a released one is finished without this judgement.
- * A sealed recording keeps the record of its writer's full identity ({@link recordingOwnerRecordPath}) after its seal ({@link RecordingWriter.finish}) until its study is saved from a checkpoint its run took after the seal ({@link removeWriterRecordsOfSealedRecordings}), and that record decides, as it does for an unsealed recording ({@link writerStateByRecord}). Nothing holds a sealed recording without such a record (its study was saved so, it was made by 0.2.29.0, or its record could not be written), nor this window's own: this window lists the finished recording of its own run whose archive could not be saved yet, and Retry storage there writes the archive.
+ * A sealed recording keeps the record of its writer's full identity ({@link recordingOwnerRecordPath}) after its seal ({@link RecordingWriter.finish}) until its study is saved from a checkpoint its run took after the seal ({@link removeWriterRecordsOfSealedRecordings}), and that record decides, as it does for an unsealed recording ({@link writerStateByRecord}). Nothing holds a sealed recording without such a record (its study was saved so, it was made by 0.2.29.0, or its record could not be written), nor this window's own: this window lists the finished recording of its own run whose archive could not be saved yet, and Retry storage there writes the archive. Its caller has already answered both by its header ({@link isSealedRecordingReleased}), so a header of this window's own never reaches this judgement; a record that names this very process is still told here.
  * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`.
  * @param header - What the recording's header says of its writer.
  * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
@@ -256,8 +256,6 @@ export async function sealedRecordingWriterState(
   header: RecordingWriterOfHeader,
   starts: ProcessStartsOfList = new Map(),
 ): Promise<RecordingWriterState | undefined> {
-  // This window's own run is judged by this window, by its header's session.
-  if (isOwnRecording(header.owner)) return undefined
   const recordedOwner = await readRecordingWriterRecord(
     directory,
     header.createdAt,
