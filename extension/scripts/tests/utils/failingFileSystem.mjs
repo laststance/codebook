@@ -273,3 +273,37 @@ export async function link(existingPath, newPath) {
     { code: failure.code },
   )
 }
+
+/** The look a test asked to fail: the path it waits for and the system error it fails with; gone once it failed. */
+let pendingLookFailure
+
+/**
+ * Asks the next `lstat` of a path that `isAwaited` names to fail with a system error, once, as the system answers a look into a folder this user may not search (`EACCES`). Called by the publisher's tests before they recover with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark).
+ * @param {(path: string) => boolean} isAwaited - Whether a path `lstat` is asked for is the one whose look fails.
+ * @param {'EACCES'} code - The system error.
+ * @returns {void}
+ * @example
+ * failLookOf((path) => path.endsWith('-codebook-wiki.json'), 'EACCES')
+ */
+export function failLookOf(isAwaited, code) {
+  pendingLookFailure = { isAwaited, code }
+}
+
+/**
+ * Looks at an entry as `lstat` does, except for the path {@link failLookOf} waits for: that look fails with the system error, worded as the system words it with the path, once.
+ * @param {string} path - The entry.
+ * @param {...unknown} rest - The caller's options, handed on unchanged.
+ * @returns {Promise<import('node:fs').Stats | import('node:fs').BigIntStats>} What `lstat` answers.
+ * @example
+ * await lstat('/repo/.codebook/next/codebook-wiki.json') // rejects with code EACCES after failLookOf named it
+ */
+export async function lstat(path, ...rest) {
+  const failure = pendingLookFailure
+  // Only the awaited path's look fails, once.
+  if (!failure?.isAwaited(String(path))) return fileSystem.lstat(path, ...rest)
+  pendingLookFailure = undefined
+  throw Object.assign(
+    new Error(`${failure.code}: permission denied, lstat '${path}'`),
+    { code: failure.code, path: String(path), syscall: 'lstat' },
+  )
+}

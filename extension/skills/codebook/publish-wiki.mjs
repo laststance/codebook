@@ -100,7 +100,7 @@ const isInProject = (root, path) => { const within = relative(root, path); retur
 /** Whether the real path of an entry lies in the project; an entry whose real path the system cannot name (`EACCES` for a folder of another user, `EINVAL` for some junctions on Windows) counts as one that leaves it, so it is refused inside the project with the sentence of a link instead of the system's error. Called by {@link isOwnFolder} and {@link enteredProjectAt}. @example await isRealPathInProject('/repo/.codebook', '/repo') // => true for a folder of the project's own */
 const isRealPathInProject = (path, root) => realpath(path).then(real => isInProject(root, real), () => false);
 
-/** Looks at one entry without following it; called by {@link enteredProjectAt}, {@link requireRegularFolder}, {@link restoreFinalized}, {@link restoreStoppedCandidate} and {@link removeFinalizingFiles}. @returns The entry's status, or undefined when nothing stands there. @example await lookAt('/repo/.codebook') // => undefined in a project without it */
+/** Looks at one entry without following it; called by {@link enteredProjectAt}, {@link requireRegularFolder}, {@link restoreFinalized}, {@link restoreStoppedCandidate} and {@link finalizingFilesIn}. @returns The entry's status, or undefined when nothing stands there. @example await lookAt('/repo/.codebook') // => undefined in a project without it */
 const lookAt = path => lstat(path).catch(error => { if (isMissing(error)) return undefined; throw error; });
 
 /** Whether an entry is a directory as a look without following answers it: no link and no file. Called by {@link isOwnFolder}. @example isRegularFolder(await lstat('/repo/.codebook/wiki')) // => true for a folder */
@@ -344,7 +344,7 @@ async function replaceOwnFile(path, bytes) {
 /** The file beside a candidate's manifest or record through which a publish puts the finalized one, or the prepared one again, in place ({@link replaceOwnFileThrough}), and through which it puts its journal in place again ({@link JOURNAL_UPDATE}); it carries the id of the publish's journal, so the recovery of a stopped publish knows it ({@link restoreStoppedCandidate}). @example finalizingPathOf('/repo/.codebook/next', '6f1c…', 'codebook-wiki.json') // => '/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json' */
 const finalizingPathOf = (stage, id, name) => join(stage, '.codebook-publish-' + id + '-' + name);
 
-/** The name, after the journal's id ({@link finalizingPathOf}), of the file in the candidate through which a publish puts its journal in place again each time it names one more copy of a learner's file ({@link journalOfCopiesOf}); a stop before the move leaves the file for the recovery to remove ({@link removeFinalizingFiles}). */
+/** The name, after the journal's id ({@link finalizingPathOf}), of the file in the candidate through which a publish puts its journal in place again each time it names one more copy of a learner's file ({@link journalOfCopiesOf}); a stop before the move leaves the file for the recovery to remove ({@link finalizingFilesIn}). */
 const JOURNAL_UPDATE = 'publish-journal.json';
 
 /** Writes a candidate's manifest or record in place of the entry at its name through a new file beside it ({@link writeOwnFile}), which a move then puts at the name ({@link renameRetried}): the move replaces the entry itself, a link or one name of a file with several, never what it leads to, so a link put at the name after the publisher read it leads no write out of the candidate; and a stop of the publish leaves the name with the bytes it had or with the new ones, never without them. A failed move removes the file beside it while it is the one written; a stop before the move leaves it for the recovery ({@link restoreStoppedCandidate}). Called by {@link finalizerOf}, {@link journalOfCopiesOf}, {@link restoreFinalized} and {@link restorePreparedFiles}. @returns The record of the file now at the name ({@link writeOwnFile}). @throws What {@link writeOwnFile} or the last move rejects with. @example await replaceOwnFileThrough('/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json', '/repo/.codebook/next/codebook-wiki.json', manifestText) // => { path: '/repo/.codebook/next/codebook-wiki.json', hash: '…', dev: 2049n, ino: 131076n } */
@@ -647,7 +647,7 @@ const copiesBegunOf = record => new Set(Array.isArray(record.learnerCopies) ? re
 /** Whether the bytes of a file are the start of another file's bytes, or all of them: what a copy holds once a kill stopped its write, which goes from the first byte on, or once the write ended. Called by {@link learnerCopiesIn}. @example isStartOf(Buffer.from('The learner ke'), Buffer.from('The learner kept these notes')) // => true */
 const isStartOf = (part, whole) => part.length <= whole.length && whole.subarray(0, part.length).equals(part);
 
-/** The prepared manifest and record a publish journal keeps, by name, for the files whose finalized bytes, by their SHA-256 digest, the journal names: the manifest's `manifestSha256` and the record's `finalizedReceiptSha256`. Called by {@link restorePreparedFiles}. @returns The pairs; none for a journal of an earlier version, which keeps neither, or for one whose kept bytes are not text of base64. @example preparedFilesOf(record) // => [{ name: 'codebook-wiki.json', finalizedSha256: '…', prepared: <Buffer> }, { name: 'codebook-publication.json', … }] */
+/** The prepared manifest and record a publish journal keeps, by name, for the files whose finalized bytes, by their SHA-256 digest, the journal names: the manifest's `manifestSha256` and the record's `finalizedReceiptSha256`. Called by {@link finalizedFilesIn}. @returns The pairs; none for a journal of an earlier version, which keeps neither, or for one whose kept bytes are not text of base64. @example preparedFilesOf(record) // => [{ name: 'codebook-wiki.json', finalizedSha256: '…', prepared: <Buffer> }, { name: 'codebook-publication.json', … }] */
 function preparedFilesOf(record) {
   const { prepared } = record, isBase64 = text => typeof text === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(text);
   if (!isBase64(prepared?.manifest) || !isBase64(prepared?.receipt) || !HASH.test(record.manifestSha256) || !HASH.test(record.finalizedReceiptSha256)) return [];
@@ -655,7 +655,7 @@ function preparedFilesOf(record) {
     { name: RECEIPT, finalizedSha256: record.finalizedReceiptSha256, prepared: Buffer.from(prepared.receipt, 'base64') }];
 }
 
-/** Puts the candidate of a stopped publish back as it was prepared and removes what that publish left there that no next publish accepts as a file of the candidate: the files through which it put the finalized manifest and record, or its journal, in place ({@link finalizingPathOf}), known by the journal's id; the manifest and the record it finalized, which take the prepared bytes the journal keeps again ({@link preparedFilesOf}) while they hold the finalized bytes, so the learner's next edit is not refused as a change of a finalized candidate; and what the copies of the learner's files that its journal names as begun left ({@link learnerCopiesIn}), which the Wiki still holds whole. A candidate that is gone, because it became the Wiki, or that is no folder of its own is left; so is any copy in a candidate whose manifest cannot be read or that holds a link, and the next publish names what it refuses. Each removal and write is held to the output's path ({@link holdOfPath}), to the candidate's folder it lies in ({@link folderLookOf}) and to a stage that is, as the folders stand then, neither the Wiki folder nor the kept prior Wiki under another name ({@link requireStageOfItsOwn}). Called by {@link restoreCandidateOfJournal} for a publish journal, once the prior Wiki, the new one or none stands in the Wiki folder. @param wiki - The Wiki in the Wiki folder, as {@link inspectOutput} read it; null for none. @throws The refusal of a hold ({@link candidateHoldOf}), that of a stage that names the Wiki folder or the kept prior Wiki among them; the journal is kept then. @example await restoreStoppedCandidate(record, wiki, paths, requirePathHeld) */
+/** Puts the candidate of a stopped publish back as it was prepared and removes what that publish left there that no next publish accepts as a file of the candidate: the files through which it put the finalized manifest and record, or its journal, in place ({@link finalizingFilesIn}), known by the journal's id; the manifest and the record it finalized, which take the prepared bytes the journal keeps again ({@link finalizedFilesIn}) while they hold the finalized bytes, so the learner's next edit is not refused as a change of a finalized candidate; and what the copies of the learner's files that its journal names as begun left ({@link learnerCopiesIn}), which the Wiki still holds whole. All of it is looked at first, and nothing is written or removed before the candidate is proved this publication's own: a journal a cloned repository carries may name any folder beside the Wiki folder as its stage, another Wiki among them, with the digests of that folder's manifest and record, so only a stage by the name --prepare gives it or the one given with --stage now ({@link isNameableStage}) is changed; another one that holds something to change is refused with {@link UNREPEATED_STAGE_REFUSAL}, every file of it kept, and the journal is kept for a recovery with that --stage. A candidate that is gone, because it became the Wiki, or that is no folder of its own is left; so is any copy in a candidate whose manifest cannot be read or that holds a link, and the next publish names what it refuses. Each removal and write is held to the output's path ({@link holdOfPath}), to the candidate's folder it lies in ({@link folderLookOf}) and to a stage that is, as the folders stand then, neither the Wiki folder nor the kept prior Wiki under another name ({@link requireStageOfItsOwn}). Called by {@link restoreCandidateOfJournal} for a publish journal, once the prior Wiki, the new one or none stands in the Wiki folder. @param wiki - The Wiki in the Wiki folder, as {@link inspectOutput} read it; null for none. @throws The refusal of a hold ({@link candidateHoldOf}), that of a stage that names the Wiki folder or the kept prior Wiki among them, and that of a stage the recovery cannot prove its own; the journal is kept then. @example await restoreStoppedCandidate(record, wiki, paths, requirePathHeld) */
 async function restoreStoppedCandidate(record, wiki, paths, requirePathHeld) {
   const { root, output } = paths, stage = record.stage, entry = await lookAt(stage);
   // A candidate that became the Wiki is gone; one that is no folder of its own is not entered, and the next publish refuses it with its sentence.
@@ -664,11 +664,16 @@ async function restoreStoppedCandidate(record, wiki, paths, requirePathHeld) {
   const requireHeld = candidateHoldOf(requirePathHeld, await folderLookOf(stage), () => requireStageOfItsOwn(record, output));
   const removeHeld = async path => { await requireHeld(path); await unlink(path); };
   // A journal of an earlier version names no id, and its publish wrote no file beside the manifest or the record.
-  if (isRecordId(record.id)) {
-    await removeFinalizingFiles(stage, record.id, removeHeld);
-    await restorePreparedFiles(record, stage, requireHeld);
-  }
+  const hasId = isRecordId(record.id);
+  const finalizing = hasId ? await finalizingFilesIn(stage, record.id) : [], finalized = hasId ? await finalizedFilesIn(record, stage) : [];
   const copies = wiki ? await learnerCopiesIn(stage, wiki, output, root, copiesBegunOf(record)).catch(() => []) : [];
+  // A candidate that holds nothing the stopped publish left is as it was prepared, whoever's it is.
+  if (finalizing.length + finalized.length + copies.length === 0) return;
+  await requireStageOfItsOwn(record, output);
+  // Only a candidate proved this publication's own is changed: a stage by a name of the journal's own may be any folder beside the Wiki folder.
+  if (nameableStageOf(record, paths) === undefined) throw new Error(UNREPEATED_STAGE_REFUSAL);
+  for (const path of finalizing) await removeHeld(path);
+  await restorePreparedFiles(finalized, record.id, stage, requireHeld);
   for (const path of copies) await removeHeld(join(stage, path));
 }
 
@@ -682,18 +687,32 @@ const candidateHoldOf = (requirePathHeld, isFolderWhereItWas, requireStageHere) 
   if (!(await isFolderWhereItWas(dirname(path)))) throw holdRefusalOf(stageRefusalOf(dirname(path)));
 };
 
-/** Removes the files beside a candidate's manifest and record through which a stopped publish was putting the finalized ones, or its journal ({@link JOURNAL_UPDATE}), in place ({@link finalizingPathOf}), each a regular file, each removal held. Called by {@link restoreStoppedCandidate}. @example await removeFinalizingFiles('/repo/.codebook/next', journalId, removeHeld) */
-async function removeFinalizingFiles(stage, id, removeHeld) {
-  for (const name of [MANIFEST, RECEIPT, JOURNAL_UPDATE]) if ((await lookAt(finalizingPathOf(stage, id, name)))?.isFile()) await removeHeld(finalizingPathOf(stage, id, name));
+/** The files beside a candidate's manifest and record through which a stopped publish was putting the finalized ones, or its journal ({@link JOURNAL_UPDATE}), in place ({@link finalizingPathOf}), each a regular file; it only looks. Called by {@link restoreStoppedCandidate}, which removes them. @returns Their paths. @example await finalizingFilesIn('/repo/.codebook/next', journalId) // => ['/repo/.codebook/next/.codebook-publish-6f1c…-codebook-wiki.json'] */
+async function finalizingFilesIn(stage, id) {
+  const files = [];
+  for (const name of [MANIFEST, RECEIPT, JOURNAL_UPDATE]) if ((await lookAt(finalizingPathOf(stage, id, name)))?.isFile()) files.push(finalizingPathOf(stage, id, name));
+  return files;
 }
 
-/** Puts the prepared manifest and record a publish journal keeps ({@link preparedFilesOf}) back in its candidate: only a file that still holds the bytes this publish finalized takes the prepared bytes again, through the file beside it ({@link replaceOwnFileThrough}); an edit since stays. Called by {@link restoreStoppedCandidate}. @example await restorePreparedFiles(record, '/repo/.codebook/next', requireHeld) */
-async function restorePreparedFiles(record, stage, requireHeld) {
-  for (const { name, finalizedSha256, prepared } of preparedFilesOf(record)) {
-    const current = await regularBytes(join(stage, name), true).catch(() => undefined);
-    if (current === undefined || digest(current) !== finalizedSha256) continue;
-    await requireHeld(join(stage, name));
-    await replaceOwnFileThrough(finalizingPathOf(stage, record.id, name), join(stage, name), prepared);
+/** Whether a candidate's manifest or record still holds the bytes a stopped publish finalized, by their SHA-256 digest; a file that cannot be read does not. Called by {@link finalizedFilesIn} and {@link restorePreparedFiles}. @param file - The pair the journal keeps ({@link preparedFilesOf}). @example await holdsFinalizedBytes('/repo/.codebook/next', { name: 'codebook-wiki.json', finalizedSha256: '…' }) // => true until the learner edits the manifest */
+async function holdsFinalizedBytes(stage, { name, finalizedSha256 }) {
+  const current = await regularBytes(join(stage, name), true).catch(() => undefined);
+  return current !== undefined && digest(current) === finalizedSha256;
+}
+
+/** The prepared manifest and record a publish journal keeps ({@link preparedFilesOf}) whose files in the candidate still hold the bytes the publish finalized ({@link holdsFinalizedBytes}); it only looks. Called by {@link restoreStoppedCandidate}, which puts them back ({@link restorePreparedFiles}). @returns The pairs. @example await finalizedFilesIn(record, '/repo/.codebook/next') // => [{ name: 'codebook-wiki.json', finalizedSha256: '…', prepared: <Buffer> }] */
+async function finalizedFilesIn(record, stage) {
+  const files = [];
+  for (const file of preparedFilesOf(record)) if (await holdsFinalizedBytes(stage, file)) files.push(file);
+  return files;
+}
+
+/** Puts the prepared manifest and record back in a candidate ({@link finalizedFilesIn}): only a file that still holds the bytes the publish finalized, looked at again just before, takes the prepared bytes again, through the file beside it ({@link replaceOwnFileThrough}); an edit since stays. Called by {@link restoreStoppedCandidate}. @example await restorePreparedFiles(finalized, journalId, '/repo/.codebook/next', requireHeld) */
+async function restorePreparedFiles(files, id, stage, requireHeld) {
+  for (const file of files) {
+    if (!(await holdsFinalizedBytes(stage, file))) continue;
+    await requireHeld(join(stage, file.name));
+    await replaceOwnFileThrough(finalizingPathOf(stage, id, file.name), join(stage, file.name), file.prepared);
   }
 }
 
@@ -1169,8 +1188,8 @@ const isNameableStage = (stage, paths) => typeof stage === 'string' && (stage ==
 /** The stage of a publish journal as the recovery may name it to the agent ({@link isNameableStage}); undefined otherwise. Called by {@link recoverPublishJournal} and {@link restoreCandidateOfJournal}. @example nameableStageOf({ stage: '/repo/.codebook/next $(touch x)' }, { output: '/repo/.codebook/wiki', stage: undefined }) // => undefined */
 const nameableStageOf = (record, paths) => isNameableStage(record.stage, paths) ? record.stage : undefined;
 
-/** The refusal of a recovery whose candidate could not be put back when the recovery may not name that candidate ({@link nameableStageOf}). Read by {@link restoreCandidateOfJournal}. */
-const UNREPEATED_STAGE_REFUSAL = 'The candidate the Wiki publication journal names could not be put back as prepared, and the journal was kept. Its name comes from the journal alone, so it is not repeated here. Run --recover with --stage set to the candidate you prepared to see why.';
+/** The refusal of a recovery that did not put back the candidate a journal names by a name the recovery may not take or repeat ({@link isNameableStage}): one that holds something a stopped publish may have left ({@link restoreStoppedCandidate}), or whose look failed with a refusal that names it ({@link restoreCandidateOfJournal}). Nothing in the candidate was changed and the journal is kept; the agent is sent to the recovery with the --stage it prepared, and, where that cannot match because the journal names another folder (a journal a cloned repository carries), to the learner, so no run of the same command answers the same sentence for good. Read by {@link restoreStoppedCandidate} and {@link restoreCandidateOfJournal}. */
+const UNREPEATED_STAGE_REFUSAL = 'The candidate the Wiki publication journal names was not put back as prepared, and the journal was kept. Its name comes from the journal alone, so it is not repeated here, and nothing in it was changed. Run --recover with --stage set to the candidate you prepared. If that gives this answer again, the journal does not name your candidate: show the journal to the learner, and do not delete it.';
 
 /** Puts back the candidate of a stopped publish ({@link restoreStoppedCandidate}) and answers its refusal without the candidate's name where the recovery may not name it ({@link nameableStageOf}) and the refusal holds the candidate's path, as a refusal of the file system or of a hold does for the path of a file or a folder in it: the refusal is then {@link UNREPEATED_STAGE_REFUSAL}, with the one it replaces as its cause, so no text of the journal's reaches the agent. The path is matched whole, not the candidate's name alone: a fixed refusal of the publisher's own, such as {@link SIBLING_JOURNAL_REFUSAL}, may hold a word that is also the candidate's name (`Wiki`), and it passes unchanged, so the agent is not sent round to a --stage that cannot match. Called by {@link recoverPublishJournal}, {@link keepCurrentWiki} and {@link restorePriorWiki}. @throws The refusal, or the one that names no candidate. @example await restoreCandidateOfJournal(record, wiki, paths, requirePathHeld) */
 const restoreCandidateOfJournal = (record, wiki, paths, requirePathHeld) => restoreStoppedCandidate(record, wiki, paths, requirePathHeld).catch(error => {
