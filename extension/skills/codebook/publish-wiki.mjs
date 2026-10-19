@@ -934,8 +934,10 @@ async function restoreStoppedCandidate(record, wiki, paths, requirePathHeld) {
   // A journal of an earlier version names no id, and its publish wrote no file beside the manifest or the record.
   const hasId = isRecordId(record.id);
   const finalizing = hasId ? await finalizingFilesIn(stage, record.id) : [], finalized = hasId ? await finalizedFilesIn(record, stage, paths.journal) : [];
+  // The list of copies is read before the candidate is looked at: a read of it that fails stops the recovery, whose refusal no look below takes for none.
+  const begun = wiki ? await copiesBegunOf(record, paths.journal) : undefined;
   // A candidate whose copies cannot be judged, by a link in it or a manifest that is no JSON object, is left for the next publish to name; a read that fails at this moment stops the recovery instead.
-  const copies = wiki ? await learnerCopiesIn(stage, wiki, output, root, await copiesBegunOf(record, paths.journal)).catch(noneUnlessUnread([])) : [];
+  const copies = wiki ? await learnerCopiesIn(stage, wiki, output, root, begun).catch(noneUnlessUnread([])) : [];
   // A candidate that holds nothing the stopped publish left is as it was prepared, whoever's it is.
   if (finalizing.length + finalized.length + copies.length === 0) return [];
   await requireStageOfItsOwn(record, output);
