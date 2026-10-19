@@ -16986,3 +16986,158 @@ test('a recovery that puts a stopped publish’s candidate back keeps the learne
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+/** The refusal of a publish whose publish lock is no longer its own, for the Wiki folder it names. */
+const lostPublishLockRefusalOf = (output) =>
+  `The Wiki publish lock ${output}.publish-lock.json is no longer this publish’s: another step ended or replaced it while this publish ran (a --recover takes a lock that stood empty past the grace for a stopped publish’s), so the Wiki was not changed. Publish again once no other publish or recovery of this Wiki runs.`
+
+// Value: protects=the learner's Wiki on a volume that cannot give a file a second name (FAT, exFAT, some network shares), where the publish lock is created at its name and written after, when the publisher is held between the two longer than the grace and a --recover ends the lock as one that stood empty; fails_when=the publisher writes the rest of its lock through its handle into the file the recovery removed and publishes without a lock, while another publish may take the lock and write the same candidate; why_new=Cycle 0047 row 218 (P2CXA-A3); seam=a copy of the shipped publisher whose `node:fs/promises` fails the lock's hard link with EPERM and runs the test's step halfway through the lock's write (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), where the test empties the lock, dates its last change 11 seconds back and runs the shipped recovery, which ends it; no_claim=a real FAT or exFAT volume, and a lock that stays empty for the whole grace, which this stands in for
+test('a publish on a volume without hard links whose publish lock a --recover ended while the publisher was held between the lock’s create and its write stops before it writes anything, and the candidate then publishes', async () => {
+  // Arrange: no hard link can give the lock its name; halfway through the lock's write, the lock is as a recovery finds it past the grace, empty and changed 11 seconds ago, and a recovery runs.
+  const { publishWiki: publishWhoseLockIsEnded } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const { swapBeforeLinking } =
+    await import('./utils/swappedFolderFileSystem.mjs')
+  const wiki = await publishedWikiWithACandidate()
+  const lock = `${wiki.output}.publish-lock.json`
+  let recoveryMeanwhile = 'no recovery'
+  swapBeforeLinking(
+    (path) => path === lock,
+    async () => {
+      throw Object.assign(new Error('EPERM: operation not permitted, link'), {
+        code: 'EPERM',
+      })
+    },
+  )
+  swapHalfwayThroughWriting(
+    (path) => path === lock,
+    async () => {
+      await writeFile(lock, '')
+      const past = new Date(Date.now() - 11_000)
+      await utimes(lock, past, past)
+      recoveryMeanwhile = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+    },
+  )
+  try {
+    // Act: the held publish, then the candidate published again.
+    const publish = await publishWhoseLockIsEnded({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+    const wikiIsUnchanged =
+      (await readFile(join(wiki.output, 'index.html'), 'utf8')) ===
+      wiki.wikiPage
+    const candidateIsUntouched =
+      (await readFile(join(wiki.next, 'index.html'), 'utf8')) ===
+      wiki.candidatePage
+    const besideTheWiki = await publisherFilesBeside(wiki.output)
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recoveryMeanwhile,
+        publish,
+        wikiIsUnchanged,
+        candidateIsUntouched,
+        besideTheWiki,
+        nextPublish,
+      },
+      {
+        recoveryMeanwhile: 'publish-lock-removed',
+        publish: lostPublishLockRefusalOf(wiki.output),
+        wikiIsUnchanged: true,
+        candidateIsUntouched: true,
+        besideTheWiki: [],
+        nextPublish: { publishedFiles: 1 },
+      },
+    )
+  } finally {
+    swapBeforeLinking(
+      () => false,
+      async () => undefined,
+    )
+    swapHalfwayThroughWriting(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's Wiki when the publish lock is removed after the publisher took it and before its swap, as a --recover does that read the lock empty just before the publisher wrote it and removes it just after; fails_when=the publisher checks its lock only when it takes it, so it moves the Wiki without a lock while another publish may take the lock and write the same candidate; why_new=Cycle 0047 row 218 (P2CXA-A3: the lock is confirmed again before the swap); seam=a copy of the shipped publisher whose `node:fs/promises` runs the test's removal of the lock just before the publish's recheck reads the Wiki's record once its journal stands (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a removal in the instant between that check and the swap, which no file system call closes
+test('a publish whose publish lock is removed after it took it and before its swap stops without changing the Wiki, leaves nothing beside the Wiki folder, and the candidate then publishes', async () => {
+  // Arrange: just before the recheck reads the Wiki's record, once the journal stands, the lock is removed.
+  const { publishWiki: publishWhoseLockIsRemoved } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const lock = `${wiki.output}.publish-lock.json`,
+    journal = `${wiki.output}.publish-journal.json`
+  swapBeforeReading(
+    (path) =>
+      path === join(wiki.output, 'codebook-publication.json') &&
+      existsSync(journal),
+    () => rm(lock),
+  )
+  try {
+    // Act: the publish whose lock is removed, then the candidate published again.
+    const publish = await publishWhoseLockIsRemoved({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+    const wikiIsUnchanged =
+      (await readFile(join(wiki.output, 'index.html'), 'utf8')) ===
+      wiki.wikiPage
+    const besideTheWiki = await publisherFilesBeside(wiki.output)
+    const nextPublish = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { publish, wikiIsUnchanged, besideTheWiki, nextPublish },
+      {
+        publish: lostPublishLockRefusalOf(wiki.output),
+        wikiIsUnchanged: true,
+        besideTheWiki: [],
+        nextPublish: { publishedFiles: 1 },
+      },
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
