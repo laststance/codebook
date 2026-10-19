@@ -147,22 +147,23 @@ test('a page that needs more memory than a page worker may use is refused at the
   )
 })
 
-// Value: protects=the editor's extension host, and every extension of its window, against a page within the page file limit (2 MiB) whose nested formatting elements drive a page worker to its heap limit: on a Node build without pointer compression (the system Node, or a remote's Node, where the extension runs in a WSL or SSH window) a worker at the 256 MB of Cycle 0047 row 4 aborted the whole process (FATAL ERROR: Reached heap limit, exit 134) in 5 of 10 runs instead of ending its thread with ERR_WORKER_OUT_OF_MEMORY, and tabs restored after the reload ran into it again; fails_when=WIKI_PAGE_WORKER_HEAP_LIMIT_MB is lowered toward 256 MB again, so the child aborts with SIGABRT (in about half the runs at 256 MB on such a build), or a worker at its heap limit is answered otherwise than as memory-limit; why_new=Cycle 0047 row 107 (ADV2-1); seam=a child process of this Node binary (pagesServedInChildProcess) that serves the page through the compiled page-worker module under the shipped constants, so an abort fails this test instead of ending the test runner; no_claim=a Node build with pointer compression (Electron's, in the desktop editors), whose worker ends as memory-limit under either limit, so there the test passes either way; that every page of 2 MiB ends cleanly at 512 MB (29 crafted shapes ended cleanly in the parent's measurement); the time and memory of the run (about 3.4 s and 0.7 GB of the process on the development host)
-test('a 2 MiB page of nested formatting elements that drives a page worker to its heap limit is refused at the memory limit, and the process that runs the worker lives on', async () => {
+// Value: protects=the editor's extension host, and every extension of its window, against a page within the page file limit (2 MiB) whose nested formatting elements drive a page worker to its heap limit: on a Node build without pointer compression (the system Node, or a remote's Node, where the extension runs in a WSL or SSH window) a worker at the 256 MB of Cycle 0047 row 4 aborted the whole process (FATAL ERROR: Reached heap limit, exit 134) in 5 of 10 runs instead of ending its thread with ERR_WORKER_OUT_OF_MEMORY, and tabs restored after the reload ran into it again; fails_when=WIKI_PAGE_WORKER_HEAP_LIMIT_MB is lowered toward 256 MB again, so the child aborts with SIGABRT (in about half the runs at 256 MB on such a build), or the page is answered otherwise than the 512 MB limit allows, as failed or not at all; why_new=Cycle 0047 row 107 (ADV2-1); Cycle 0047 row 143 (P3TEST-1) the page may also be served: under coverage (CI's c8 passes NODE_V8_COVERAGE to the child) and CPU load the worker's heap stayed within 512 MB and the page was served in most runs measured, so the test holds the process's own end and an answer the limit allows, memory-limit or served, and not memory-limit alone; seam=a child process of this Node binary (pagesServedInChildProcess) that serves the page through the compiled page-worker module under the shipped constants, so an abort fails this test instead of ending the test runner; no_claim=which of memory-limit and served a run ends with (the garbage collector's timing under coverage and load decides), which the test above holds for a page past a smaller limit; a Node build with pointer compression (Electron's, in the desktop editors), whose worker ends as memory-limit under either limit, so there the test passes either way; that every page of 2 MiB ends cleanly at 512 MB (29 crafted shapes ended cleanly in the parent's measurement); the time and memory of the run (about 3.4 s and 0.7 GB of the process on the development host)
+test('a 2 MiB page of nested formatting elements that drives a page worker toward its heap limit leaves the process that runs the worker alive, and is refused at the memory limit or served, never failed', async () => {
   // Arrange: 699,000 nested <b>, 2,097,000 bytes, within the page file limit.
   const nestedFormattingPage = '<b>'.repeat(699_000)
 
   // Act
   const child = await pagesServedInChildProcess([nestedFormattingPage])
 
-  // Assert: an abort shows as the signal SIGABRT and no answer; only the page's state is compared, so a page served by mistake is not printed in full.
+  // Assert: an abort shows as the signal SIGABRT and no answer. The page is refused at the memory limit, or served in a run whose worker's heap stays within 512 MB (under coverage and load); only its state is compared, so a served page is not printed in full.
+  const states = child.output?.map((answer) => answer.state)
   assert.deepEqual(
-    {
-      exitCode: child.exitCode,
-      signal: child.signal,
-      states: child.output?.map((answer) => answer.state),
-    },
-    { exitCode: 0, signal: null, states: ['memory-limit'] },
+    { exitCode: child.exitCode, signal: child.signal, answers: states?.length },
+    { exitCode: 0, signal: null, answers: 1 },
+  )
+  assert.ok(
+    states?.[0] === 'memory-limit' || states?.[0] === 'served',
+    `the page was answered as ${states?.[0]}`,
   )
 })
 
