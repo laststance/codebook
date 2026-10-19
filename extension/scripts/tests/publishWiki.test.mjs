@@ -15255,3 +15255,470 @@ for (const failure of [
     }
   })
 }
+
+/**
+ * The name of a file beside a Wiki folder with the ids and digests a run gives it hidden, so a test names what a step left without its random parts.
+ * @param {string} name - The name, as `readdir` gives it.
+ * @returns {string} The name with `<id>` and `<digest>` in their places.
+ * @example
+ * withIdsHidden('wiki.publish-journal.json.copies-6f1c2a7e-0000-4000-8000-000000000000') // => 'wiki.publish-journal.json.copies-<id>'
+ */
+const withIdsHidden = (name) =>
+  name
+    .replace(
+      /\.prepared-[0-9a-f-]{36}-[0-9a-f]{64}$/,
+      '.prepared-<id>-<digest>',
+    )
+    .replace(/\.(pending|clock|copies)-[0-9a-f-]{36}$/, '.$1-<id>')
+    .replace(/\.recovery-[0-9a-f]{64}/, '.recovery-<digest>')
+
+/** The place, a host name and a space of process ids, of a dev container that was rebuilt, where a publish ran that cannot come back. */
+const REBUILT_CONTAINER = {
+  host: 'devcontainer-rebuilt',
+  space: 'linux@4026532999',
+}
+
+for (const recovery of [
+  {
+    names: 'without a --gone-host and --gone-space pair keeps it',
+    goneOwners: [],
+    outcome: 'published-current',
+    fileBesideTheLock: 'kept',
+  },
+  {
+    names: 'with the pair of that place removes it',
+    goneOwners: [REBUILT_CONTAINER],
+    outcome: 'published-current',
+    fileBesideTheLock: 'removed',
+  },
+  {
+    names: 'with the pair of another place is refused and keeps it',
+    goneOwners: [{ host: 'another-machine', space: 'linux@1' }],
+    outcome:
+      '--gone-host and --gone-space name "another-machine" (linux@1), but no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.',
+    fileBesideTheLock: 'kept',
+  },
+]) {
+  // Value: protects=the folder beside the learner's Wiki after a publish in a dev container that was rebuilt since was killed just before the link that gives its publish lock its name, which leaves no lock and no journal; fails_when=a --recover with the pair of that place is refused because no journal or lock stands, so the file beside the lock, whose writer no recovery here can look at, stays beside the Wiki for good, or the pair of a place that no file names is accepted; why_new=Cycle 0047 row 222 (P2SM-20); seam=the file the kill leaves, written by the test with that place as its writer's; no_claim=a real container
+  test(`a --recover beside the file that a publish killed in a place that cannot come back left beside its publish lock, with no lock or journal standing, ${recovery.names}`, async () => {
+    // Arrange: the file through which the killed publish was to give its lock its name, naming the rebuilt container as its writer's place.
+    const wiki = await publishedWikiWithACandidate()
+    const id = '00000000-0000-4000-8000-0000000002a2'
+    const fileBesideTheLock = join(
+      dirname(wiki.output),
+      `wiki.publish-lock.json.pending-${id}`,
+    )
+    try {
+      await writeFile(
+        fileBesideTheLock,
+        JSON.stringify({
+          pid: 4242,
+          owner: {
+            ...REBUILT_CONTAINER,
+            boot: { id: 'boot-of-the-rebuilt-container' },
+            start: 'linux:16362446',
+          },
+          id,
+        }),
+      )
+
+      // Act
+      const outcome = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        goneOwners: recovery.goneOwners,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          outcome,
+          fileBesideTheLock: existsSync(fileBesideTheLock) ? 'kept' : 'removed',
+        },
+        {
+          outcome: recovery.outcome,
+          fileBesideTheLock: recovery.fileBesideTheLock,
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+for (const nextStep of [
+  {
+    names: 'the next --recover',
+    run: (wiki) =>
+      recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      ),
+    outcome: 'published-current',
+  },
+  {
+    names: 'the next publish',
+    run: async (wiki) => {
+      const again = join(wiki.root, '.codebook/again')
+      await writeStage(
+        again,
+        wiki.root,
+        '<h1>Again</h1>',
+        undefined,
+        wiki.output,
+      )
+      return publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: again,
+      }).then(
+        ({ publishedFiles }) => ({ publishedFiles }),
+        (error) => error.message,
+      )
+    },
+    outcome: { publishedFiles: 1 },
+  },
+]) {
+  // Value: protects=the folder beside the learner's Wiki after a publish whose removal of its list of copies failed once (a Windows indexer or scanner that holds the file just closed), and which then removed its journal and its lock; fails_when=the list, which no journal or lock names any more, stays beside the Wiki for good, one more for each such publish; why_new=Cycle 0047 row 222 (P2SM-30, P2SM-31); seam=a copy of the shipped publisher whose `unlink` of the list fails once (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, `observeRemovals`); no_claim=a list whose removal fails at every try, which each later step tries again
+  test(`a list of copies that a publish could not remove once, left without its journal and its lock, is removed by ${nextStep.names} once it has stood for the grace`, async () => {
+    // Arrange: a learner's file in the Wiki, so the publish of the candidate writes its list of copies, whose removal then fails once.
+    const { publishWiki: publishWhoseListRemovalFails } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    let hasFailed = false
+    const stopObserving = observeRemovals((path) => {
+      if (hasFailed || !/\.copies-[0-9a-f-]{36}$/.test(path)) return
+      hasFailed = true
+      throw Object.assign(
+        new Error(`EBUSY: resource busy or locked, unlink '${path}'`),
+        { code: 'EBUSY' },
+      )
+    })
+    try {
+      await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s notes')
+      const publish = await publishWhoseListRemovalFails({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ publishedFiles, preservedManualFiles }) => ({
+          publishedFiles,
+          preservedManualFiles,
+        }),
+        (error) => error.message,
+      )
+      stopObserving()
+      const leftByThePublish = await publisherFilesBeside(wiki.output)
+      const aMinuteAgo = new Date(Date.now() - 60_000)
+      for (const name of leftByThePublish)
+        await utimes(join(dirname(wiki.output), name), aMinuteAgo, aMinuteAgo)
+
+      // Act
+      const outcome = await nextStep.run(wiki)
+
+      // Assert
+      assert.deepEqual(
+        {
+          publish,
+          leftByThePublish: leftByThePublish.map(withIdsHidden),
+          outcome,
+          besideTheWiki: await publisherFilesBeside(wiki.output),
+        },
+        {
+          publish: { publishedFiles: 1, preservedManualFiles: 1 },
+          leftByThePublish: ['wiki.publish-journal.json.copies-<id>'],
+          outcome: nextStep.outcome,
+          besideTheWiki: [],
+        },
+      )
+    } finally {
+      stopObserving()
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=a publish that runs while a --recover ends what stopped runs left beside the Wiki folder: its journal names the list of copies it appends to; fails_when=the recovery takes a list past the grace for a stopped run's without looking for the journal that names it, so the publish that runs loses the list that tells its recovery which copies began; why_new=Cycle 0047 row 222 (P2SM-30: a list of copies is removed once no journal or lock names it); seam=a copy of the shipped publisher whose `node:fs/promises` writes that journal and list while the recovery reads the Wiki's record (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), as a publish that starts meanwhile writes them; no_claim=a list beside a journal a recovery ends, which goes with that journal's run
+test('a --recover keeps the list of copies of a publish whose journal stands, also once the list has stood for the grace', async () => {
+  // Arrange: while the recovery reads the Wiki's record, a publish of this test's process writes its journal and its list of copies, last changed a minute ago.
+  const { recoverWikiPublication: recoverWhileAPublishStarts } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const id = '00000000-0000-4000-8000-0000000002b2'
+  const journal = `${wiki.output}.publish-journal.json`,
+    list = `${journal}.copies-${id}`
+  const journalText = JSON.stringify({ pid: process.pid, id })
+  try {
+    swapBeforeReading(
+      (path) => path === join(wiki.output, 'codebook-publication.json'),
+      async () => {
+        await writeFile(journal, journalText)
+        await writeFile(list, '"manual.txt"\n')
+        const aMinuteAgo = new Date(Date.now() - 60_000)
+        await utimes(list, aMinuteAgo, aMinuteAgo)
+      },
+    )
+
+    // Act
+    const recovery = await recoverWhileAPublishStarts({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recovery,
+        journal: await readFile(journal, 'utf8').catch(() => 'removed'),
+        list: await readFile(list, 'utf8').catch(() => 'removed'),
+      },
+      {
+        recovery: 'published-current',
+        journal: journalText,
+        list: '"manual.txt"\n',
+      },
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const record of [
+  {
+    names: 'a journal, between the removal of the journal and the release',
+    killed: (wiki) =>
+      runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+        ],
+      }) +
+      runKilledPublisher({
+        operation: 'recoverWikiPublication',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          {
+            call: 'reading',
+            folder: dirname(wiki.output),
+            name: '^wiki\\.publish-journal\\.json\\.recovery-[0-9a-f]{64}$',
+          },
+        ],
+      }),
+    leftByTheKill: [
+      'wiki.publish-journal.json.recovery-<digest>',
+      'wiki.publish-lock.json',
+    ],
+    recovery: 'publish-lock-removed',
+  },
+  {
+    names: 'a publish lock, between the removal of the lock and the release',
+    killed: (wiki) =>
+      runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          { call: 'writing', folder: wiki.next, name: '^index\\.html$' },
+        ],
+      }) +
+      runKilledPublisher({
+        operation: 'recoverWikiPublication',
+        options: { projectRoot: wiki.root, outputDirectory: wiki.output },
+        killAt: [
+          {
+            call: 'reading',
+            folder: dirname(wiki.output),
+            name: '^wiki\\.publish-lock\\.json\\.recovery-[0-9a-f]{64}$',
+          },
+        ],
+      }),
+    leftByTheKill: ['wiki.publish-lock.json.recovery-<digest>'],
+    recovery: 'published-current',
+  },
+]) {
+  // Value: protects=the folder beside the learner's Wiki after a recovery was killed once it removed the record it ended and before it released its claim of that record; fails_when=the claim, which no journal or lock leads to any more, stays beside the Wiki for good, one more for each such kill; why_new=Cycle 0047 row 222 (P2SM-32, P2SM-33); seam=a publisher process, then a recovery process, killed where the row says (scripts/tests/utils/killedPublisherProbe.mjs; the recovery reads its claim first at its release); no_claim=a claim whose writer still runs, which the owner gate keeps (the test of the claims of runs that run)
+  test(`a recovery of ${record.names} of its claim, leaves the claim, which the next --recover removes once its owner gate judges its writer gone, leaving nothing beside the Wiki folder`, async () => {
+    // Arrange: the publish is killed, then the recovery of what it left.
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      const killed = record.killed(wiki)
+      const leftByTheKill = (await publisherFilesBeside(wiki.output)).map(
+        withIdsHidden,
+      )
+
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          leftByTheKill,
+          recovery,
+          besideTheWiki: await publisherFilesBeside(wiki.output),
+        },
+        {
+          killed: '',
+          leftByTheKill: record.leftByTheKill,
+          recovery: record.recovery,
+          besideTheWiki: [],
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+/**
+ * The publish lock this test's process writes while it publishes a Wiki: its process id, its owner and an id, as a record of a run that runs here, read while the publish holds it through the copy of the publisher whose `node:fs/promises` runs a test's swap before a write (`?swapped-folder`).
+ * @param {{ root: string, output: string, next: string }} wiki - A published Wiki with a candidate ({@link publishedWikiWithACandidate}), which this publishes.
+ * @returns {Promise<{ pid: number, owner: object, id: string }>} The lock's record.
+ * @example
+ * const { pid, owner } = await lockRecordOfThisProcess(await publishedWikiWithACandidate())
+ */
+async function lockRecordOfThisProcess(wiki) {
+  const { publishWiki: publishWhoseLockIsRead } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  let lockText = '{}'
+  swapBeforeWriting(
+    (path) => path === join(wiki.next, 'index.html'),
+    async () => {
+      lockText = await readFile(`${wiki.output}.publish-lock.json`, 'utf8')
+    },
+  )
+  try {
+    await publishWhoseLockIsRead({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    })
+  } finally {
+    swapBeforeWriting(
+      () => false,
+      async () => undefined,
+    )
+  }
+  return JSON.parse(lockText)
+}
+
+// Value: protects=a recovery that runs, and the chain of claims of a publish lock that stands, while another --recover ends what stopped runs left beside the Wiki folder; fails_when=the sweep removes the claim of a recovery whose process still runs because no record leads to it, or a stopped claim at the head of the chain of a lock that stands, so a recovery of that lock skips the claim after it; why_new=Cycle 0047 row 222 (P2SM-32: a claim no standing record leads to goes once its writer is gone, no other); seam=the claims and the lock, written by the test: one of this test's process (its publish lock's record), and a stopped one of an earlier version at the head of the chain of a lock that a recovery of another run's journal leaves; no_claim=a claim of a recovery on another computer, which the owner gate keeps as it keeps its journal
+test('a --recover keeps a claim no record leads to whose recovery still runs, and a stopped claim of a publish lock that stands, beside the Wiki folder', async () => {
+  // Arrange: a claim of this test's process beside the journal's name; a publish killed after its journal, whose lock is then another run's, with a stopped claim of that lock.
+  const wiki = await publishedWikiWithACandidate()
+  const besideTheWiki = dirname(wiki.output)
+  try {
+    const lockOfThisProcess = await lockRecordOfThisProcess(wiki)
+    await writeStage(
+      wiki.next,
+      wiki.root,
+      '<h1>Next</h1>',
+      undefined,
+      wiki.output,
+    )
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+      ],
+    })
+    const lock = `${wiki.output}.publish-lock.json`
+    const lockOfAnotherRun = JSON.stringify({
+      pid: 99999999,
+      id: '00000000-0000-4000-8000-0000000002c2',
+    })
+    await writeFile(lock, lockOfAnotherRun)
+    const claimsKept = {
+      [`wiki.publish-journal.json.recovery-${'c'.repeat(64)}`]: JSON.stringify({
+        ...lockOfThisProcess,
+        id: '00000000-0000-4000-8000-0000000002c3',
+      }),
+      [`wiki.publish-lock.json.recovery-${createHash('sha256').update(lockOfAnotherRun).digest('hex')}`]:
+        JSON.stringify({
+          pid: 99999999,
+          id: '00000000-0000-4000-8000-0000000002c4',
+        }),
+    }
+    for (const [name, text] of Object.entries(claimsKept))
+      await writeFile(join(besideTheWiki, name), text)
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    const claimsAfter = Object.fromEntries(
+      await Promise.all(
+        Object.keys(claimsKept).map(async (name) => [
+          name,
+          await readFile(join(besideTheWiki, name), 'utf8').catch(
+            () => 'removed',
+          ),
+        ]),
+      ),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        lock: await readFile(lock, 'utf8').catch(() => 'removed'),
+        claimsAfter,
+      },
+      {
+        killed: '',
+        recovery: 'published-or-restored',
+        lock: lockOfAnotherRun,
+        claimsAfter: claimsKept,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
