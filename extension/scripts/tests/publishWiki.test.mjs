@@ -15652,6 +15652,180 @@ test('a publish killed just before the link that gives its publish lock its name
   }
 })
 
+// Cycle 0047, second ship, fixing cycle 3: the tests of fixer PA (rows 260, 261, 263, 265 and 268): the publish's checks and removals of its own records, the recovery's removals and answers, and the syncs before the swap.
+
+/**
+ * The refusal of a publish whose look at its own publish lock or journal failed with a system error when it checked it, for the record, its path and the error's code.
+ * @param {'Wiki publish lock' | 'Wiki publication journal'} recordName - The record, as the refusal names it.
+ * @param {string} path - The record's path.
+ * @param {string} code - The system error's code.
+ * @returns {string} The sentence, which names the record by its path and the failure by its code alone.
+ * @example
+ * unreadOwnRecordRefusalOf('Wiki publish lock', '/repo/.codebook/wiki.publish-lock.json', 'EBUSY') // => 'The publisher could not look at its Wiki publish lock /repo/.codebook/wiki.publish-lock.json (EBUSY), so the Wiki was not changed. …'
+ */
+const unreadOwnRecordRefusalOf = (recordName, path, code) =>
+  `The publisher could not look at its ${recordName} ${path} (${code}), so the Wiki was not changed. Publish again once the file can be read: another program may hold it open, as a scanner or an indexer can on Windows, or this user may not read it.`
+
+for (const { check, recordName, recordOf, code, isLookedOf } of [
+  {
+    check: 'its publish lock once it took it',
+    recordName: 'Wiki publish lock',
+    recordOf: (output) => `${output}.publish-lock.json`,
+    code: 'EBUSY',
+    // The first look at the lock while no journal stands is the check of the lock just taken.
+    isLookedOf: (lock, journal) => (path) =>
+      path === lock && !existsSync(journal),
+  },
+  {
+    check: 'its publish lock before its swap',
+    recordName: 'Wiki publish lock',
+    recordOf: (output) => `${output}.publish-lock.json`,
+    code: 'EIO',
+    // The first look at the lock once the journal stands is the check before the swap.
+    isLookedOf: (lock, journal) => (path) =>
+      path === lock && existsSync(journal),
+  },
+  {
+    check: 'its journal once it wrote it',
+    recordName: 'Wiki publication journal',
+    recordOf: (output) => `${output}.publish-journal.json`,
+    code: 'EIO',
+    // The first look at the journal once it stands is the check of the journal just written.
+    isLookedOf: (lock, journal) => (path) =>
+      path === journal && existsSync(journal),
+  },
+  {
+    check: 'its journal before its swap',
+    recordName: 'Wiki publication journal',
+    recordOf: (output) => `${output}.publish-journal.json`,
+    code: 'EBUSY',
+    // The check of the journal before the swap is the first look at it after the lock's check there.
+    isLookedOf: (lock, journal) => {
+      let isLockRechecked = false
+      return (path) => {
+        if (path === lock && existsSync(journal)) isLockRechecked = true
+        return path === journal && isLockRechecked
+      }
+    },
+  },
+]) {
+  // Value: protects=the learner's next publish after a publish whose look at its own publish lock or journal failed for a moment (a scanner or an indexer that holds the file on Windows, a disk error); fails_when=the publish takes the failed look for a lost record, so it says that another step ended the record, keeps its own journal, which refuses every later publish until --recover, or leaves its lock, which refuses every later publish and the update's start, while it tells the learner to publish again; why_new=Cycle 0047 row 260 (P3MAINT-1, P3TEST-4, P3MAINT-2); seam=a copy of the shipped publisher whose `node:fs/promises` fails one look at the record with the row's code (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failLookOf); no_claim=a look that keeps failing, after which the publisher cannot remove its record either
+  test(`a publish whose look at ${check} fails with ${code} is refused by that code, leaves neither its lock nor its journal beside the Wiki folder, and the candidate then publishes`, async () => {
+    // Arrange: the row's look at the publish's own record fails once with the row's code.
+    const { publishWiki: publishWhoseLookFails } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    failLookOf(
+      isLookedOf(
+        `${wiki.output}.publish-lock.json`,
+        `${wiki.output}.publish-journal.json`,
+      ),
+      code,
+    )
+    try {
+      // Act: the publish whose look fails, then the candidate published again.
+      const publish = await publishWhoseLookFails({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ publishedFiles }) => ({ publishedFiles }),
+        (error) => error.message,
+      )
+      const wikiIsUnchanged =
+        (await readFile(join(wiki.output, 'index.html'), 'utf8')) ===
+        wiki.wikiPage
+      const besideTheWiki = await publisherFilesBeside(wiki.output)
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ publishedFiles }) => ({ publishedFiles }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { publish, wikiIsUnchanged, besideTheWiki, nextPublish },
+        {
+          publish: unreadOwnRecordRefusalOf(
+            recordName,
+            recordOf(wiki.output),
+            code,
+          ),
+          wikiIsUnchanged: true,
+          besideTheWiki: [],
+          nextPublish: { publishedFiles: 1 },
+        },
+      )
+    } finally {
+      failLookOf(() => false, code)
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+/**
+ * Runs the shipped publisher's command line in a process of its own with a module loaded first (`--import`) that stands in for a part of the system, and answers how it ended.
+ * @param {string} standIn - The module, as a `data:` URL.
+ * @param {string[]} commandArguments - What the command line is given, as `['--recover', '--project', root, '--output', output]`.
+ * @returns {{ code: number | null, answer: Record<string, unknown> | string }} The exit code, and what the command printed: its answer, parsed, or the error it printed.
+ * @example
+ * runPublisherWith(removalsFailing('^wiki\\.publish-journal\\.json$', 1), ['--project', root, '--output', output, '--stage', next]) // => { code: 0, answer: { output, previousOutput, publishedFiles: 1, preservedManualFiles: 0 } }
+ */
+function runPublisherWith(standIn, commandArguments) {
+  const result = spawnSync(
+    process.execPath,
+    ['--import', standIn, PUBLISHER_COMMAND, ...commandArguments],
+    { encoding: 'utf8', timeout: 20_000 },
+  )
+  // A refused step prints its error and nothing else.
+  if (result.stdout === '')
+    return { code: result.status, answer: result.stderr.trim() }
+  return { code: result.status, answer: JSON.parse(result.stdout) }
+}
+
+/** A module loaded before the publisher (`--import`) under which each look at the name of the Wiki's publish lock or journal (`lstat`) answers another file id than the file the publisher wrote beside it and linked there, the id plus 1,000,000: as a mount answers that gives each name a file id of its own (sshfs without `use_ino`, CIFS with `noserverino`). */
+const recordNamesWithFileIdsOfTheirOwn = `data:text/javascript,${encodeURIComponent(
+  `import fileSystem from 'node:fs/promises'; import { syncBuiltinESMExports } from 'node:module'; const lstat = fileSystem.lstat; fileSystem.lstat = async (path, ...rest) => { const status = await lstat(path, ...rest); if (/\\.publish-(lock|journal)\\.json$/.test(String(path))) status.ino += typeof status.ino === 'bigint' ? 1000000n : 1000000; return status }; syncBuiltinESMExports();`,
+)}`
+
+// Value: protects=the learner whose project lies on a mount that gives each name of a file a file id of its own (sshfs without `use_ino`, CIFS with `noserverino`), where publishing worked before the publish checked its lock and its journal; fails_when=the checks compare the file id the name answers with the id of the file written beside it, so every publish is refused as one whose lock another step ended; why_new=Cycle 0047 row 260 (P3CLA-3); seam=a publisher process whose looks at the names of its lock and journal answer another file id (a module loaded first, `--import`); no_claim=a real sshfs or CIFS mount
+test('a publish on a mount that gives the names of its publish lock and journal file ids of their own publishes the candidate and leaves nothing beside the Wiki folder', async () => {
+  // Arrange
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    // Act
+    const { code, answer } = runPublisherWith(
+      recordNamesWithFileIdsOfTheirOwn,
+      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        publish: {
+          code,
+          answer:
+            typeof answer === 'string'
+              ? answer
+              : { publishedFiles: answer.publishedFiles },
+        },
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        publish: { code: 0, answer: { publishedFiles: 1 } },
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Cycle 0047, second ship, fixing cycle 2: the tests of fixer PB (rows 222 to 227).
 
 // Value: protects=the tests that arm a kill or a failure halfway through a write of the publisher's list of copies, whose lines all go through one handle; fails_when=the stand-in runs its swap or its failure at every write through the wrapped handle, not once, so a second line reruns a swap that is no kill or rearms the next kill of a chain, and a later write loses its options; why_new=Cycle 0047 row 227 (P2OCR1a-1); seam=the `open` of the stand-ins themselves (scripts/tests/utils/swappedFolderFileSystem.mjs, scripts/tests/utils/failingFileSystem.mjs); no_claim=a write of the publisher's own, which the tests of the kills and of the failed writes cover
