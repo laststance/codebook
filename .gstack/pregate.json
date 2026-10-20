@@ -1,0 +1,13 @@
+{
+  "runner": "node extension/scripts/run-pregate-tests.mjs {files}",
+  "dependencies": {
+    ".coderabbit.yaml": [],
+    ".gitignore": [],
+    ".codex/restore-product-context.mjs": [
+      ".codex/restore-product-context.test.mjs"
+    ],
+    "extension/test-timings.json": []
+  },
+  "strays": { "allow": [".gstack"] },
+  "warn": ["literals"]
+}

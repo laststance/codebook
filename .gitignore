@@ -1,5 +1,6 @@
-# Local agent state and credentials
-.gstack/
+# Local agent state and credentials; the gstack pre-gate's policy is shared
+.gstack/*
+!.gstack/pregate.json
 .DS_Store
 .env
 .env.*
