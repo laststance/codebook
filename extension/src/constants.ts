@@ -51,6 +51,10 @@ export const STORAGE_LOCK_UNWRITTEN_GRACE_MS = 10_000
 export const STORAGE_LOCK_RELEASE_ATTEMPTS = 20
 /** How long the release of this window's storage lock waits between two attempts; with {@link STORAGE_LOCK_RELEASE_ATTEMPTS} about half a second. */
 export const STORAGE_LOCK_RELEASE_RETRY_DELAY_MS = 25
+/** How long a window waits after its release left the storage lock in place (the system refused to read or remove it) before it takes the lock back without a further write ({@link withStorageLock}); a scanner or an indexer on Windows usually lets go within seconds. */
+export const STORAGE_LOCK_TAKE_BACK_DELAY_MS = 5_000
+/** How many times a window takes back a lock its release left in place, {@link STORAGE_LOCK_TAKE_BACK_DELAY_MS} apart, before it leaves the lock to its next write of that folder; with the delay about a minute. */
+export const STORAGE_LOCK_TAKE_BACK_ATTEMPTS = 12
 /** What an editor that runs without its telemetry service answers as `vscode.env.machineId` on every computer; it identifies none. */
 export const EDITOR_MACHINE_ID_PLACEHOLDER = 'someValue.machineId'
 export const CURSOR_MCP_CATALOG_REFRESH_STEP_MS = 1
