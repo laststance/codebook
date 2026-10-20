@@ -13899,6 +13899,12 @@ for (const syntaxError of [
     text: '{\n  "schemaVersion": 1,\n  "CRAFTED-MARKER": [',
     place: 'line 3, column 22',
   },
+  // Value: protects=the place the refusal names for a break after the shapes a manifest holds before it: an empty list and an empty object, a string with escapes, a fraction, exponents and the three literals; fails_when=the walker closes no list or object at once after it opened, reads no escape, no fraction or no exponent of a number, or no literal, so it names a place before the real break; why_new=Cycle 0047 row 269 (P3TEST-8): no row stepped the walker over these shapes before its break (rows 178 and 212); seam=none (the shipped CLI as the agent runs it); no_claim=every shape JSON allows
+  {
+    kind: 'a sign before a number, after an empty list and object, escapes, a fraction, exponents and the three literals',
+    text: '{\n  "schemaVersion": 1,\n  "pages": [],\n  "assets": {},\n  "title": "A \\"quoted\\" tab\\t, a slash \\/ and \\u00e9",\n  "ratio": 1.25,\n  "scale": -2.5e+3,\n  "small": 1E-2,\n  "flags": [true, false, null],\n  "CRAFTED-MARKER": +1\n}\n',
+    place: 'line 10, column 21',
+  },
 ]) {
   // Value: protects=the agent that edits a candidate's manifest by hand and must find its own syntax error; fails_when=the refusal of a manifest that is no JSON names no place, so the agent cannot find the error, or it passes on the parser's message, which quotes the manifest's text; why_new=Cycle 0047 row 178 (S2OCR1a-2); seam=none (the shipped CLI as the agent runs it); no_claim=a manifest that is JSON but no object, whose refusal names no place
   test(`a publish of a candidate whose manifest has a syntax error (${syntaxError.kind}) is refused through the CLI with the line and the column of the error and none of the manifest’s text`, async () => {
