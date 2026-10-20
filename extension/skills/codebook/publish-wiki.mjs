@@ -180,7 +180,8 @@ async function regularBytes(path, optional = false) {
   let stat;
   try { stat = await lstat(path); } catch (error) { if (optional && isMissing(error)) return undefined; throw error; }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Wiki publication requires a regular file: ' + path);
-  return readFile(path);
+  // A file that another process removed between the look and the read is a missing one, as it is when the look finds nothing.
+  return optional ? readFile(path).catch(error => { if (isMissing(error)) return undefined; throw error; }) : readFile(path);
 }
 
 /** Inventories stage/output for the shared publisher; linked and special files remain untouched. @example await listFiles('/repo/.codebook/wiki') */
@@ -391,12 +392,15 @@ function assertBaseline(expected, state) {
     throw new Error('The Wiki output changed since this candidate was prepared. Preserve it and inspect --recover (with --stage for a legacy adoption) before preparing again.');
 }
 
+/** The refusal of a step that finds a journal at its place, or finds another step's journal written meanwhile: an earlier publication or recovery needs inspection, which --recover does once its process exits. It names the journal by its path alone. Called by {@link requireNoJournal} and {@link startManifestRecovery}. @example journalStandsRefusalOf('/repo/.codebook/wiki.publish-journal.json') // => 'An earlier Wiki publication needs inspection. Run --recover after its process exits: /repo/.codebook/wiki.publish-journal.json' */
+const journalStandsRefusalOf = journal => 'An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal;
+
 /** Keeps all ordinary entry points out of an unfinished publication transaction: a journal at its name refuses the step. Where the publish lock stands beside it, the journal is most often that of a publish that runs now, past the write of its journal, which it keeps for most of its time: the step is refused with the lock's sentence ({@link publishLockRefusalOf}), which says to wait for that publish, or to run --recover once a stopped one's process exits, so the agent is not sent to recover a live publish; a journal without a lock is a stopped step's, which needs --recover. Called by {@link prepareWikiStage} and {@link publishWiki} with the lock, before a publish takes its own, and by {@link underPublishLock} without it, once this run holds the lock. @param lock - The publish lock's path, looked at only where a journal stands; none under this run's own lock. @param retry - What the lock's sentence asks the agent to run once that publish ends ({@link publishLockRefusalOf}). @throws The refusal of the lock or of the journal, and that of an entry at the journal's name that is no regular file. @example await requireNoJournal('/repo/.codebook/wiki.publish-journal.json', '/repo/.codebook/wiki.publish-lock.json') // throws the lock's sentence beside a live publish */
 async function requireNoJournal(journal, lock, retry) {
   if (!(await regularBytes(journal, true))) return;
   // A journal beside the publish lock is most often a live publish's: the step is sent to wait for it, not to recover it. A lock that cannot be looked at leaves the journal's sentence.
   if (lock !== undefined && await lookAt(lock).catch(() => undefined) !== undefined) throw new Error(publishLockRefusalOf(lock, retry));
-  throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
+  throw new Error(journalStandsRefusalOf(journal));
 }
 
 /** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. Both are compared as bigints: an NTFS file id may lie above 2^53, where two JavaScript numbers of different ids are equal. A folder that cannot be looked at counts as moved. Called by {@link holdOfPath}. @example await isWhereItWasResolved('/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1'], '/repo') // => false once .codebook was swapped for a link */
@@ -646,7 +650,8 @@ function parseRecordOf(bytes, refusal, refusalOfSyntax = () => refusal) {
 async function removeOwnedRecord(path, bytes, remove = unlink) {
   const current = await regularBytes(path, true);
   if (!current || !current.equals(Buffer.from(bytes))) throw new Error(ownershipRefusalOf(path));
-  await remove(path);
+  // A record that another step removed between the check and the removal is no longer this step's to remove: the same refusal, with the system's error as its cause.
+  await remove(path).catch(cause => { throw isMissing(cause) ? new Error(ownershipRefusalOf(path), { cause }) : cause; });
 }
 
 /** The refusal of a removal of a journal, a claim, a publish lock or a side file that no longer holds the bytes of the step that removes it; the record is kept. Called by {@link removeOwnedRecord} and {@link releaseClaims}. @example ownershipRefusalOf('/repo/.codebook/wiki.publish-journal.json') // => 'Publication ownership changed; the recovery record was preserved: /repo/.codebook/wiki.publish-journal.json' */
@@ -1512,6 +1517,9 @@ async function claimOwnersOf(journal, bytes) {
   throw new Error('The Wiki recovery claims form a cycle; all records were preserved.');
 }
 
+/** The refusal of a recovery that found the claim of an earlier recovery at its place and then found it gone: another recovery released it meanwhile. It names the claim by its path alone; nothing was moved, and the agent runs --recover again. Called by {@link claimRecovery}. @example releasedClaimRefusalOf('/repo/.codebook/wiki.publish-journal.json.recovery-3f2a…') // => 'Another recovery of this Wiki released its recovery claim /repo/.codebook/wiki.publish-journal.json.recovery-3f2a… while this one read it, so nothing was moved. Run --recover again once no other recovery runs.' */
+const releasedClaimRefusalOf = path => 'Another recovery of this Wiki released its recovery claim ' + path + ' while this one read it, so nothing was moved. Run --recover again once no other recovery runs.';
+
 /** Claims stopped recovery attempts of a journal, or of a publish lock ({@link endStoppedLock}), through append-only exclusive records beside it, without unlinking another contender's lock; each claim names its owner as the `system` of `ownerJudgement` tells it ({@link ownerHere}), and an earlier claim ({@link stoppedClaimAt}) is judged by it and by the places the learner confirmed gone ({@link requireExited}); an earlier claim without a byte is ended ({@link endUnwrittenClaim}) and its place claimed. @example await claimRecovery(journal, journalBytes, { system: SYSTEM_HERE }) */
 async function claimRecovery(journal, bytes, ownerJudgement) {
   // Journal hash -> exclusive owner -> stopped owner ID -> exclusive successor; a live owner stops traversal.
@@ -1521,7 +1529,7 @@ async function claimRecovery(journal, bytes, ownerJudgement) {
     const path = journal + '.recovery-' + parent, id = randomUUID(), claimBytes = JSON.stringify({ pid: process.pid, owner: await ownerHere(ownerJudgement.system), id });
     try { await writeWholeRecord(path, claimBytes, id); claims.push({ path, bytes: claimBytes }); return claims; }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
-    const previous = await stoppedClaimAt(path, false);
+    const previous = await stoppedClaimAt(path, false).catch(cause => { throw isMissing(cause) ? new Error(releasedClaimRefusalOf(path), { cause }) : cause; });
     // A claim without a byte has no successor: once it is ended, this recovery claims its place.
     if (previous.record === undefined) { await endUnwrittenClaim(path); continue; }
     await requireExited(previous.record, ownerJudgement);
@@ -2005,7 +2013,8 @@ async function startManifestRecovery(paths, requirePathHeld, system) {
   if (state.actual && state.actual.equals(state.bytes)) return { result: { status: 'published-current', output } };
   const record = await manifestJournalOf(state, paths, system), bytes = Buffer.from(JSON.stringify(record));
   await requirePathHeld();
-  await writeWholeRecord(journal, bytes, record.id);
+  // A journal that another recovery wrote first keeps this one out (the link refuses an entry at the name), with the sentence of a journal that stands.
+  await writeWholeRecord(journal, bytes, record.id).catch(cause => { throw cause.code === 'EEXIST' ? new Error(journalStandsRefusalOf(journal), { cause }) : cause; });
   await requirePathHeld().catch(async error => { await removeOwnedRecord(journal, bytes); throw error; });
   return { record, bytes, claims: [] };
 }

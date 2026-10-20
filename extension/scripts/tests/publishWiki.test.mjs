@@ -21120,3 +21120,178 @@ for (const kept of [
     },
   )
 }
+
+// Cycle 0048 task 15 (S11-N11): two recoveries of one Wiki at once answer with the publisher's sentences.
+
+// Value: protects=the learner and the agent whose two --recover runs of one Wiki overlap (two editor windows, two agents): the one that loses the race is told so in the publisher's words and runs --recover again, not given a raw ENOENT of the system; fails_when=the recovery reads the claim of an earlier recovery that the other recovery released meanwhile and rejects with ENOENT; why_new=Cycle 0048 task 15 (S11-N11); seam=a copy of the publisher over a file system that removes the claim just before the recovery reads it (scripts/tests/utils/swappedFolderFileSystem.mjs); no_claim=the outcome of a retry after the other recovery ended
+test('a --recover whose earlier claim of the journal was released by another recovery just before it read it is refused with the publisher’s sentence, not a raw ENOENT', async () => {
+  // Arrange: a journal of a stopped metadata recovery with a claim of a stopped owner; just before the recovery reads that claim, another recovery releases it.
+  const { recoverWikiPublication: recoverWhileTheClaimGoes } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-claim-released-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    const before = await readFile(join(output, 'codebook-wiki.json'))
+    const id = '12345678-1234-1234-1234-123456789abc'
+    const record = {
+      projectRoot: root,
+      output,
+      operation: 'restore-manifest',
+      pid: 99999999,
+      id,
+      manifestSha256: createHash('sha256').update(before).digest('hex'),
+      modifiedManifestSha256: createHash('sha256')
+        .update('{unfinished edit')
+        .digest('hex'),
+      modifiedManifestBackup: output + '.modified-manifest-' + id + '.json',
+      temporaryManifest: join(output, '.codebook-restore-' + id + '.json'),
+    }
+    const bytes = JSON.stringify(record)
+    await writeFile(journal, bytes)
+    await writeFile(join(output, 'codebook-wiki.json'), '{unfinished edit')
+    const claim =
+      journal + '.recovery-' + createHash('sha256').update(bytes).digest('hex')
+    await writeFile(
+      claim,
+      JSON.stringify({
+        pid: 99999999,
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      }),
+    )
+    swapBeforeReading(
+      (path) => path === claim,
+      () => rm(claim),
+    )
+
+    // Act
+    const recovery = await recoverWhileTheClaimGoes({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      recovery,
+      `Another recovery of this Wiki released its recovery claim ${claim} while this one read it, so nothing was moved. Run --recover again once no other recovery runs.`,
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner and the agent whose two --recover runs of one Wiki start a recovery of an edited manifest at once: the one that loses the race to write the journal is told so in the publisher's words, not given a raw EEXIST of the system; fails_when=the recovery rejects with the EEXIST of the link that gives its journal its name; why_new=Cycle 0048 task 15 (S11-N11); seam=a copy of the publisher over a file system that lets another recovery write the journal just before this one links its own (scripts/tests/utils/swappedFolderFileSystem.mjs); no_claim=the other recovery's own course
+test('a --recover whose journal of a manifest recovery was written by another recovery just before it linked its own is refused with the publisher’s sentence, not a raw EEXIST', async () => {
+  // Arrange: a published Wiki whose manifest the learner edited; just before the recovery gives its journal the name, another recovery writes a journal there.
+  const { recoverWikiPublication: recoverWhileTheJournalIsWritten } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-raced-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'codebook-wiki.json'), '{unfinished edit')
+    swapBeforeLinking(
+      (path) => path === journal,
+      () => writeFile(journal, '{"written":"by another recovery"}'),
+    )
+
+    // Act
+    const recovery = await recoverWhileTheJournalIsWritten({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert: the other recovery's journal is untouched.
+    assert.deepEqual(
+      { recovery, journal: await readFile(journal, 'utf8') },
+      {
+        recovery: `An earlier Wiki publication needs inspection. Run --recover after its process exits: ${journal}`,
+        journal: '{"written":"by another recovery"}',
+      },
+    )
+  } finally {
+    swapBeforeLinking(
+      () => false,
+      async () => undefined,
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner and the agent whose two --recover runs of one Wiki end the same empty journal at once: the one that finds the journal gone is told so in the publisher's words, not given a raw ENOENT of the system; fails_when=the recovery reads the empty journal again to remove it, and the other recovery removed it between its two reads, so the read rejects with ENOENT; why_new=Cycle 0048 task 15 (S11-N11); seam=a copy of the publisher over a file system that removes the journal just before the recovery's second read of it (scripts/tests/utils/swappedFolderFileSystem.mjs); no_claim=the outcome of a retry after the other recovery ended
+test('a --recover whose empty journal was ended by another recovery between its two reads of it is refused with the publisher’s sentence, not a raw ENOENT', async () => {
+  // Arrange: a published Wiki and an empty journal a minute old; the recovery's second read of the journal finds it removed.
+  const { recoverWikiPublication: recoverWhileTheJournalGoes } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-ended-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(journal, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+    let reads = 0
+    swapBeforeReading(
+      (path) => path === journal && ++reads === 2,
+      () => rm(journal),
+    )
+
+    // Act
+    const recovery = await recoverWhileTheJournalGoes({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      recovery,
+      `Publication ownership changed; the recovery record was preserved: ${journal}`,
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+})
