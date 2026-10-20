@@ -8605,11 +8605,19 @@ test('a recovery whose journal names a running process of another user refuses w
   }
 })
 
-// Value: protects=the learner's --recover after a killed publish whose process id another process took since; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running" until it ends; why_new=Cycle 0047 row 42 (P3RT20); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given the test process's own id, which a process of another start has; no_claim=a process id that went to another process on a system whose process starts cannot be read, which stays "may still be running"
+// Value: protects=the learner's --recover after a killed publish whose process id another process took since; fails_when=the recovery judges the publisher by its bare process id, so the live process that has the id now keeps the Wiki locked as "may still be running" until it ends; why_new=Cycle 0047 row 42 (P3RT20); row 269 (P3OCR1b-6): the journal names a fixed past start, since a macOS start counts whole seconds and the killed publisher's own could equal the test process's; seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), whose journal is then given the test process's own id and a start in the platform's form long before the test process began; no_claim=a process id that went to another process on a system whose process starts cannot be read, which stays "may still be running"
 test('a recovery of a killed publish whose process id another process has now recovers the Wiki', async () => {
-  // Arrange: the killed publisher's process id is given to the running test process, which began at another time.
+  // Arrange: the killed publisher's process id is given to the running test process, and its start, in the platform's form, lies long before the test process began.
   const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
     record.pid = process.pid
+    record.owner = {
+      ...record.owner,
+      start: {
+        linux: 'linux:1',
+        darwin: 'ps:Mon Oct  5 09:12:33 2026',
+        win32: 'win:2026-10-05T09:12:33.1234567Z',
+      }[process.platform],
+    }
   })
   try {
     // Act
