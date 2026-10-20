@@ -867,6 +867,30 @@ test('a valid writer record padded past a record’s bound is no record: the rec
   assert.deepEqual(writer, { kind: 'gone' })
 })
 
+// Value: protects=the recording of another computer (same host name, same storage folder) that is still being written, whose writer record stands as a regular file and cannot be read now (a scanner holds it, or it is damaged): Delete asks the learner; fails_when=an unsealed recording whose record stands unread is judged by its header alone, whose process id no process of this computer has, so the writer is called gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 30); why_new=Cycle 0048 task 30 (found while fixing task 1): the header's gone answered for an unsealed recording whose record stands unread; seam=the header, which names this host and a process id of no process, and the writer record, which stands as a file that is no JSON; no_claim=a record too large for the bound or behind a link, which is none (the tests beside it)
+test('an unsealed recording whose writer record stands as a regular file and cannot be read is unreadable, although its header names a process id that no process of this computer has', async (context) => {
+  // Arrange: the other computer's header names this host and a process id of no process here; its writer record stands but gives nothing.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+  })
+  await writeFile(
+    recordingOwnerRecordPath(storage.directory, recording.studyId),
+    'no JSON',
+  )
+
+  // Act
+  const writer = await writerOf(recording.folder, 'ignored')
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'unreadable' })
+})
+
 // Value: protects=the judgement of a recording's writer while a link (a junction on Windows) stands at the place of the folder of writer records and leads to a valid record that names the recording; fails_when=the record is read through that link and judges the recording (here as another machine's), so a file a link puts there decides whether a recording is listed and moved (TT37, CX14's read); why_new=Cycle 0046 third testing review TT37: the file behind the link in CX14's test never parsed as a record; seam=a link at `recording-owners` to a folder of the test with a valid record that names the recording and machine-b, and the header, which names this host and a process id of no process
 test('a valid writer record behind a link at the place of the folder of writer records is not read: the recording is judged by its header', async (context) => {
   // Arrange: the recording's header names this host and a process id of no process; its folder of records is a link to a folder with a valid record of machine-b that names it.

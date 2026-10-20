@@ -8,6 +8,7 @@ import { isProcessGone } from './isProcessGone'
 import { isProcessOfAnotherUser } from './isProcessOfAnotherUser'
 import { isRecordedOwnerGone } from './isRecordedOwnerGone'
 import { isSameStorageMachine } from './isSameStorageMachine'
+import { isWriterRecordUnreadable } from './isWriterRecordUnreadable'
 import { isOwnRecording } from './ownRecordingSessions'
 import { processStartedAtMs } from './processStartedAtMs'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
@@ -44,8 +45,8 @@ export type RecordingWriterState =
   | { kind: 'gone' }
   | { kind: 'left-to-caller' }
 
-/** What {@link sealedRecordingWriterState} found that holds a sealed recording: a writer's state ({@link RecordingWriterState}), or `unreadable` where the writer record stands and cannot be read now and the header alone would call the writer gone, which proves nothing of a writer on another computer. */
-export type SealedRecordingHolder =
+/** What {@link recordingWriterState} and {@link sealedRecordingWriterState} found of a recording's writer: its state ({@link RecordingWriterState}), or `unreadable` where the writer record stands as a regular file and cannot be read now and the header alone would call the writer gone, which proves nothing of a writer on another computer. */
+export type JudgedRecordingWriter =
   RecordingWriterState | { kind: 'unreadable' }
 
 /** The recordings whose writer this window found gone by the record of its full identity, by the recording's directory and creation time: such a writer never comes back, so it is not judged again for as long as this window runs. A judgement by the header alone is not kept: the record can appear after the header (it is written right after it), and then it decides. */
@@ -230,7 +231,7 @@ async function writerStateByHeader(
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.
  * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
- * @returns What was found ({@link RecordingWriterState}).
+ * @returns What was found ({@link RecordingWriterState}); `unreadable` when the header calls the writer gone while its record stands as a regular file that is no JSON or cannot be read ({@link isWriterRecordUnreadable}, Cycle 0048 task 30).
  * @example
  * await recordingWriterState('/storage/learning/recordings.v2/<id>', header) // => { kind: 'on-another-host', host: 'laptop.home-network' } for a recording of 0.2.29.0 made under an earlier host name
  */
@@ -239,7 +240,7 @@ export async function recordingWriterState(
   header: RecordingWriterOfHeader,
   ownProcess: OwnProcessRule = 'counts',
   starts: ProcessStartsOfList = new Map(),
-): Promise<RecordingWriterState> {
+): Promise<JudgedRecordingWriter> {
   // This window's own recording, by what this window knows, is told before any machine or host check: one whose host name changed while it records is still this window's.
   if (isOwnRecording(header.owner))
     return ownProcess === 'ignored'
@@ -256,6 +257,13 @@ export async function recordingWriterState(
   const state = recordedOwner
     ? await writerStateByRecord(recordedOwner, header, readStart)
     : await writerStateByHeader(header, readStart)
+  // A header's `gone` is not believed while a record stands as a regular file that cannot be read now: on another computer with this host name its process id is one no process here has (Cycle 0048 task 30).
+  if (
+    !recordedOwner &&
+    state.kind === 'gone' &&
+    (await isWriterRecordUnreadable(directory))
+  )
+    return { kind: 'unreadable' }
   // Only a record's judgement is stable: a header's alone can change once the writer's record appears, so it is not remembered.
   if (state.kind === 'gone' && recordedOwner) goneWriters.add(recording)
   return state
@@ -264,11 +272,11 @@ export async function recordingWriterState(
 /**
  * Judges what holds a sealed recording: the run that wrote it, while that run has not saved its study from a checkpoint taken after the seal, so that another window takes the recording neither for what is left of a removed study nor for something a removal may move; called by {@link recordingWriterOf} for a sealed recording with a readable header whose run has not released it ({@link isSealedRecordingReleased}); a released one is finished without this judgement.
  * A sealed recording keeps the record of its writer's full identity ({@link recordingOwnerRecordPath}) after its seal ({@link RecordingWriter.finish}) until its study is saved from a checkpoint its run took after the seal ({@link removeWriterRecordsOfSealedRecordings}), and that record decides, as it does for an unsealed recording ({@link writerStateByRecord}). Nothing holds a sealed recording without such a record (its study was saved so, it was made by 0.2.29.0, or its record could not be written), nor this window's own: this window lists the finished recording of its own run whose archive could not be saved yet, and Retry storage there writes the archive. Its caller has already answered both by the look ({@link isSealedRecordingReleased}), but only where the look read the record, or proved it absent: a header of this window's own reaches this judgement when the look could not read the record that stands there ({@link RecordingLook.mayHaveFailedRead}, Cycle 0047 row 239), and a record that names this very process is still told here.
- * The record is read again here, after the look saw it standing: a read that fails again (a scanner still holds the file, or it is no record of this recording) proves no more than a recording without a record has, so the header judges the writer ({@link writerStateByHeader}), and only a header of this window's own answers that nothing holds it (Cycle 0047 row 251). A header that calls the writer gone is not believed then: on another computer with this host name and this storage folder the process id is one no process here has, so the answer is `unreadable` and the learner decides (Cycle 0048 task 1).
+ * The record is read again here, after the look saw it standing: a read that fails again (a scanner still holds the file, or it is no record of this recording) proves no more than a recording without a record has, so the header judges the writer ({@link writerStateByHeader}), and only a header of this window's own answers that nothing holds it (Cycle 0047 row 251). A header that calls the writer gone is not believed while the record stands as a regular file that is no JSON or cannot be read ({@link isWriterRecordUnreadable}): on another computer with this host name and this storage folder the process id is one no process here has, so the answer is `unreadable` and the learner decides (Cycle 0048 task 1).
  * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`.
  * @param header - What the recording's header says of its writer.
  * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
- * @returns The state of the writer whose run may still save the study ({@link RecordingWriterState}: `may-run`, `on-another-host`, `unconfirmed-here`, or `gone`) by its record, or by its header when the record cannot be read now (`may-run`, `on-another-host`, `unconfirmed-here`); `unreadable` when the record cannot be read now and the header calls the writer gone; `undefined` when this window's own run holds it (its record names this very process, or, with no record read, its header names this window), which its caller judges.
+ * @returns The state of the writer whose run may still save the study ({@link RecordingWriterState}: `may-run`, `on-another-host`, `unconfirmed-here`, or `gone`) by its record, or by its header when the record cannot be read now (`may-run`, `on-another-host`, `unconfirmed-here`); `unreadable` when the record stands unread and the header calls the writer gone ({@link isWriterRecordUnreadable}); `undefined` when this window's own run holds it (its record names this very process, or, with no record read, its header names this window), which its caller judges.
  * @example
  * await sealedRecordingWriterState('/storage/learning/recordings.v2/<id>', header) // => { kind: 'may-run' } while another window of this machine has not saved that study
  * await sealedRecordingWriterState('/storage/learning/recordings.v2/<id>', header) // => { kind: 'may-run' } as well while a scanner holds that window's record, judged by its header
@@ -277,7 +285,7 @@ export async function sealedRecordingWriterState(
   directory: string,
   header: RecordingWriterOfHeader,
   starts: ProcessStartsOfList = new Map(),
-): Promise<SealedRecordingHolder | undefined> {
+): Promise<JudgedRecordingWriter | undefined> {
   const recordedOwner = await readRecordingWriterRecord(
     directory,
     header.createdAt,
@@ -287,8 +295,11 @@ export async function sealedRecordingWriterState(
   if (!recordedOwner) {
     if (isOwnRecording(header.owner)) return undefined
     const byHeader = await writerStateByHeader(header, readStart)
-    // A header's `gone` is the process id of a process this computer probes; the unread record may be that of another computer with this host name, whose process id no process here has, so the learner decides (Cycle 0048 task 1).
-    return byHeader.kind === 'gone' ? { kind: 'unreadable' } : byHeader
+    // A header's `gone` is not believed while the record stands as a regular file that cannot be read now: it may be that of another computer with this host name, whose process id no process here has, so the learner decides (Cycle 0048 task 1).
+    return byHeader.kind === 'gone' &&
+      (await isWriterRecordUnreadable(directory))
+      ? { kind: 'unreadable' }
+      : byHeader
   }
   // A record that names this very process (its id and its start on this machine) is this window's own as well.
   const identity = await currentStorageOwner()
