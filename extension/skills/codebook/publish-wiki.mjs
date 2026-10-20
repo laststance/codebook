@@ -355,9 +355,12 @@ function assertBaseline(expected, state) {
     throw new Error('The Wiki output changed since this candidate was prepared. Preserve it and inspect --recover (with --stage for a legacy adoption) before preparing again.');
 }
 
-/** Keeps all ordinary entry points out of an unfinished publication transaction. @example await requireNoJournal('/wiki.publish-journal.json') */
-async function requireNoJournal(journal) {
-  if (await regularBytes(journal, true)) throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
+/** Keeps all ordinary entry points out of an unfinished publication transaction: a journal at its name refuses the step. Where the publish lock stands beside it, the journal is most often that of a publish that runs now, past the write of its journal, which it keeps for most of its time: the step is refused with the lock's sentence ({@link publishLockRefusalOf}), which says to wait for that publish, or to run --recover once a stopped one's process exits, so the agent is not sent to recover a live publish; a journal without a lock is a stopped step's, which needs --recover. Called by {@link prepareWikiStage} and {@link publishWiki} with the lock, before a publish takes its own, and by {@link underPublishLock} without it, once this run holds the lock. @param lock - The publish lock's path, looked at only where a journal stands; none under this run's own lock. @param retry - What the lock's sentence asks the agent to run once that publish ends ({@link publishLockRefusalOf}). @throws The refusal of the lock or of the journal, and that of an entry at the journal's name that is no regular file. @example await requireNoJournal('/repo/.codebook/wiki.publish-journal.json', '/repo/.codebook/wiki.publish-lock.json') // throws the lock's sentence beside a live publish */
+async function requireNoJournal(journal, lock, retry) {
+  if (!(await regularBytes(journal, true))) return;
+  // A journal beside the publish lock is most often a live publish's: the step is sent to wait for it, not to recover it. A lock that cannot be looked at leaves the journal's sentence.
+  if (lock !== undefined && await lookAt(lock).catch(() => undefined) !== undefined) throw new Error(publishLockRefusalOf(lock, retry));
+  throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
 }
 
 /** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. Both are compared as bigints: an NTFS file id may lie above 2^53, where two JavaScript numbers of different ids are equal. A folder that cannot be looked at counts as moved. Called by {@link holdOfPath}. @example await isWhereItWasResolved('/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1'], '/repo') // => false once .codebook was swapped for a link */
@@ -538,7 +541,7 @@ export async function prepareWikiStage({ projectRoot, outputDirectory, stageDire
   const { root, output, journal } = paths, stage = paths.stage ?? output + '.stage-' + randomUUID();
   // The look at the folder the paths were resolved in, taken now, so a swap on the path before the stage is written is seen ({@link holdOfPath}).
   const requirePathHeld = await holdOfPath(paths, [stage]);
-  await requireNoJournal(journal);
+  await requireNoJournal(journal, paths.lock, 'prepare again');
   const prior = await inspectOutput(output, root, { allowLegacy: adoptExisting });
   await mkdir(stage); // An existing candidate is never overwritten or silently reused.
   // A stage that no longer lies where it was made is refused before anything is written into it, and it and the folders the preparation made are removed, each empty.
@@ -547,7 +550,7 @@ export async function prepareWikiStage({ projectRoot, outputDirectory, stageDire
   // Every file of the candidate is written only while the path and the candidate's folders hold; a refusal removes what was written.
   const { written, made } = await writeFilesHeld(candidateFilesOf(stage, receipt, prior, output), requirePathHeld, await folderLookOf(stage), [stage, ...paths.madeFolders]);
   try {
-    await requireNoJournal(journal);
+    await requireNoJournal(journal, paths.lock, 'prepare again');
     assertBaseline(receipt.baseline, await inspectOutput(output, root, { allowLegacy: adoptExisting }));
   } catch (error) {
     // A publish that began, or a Wiki that changed, after the candidate was written refuses it: what the preparation wrote and the folders it made are removed, each still its own, so the next preparation into the same folder is not refused for it.
@@ -766,7 +769,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   const requirePathHeld = await holdOfPath(paths, [stage]), requireParentHeld = await holdOfPath(paths, []), isFolderWhereItWas = await folderLookOf(stage);
   // The candidate's look is taken before it is read, so a candidate another publish moved into the Wiki, or one removed, while this one waited for the lock is told under it.
   await isFolderWhereItWas(stage);
-  await requireNoJournal(journal);
+  await requireNoJournal(journal, paths.lock);
   const { bytes, manifest, owned } = await readCandidateManifest(stage, root);
   // Validate authored content without modifying either the stage or published output.
   const rendered = await renderWikiPages(manifest, { projectRoot: root, outputDirectory: output });
@@ -825,8 +828,8 @@ async function requireCandidateHere(stage, isFolderWhereItWas) {
   if (!(await isFolderWhereItWas(stage))) throw new Error('The candidate ' + stage + ' was published or removed while this publish waited for the Wiki’s publish lock, so nothing was written. Prepare a new candidate if the Wiki still needs an update.');
 }
 
-/** The refusal of a publish or a preview while another run holds the Wiki's publish lock ({@link takePublishLock}): it names the lock by its path alone, never by its text, and sends a stopped run's lock to --recover, which ends it under the gate of its owner ({@link endStoppedLock}). Called by {@link takePublishLock}. @example publishLockRefusalOf('/repo/.codebook/wiki.publish-lock.json') // => 'Another publish of this Wiki holds its publish lock /repo/.codebook/wiki.publish-lock.json, so nothing was written. …' */
-const publishLockRefusalOf = lock => 'Another publish of this Wiki holds its publish lock ' + lock + ', so nothing was written. Wait until that publish ends, then publish again; if it was stopped, run --recover once its process exits.';
+/** The refusal of a publish or a preview while another run holds the Wiki's publish lock ({@link takePublishLock}), and of a preparation, a publish or a preview beside a journal that stands with the lock ({@link requireNoJournal}): it names the lock by its path alone, never by its text, and sends a stopped run's lock to --recover, which ends it under the gate of its owner ({@link endStoppedLock}). Called by {@link takePublishLock} and {@link requireNoJournal}. @param retry - What the agent runs once that publish ends: `publish again` unless named, `prepare again` for a preparation. @example publishLockRefusalOf('/repo/.codebook/wiki.publish-lock.json') // => 'Another publish of this Wiki holds its publish lock /repo/.codebook/wiki.publish-lock.json, so nothing was written. …' */
+const publishLockRefusalOf = (lock, retry = 'publish again') => 'Another publish of this Wiki holds its publish lock ' + lock + ', so nothing was written. Wait until that publish ends, then ' + retry + '; if it was stopped, run --recover once its process exits.';
 
 /** The refusal of a publish whose journal is no longer its own when it checks it (`requireHeld`, {@link publishJournalWriterOf}): a recovery ended it, empty, or another step's journal stands at its name. It names the journal by its path alone, and the publish undoes what it wrote before its swap, as for every refusal there, without removing what stands at the journal's name. Called by {@link publishJournalWriterOf}. @example lostJournalRefusalOf('/repo/.codebook/wiki.publish-journal.json') // => 'The Wiki publication journal /repo/.codebook/wiki.publish-journal.json is no longer this publish’s: … so the Wiki was not changed. …' */
 const lostJournalRefusalOf = journal => 'The Wiki publication journal ' + journal + ' is no longer this publish’s: another step ended or replaced it while this publish ran (a --recover takes a journal that stood empty past the grace for a stopped step’s), so the Wiki was not changed. Publish again once no other publish or recovery of this Wiki runs.';
@@ -1532,7 +1535,7 @@ async function openRecovery(paths, requirePathHeld, ownerJudgement) {
   return { ...await startManifestRecovery(paths, requirePathHeld, ownerJudgement.system), isResumed: false };
 }
 
-/** Recovers by the journal a recovery opened ({@link openRecovery}): while the path holds and the journal is the one claimed, the stopped publish or the edited manifest is recovered ({@link recoverPublishJournal}, {@link recoverManifestJournal}), what the run left beside its journal goes, by the journal's id, before the journal ({@link removeLeftoversOfRun}), the claims are released ({@link releaseClaims}), and the publish lock of that run goes after it ({@link endLockOfRun}). Called by {@link recoverAt}. @param opened - The journal's record and bytes, the claims taken, and whether the journal was one a stopped step left. @returns What the recovery did; undefined for a superseded manifest recovery, whose journal was removed. @throws The refusal of a changed path or journal, and what the recovery refuses; the journal is kept then. @example await runRecovery(opened, paths, requirePathHeld) // => { status: 'published-or-restored', output: '/repo/.codebook/wiki', previousOutput: undefined } */
+/** Recovers by the journal a recovery opened ({@link openRecovery}): while the path holds and the journal is the one claimed, the stopped publish or the edited manifest is recovered ({@link recoverPublishJournal}, {@link recoverManifestJournal}), what the run left beside its journal goes, by the journal's id, before the journal ({@link removeLeftoversOfRun}), the claims are released ({@link releaseClaims}), and the publish lock of that run goes after it ({@link endLockOfRun}), which the answer says. Called by {@link recoverAt}. @param opened - The journal's record and bytes, the claims taken, and whether the journal was one a stopped step left. @returns What the recovery did, for a publish journal with the end of its run's publish lock: `publishLockRemoved: true` once this recovery removed it, `publishLockKept` with its path where its removal failed, nothing where no lock of that run stood; undefined for a superseded manifest recovery, whose journal was removed. @throws The refusal of a changed path or journal, and what the recovery refuses; the journal is kept then. @example await runRecovery(opened, paths, requirePathHeld) // => { status: 'published-or-restored', output: '/repo/.codebook/wiki', previousOutput: undefined } */
 async function runRecovery({ record, bytes, claims, isResumed }, paths, requirePathHeld) {
   let completed = false, result;
   try {
@@ -1544,8 +1547,8 @@ async function runRecovery({ record, bytes, claims, isResumed }, paths, requireP
     await removeOwnedRecord(paths.journal, bytes);
     completed = true;
   } finally { await releaseClaims(claims, completed); }
-  // The publish lock of the run whose journal ended goes after it; a lock of another run stays for its own recovery.
-  if (record.operation !== 'restore-manifest' && isRecordId(record.id)) await endLockOfRun(record.id, paths.lock);
+  // The publish lock of the run whose journal ended goes after it, and the answer says so; a lock of another run stays for its own recovery.
+  if (record.operation !== 'restore-manifest' && isRecordId(record.id)) return { ...result, ...await endLockOfRun(record.id, paths.lock) };
   return result;
 }
 
@@ -1672,13 +1675,15 @@ async function endStoppedLock(bytes, paths, requirePathHeld, ownerJudgement) {
   return hasJournal ? undefined : { status: 'publish-lock-removed', output };
 }
 
-/** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') */
+/** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @returns What the recovery's answer says of the lock: `{ publishLockRemoved: true }` once it was removed, `{ publishLockKept }` with its path where its removal failed, which one more --recover ends, and nothing where no lock of that run stands. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') // => { publishLockRemoved: true } */
 async function endLockOfRun(id, lock) {
   const bytes = await regularBytes(lock, true).catch(() => undefined);
   let held;
   try { held = bytes === undefined ? undefined : JSON.parse(bytes); } catch { held = undefined; }
-  // A lock this recovery cannot remove now stays for the next one, which ends it by its owner's gate; the Wiki is recovered either way.
-  if (held?.id === id) await removeOwnedRecord(lock, bytes).catch(() => undefined);
+  // Only the lock of this run is this recovery's to end.
+  if (held?.id !== id) return {};
+  // A lock this recovery cannot remove now stays for the next one, which ends it by its owner's gate; the Wiki is recovered either way, and the answer names the lock.
+  return removeOwnedRecord(lock, bytes).then(() => ({ publishLockRemoved: true }), () => ({ publishLockKept: lock }));
 }
 
 /** Removes what a stopped run left beside the Wiki folder, by the id of the journal or the publish lock a recovery ends after its owner's gate ({@link requireExited}): the list of copies ({@link copiesListPathOf}), every side file that keeps the candidate's prepared bytes, whole or cut short ({@link preparedPathOf}), and the files beside the journal and the lock through which they were to get their names ({@link pendingPathOf}); the id is random for each run, so no file of another run has it, and the gate proves that the run stopped, so none of them is still written. Each must be a regular file; a link or a folder at its name stays ({@link removeFileOfRun}). Called by {@link runRecovery} and {@link endStoppedLock} before they remove the journal or the lock. @throws What a look or a removal rejects with, other than a missing file; the journal or the lock is kept then, for the next recovery. @example await removeLeftoversOfRun(paths, '6f1c…') */
