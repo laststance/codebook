@@ -427,13 +427,13 @@ test('a call whose test does not end is ended after its silence limit and report
   const result = await runTestInvocation(
     { files: ['hanging.test.js'] },
     directory,
-    { silenceTimeoutMs: 3_000 },
+    { silenceTimeoutMs: 5_000 },
   )
 
   // Assert
   assert.equal(result.timedOut, true)
-  // gstack-timing-ok: the bound is the contract: the call ends by its 3 s silence limit, not by the 15 s the hanging test takes or the 120 s default
-  assert.equal(result.elapsedMs < 10_000, true)
+  // gstack-timing-ok: the bound is the contract: the call ends by its 5 s silence limit, not by the 15 s the hanging test takes or the 120 s default. The 5 s is also the time the first test has to start and print inside the call, so a slow start-up of 4 s does not drop its line; the 12 s bound sits 3 s below the hanging test's own end.
+  assert.equal(result.elapsedMs < 12_000, true)
   assert.match(result.output, /✔ finishes first/)
 })
 
@@ -632,8 +632,9 @@ test('the shard script ends a silent call, names its file and fails the shard', 
   // Act
   const result = await runShardScript(
     root,
-    ['--shard', '1/1', '--lanes', '1', '--silence-seconds', '3'],
-    12_000,
+    // gstack-timing-ok: the hanging test never ends in time, so the 6 s limit is the contract that ends the call. It is also the time `finishes first` has to print after the call's spawn (start-up and module load included); the 25 s process limit leaves 19 s above the limit for a loaded start-up.
+    ['--shard', '1/1', '--lanes', '1', '--silence-seconds', '6'],
+    25_000,
   )
 
   // Assert
@@ -641,7 +642,7 @@ test('the shard script ends a silent call, names its file and fails the shard', 
   assert.match(result.stdout, /✔ finishes first/)
   assert.match(
     result.stderr,
-    /✖ hanging\.test\.js printed nothing for 3 s and was ended/,
+    /✖ hanging\.test\.js printed nothing for 6 s and was ended/,
   )
 })
 

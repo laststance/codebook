@@ -331,7 +331,7 @@ test('the pre-gate runner builds first, runs the product test before the script 
   )
 })
 
-// Value: protects=the pre-gate from one test that never ends: its run is ended after the silence limit, named, and the lane fails, while the next run still runs; fails_when=the runner starts `node --test` with no silence limit, so the pre-gate waits for the hung test until its own time limit and shows nothing; why_new=Cycle 0048 task 57 (Red Team: task 25's limit covered one entry point of three); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a hanging product test and a 3 s limit passed as `--silence-seconds`; no_claim=the default limit (120 s)
+// Value: protects=the pre-gate from one test that never ends: its run is ended after the silence limit, named, and the lane fails, while the next run still runs; fails_when=the runner starts `node --test` with no silence limit, so the pre-gate waits for the hung test until its own time limit and shows nothing; why_new=Cycle 0048 task 57 (Red Team: task 25's limit covered one entry point of three); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a hanging product test and a 5 s limit passed as `--silence-seconds`, which leaves the script test that runs after it 5 s to start and pass; no_claim=the default limit (120 s)
 test('the pre-gate runner ends a product test that never ends, names its run, runs the script test after it and exits 1', async (context) => {
   // Arrange
   const hangingProduct = [
@@ -352,9 +352,10 @@ test('the pre-gate runner ends a product test that never ends, names its run, ru
   )
 
   // Act
+  // gstack-timing-ok: the product test never ends, so the 5 s limit is the contract that ends it; a load only delays the end. The limit is the margin of the script test that runs after it (it must start and pass inside 5 s of its spawn).
   const result = await runPregateRunner(root, [
     '--silence-seconds',
-    '3',
+    '5',
     'extension/scripts/tests/script.test.mjs',
     'extension/src/tests/product.test.ts',
   ])
@@ -364,7 +365,7 @@ test('the pre-gate runner ends a product test that never ends, names its run, ru
     {
       code: result.code,
       namesTheRun: result.stderr.includes(
-        '✖ extension/dist/tests/product.test.js printed nothing for 3 s and was ended',
+        '✖ extension/dist/tests/product.test.js printed nothing for 5 s and was ended',
       ),
       order: result.order,
     },
@@ -490,7 +491,7 @@ test('the pre-gate allows a run that holds the package test a silence longer tha
   })
 })
 
-// Value: protects=the pre-gate lane from ending a package build that stays silent longer than the default silence limit but within the build's own limit; fails_when=the runner gives the run that holds package.test.mjs the same limit as any other run, so a silent `before` hook is ended as hung; why_new=Cycle 0048 task 110 (Red Team); seam=run-pregate-tests.mjs started as a process in a fixture repository whose copies of the two constants are shortened (default silence limit 2 s, package command limit 6 s) and whose script tests stay silent for 4 s; no_claim=the real constants, which the test above reads
+// Value: protects=the pre-gate lane from ending a package build that stays silent longer than the default silence limit but within the build's own limit; fails_when=the runner gives the run that holds package.test.mjs the same limit as any other run, so a silent `before` hook is ended as hung; why_new=Cycle 0048 task 110 (Red Team); seam=run-pregate-tests.mjs started as a process in a fixture repository whose copies of the two constants are shortened (default silence limit 2 s, package command limit 20 s, so the package run's limit is 22 s) and whose script tests stay silent for 4 s, which leaves 18 s for a slow start-up of the package run and 2 s before the other run is ended; no_claim=the real constants, which the test above reads
 test('the pre-gate runner lets package.test.mjs stay silent longer than the default silence limit and ends another test that does the same', async (context) => {
   // Arrange
   const root = await createFixtureRepository(context, {})
@@ -508,8 +509,10 @@ test('the pre-gate runner lets package.test.mjs stay silent longer than the defa
   await shorten(
     'packageConstants.mjs',
     'PACKAGE_COMMAND_TIMEOUT_MS = 180_000',
-    'PACKAGE_COMMAND_TIMEOUT_MS = 6_000',
+    // The silence watch counts from the child's spawn, start-up and module load included: 22 s (20 s plus the 2 s default) keeps a loaded runner's slow start from ending the package run.
+    'PACKAGE_COMMAND_TIMEOUT_MS = 20_000',
   )
+  // gstack-timing-ok: the contract is 2 s default limit < 4 s of silence < 22 s package limit. A timer never fires early, so a load only delays the end of the other run (the 2 s above its limit is spent only if its watch is late by 2 s) and, for the package run, would need a 18 s stall to reach its limit.
   const quietFor4Seconds = scriptedTest(
     'quiet',
     'await new Promise((resolve) => setTimeout(resolve, 4_000))',
@@ -661,7 +664,7 @@ test('a long step called without an interval writes its first progress line afte
   )
 })
 
-// Value: protects=the package test's hook from being ended as hung while its build runs several commands in turn: the hook's lines reach the pre-gate runner as they are written and restart its silence time; fails_when=the hook writes nothing during its build (the run is ended after the silence limit although the build is within its own limits), or Node's runner holds the hook's output until the file ends; why_new=Cycle 0048 task 111 (found while fixing task 110); seam=run-pregate-tests.mjs started as a process in a fixture repository whose package.test.mjs runs a silent 5 s step through writeProgressWhileRunning (interval 500 ms) under `--silence-seconds 3`, and a twin that runs the same step without it; no_claim=the real build
+// Value: protects=the package test's hook from being ended as hung while its build runs several commands in turn: the hook's lines reach the pre-gate runner as they are written and restart its silence time; fails_when=the hook writes nothing during its build (the run is ended after the silence limit although the build is within its own limits), or Node's runner holds the hook's output until the file ends; why_new=Cycle 0048 task 111 (found while fixing task 110); seam=run-pregate-tests.mjs started as a process in a fixture repository whose package.test.mjs runs a silent 8 s step through writeProgressWhileRunning (interval 500 ms) under `--silence-seconds 6`, and a twin that runs the same step without it, so the first line may be 5.5 s late and the twin is ended 2 s before its step ends; no_claim=the real build
 test('the pre-gate runner does not end a package test whose hook stays silent for longer than the limit but writes progress lines, and ends one that writes none', async (context) => {
   // Arrange
   const root = await createFixtureRepository(context, {})
@@ -675,7 +678,8 @@ test('the pre-gate runner does not end a package test whose hook stays silent fo
       "test('built', () => {})",
       '',
     ].join('\n')
-  const silentStep = 'new Promise((resolve) => setTimeout(resolve, 5_000))'
+  // gstack-timing-ok: the contract is a progress line every 500 ms < the 6 s silence limit < the 8 s the step is silent. A timer never fires early, so a load only delays the lines (5.5 s of slack for the start-up and module load that the watch counts) and the twin's end (it is ended at 6 s whatever the load, 2 s before its step could end).
+  const silentStep = 'new Promise((resolve) => setTimeout(resolve, 8_000))'
   await writeFile(
     join(root, 'extension/scripts/tests/package.test.mjs'),
     hook(`writeProgressWhileRunning(() => ${silentStep}, { intervalMs: 500 })`),
@@ -688,12 +692,12 @@ test('the pre-gate runner does not end a package test whose hook stays silent fo
   // Act
   const withProgress = await runPregateRunner(root, [
     '--silence-seconds',
-    '3',
+    '6',
     'extension/scripts/tests/package.test.mjs',
   ])
   const withoutProgress = await runPregateRunner(root, [
     '--silence-seconds',
-    '3',
+    '6',
     'extension/scripts/tests/other.test.mjs',
   ])
 
@@ -733,13 +737,14 @@ test('the package test’s before hook runs the package build inside writeProgre
   assert.match(source, hookCall)
 })
 
-// Value: protects=the pre-gate's silence watch from a run that talks only on stderr (Node's runner prints a test's own stderr on its stdout, so what reaches the runner's stderr is its own: a warning, a crash report): that text is passed through to the pre-gate runner's own stderr and counts as activity, so the run is not ended as hung; fails_when=stderr is not piped on, or a chunk of it does not restart the silence time (the run is ended after the limit although it printed all the time); why_new=Cycle 0048 task 87 (Step 7: stderr became piped in fixing cycle 2); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a product test that prints nothing for 5 s under a 3 s limit, and NODE_OPTIONS=--require of a file that makes the `node --test` process (the one with `--test` in its execArgv, not the pre-gate runner that has none) write a line to its stderr every second; the test is red on a runner that drops the run's stderr (Cycle 0048 task 102); no_claim=output on stdout, which the hanging test above covers by its absence
+// Value: protects=the pre-gate's silence watch from a run that talks only on stderr (Node's runner prints a test's own stderr on its stdout, so what reaches the runner's stderr is its own: a warning, a crash report): that text is passed through to the pre-gate runner's own stderr and counts as activity, so the run is not ended as hung; fails_when=stderr is not piped on, or a chunk of it does not restart the silence time (the run is ended after the limit although it printed all the time); why_new=Cycle 0048 task 87 (Step 7: stderr became piped in fixing cycle 2); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a product test that prints nothing for 7 s under a 5 s limit, and NODE_OPTIONS=--require of a file that makes the `node --test` process (the one with `--test` in its execArgv, not the pre-gate runner that has none) write a line to its stderr every second; the test is red on a runner that drops the run's stderr (Cycle 0048 task 102); no_claim=output on stdout, which the hanging test above covers by its absence
 test('the pre-gate runner keeps a run alive that writes only to stderr for longer than the limit, and passes the text to its own stderr', async (context) => {
   // Arrange
   const root = await createFixtureRepository(context, {
     'product.test.js': scriptedTest(
       'product',
-      'await new Promise((resolve) => setTimeout(resolve, 5_000))',
+      // gstack-timing-ok: the contract is a stderr line every 1 s < the 5 s silence limit < the 7 s the test is silent. A timer never fires early, so a load only delays the lines (4 s of slack for the start-up the watch counts); without the lines the run is ended at 5 s, 2 s before the test could end.
+      'await new Promise((resolve) => setTimeout(resolve, 7_000))',
     ),
   })
   const preloadPath = join(root, 'write-to-stderr.cjs')
@@ -752,7 +757,7 @@ test('the pre-gate runner keeps a run alive that writes only to stderr for longe
   // Act
   const result = await runPregateRunner(
     root,
-    ['--silence-seconds', '3', 'extension/src/tests/product.test.ts'],
+    ['--silence-seconds', '5', 'extension/src/tests/product.test.ts'],
     { NODE_OPTIONS: `--require=${preloadPath}` },
   )
 
@@ -774,6 +779,7 @@ test('the pre-gate runner fails the lane for a run ended for its silence even wh
   const root = await createFixtureRepository(context, {
     'product.test.js': scriptedTest(
       'product',
+      // gstack-timing-ok: the contract is the 3 s silence limit < the 6 s the test is silent. A timer never fires early, so a load only delays the test's end and the run is ended at 3 s, 3 s before the test could end; no outcome here waits for a start-up.
       'await new Promise((resolve) => setTimeout(resolve, 6_000))',
     ),
   })
