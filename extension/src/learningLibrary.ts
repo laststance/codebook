@@ -291,6 +291,18 @@ type WriterOfAnotherWindow = Extract<
   { kind: 'may-run' | 'on-another-host' | 'unconfirmed-here' | 'unreadable' }
 >
 
+/**
+ * Says whether the writer the removal found for a recording under its lock is one of another window that may still write it ({@link WriterOfAnotherWindow}); called by {@link LearningLibrary.writersOfOtherWindows} for each recording of a study.
+ * @param writer - The writer of one recording ({@link recordingWriterOf}).
+ * @returns `true` for a writer of this machine that may still run (`may-run`), one this computer cannot confirm (`on-another-host`, `unconfirmed-here`) and a recording whose header or record could not be read now (`unreadable`), each of which keeps the study or makes Delete ask first; `false` for a recording that is finished, whose writer is gone, or that this window leaves to itself (`left-to-caller`).
+ * @example isWriterOfAnotherWindow({ kind: 'gone', createdAt: '2026-10-05T09:00:00.000Z' }) // => false
+ */
+const isWriterOfAnotherWindow = (writer: RecordingWriterOfDirectory) =>
+  writer.kind === 'may-run' ||
+  writer.kind === 'on-another-host' ||
+  writer.kind === 'unconfirmed-here' ||
+  writer.kind === 'unreadable'
+
 /** What {@link LearningLibrary.removeStudy} has changed so far, read when a step fails to tell `nothing-moved` from `partly-moved`. @example const changes: StudyRemovalChanges = { movedPathCount: 0 } */
 type StudyRemovalChanges = {
   /** Paths that went to the system Trash. */
@@ -552,12 +564,7 @@ export class LearningLibrary {
       })),
     )
     return writers.flatMap(({ directory, writer }): WriterOfRecording[] =>
-      writer.kind === 'may-run' ||
-      writer.kind === 'on-another-host' ||
-      writer.kind === 'unconfirmed-here' ||
-      writer.kind === 'unreadable'
-        ? [{ directory, writer }]
-        : [],
+      isWriterOfAnotherWindow(writer) ? [{ directory, writer }] : [],
     )
   }
 

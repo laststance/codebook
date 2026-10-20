@@ -2074,16 +2074,31 @@ function parsedArgumentsOf(args, options) {
   return isWhole ? parsed.values : undefined;
 }
 
-/** Reads the command line: its first argument names the step (`--prepare`, `--recover`, or a publish without one), and the rest its options ({@link parsedArgumentsOf}), which must name the project and the output, the stage for a publish, and as many `--gone-host` as `--gone-space` options, the nth host name paired with the nth space. Called by the command line at the end of this file. @param args - The arguments after the script's path. @returns The step and the options it is called with, the system the publisher runs on among them ({@link SYSTEM_HERE}); undefined for arguments it refuses, for which the usage is printed. @example commandOf(['--recover', '--project', '/repo', '--output', '/repo/.codebook/wiki']).options.goneOwners // => [] */
-function commandOf(args) {
-  const mode = ['--prepare', '--recover'].includes(args[0]) ? args[0] : 'publish';
-  const values = parsedArgumentsOf(mode === 'publish' ? args : args.slice(1), COMMAND_OPTIONS[mode]);
-  const hosts = values?.['gone-host'] ?? [], spaces = values?.['gone-space'] ?? [];
+/** The function each step of the command line runs ({@link stepOf}): the preparation of a candidate ({@link prepareWikiStage}), its publish or preview ({@link publishWiki}) and the recovery ({@link recoverWikiPublication}). Read by {@link commandOf}. */
+const COMMAND_OPERATIONS = { '--prepare': prepareWikiStage, publish: publishWiki, '--recover': recoverWikiPublication };
+
+/** The step the command line's first argument names, `--prepare` or `--recover`, or a publish, which names none, with the arguments its options are read from. Called by {@link commandOf}. @param args - The arguments after the script's path. @returns The step and the arguments after its word. @example stepOf(['--recover', '--project', '/repo']) // => { mode: '--recover', rest: ['--project', '/repo'] } */
+const stepOf = args => ['--prepare', '--recover'].includes(args[0]) ? { mode: args[0], rest: args.slice(1) } : { mode: 'publish', rest: args };
+
+/** Whether the options of the command line name what its step needs: the project and the output, and the stage for a publish. Called by {@link commandOf}. @param mode - The step ({@link stepOf}). @param values - The options as {@link parsedArgumentsOf} read them. @example hasRequiredOptions('publish', { project: '/repo', output: '/repo/.codebook/wiki' }) // => false */
+const hasRequiredOptions = (mode, values) => Boolean(values.project && values.output && (mode !== 'publish' || values.stage));
+
+/** The places the learner confirmed gone, as the options of the command line name them: the nth `--gone-host` paired with the nth `--gone-space`. Called by {@link commandOf}. @param values - The options as {@link parsedArgumentsOf} read them. @returns One `{ host, space }` for each pair, none without the options; undefined when the two options are not given as often, which the usage refuses. @example goneOwnersOf({ 'gone-host': ['devbox'], 'gone-space': ['linux@4026531836'] }) // => [{ host: 'devbox', space: 'linux@4026531836' }] */
+function goneOwnersOf(values) {
+  const hosts = values['gone-host'] ?? [], spaces = values['gone-space'] ?? [];
   // Each place confirmed gone has its host name and its space: the nth --gone-host pairs with the nth --gone-space.
-  if (!values || !values.project || !values.output || mode === 'publish' && !values.stage || hosts.length !== spaces.length) return undefined;
-  const operation = mode === '--prepare' ? prepareWikiStage : mode === '--recover' ? recoverWikiPublication : publishWiki;
-  return { operation, options: { projectRoot: values.project, outputDirectory: values.output, stageDirectory: values.stage, adoptExisting: values['adopt-existing'] === true, renderOnly: values['render-only'] === true,
-    goneOwners: hosts.map((host, index) => ({ host, space: spaces[index] })), system: SYSTEM_HERE } };
+  return hosts.length === spaces.length ? hosts.map((host, index) => ({ host, space: spaces[index] })) : undefined;
+}
+
+/** Reads the command line: its first argument names the step ({@link stepOf}: `--prepare`, `--recover`, or a publish without one), and the rest its options ({@link parsedArgumentsOf}), which must name what the step needs ({@link hasRequiredOptions}: the project and the output, and the stage for a publish) and as many `--gone-host` as `--gone-space` options, the nth host name paired with the nth space ({@link goneOwnersOf}). Called by the command line at the end of this file. @param args - The arguments after the script's path. @returns The step's function ({@link COMMAND_OPERATIONS}) and the options it is called with, the system the publisher runs on among them ({@link SYSTEM_HERE}); undefined for arguments it refuses, for which the usage is printed. @example commandOf(['--recover', '--project', '/repo', '--output', '/repo/.codebook/wiki']).options.goneOwners // => [] */
+function commandOf(args) {
+  const { mode, rest } = stepOf(args);
+  const values = parsedArgumentsOf(rest, COMMAND_OPTIONS[mode]);
+  // Arguments that parseArgs refused, and a step without the project, the output or a publish's stage, get the usage.
+  if (values === undefined || !hasRequiredOptions(mode, values)) return undefined;
+  const goneOwners = goneOwnersOf(values);
+  if (goneOwners === undefined) return undefined;
+  return { operation: COMMAND_OPERATIONS[mode], options: { projectRoot: values.project, outputDirectory: values.output, stageDirectory: values.stage, adoptExisting: values['adopt-existing'] === true, renderOnly: values['render-only'] === true, goneOwners, system: SYSTEM_HERE } };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
