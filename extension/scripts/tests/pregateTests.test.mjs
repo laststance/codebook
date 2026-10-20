@@ -417,7 +417,7 @@ function scriptedTest(name, body) {
   ].join('\n')
 }
 
-// Value: protects=the pre-gate's silence watch from a run that talks only on stderr (Node's runner prints a test's own stderr on its stdout, so what reaches the runner's stderr is its own: a warning, a crash report): that text is passed through to the pre-gate runner's own stderr and counts as activity, so the run is not ended as hung; fails_when=stderr is not piped on, or a chunk of it does not restart the silence time (the run is ended after the limit although it printed all the time); why_new=Cycle 0048 task 87 (Step 7: stderr became piped in fixing cycle 2); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a product test that prints nothing for 5 s under a 3 s limit, and NODE_OPTIONS=--require of a file that makes the runner (a node process with no NODE_TEST_CONTEXT) write a line to its stderr every second; no_claim=output on stdout, which the hanging test above covers by its absence
+// Value: protects=the pre-gate's silence watch from a run that talks only on stderr (Node's runner prints a test's own stderr on its stdout, so what reaches the runner's stderr is its own: a warning, a crash report): that text is passed through to the pre-gate runner's own stderr and counts as activity, so the run is not ended as hung; fails_when=stderr is not piped on, or a chunk of it does not restart the silence time (the run is ended after the limit although it printed all the time); why_new=Cycle 0048 task 87 (Step 7: stderr became piped in fixing cycle 2); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a product test that prints nothing for 5 s under a 3 s limit, and NODE_OPTIONS=--require of a file that makes the `node --test` process (the one with `--test` in its execArgv, not the pre-gate runner that has none) write a line to its stderr every second; the test is red on a runner that drops the run's stderr (Cycle 0048 task 102); no_claim=output on stdout, which the hanging test above covers by its absence
 test('the pre-gate runner keeps a run alive that writes only to stderr for longer than the limit, and passes the text to its own stderr', async (context) => {
   // Arrange
   const root = await createFixtureRepository(context, {
@@ -429,7 +429,8 @@ test('the pre-gate runner keeps a run alive that writes only to stderr for longe
   const preloadPath = join(root, 'write-to-stderr.cjs')
   await writeFile(
     preloadPath,
-    "if (!process.env.NODE_TEST_CONTEXT) setInterval(() => console.error('runner still working'), 1_000).unref()\n",
+    // Only the `node --test` process has `--test` in its execArgv; the pre-gate runner and the test-file processes do not.
+    "if (process.execArgv.includes('--test')) setInterval(() => console.error('runner still working'), 1_000).unref()\n",
   )
 
   // Act
@@ -450,7 +451,7 @@ test('the pre-gate runner keeps a run alive that writes only to stderr for longe
   )
 })
 
-// Value: protects=the pre-gate's verdict on a run that was ended for its silence but winds down with exit code 0 (the real runner exits non-zero after a SIGTERM, so this is the only case that tells `timedOut ||` from the exit code): the lane fails and the run is named; fails_when=the verdict reads only the exit code, so a hung test that the runner reports as exit 0 after the SIGTERM turns into a pass; why_new=Cycle 0048 task 88 (Step 7: nothing told `timedOut ||` apart); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, and NODE_OPTIONS=--require of a file that makes the runner (a node process with no NODE_TEST_CONTEXT) exit 0 on SIGTERM; the script has no seam for a stand-in runner and needs none; no_claim=what the real runner exits with after a SIGTERM
+// Value: protects=the pre-gate's verdict on a run that was ended for its silence but winds down with exit code 0 (the real runner exits non-zero after a SIGTERM, so this is the only case that tells `timedOut ||` from the exit code): the lane fails and the run is named; fails_when=the verdict reads only the exit code, so a hung test that the runner reports as exit 0 after the SIGTERM turns into a pass; why_new=Cycle 0048 task 88 (Step 7: nothing told `timedOut ||` apart); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, and NODE_OPTIONS=--require of a file that makes the `node --test` process (the one with `--test` in its execArgv) exit 0 on SIGTERM; the script has no seam for a stand-in runner and needs none; no_claim=what the real runner exits with after a SIGTERM
 test('the pre-gate runner fails the lane for a run ended for its silence even when the runner exits 0 after the SIGTERM', async (context) => {
   // Arrange
   // The hung test ends by itself after 6 s: the stand-in runner exits at the SIGTERM and leaves its file process behind.
@@ -463,7 +464,7 @@ test('the pre-gate runner fails the lane for a run ended for its silence even wh
   const preloadPath = join(root, 'exit-on-sigterm.cjs')
   await writeFile(
     preloadPath,
-    "if (!process.env.NODE_TEST_CONTEXT) process.on('SIGTERM', () => process.exit(0))\n",
+    "if (process.execArgv.includes('--test')) process.on('SIGTERM', () => process.exit(0))\n",
   )
 
   // Act
