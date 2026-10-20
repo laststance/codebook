@@ -19,8 +19,10 @@ let placedPageCount = 0
  * const givePlaceBack = takeWikiPagePlace() // => a function, or undefined while six pages are in hand
  * if (givePlaceBack) {
  *   // Given back once the answer has closed and the reader's work for the page has ended.
- *   const noteWorkEnded = givePlaceBackAtTheLaterEnd(response, givePlaceBack)
- *   try { await servePage(response, 'index.html') } finally { noteWorkEnded() }
+ *   const answerClosed = new Promise<void>((resolveClosed) => { response.once('close', () => resolveClosed()) })
+ *   const work = servePage(response, 'index.html')
+ *   void Promise.allSettled([work, answerClosed]).then(() => givePlaceBack())
+ *   await work
  * }
  * ```
  */

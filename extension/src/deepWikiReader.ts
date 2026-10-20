@@ -583,13 +583,14 @@ export async function startDeepWikiReader(
       refusePage(response, relativePath, 'busy')
       return
     }
-    // The place is held until the page's answer has closed and the reader's work for the page has ended: a browser that does not read its page keeps the page's bytes in the host until its answer closes, and one that goes while the reader reads for it closes its answer before the reads end. The answer has not closed yet, as nothing was awaited since the request came.
-    const noteWorkEnded = givePlaceBackAtTheLaterEnd(response, givePlaceBack)
-    try {
-      await servePage(response, relativePath)
-    } finally {
-      noteWorkEnded()
-    }
+    // The place is held until the page's answer has closed and the reader's work for the page has ended: a browser that does not read its page keeps the page's bytes in the host until its answer closes, and one that goes while the reader reads for it closes its answer before the reads end, so a place given back at that close let a further page in while the gone one still read (Codex's probe held 12 open files and 24 MiB against six). The close is watched before anything is awaited for the page, so none is missed: the answer has not closed yet, as nothing was awaited since the request came.
+    const answerClosed = new Promise<void>((resolveClosed) => {
+      response.once('close', () => resolveClosed())
+    })
+    const work = servePage(response, relativePath)
+    // The later of the two ends gives the place back, whichever way the work ended; the request's handler does not wait for the close, so a failed page is answered at once.
+    void Promise.allSettled([work, answerClosed]).then(() => givePlaceBack())
+    await work
   }
   /**
    * Reads what a page needs (the manifest, its file's look, the publication identity) and serves it ({@link prepareAndSendPage}), and stops after the read in hand once the page's browser has gone, so a gone request holds its place only while that read ends.
@@ -926,35 +927,6 @@ async function readPartOfWikiFile(
     return bytesRead === 0 ? undefined : part.subarray(0, bytesRead)
   } finally {
     await file.close()
-  }
-}
-
-/**
- * Gives a page's place among the pages in hand back at the later of two ends: the close of the page's answer, once the answer has left the host or its connection has closed, and the end of the reader's own work for the page.
- * Why: when a browser goes while the reader reads the manifest, the publication identity or the page, its answer closes before those reads end; a place given back at the close let a further page in while the gone one still read, so clients that went during slow reads held more pages at once than the places bound (Codex's probe held 12 open files and 24 MiB against six).
- * Called by the Wiki reader for every page that took its place ({@link takeWikiPagePlace}), before anything is awaited for it, so the answer has not closed yet.
- * @param response - The page's answer.
- * @param givePlaceBack - Gives the page's place back ({@link takeWikiPagePlace}).
- * @returns The step the reader takes once its work for the page has ended, whichever way it ended; a further call does nothing.
- * @example
- * const noteWorkEnded = givePlaceBackAtTheLaterEnd(response, givePlaceBack)
- * try { await servePage(response, 'index.html') } finally { noteWorkEnded() }
- */
-function givePlaceBackAtTheLaterEnd(
-  response: ServerResponse,
-  givePlaceBack: () => void,
-): () => void {
-  let isAnswerClosed = false
-  let isWorkEnded = false
-  response.once('close', () => {
-    isAnswerClosed = true
-    // The work ended before the answer closed: the close is the later end.
-    if (isWorkEnded) givePlaceBack()
-  })
-  return (): void => {
-    isWorkEnded = true
-    // The answer closed before the work ended, as when its browser went during a read: the work's end is the later end.
-    if (isAnswerClosed) givePlaceBack()
   }
 }
 
