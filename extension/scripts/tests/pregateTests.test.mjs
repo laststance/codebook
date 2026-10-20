@@ -546,6 +546,88 @@ test('the pre-gate runner ends a build that never ends after its limit, names th
   )
 })
 
+// Value: protects=the pre-gate from a build limit that would end the build at once or never (`Infinity`, 0, a text, under one millisecond, more than a timer can wait): the runner stops with code 2 and a sentence that names `--build-seconds`, before it builds; fails_when=the option is read with `Number()` alone, so NaN or 0 reaches the build's timeout, or the refusal names `--silence-seconds`; why_new=Cycle 0048 task 73 added the option; the silence test above refuses `--silence-seconds` only; seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build; no_claim=the default limit (300 s) and a build that is ended at its limit, which the test above covers
+test('the pre-gate runner refuses a build limit of Infinity, above a timer’s limit, under a millisecond, 0 or no number, names the option, and builds nothing', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {})
+
+  // Act
+  const refusals = []
+  for (const seconds of ['Infinity', '3000000', '0.0004', '0', 'soon'])
+    refusals.push(
+      await runPregateRunner(root, [
+        '--build-seconds',
+        seconds,
+        'extension/scripts/tests/script.test.mjs',
+      ]),
+    )
+
+  // Assert
+  assert.deepEqual(
+    refusals.map(({ code, stderr, order }) => ({ code, stderr, order })),
+    [
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --build-seconds must be at most 2147483, the longest wait a timer allows.\n',
+        order: [],
+      },
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --build-seconds must be at most 2147483, the longest wait a timer allows.\n',
+        order: [],
+      },
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --build-seconds must be at least 0.001, the shortest wait a timer keeps.\n',
+        order: [],
+      },
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --build-seconds must be a number above 0.\n',
+        order: [],
+      },
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --build-seconds must be a number above 0.\n',
+        order: [],
+      },
+    ],
+  )
+})
+
+// Value: protects=the pre-gate from a lane that goes on after its build failed: a build that exits with code 3 ends the runner with code 3, no test runs against the old dist, and no line claims that the build was ended for its time; fails_when=the exit code of a failed build is dropped (exit 0 or 1), the tests run against a stale dist, or the build-limit sentence is printed for a build that failed by itself; why_new=Cycle 0048 task 73 added the build bound and reportBuildFailure; no test makes the build fail by itself; seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build exits with code 3; no_claim=the build that cannot start (its spawn error), which a fixture cannot arrange
+test('the pre-gate runner ends with the exit code of a build that failed, runs no test and does not say the build was ended for its time', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {
+    'product.test.js': notingTest('product', true),
+  })
+  await writeFile(
+    join(root, 'extension/scripts/build-fast.mjs'),
+    [
+      "import { appendFileSync } from 'node:fs'",
+      "appendFileSync(process.env.ORDER_LOG, 'build\\n')",
+      'process.exit(3)',
+      '',
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runPregateRunner(root, [
+    'extension/src/tests/product.test.ts',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    { code: result.code, stderr: result.stderr, order: result.order },
+    { code: 3, stderr: '', order: ['build'] },
+  )
+})
+
 // Value: protects=the count the pre-gate reads from the end of the runner's output: when the reader is slower than the runner (a pipe that has filled), the combined summary is still written in full; fails_when=the runner ends with process.exit() right after writing the summary, which drops the output still queued for the pipe (the probe: 5 MB written to a pipe read after a second lose the tail); why_new=Cycle 0048 task 72 (Codex); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build and a product test that prints 2.4 MB, whose output is read only after 2 s; no_claim=a reader on another system (Windows pipes are written the same way, but this test runs where the others run)
 test('the pre-gate runner writes its whole output, the combined summary last, to a pipe that is read late', async (context) => {
   // Arrange

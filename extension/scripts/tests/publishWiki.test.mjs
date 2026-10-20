@@ -21555,6 +21555,37 @@ test('the publisher started through a linked skill folder prints its usage and e
   }
 })
 
+// Value: protects=a host program that imports the publisher while its own script path (process.argv[1]) names no file that exists (a program started from a stdin pipe, a bundler, a test runner with a removed script): the import ends without a throw, without the usage on stderr and without the exit code 2 the command line sets; fails_when=isStartedAsScript lets the error of the path's resolution escape (the import throws) or answers true for a path it cannot resolve (the usage is printed and the exit code is 2); why_new=the previous /ship pass (Step 7, 6386434f) found the unresolvable path untested; the linked-folder test above covers a path that resolves; seam=a child node process that sets process.argv[1] to a missing path before it imports the publisher; no_claim=a path that resolves to another file than the publisher, which every import by the tests of this file covers
+test('importing the publisher while the host script path names no existing file runs no command: no usage, no exit code, no throw', () => {
+  // Arrange
+  const publisherUrl = new URL(
+    '../../skills/codebook/publish-wiki.mjs',
+    import.meta.url,
+  ).href
+  const hostProgram = [
+    "process.argv[1] = '/codebook-no-such-folder/no-such-script.mjs'",
+    `const publisher = await import(${JSON.stringify(publisherUrl)})`,
+    'console.log(typeof publisher.publishWiki)',
+  ].join('\n')
+
+  // Act
+  const imported = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', hostProgram],
+    { encoding: 'utf8' },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: imported.status,
+      stdout: imported.stdout,
+      stderr: imported.stderr,
+    },
+    { status: 0, stdout: 'function\n', stderr: '' },
+  )
+})
+
 // Cycle 0048 task 65 (CodeRabbit): a page the published Wiki owns keeps the plain refusal of a stray file.
 
 // Value: protects=the agent whose candidate holds a page that the published Wiki owns but its manifest dropped (a page --render-only wrote into the candidate): the refusal must tell it to delete the page from the stage, since the copy sentence tells it to write into that owned page, and the next publish refuses the owned page as changed; fails_when=the refusal calls every stray file that stands in the Wiki folder a copy of a learner's file, owned pages included; why_new=Cycle 0048 task 65 (CodeRabbit strayFileRefusalOf); seam=a published Wiki with an extra page and a candidate that holds that page but lists only the overview; no_claim=a candidate whose Wiki has no publication record (a legacy one)
