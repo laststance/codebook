@@ -18,3 +18,7 @@ export const CALL_SILENCE_TIMEOUT_MS = 120_000
 export const CALL_KILL_GRACE_MS = 5_000
 /** The longest delay `setTimeout` accepts; Node fires a timer set above it at once, so a silence limit above it would end every call as hung. */
 export const MAX_TIMER_DELAY_MS = 2_147_483_647
+/** The shortest delay `setTimeout` keeps; Node runs a shorter one after 1 ms, so a limit under it would end every call before its runner started. */
+export const MIN_TIMER_DELAY_MS = 1
+/** The build that `run-pregate-tests.mjs` runs before its tests may take this long; the fast build takes seconds, and a hung one would hold the pre-gate with nothing shown. */
+export const PREGATE_BUILD_TIMEOUT_MS = 300_000

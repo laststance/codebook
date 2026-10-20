@@ -14,10 +14,10 @@ import { watchCallSilence } from './watchCallSilence.mjs'
  * @param options.silenceTimeoutMs - How long the call may print nothing before it is ended as hung; the reporter prints each test when it ends, so a quiet call is one test that does not end.
  * @param options.killGraceMs - How long a call ended for silence may take to stop on SIGTERM before it is killed; {@link CALL_KILL_GRACE_MS} by default, so a test of the kill does not wait 5 s.
  * @param options.runnerArguments - The arguments that start the runner, before the call's own flags; `['--test']` (Node's test runner) by default. A test passes the path of a stand-in script, because the real runner exits within milliseconds of SIGTERM and cannot show how a slow or stubborn runner is treated.
- * @returns `{ code, signal, output, elapsedMs, timedOut }` once the process and its streams have closed. `timedOut` is true when the call was ended for its silence (the process then ends with a signal, so `code` is `null`). Coverage is collected through the inherited `NODE_V8_COVERAGE`.
+ * @returns `{ code, signal, output, elapsedMs, timedOut }` once the process and its streams have closed. `code` is the runner's exit code when it exits by itself and `null` when a signal ended it (`signal` then names it); a runner that winds down after the SIGTERM of a silence end exits with its own code, 0 or not, so a caller reads `timedOut`, never `code`, to know that the call was ended for its silence. Coverage is collected through the inherited `NODE_V8_COVERAGE`.
  * @example
  * await runTestInvocation({ files: ['service.test.js'] }, 'dist/tests')
- * // => { code: 0, signal: null, output: '✔ …', elapsedMs: 412 }
+ * // => { code: 0, signal: null, output: '✔ …', elapsedMs: 412, timedOut: false }
  */
 export function runTestInvocation(
   invocation,

@@ -16,6 +16,7 @@ import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { buildTestTimings } from '../utils/buildTestTimings.mjs'
+import { parseSilenceSeconds } from '../utils/parseSilenceSeconds.mjs'
 import { planCallEnd } from '../utils/planCallEnd.mjs'
 import { planTestShards } from '../utils/planTestShards.mjs'
 import { readTestTimings } from '../utils/readTestTimings.mjs'
@@ -920,6 +921,31 @@ test('the shard script refuses a silence limit of Infinity or above what a timer
     }),
   )
   assert.deepEqual(await readExecuted(root), [])
+})
+
+// Value: protects=the shard job and the pre-gate from a silence limit below what a timer can keep: `0.0004` seconds is 0.4 ms, which `setTimeout` rounds up to 1 ms, so every call is ended as hung before its runner starts; fails_when=the option accepts any number above 0; why_new=Cycle 0048 task 69 (OCR B); seam=parseSilenceSeconds, which both scripts call for their option; no_claim=the scripts' output for the refusal, which the process tests above cover for the other refusals
+test('a silence limit under one millisecond is refused with the shortest limit named, and one millisecond is accepted', () => {
+  // Arrange
+  const tooShort = ['0.0004', '0.000999', '1e-9']
+
+  // Act
+  const refusals = tooShort.map((text) => {
+    try {
+      return parseSilenceSeconds(text)
+    } catch (error) {
+      return error.message
+    }
+  })
+  const accepted = parseSilenceSeconds('0.001')
+
+  // Assert
+  assert.deepEqual(
+    refusals,
+    Array(3).fill(
+      '--silence-seconds must be at least 0.001, the shortest wait a timer keeps.',
+    ),
+  )
+  assert.equal(accepted, 0.001)
 })
 
 // Value: protects=the Windows shard job from test-file processes that outlive a call reported as ended, from a `taskkill` that Windows finds in the working folder (a cloned repository could carry one), and the Linux and macOS jobs from a change of the SIGTERM-then-SIGKILL order that lets the runner report what it was running; fails_when=win32 gets only `child.kill()` (TerminateProcess on the runner alone), the program is started by its bare name `taskkill`, win32 has no forced step after the grace, or a POSIX system gets the forced step first; why_new=Cycle 0048 task 56 (Red Team), extended by tasks 67 and 68 (Security, OCR B, Codex); seam=planCallEnd, the answer watchCallSilence takes for process.platform and the SystemRoot variable; no_claim=any run on Windows: no Windows process is started, so that `taskkill` ends the tree there is not shown by this test
