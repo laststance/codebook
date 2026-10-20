@@ -178,7 +178,8 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
       if (!Object.hasOwn(values, key)) throw new Error(`Unknown reader template field: ${key}`);
       return values[key];
     });
-    pages.set(page.path, requireReadablePage(page.path, pageHtml));
+    // A page's text may hold CRLF or a lone CR (an editor on Windows writes them); a browser reads each as LF, so the page is written with LF only, and a checkout with CRLF line ends changes it by the one rule the publisher's refusal of CRLF line ends knows.
+    pages.set(page.path, requireReadablePage(page.path, pageHtml.replace(/\r\n?/g, '\n')));
   }
   return pages;
 }

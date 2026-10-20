@@ -20807,3 +20807,64 @@ test('a publish through the other name of the Wiki folder is refused beside the 
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+// Cycle 0048 task 8 (S11-N4): a published page whose text held CRLF line ends.
+
+// Value: protects=the learner whose agent wrote CRLF line ends into a page's text and who commits the Wiki folder and checks it out with core.autocrlf: the refusal names the CRLF line ends and its way out restores the page; fails_when=the publisher writes the CR of the page's text as it is, so the CRLF-to-LF read of the checked-out page differs from the recorded digest and the step is refused with the sentence of a page changed by hand, which has no way out; why_new=Cycle 0048 task 8 (S11-N4); seam=the published files written again with CRLF line ends, as Git's conversion writes each LF that no CR precedes; no_claim=Git's own conversion and the git commands the refusal names
+test('a publish of a candidate after a Wiki with CRLF line ends in a page’s text was checked out with CRLF line ends is refused with the sentence that names the CRLF line ends and the way out', async () => {
+  // Arrange: a Wiki published from a page whose text holds CRLF line ends, then checked out as Git with core.autocrlf writes it.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-crlf-text-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  try {
+    await mkdir(root)
+    await writeStage(
+      first,
+      root,
+      '<h1>Notes</h1><pre>one\r\ntwo\r\n</pre>',
+      undefined,
+      output,
+    )
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+    const pagePath = join(output, 'index.html')
+    const published = await readFile(pagePath)
+    // Git writes each LF that no CR precedes as CRLF, and leaves a CRLF as it is.
+    await writeFile(
+      pagePath,
+      Buffer.from(
+        published.toString('latin1').replace(/(?<!\r)\n/g, '\r\n'),
+        'latin1',
+      ),
+    )
+
+    // Act
+    const outcome = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      () => 'not refused',
+      (error) => error.message.slice(0, 113),
+    )
+
+    // Assert
+    assert.deepEqual(
+      { publishedHasCarriageReturn: published.includes('\r'), outcome },
+      {
+        publishedHasCarriageReturn: false,
+        outcome:
+          'A file of the published Wiki has CRLF line ends where the publisher wrote LF: read with LF line ends, it matches ',
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
