@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, renameSync, writeFileSync } from 'node:fs'
 import {
   access,
+  chmod,
   cp,
   link,
   lstat,
@@ -21068,3 +21069,54 @@ test('a --recover beside an empty journal and a missing Wiki folder, with three 
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Cycle 0048 task 14 (S11-N10): the copies of the learner's files keep their mode and times.
+for (const kept of [
+  {
+    names: 'times',
+    isSkipped: false,
+    read: async (path) => {
+      const status = await lstat(path)
+      return { modifiedAt: status.mtime.toISOString() }
+    },
+    expected: { modifiedAt: '2021-03-04T05:06:07.000Z' },
+  },
+  {
+    names: 'mode',
+    isSkipped: process.platform === 'win32',
+    read: async (path) => {
+      const status = await lstat(path)
+      return { mode: (status.mode & 0o777).toString(8) }
+    },
+    expected: { mode: '750' },
+  },
+]) {
+  // Value: protects=the learner whose own file lies in the Wiki folder (a script they run, a note whose date they sort by) and who loses its execute bit or its modification date at the next publish; fails_when=the copy of the learner's file into the new Wiki is a new file with the mode the umask gives and the time of the copy; why_new=Cycle 0048 task 14 (S11-N10); seam=the real publish over a Wiki that holds a file of the learner's with a set mode and time; no_claim=owner and group, and a file system that keeps no mode (Windows reads the bits it has)
+  test(
+    `a publish keeps the ${kept.names} of the learner’s file in the new Wiki`,
+    { skip: kept.isSkipped },
+    async () => {
+      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; a candidate stands beside it.
+      const wiki = await publishedWikiWithACandidate()
+      const learnerFile = join(wiki.output, 'manual.sh')
+      try {
+        await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+        await chmod(learnerFile, 0o750)
+        const changedAt = new Date('2021-03-04T05:06:07Z')
+        await utimes(learnerFile, changedAt, changedAt)
+
+        // Act
+        await publishWiki({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        })
+
+        // Assert
+        assert.deepEqual(await kept.read(learnerFile), kept.expected)
+      } finally {
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    },
+  )
+}
