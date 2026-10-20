@@ -1505,20 +1505,29 @@ async function endSupersededRestore(record, requireHeld) {
   return Object.assign(new Error('The altered Wiki manifest changed again after an interrupted recovery; that recovery was ended.'), { isSupersededRestore: true });
 }
 
-/** Restores only receipt-verified metadata, retaining altered bytes before the atomic rename; each write goes through `writeHeld`, and the rename waits for `requireHeld` ({@link restoreManifestHeld}). A recovery resumed after its process stopped (`isResumed`) whose edited manifest changed again since is ended ({@link endSupersededRestore}); one that runs from its start refuses such a change, which happened while it ran. @example await restoreManifest(record, paths, writeHeld, requireHeld, false) */
+/** Restores only receipt-verified metadata, retaining altered bytes before the atomic rename; each write goes through `writeHeld`, and the rename waits for `requireHeld` ({@link restoreManifestHeld}). The folder of the kept copy and the Wiki folder are synced ({@link syncFolder}) before the rename, and the Wiki folder again after it, so the journal that the caller removes next never outlives the names it guards. A recovery resumed after its process stopped (`isResumed`) whose edited manifest changed again since is ended ({@link endSupersededRestore}); one that runs from its start refuses such a change, which happened while it ran. @example await restoreManifest(record, paths, writeHeld, requireHeld, false) */
 async function restoreManifest(record, paths, writeHeld, requireHeld, isResumed) {
   const { root, output } = paths;
   let state = await recoveryState(root, output, record.sourceStage);
   if (!holdsRetainedGeneration(state, record)) throw new Error('The retained Wiki generation changed; recovery was stopped.');
-  if (state.actual && digest(state.actual) === record.manifestSha256) return;
+  if (state.actual && digest(state.actual) === record.manifestSha256) {
+    // The rename of an earlier run may stand only in the cache: its folder is on the disk before this run's journal goes.
+    await syncFolder(output);
+    return;
+  }
   await requireRecordedEdit(state, record, requireHeld, isResumed);
   await keepEditedManifest(state, record, writeHeld);
   await writeStagingManifest(state, record, writeHeld);
+  // The names of the kept copy (beside the Wiki folder) and of the staging file (in it) are on the disk before the rename that replaces the edit: a power cut must not keep the rename and lose the copy's name.
+  await syncFolder(dirname(record.modifiedManifestBackup));
+  await syncFolder(output);
   state = await recoveryState(root, output, record.sourceStage);
   if (!holdsRetainedGeneration(state, record) || actualDigestOf(state) !== record.modifiedManifestSha256)
     throw new Error('The Wiki changed before metadata recovery; all files were preserved.');
   await requireHeld();
   await renameRetried(record.temporaryManifest, join(output, MANIFEST));
+  // The rename is on the disk before the journal that guards it goes.
+  await syncFolder(output);
 }
 
 /** Whether a recovery state still holds the generation a metadata recovery journal retains: a record, or a legacy adoption, whose manifest has the journal's SHA-256 digest. Called by {@link restoreManifest} before and after its writes. @example holdsRetainedGeneration(state, record) // => true while the Wiki's record is the one recovered */

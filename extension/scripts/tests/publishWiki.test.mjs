@@ -20323,3 +20323,90 @@ for (const { refused, argumentsOf } of [
     }
   })
 }
+
+// Cycle 0048, fixer P1 (Issue #105 tasks 2, 3, 4, 5, 7 and 13): the durability of the publish and of the manifest recovery, the learner's files saved at the swap, the owner judgement of this host, the lock a recovery cannot read, and the lock's name.
+
+/**
+ * Reads the calls that {@link fileSystemCallsRecordedIn} recorded, those in or beside one folder, each as one line with its paths relative to that folder, each run's id and each digest hidden.
+ * @param {string} log - The file the calls were recorded in.
+ * @param {string} folder - The folder that holds the Wiki folder.
+ * @returns {Promise<string[]>} One line per call, as `sync wiki.publish-lock.json` or `rename next wiki`.
+ * @example
+ * await recordedCallsBeside(join(directory, 'calls.jsonl'), join(root, '.codebook')) // => ['sync .', 'close .']
+ */
+async function recordedCallsBeside(log, folder) {
+  return (await readFile(log, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .filter(([, path]) => path === folder || path.startsWith(`${folder}/`))
+    .map((call) =>
+      call
+        .map((part, index) =>
+          index === 0
+            ? part
+            : (relative(folder, part) || '.')
+                .replace(
+                  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+                  '<id>',
+                )
+                .replace(/[0-9a-f]{64}/g, '<digest>'),
+        )
+        .join(' '),
+    )
+}
+
+// Value: protects=the learner's edited manifest, which a recovery of the Wiki's metadata keeps beside the Wiki before the generated manifest takes its place, on a power cut right after the recovery (ext4 can keep the rename and lose the name of the kept copy); fails_when=the recovery renames the generated manifest over the edit, or removes its journal, before the folder of the kept copy and the Wiki folder have their names on the disk; why_new=Cycle 0048 task 2 (S11-XA1); seam=a publisher process whose file system calls a module loaded first records in their order (`--import`); no_claim=that a real power cut keeps what the syncs promise
+test('a recovery of an edited manifest syncs the folder of the kept copy and the Wiki folder before the rename that replaces the edit, and the Wiki folder again before its journal goes', async () => {
+  // Arrange: a published Wiki whose manifest the learner edited, and the calls of the recovery are recorded.
+  const wiki = await publishedWikiWithACandidate()
+  const log = join(wiki.directory, 'calls.jsonl'),
+    folder = dirname(wiki.output)
+  await writeFile(join(wiki.output, 'codebook-wiki.json'), '{accidental edit')
+  try {
+    // Act
+    const { code } = runPublisherWith(fileSystemCallsRecordedIn(log), [
+      '--recover',
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+    ])
+
+    // Assert: from the write of the staging file to the removal of the journal.
+    const calls = await recordedCallsBeside(log, folder)
+    const fromStaging = calls.slice(
+      calls.findIndex((call) =>
+        call.startsWith('write wiki/.codebook-restore-'),
+      ),
+    )
+    assert.deepEqual(
+      {
+        code,
+        calls: fromStaging.filter(
+          (call) => !call.startsWith('unlink wiki.publish-journal.json.'),
+        ),
+      },
+      {
+        code: 0,
+        calls: [
+          'write wiki/.codebook-restore-<id>.json',
+          'sync wiki/.codebook-restore-<id>.json',
+          'close wiki/.codebook-restore-<id>.json',
+          // The folder of the kept copy and the Wiki folder, before the rename.
+          'sync .',
+          'close .',
+          'sync wiki',
+          'close wiki',
+          'rename wiki/.codebook-restore-<id>.json wiki/codebook-wiki.json',
+          // The Wiki folder again, before the journal goes.
+          'sync wiki',
+          'close wiki',
+          'unlink wiki.publish-journal.json',
+        ],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
