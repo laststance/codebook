@@ -145,8 +145,8 @@ test('the pre-gate runner refuses a selected file that is no test it can run, an
   })
 })
 
-// Value: protects=the pre-gate runs workflowPins.test.mjs for a change to any CI definition that test reads: a workflow written as `.yml` or `.yaml` and a composite action anywhere under `.github/actions`; fails_when=the policy drops one of the three entries, names a missing test file, or leaves `.yaml` workflows or the actions out (a change there then selects no test); why_new=task 31 was closed by the policy file and evidence only; Cycle 0048 task 105 (OCR B) added the `.yaml` and actions entries; seam=none; no_claim=that the pre-gate reads the policy as this test does (its glob has `*` for one path part and `**` for any)
-test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the workflow files and composite actions, and that test exists', () => {
+// Value: protects=the pre-gate runs workflowPins.test.mjs for a change to any CI definition that test reads: a workflow written as `.yml` or `.yaml`, a composite action anywhere under `.github/actions`, the Node release, the Reader DOM job's package files; and runs no test for the VERSION file, which none reads; fails_when=the policy drops one of these entries, names a missing test file, or leaves `.yaml` workflows, the actions, `.node-version` or either Reader DOM package file out (a change there then selects no test); why_new=task 31 was closed by the policy file and evidence only; Cycle 0048 task 105 (OCR B) added the `.yaml` and actions entries; task 113 added `"VERSION": []`; Cycle 0048 tasks 118 and 122 (Testing, Red Team) pin the VERSION entry and the files workflowPins.test.mjs read that no import reaches; seam=none; no_claim=that the pre-gate reads the policy as this test does (its glob has `*` for one path part and `**` for any), and the files that the import graph reaches by their path in the test text
+test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the workflow files, composite actions, Node release and Reader DOM package files it reads, and VERSION as no lane, and that test exists', () => {
   // Arrange
   const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
   const policy = JSON.parse(
@@ -158,6 +158,11 @@ test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the
     yml: policy.dependencies['.github/workflows/*.yml'],
     yaml: policy.dependencies['.github/workflows/*.yaml'],
     actions: policy.dependencies['.github/actions/**'],
+    nodeVersion: policy.dependencies['.node-version'],
+    readerDomPackage: policy.dependencies['.github/reader-dom/package.json'],
+    readerDomLockfile:
+      policy.dependencies['.github/reader-dom/package-lock.json'],
+    version: policy.dependencies['VERSION'],
   }
 
   // Assert
@@ -166,8 +171,90 @@ test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the
     yml: workflowPins,
     yaml: workflowPins,
     actions: workflowPins,
+    nodeVersion: [
+      'extension/scripts/tests/health.test.mjs',
+      'extension/scripts/tests/workflowPins.test.mjs',
+    ],
+    readerDomPackage: workflowPins,
+    readerDomLockfile: workflowPins,
+    version: [],
   })
   assert.equal(existsSync(`${repositoryRoot}${workflowPins[0]}`), true)
+})
+
+// Value: protects=the pre-gate runs the script test that reads a repository file no import reaches (a file it opens by a path built in code, a place beside it, a file it copies into a fixture, or the policy itself): a change to that file selects the test; fails_when=one of these entries is dropped or points to another test, so a change to `.gitignore`, `AGENTS.md`, `.codex/hooks.json`, the shipped skill's `SKILL.md` or `reader-shell.html`, a browser check, the health checker, the shard script or the policy runs no test that reads it; why_new=Cycle 0048 task 122 (Red Team: workflowPins.test.mjs read five files that the policy named nowhere; the same search over every script test found the rest); seam=none; no_claim=files that a test only writes into a fixture (the fixtures of packageIO.test.mjs, `extension/test-timings.json`), and the files the import graph reaches, which the pre-gate decides
+test('the pre-gate policy declares the script test that reads each repository file the import graph does not reach, and every test it names exists', () => {
+  // Arrange
+  const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+  const policy = JSON.parse(
+    readFileSync(`${repositoryRoot}.gstack/pregate.json`, 'utf8'),
+  )
+  const scriptTests = 'extension/scripts/tests/'
+
+  // Act
+  const declared = (file) => policy.dependencies[file]
+  const lanes = {
+    gitignore: declared('.gitignore'),
+    policy: declared('.gstack/pregate.json'),
+    agents: declared('AGENTS.md'),
+    codexHooks: declared('.codex/hooks.json'),
+    healthChecker: declared('extension/scripts/checkHealth.mjs'),
+    shardScript: declared('extension/scripts/test-shard.mjs'),
+    studyCheck: declared('extension/scripts/study-bootstrap-qa.mjs'),
+    wikiCheck: declared('extension/scripts/wiki-reader-dom-qa.mjs'),
+    wikiShellFixture: declared(
+      'extension/scripts/fixtures/reader-shell-0.2.29.0.txt',
+    ),
+    publishProbe: declared(`${scriptTests}utils/prepareWikiBufferProbe.mjs`),
+    publishHooks: declared(`${scriptTests}utils/markedCopyHooks.mjs`),
+    publishKilledProbe: declared(
+      `${scriptTests}utils/killedPublisherProbe.mjs`,
+    ),
+    skillGuide: declared('extension/skills/codebook/SKILL.md'),
+    readerShell: declared('extension/skills/codebook/reader-shell.html'),
+    constants: declared('extension/src/constants.ts'),
+    deepWikiReader: declared('extension/src/deepWikiReader.ts'),
+    wikiUpdateStatus: declared(
+      'extension/src/utils/installWikiUpdateStatus.ts',
+    ),
+    editorLinks: declared('extension/src/utils/rebindDeepWikiEditorLinks.ts'),
+    shortcutHelp: declared('extension/src/utils/installShortcutHelp.ts'),
+  }
+  const namedTests = Object.values(policy.dependencies).flat()
+  const missingTests = namedTests.filter(
+    (test) => !existsSync(`${repositoryRoot}${test}`),
+  )
+
+  // Assert
+  const publishWiki = [`${scriptTests}publishWiki.test.mjs`]
+  assert.deepEqual(lanes, {
+    gitignore: [`${scriptTests}repositoryIgnore.test.mjs`],
+    policy: [`${scriptTests}pregateTests.test.mjs`],
+    agents: ['.codex/restore-product-context.test.mjs'],
+    codexHooks: ['.codex/restore-product-context.test.mjs'],
+    healthChecker: [`${scriptTests}health.test.mjs`],
+    shardScript: [`${scriptTests}testShards.test.mjs`],
+    studyCheck: [`${scriptTests}studyBootstrapQa.test.mjs`],
+    wikiCheck: [`${scriptTests}wikiReaderDomQa.test.mjs`],
+    wikiShellFixture: [`${scriptTests}wikiReaderDomQa.test.mjs`],
+    publishProbe: publishWiki,
+    publishHooks: publishWiki,
+    publishKilledProbe: publishWiki,
+    skillGuide: [
+      `${scriptTests}publishWiki.test.mjs`,
+      `${scriptTests}renderWikiPageLimit.test.mjs`,
+    ],
+    readerShell: [
+      `${scriptTests}publishWiki.test.mjs`,
+      `${scriptTests}studyBootstrapQa.test.mjs`,
+    ],
+    constants: publishWiki,
+    deepWikiReader: publishWiki,
+    wikiUpdateStatus: publishWiki,
+    editorLinks: publishWiki,
+    shortcutHelp: publishWiki,
+  })
+  assert.deepEqual(missingTests, [])
 })
 
 /**

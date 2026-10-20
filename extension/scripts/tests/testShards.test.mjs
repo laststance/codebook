@@ -815,7 +815,7 @@ test('the shard script counts the tests of a call and passes when FORCE_COLOR is
   )
 })
 
-// Value: protects=a run of the pre-gate or a shard call that holds a test which starts a child with FORCE_COLOR: Node warns on stderr when NO_COLOR is also set ("The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set"), so that test's empty-stderr claim failed inside the pre-gate's own run; fails_when=plainOutputEnvironment sets NO_COLOR again, so a nested FORCE_COLOR child prints the warning; why_new=Cycle 0048 task 116 (NO_COLOR beside FORCE_COLOR); seam=plainOutputEnvironment's result as the environment of a real node process that also sets FORCE_COLOR; no_claim=an outer NO_COLOR the caller set itself
+// Value: protects=a run of the pre-gate or a shard call that holds a test which starts a child with FORCE_COLOR: Node warns on stderr when NO_COLOR is also set ("The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set"), so that test's empty-stderr claim failed inside the pre-gate's own run; fails_when=plainOutputEnvironment sets NO_COLOR again, so a nested FORCE_COLOR child prints the warning; why_new=Cycle 0048 task 116 (NO_COLOR beside FORCE_COLOR); seam=plainOutputEnvironment's result as the environment of a real node process that also sets FORCE_COLOR; plainOutputEnvironment's result for an environment that holds the caller's own NO_COLOR (Cycle 0048 task 118: its docstring says it stays, and no test pinned it); no_claim=what Node does with a NO_COLOR beside a FORCE_COLOR the caller set itself
 test('the plain output environment leaves a nested child that sets FORCE_COLOR without a NO_COLOR warning', () => {
   // Arrange
   const plainEnvironment = plainOutputEnvironment({
@@ -829,10 +829,18 @@ test('the plain output environment leaves a nested child that sets FORCE_COLOR w
     env: { ...plainEnvironment, FORCE_COLOR: '1' },
   })
 
+  const callerOwnNoColor = plainOutputEnvironment({
+    FORCE_COLOR: '1',
+    NO_COLOR: '1',
+    PATH: '/usr/bin',
+  })
+
   // Assert
   assert.deepEqual(Object.keys(plainEnvironment), ['PATH'])
   assert.equal(child.stderr, '')
   assert.equal(child.status, 0)
+  // A NO_COLOR the caller set stays; only FORCE_COLOR is taken out.
+  assert.deepEqual(callerOwnNoColor, { NO_COLOR: '1', PATH: '/usr/bin' })
 })
 
 // Value: protects=the shard job's result: a failed call must fail the job; fails_when=test-shard.mjs ends with exit code 0 although a call failed, or prints no failure line; why_new=Cycle 0048 task 27 (test guide, 2026-10-02: the script's own exit code had no test); seam=test-shard.mjs started as a process on a fixture build

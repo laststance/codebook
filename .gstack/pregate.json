@@ -2,7 +2,7 @@
   "runner": "node extension/scripts/run-pregate-tests.mjs {files}",
   "dependencies": {
     ".coderabbit.yaml": [],
-    ".gitignore": [],
+    ".gitignore": ["extension/scripts/tests/repositoryIgnore.test.mjs"],
     "VERSION": [],
     ".codex/restore-product-context.mjs": [
       ".codex/restore-product-context.test.mjs"
@@ -14,16 +14,70 @@
     ".github/workflows/*.yaml": [
       "extension/scripts/tests/workflowPins.test.mjs"
     ],
-    ".github/actions/**": [
+    ".github/actions/**": ["extension/scripts/tests/workflowPins.test.mjs"],
+    ".gstack/pregate.json": ["extension/scripts/tests/pregateTests.test.mjs"],
+    ".node-version": [
+      "extension/scripts/tests/health.test.mjs",
       "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    "AGENTS.md": [".codex/restore-product-context.test.mjs"],
+    ".codex/hooks.json": [".codex/restore-product-context.test.mjs"],
+    ".github/reader-dom/package.json": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    ".github/reader-dom/package-lock.json": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    "extension/scripts/checkHealth.mjs": [
+      "extension/scripts/tests/health.test.mjs"
+    ],
+    "extension/scripts/test-shard.mjs": [
+      "extension/scripts/tests/testShards.test.mjs"
+    ],
+    "extension/scripts/study-bootstrap-qa.mjs": [
+      "extension/scripts/tests/studyBootstrapQa.test.mjs"
+    ],
+    "extension/scripts/wiki-reader-dom-qa.mjs": [
+      "extension/scripts/tests/wikiReaderDomQa.test.mjs"
+    ],
+    "extension/scripts/fixtures/reader-shell-0.2.29.0.txt": [
+      "extension/scripts/tests/wikiReaderDomQa.test.mjs"
+    ],
+    "extension/scripts/tests/utils/prepareWikiBufferProbe.mjs": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/scripts/tests/utils/markedCopyHooks.mjs": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/scripts/tests/utils/killedPublisherProbe.mjs": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/skills/codebook/SKILL.md": [
+      "extension/scripts/tests/publishWiki.test.mjs",
+      "extension/scripts/tests/renderWikiPageLimit.test.mjs"
+    ],
+    "extension/skills/codebook/reader-shell.html": [
+      "extension/scripts/tests/publishWiki.test.mjs",
+      "extension/scripts/tests/studyBootstrapQa.test.mjs"
+    ],
+    "extension/src/constants.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/src/deepWikiReader.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/src/utils/installWikiUpdateStatus.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/src/utils/rebindDeepWikiEditorLinks.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/src/utils/installShortcutHelp.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
     ]
   },
   "strays": {
-    "allow": [
-      ".gstack"
-    ]
+    "allow": [".gstack"]
   },
-  "warn": [
-    "literals"
-  ]
+  "warn": ["literals"]
 }
