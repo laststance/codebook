@@ -21006,3 +21006,65 @@ test('a --recover that ends an empty journal and the publish lock beside it answ
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Cycle 0048 task 10 (S11-N6): the refusal of an empty journal beside a missing Wiki folder names the newest prior Wiki.
+
+// Value: protects=the learner's prior Wiki and files after a power cut left the Wiki folder missing and the journal empty while several folders keep a prior Wiki (one for each earlier publish): the agent is told which folder is the newest, so it moves back the Wiki that was current and not an older one by the order of the random names; fails_when=the refusal says "the newest of those folders" and names none, so the agent picks one by name; why_new=Cycle 0048 task 10 (S11-N6); seam=a publisher process killed between the two moves of its swap, with two older prior Wikis made beside it, one named to sort before and one to sort after the kept one; no_claim=a real power cut, and which folder the learner finally agrees to move back
+test('a --recover beside an empty journal and a missing Wiki folder, with three folders that keep a prior Wiki, names the newest of them by its last change', async () => {
+  // Arrange: the publish is killed between the two moves of its swap, so its prior Wiki is the newest folder; its journal is empty and a minute old; two older prior Wikis stand beside it.
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'renaming', folder: dirname(wiki.output), name: '^next$' },
+      ],
+    })
+    await writeFile(journal, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+    const newestName = String(
+      (await readdir(dirname(wiki.output))).find((name) =>
+        name.startsWith('wiki.previous-'),
+      ),
+    )
+    const longAgo = new Date('2020-01-01T00:00:00Z')
+    const olderFolders = [
+      'wiki.previous-00000000-0000-4000-8000-000000000000',
+      'wiki.previous-ffffffff-ffff-4fff-8fff-ffffffffffff',
+    ].map((name) => join(dirname(wiki.output), name))
+    for (const folder of olderFolders) {
+      await mkdir(folder)
+      await utimes(folder, longAgo, longAgo)
+    }
+    const newest = join(dirname(wiki.output), newestName)
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert: the refusal names the three folders in the order of their names, and the newest by its path.
+    const [first, last] = olderFolders
+    const kept = [first, newest, last].sort()
+    assert.deepEqual(
+      { killed, recovery },
+      {
+        killed: '',
+        recovery: `The Wiki publication journal is empty, and the Wiki folder ${wiki.output} is missing, while the folders ${kept.join(', ')} stand beside it, where a publish keeps the prior Wiki and the learner’s files when it replaces the Wiki: a publish stopped by a power cut or a system crash after it moved the Wiki there can leave its journal empty. Nothing was moved, and the journal was kept. Show this to the learner; once they agree, move the newest of those folders, ${newest} (the one changed last), back to ${wiki.output}, then run --recover again.`,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
