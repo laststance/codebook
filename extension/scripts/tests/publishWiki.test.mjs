@@ -3912,6 +3912,8 @@ for (const linkKind of ['symbolic link', 'hard link']) {
     const wiki = await publishedWikiWithACandidate()
     const outsideFile = join(wiki.directory, 'outside.txt'),
       page = join(wiki.next, 'index.html')
+    // The swap runs only where the preview reads the candidate's record as the seam waits for it; a preview that reads it another way would write a page with no link in place.
+    let hasLinkedThePage = false
     try {
       await writeFile(outsideFile, 'A file outside the project')
       swapBeforeReading(
@@ -3920,6 +3922,7 @@ for (const linkKind of ['symbolic link', 'hard link']) {
           await rm(page)
           if (linkKind === 'symbolic link') await symlink(outsideFile, page)
           else await link(outsideFile, page)
+          hasLinkedThePage = true
         },
       )
 
@@ -3938,6 +3941,7 @@ for (const linkKind of ['symbolic link', 'hard link']) {
       const pageEntry = await lstat(page)
       assert.deepEqual(
         {
+          hasLinkedThePage,
           preview,
           outsideFile: await readFile(outsideFile, 'utf8'),
           pageIsARegularFileOfItsOwn:
@@ -3945,6 +3949,7 @@ for (const linkKind of ['symbolic link', 'hard link']) {
           pageStart: (await readFile(page, 'utf8')).slice(0, 15),
         },
         {
+          hasLinkedThePage: true,
           preview: { renderedPages: 1 },
           outsideFile: 'A file outside the project',
           pageIsARegularFileOfItsOwn: true,
@@ -3967,6 +3972,8 @@ test('a publish whose candidate manifest and record are replaced by links to fil
   const wiki = await publishedWikiWithACandidate()
   const outsideManifest = join(wiki.directory, 'outside-manifest.json'),
     outsideRecord = join(wiki.directory, 'outside-record.json')
+  // The swap runs only where the publish reads the Wiki's record as the seam waits for it; a publish that reads it another way would finalize a candidate with no link in place.
+  let hasLinkedTheRecords = false
   try {
     await writeFile(outsideManifest, 'A file outside the project')
     await writeFile(outsideRecord, 'Another file outside the project')
@@ -3980,6 +3987,7 @@ test('a publish whose candidate manifest and record are replaced by links to fil
           outsideRecord,
           join(wiki.next, 'codebook-publication.json'),
         )
+        hasLinkedTheRecords = true
       },
     )
 
@@ -3998,6 +4006,7 @@ test('a publish whose candidate manifest and record are replaced by links to fil
       recordEntry = await lstat(join(wiki.output, 'codebook-publication.json'))
     assert.deepEqual(
       {
+        hasLinkedTheRecords,
         publish,
         outsideManifest: await readFile(outsideManifest, 'utf8'),
         outsideRecord: await readFile(outsideRecord, 'utf8'),
@@ -4011,6 +4020,7 @@ test('a publish whose candidate manifest and record are replaced by links to fil
         recordIsAFile: recordEntry.isFile(),
       },
       {
+        hasLinkedTheRecords: true,
         publish: { publishedFiles: 1 },
         outsideManifest: 'A file outside the project',
         outsideRecord: 'Another file outside the project',
