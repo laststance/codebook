@@ -4,7 +4,7 @@
 //   node scripts/test-shard.mjs                         the whole suite on this machine
 //   node scripts/test-shard.mjs --shard 3/8 --lanes 2 --list   print that share's plan without running it
 //   node scripts/test-shard.mjs --record                run every file and rewrite test-timings.json; a test that takes longer than the silence limit fails the recording
-//   node scripts/test-shard.mjs --whole-split-files     run the files the plan splits, whole and with Node's default exit
+//   node scripts/test-shard.mjs --whole-split-files     run the files the plan splits, whole and with Node's default exit; with none split it says so and passes
 //   --silence-seconds 120                               end a call that prints nothing for this long (at most 2147483)
 //
 // Build first (`pnpm build` or `pnpm build:fast`); this script only reads dist/tests.
@@ -199,6 +199,9 @@ if (options.record) {
     : planTestShards({ files, timings, ...options })[options.shard - 1]
   if (options.list) {
     console.log(JSON.stringify(lanes, null, 2))
+  } else if (options.wholeSplitFiles && lanes.flat().length === 0) {
+    // The job runs the files the shards split, whole. With none split there is nothing to run and nothing failed, so it says so and passes; "0 tests in 0 calls" would read as a run that counted nothing.
+    console.log('No test file is split, so no file runs whole.')
   } else {
     const startedAt = performance.now()
     const { tests, failedCalls } = await runLanes(lanes, options.silenceSeconds)

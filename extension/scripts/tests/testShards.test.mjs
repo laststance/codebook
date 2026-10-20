@@ -976,6 +976,46 @@ test('running the split files whole reports an error raised after their last tes
   assert.deepEqual(await readExecuted(root), ['late.test.js::first'])
 })
 
+// Value: protects=the reader of the `split-files` job's log: when no file is split (every recorded file is under SPLIT_TEST_FILE_MS) the job says that no file runs whole and passes, instead of the line "Shard 1/1: 0 tests in 0 calls" that reads as a run which counted nothing; fails_when=--whole-split-files with no split file prints the shard line again, runs a call, or fails the job (nothing was split, so there is nothing to fail); why_new=Cycle 0048 task 119 (OCR B: the job passed as a silent no-op); seam=test-shard.mjs --whole-split-files started as a process on a fixture build whose files are all quick; no_claim=the split-file run itself, which the test above covers
+test('running the split files whole says that no file is split and passes when every file is quick', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'quick.test.js': loggingTestSource(['quick one']),
+      'other.test.js': loggingTestSource(['other one']),
+    },
+    timings: {
+      files: {
+        'quick.test.js': { totalMs: 100 },
+        'other.test.js': { totalMs: 200 },
+      },
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, [
+    '--whole-split-files',
+    '--lanes',
+    '2',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      executed: await readExecuted(root),
+    },
+    {
+      code: 0,
+      stdout: 'No test file is split, so no file runs whole.\n',
+      stderr: '',
+      executed: [],
+    },
+  )
+})
+
 // Value: protects=the shard job's verdict on a call that was ended for its silence: it fails whatever exit code the runner gives after the SIGTERM, and the silent file is named; fails_when=the failure of a call is decided by the runner's exit code alone, so a runner that winds down with exit code 0 after the silence SIGTERM makes the hung test pass as "0 failed calls" and the job goes green; why_new=Cycle 0048 task 53 (Core, OCR B); seam=test-shard.mjs started as a process on a fixture build whose copy of runTestInvocation starts a stand-in runner (`runnerArguments`) that exits 0 at its SIGTERM; no_claim=what the real Node runner exits with after a SIGTERM (it exits 1)
 test('the shard script fails the shard for a call ended for its silence even when the runner exits 0 after the SIGTERM', async (context) => {
   // Arrange
