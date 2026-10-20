@@ -143,7 +143,7 @@ test('a publish lock a stopped publish or preview left blocks the start and name
 
     // Assert
     assert.deepEqual(block, {
-      cause: 'unfinished-publish',
+      cause: 'held-publish-lock',
       paths: ['wiki.publish-lock.json'],
     })
     const stage = await wiki.prepare()
@@ -152,6 +152,36 @@ test('a publish lock a stopped publish or preview left blocks the start and name
       wiki.publish(stage),
       /Another publish of this Wiki holds its publish lock/,
     )
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the learner who presses Update while a publish swaps the Wiki folders, when its journal stands beside its publish lock, or after a publish was stopped with both standing; fails_when=the start check names the journal first and says that an earlier publish did not finish, and sends the learner to the recovery, which refuses while that publish runs, although a running publish holds its lock as long as its journal stands; why_new=Cycle 0047 row 253 (P3SM-09: the cell "journal and lock both stand" had no test; P3OCR2a1-2 = P3CLA-8); seam=none; no_claim=the owner of either record, which the start check does not judge
+test('a journal and a publish lock that stand together block the start with the lock, which a running publish holds as long as its journal stands', async () => {
+  // Arrange: a journal and a lock, both written a minute before the check looks.
+  const wiki = await publishedWikiFixture()
+  await writeFile(
+    `${wiki.outputDirectory}.publish-journal.json`,
+    JSON.stringify({ operation: 'publish', pid: process.pid }),
+  )
+  await writeFile(
+    `${wiki.outputDirectory}.publish-lock.json`,
+    JSON.stringify({ pid: process.pid }),
+  )
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+      { now: () => Date.now() + 60_000 },
+    )
+
+    // Assert
+    assert.deepEqual(block, {
+      cause: 'held-publish-lock',
+      paths: ['wiki.publish-lock.json'],
+    })
   } finally {
     await wiki.cleanup()
   }
@@ -195,7 +225,7 @@ test('a publish lock written a moment ago is looked at once more: one gone by th
       {
         lockThatGoes: undefined,
         lockThatStays: {
-          cause: 'unfinished-publish',
+          cause: 'held-publish-lock',
           paths: ['wiki.publish-lock.json'],
         },
         waits: [2_000, 2_000],

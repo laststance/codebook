@@ -6,7 +6,7 @@ export type WikiUpdateHost = 'vscode' | 'cursor'
 /** Whether the published site was the same when a run ended (`kept`), was replaced during it (`replaced`), or was not there to be called either (`missing`: a publish that was stopped inside its swap, a start refused because the folder holds no Wiki, or a run whose end could not be read from the disk, {@link unreadWikiUpdateEnd}); a reader says nothing of the site for `missing`. */
 export type WikiUpdateSite = 'kept' | 'replaced' | 'missing'
 
-/** Why an update would overwrite or cannot replace something: a learner's own file, a generated page edited by hand, a generated page that is gone, a link or special file in the Wiki folder, a Wiki folder that is itself a link or a file, a link or a file on the Wiki folder's path inside the project, the manifest changed after its publish, a manifest that cannot be read, or an earlier publish that did not finish. */
+/** Why an update would overwrite or cannot replace something: a learner's own file, a generated page edited by hand, a generated page that is gone, a link or special file in the Wiki folder, a Wiki folder that is itself a link or a file, a link or a file on the Wiki folder's path inside the project, the manifest changed after its publish, a manifest that cannot be read, an earlier publish that did not finish, or a publish that holds the Wiki's publish lock, which may still run or was stopped. */
 export type WikiUpdateConflictCause =
   | 'learner-file'
   | 'edited-page'
@@ -17,6 +17,7 @@ export type WikiUpdateConflictCause =
   | 'edited-manifest'
   | 'unreadable-manifest'
   | 'unfinished-publish'
+  | 'held-publish-lock'
 
 /** Where the Wiki lives: the absolute resolved folder, and the text the learner reads for it (project-relative when inside the project). */
 export type WikiUpdateOutput = { outputDirectory: string; outputLabel: string }

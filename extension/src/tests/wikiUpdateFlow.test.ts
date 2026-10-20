@@ -4144,6 +4144,39 @@ test('a press after a publish stopped inside its swap names the unfinished publi
   }
 })
 
+// Value: protects=the learner who presses Update LLM Wiki while a publish of this Wiki has run for more than 10 s (another window's chat, a chat this window stopped watching, a terminal): the start is refused with a sentence that is true while that publish runs and after it was stopped; fails_when=a publish lock older than 10 s is reported as an earlier publish that did not finish, so the learner asks the chat for the recovery, which refuses beside the live publish; why_new=Cycle 0047 row 253 (P3OCR2a1-2 = P3CLA-8): since row 237 every lock older than 10 s was named a stopped publish; seam=a publish lock dated a minute back, as a publish that has run for a minute holds it; no_claim=the lock's owner, which the start does not judge
+test('a press while a publish has held the Wiki’s publish lock for a minute says that the lock is held and its publish may still run, not that an earlier publish did not finish', async () => {
+  // Arrange: a publish lock written a minute ago, as a publish that runs that long holds it.
+  const wiki = await openWikiWindow()
+  const lockPath = `${wiki.outputDirectory}.publish-lock.json`
+  await writeFile(lockPath, JSON.stringify({ pid: process.pid }))
+  const aMinuteAgo = new Date(Date.now() - 60_000)
+  await utimes(lockPath, aMinuteAgo, aMinuteAgo)
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert: the notice is compared with its local time taken out.
+    const status = wiki.status()
+    assert.deepEqual(
+      {
+        cause: status.state === 'conflict' ? status.cause : status.state,
+        notices: wiki.errors.map((notice) =>
+          notice.replace(new RegExp(`\\(${CLOCK_TIME}\\)`), '(<time>)'),
+        ),
+      },
+      {
+        cause: 'held-publish-lock',
+        notices: [
+          'Update not started (<time>): a publish of this Wiki holds its publish lock (wiki.publish-lock.json). It may still be running: press Update LLM Wiki again once it ends. If it was stopped, ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project" once its process exits, then press Update LLM Wiki again.',
+        ],
+      },
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a Cursor run whose publish was stopped inside its swap says the Wiki is missing and names the recovery, and the next press names the same step', async () => {
   // Arrange
   const wiki = await openWikiWindow({

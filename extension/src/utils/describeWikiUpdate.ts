@@ -467,11 +467,14 @@ export function describeWikiUpdate(
     return undefined
   }
   /**
-   * Words a start refused because of the Wiki's manifest or an unfinished publish, each ending with the recovery request for the editor chat; called by {@link describeConflict} after {@link describePageRefusal}.
+   * Words a start refused because of the Wiki's manifest, an unfinished publish or a publish that holds the Wiki's publish lock, each ending with the recovery request for the editor chat; called by {@link describeConflict} after {@link describePageRefusal}.
+   * The lock's sentence is true of a publish that still runs and of one that was stopped, as the publisher's own refusal of the lock is: the start does not judge the lock's owner, and the recovery refuses while that owner runs (Cycle 0047 row 253).
    * @param cause - The cause of the conflict.
    * @param named - The paths as the sentence names them.
-   * @returns The sentence after the time for `edited-manifest`, `unreadable-manifest` and `unfinished-publish`; undefined for every other cause.
-   * @example describeRecoveryRefusal('unfinished-publish', '.codebook/wiki.staging').slice(0, 60) // => 'an earlier publish did not finish (.codebook/wiki.staging). A'
+   * @returns The sentence after the time for `edited-manifest`, `unreadable-manifest`, `unfinished-publish` and `held-publish-lock`; undefined for every other cause.
+   * @example
+   * describeRecoveryRefusal('unfinished-publish', '.codebook/wiki.staging')?.slice(0, 61) // => 'an earlier publish did not finish (.codebook/wiki.staging). A'
+   * describeRecoveryRefusal('held-publish-lock', 'wiki.publish-lock.json')?.slice(0, 52) // => 'a publish of this Wiki holds its publish lock (wiki.'
    */
   const describeRecoveryRefusal = (
     cause: WikiUpdateStatusOf<'conflict'>['cause'],
@@ -494,6 +497,15 @@ export function describeWikiUpdate(
     if (cause === 'unfinished-publish')
       return (
         'an earlier publish did not finish (' + named + '). A' + recoveryStep
+      )
+    // A publish holds its lock while it runs, so the learner waits for it first; only a stopped one is recovered, once its process is gone.
+    if (cause === 'held-publish-lock')
+      return (
+        'a publish of this Wiki holds its publish lock (' +
+        named +
+        '). It may still be running: press Update LLM Wiki again once it ends. If it was stopped, ask the editor chat "' +
+        wording.recoveryRequest +
+        '" once its process exits, then press Update LLM Wiki again.'
       )
     return undefined
   }

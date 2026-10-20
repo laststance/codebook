@@ -574,6 +574,29 @@ test('an unfinished earlier publish is named as the reason no update started, wi
   )
 })
 
+// Value: protects=the learner who reads on the Wiki page or in the editor's notice why an update did not start while a publish holds the Wiki's publish lock; fails_when=the sentence says that an earlier publish did not finish and sends the learner to the recovery although that publish may still run, which the recovery then refuses, or leaves out the recovery a stopped one needs; why_new=Cycle 0047 row 253 (P3OCR2a1-2 = P3CLA-8): the lock had the sentence of an unfinished publish; seam=none
+test('a publish lock that blocks the start is named with the wait for a publish that still runs and the recovery of one that was stopped', () => {
+  // Arrange
+  const status: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['wiki.publish-lock.json'],
+    cause: 'held-publish-lock',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(status, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): a publish of this Wiki holds its publish lock (wiki.publish-lock.json). It may still be running: press Update LLM Wiki again once it ends. If it was stopped, ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project" once its process exits, then press Update LLM Wiki again.',
+  )
+})
+
 // Value: protects=one recovery request in the page's sentences, the editor's notice and the failure reasons, which all take it from one constant; fails_when=the embedded sentence writer keeps its own copy of the request, so a change of the constant makes page and failure reason name different requests; why_new=Cycle 0045 local review wiki-1 #12; seam=none
 test('the recovery request a refused start names is the one its caller hands over', () => {
   // Arrange

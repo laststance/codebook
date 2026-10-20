@@ -456,6 +456,20 @@ test('the packaged README says that a VS Code update waits 30 seconds for the ch
   )
 })
 
+// Value: protects=a learner reading in the README's Update table why an update did not start while a publish of this Wiki holds its publish lock; fails_when=the row names only an earlier publish that did not finish, so the README tells the learner of a publish that still runs to recover it, which the recovery refuses; why_new=Cycle 0047 row 253 (P3OCR2a1-2 = P3CLA-8): a held lock got a sentence and a cause of its own; seam=none
+test('the packaged README’s row Update not started names a publish that holds the Wiki’s publish lock, which may still be running or was stopped', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "A generated page or the Wiki's manifest was changed by hand, a publish of this Wiki holds its publish lock (it may still be running, or it was stopped), an earlier publish did not finish, or the Wiki folder, or a folder on its path inside the project, is a link or a file, which the publisher refuses. No agent ran.",
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true])
+})
+
 // Value: protects=a learner who presses Update LLM Wiki in VS Code reading where the request goes (a new chat, not the chat they use), where their own chat went, that Codebook leaves its request in the chat at the 30 seconds and why, and what an editor without New Chat does instead; fails_when=the README describes a request typed into the learner's chat, says that Codebook runs the chat's Cancel or removes queued requests at the 30 seconds, or names another sentence than the product prints; why_new=Cycle 0046 rows 82 and 129; Cycle 0047 row 6 (S11-X2): Codebook no longer runs the chat's Cancel or Remove All Queued, which act on the chat focused last; seam=none
 test('the packaged README says that a VS Code update sends its request into a new chat, where the learner’s chat went, that at the 30 seconds Codebook leaves its request in the chat and runs none of the chat’s commands, and what an editor without New Chat does', async () => {
   // Arrange
