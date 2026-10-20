@@ -20868,3 +20868,86 @@ test('a publish of a candidate after a Wiki with CRLF line ends in a page’s te
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+// Cycle 0048 task 11 (S11-N7): the staging file of a metadata recovery that returns early.
+for (const staged of [
+  {
+    names: 'holds the retained manifest',
+    bytes: 'RETAINED',
+    remains: [],
+  },
+  {
+    names: 'holds other bytes',
+    bytes: '{half a manifest',
+    remains: ['.codebook-restore-12345678-1234-1234-1234-123456789abc.json'],
+  },
+]) {
+  // Value: protects=the learner whose metadata recovery was stopped after it wrote its staging file and whose manifest was then put back as the retained one, and the next publish that would carry a leftover staging file over as the learner's own file; fails_when=the recovery returns at once for a manifest that is the retained one and leaves its staging file in the Wiki folder, where it counts as a learner's file, or removes a staging file whose bytes are not the retained manifest's; why_new=Cycle 0048 task 11 (S11-N7); seam=the real recovery over a restore-manifest journal a stopped recovery left; no_claim=the recovery that rewrites an edited manifest (the tests of the interrupted metadata restoration above)
+  test(`a --recover of a stopped metadata recovery whose manifest is the retained one already, with a staging file that ${staged.names}, ${staged.remains.length === 0 ? 'removes the staging file' : 'keeps the staging file'}`, async () => {
+    // Arrange: a published Wiki; a journal of a stopped metadata recovery, whose staging file stands in the Wiki folder; the manifest is the retained one.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-staging-file-')),
+    )
+    const output = join(root, '.codebook/wiki'),
+      first = join(root, '.codebook/first')
+    try {
+      await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+      await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: first,
+      })
+      const retained = await readFile(join(output, 'codebook-wiki.json'))
+      const id = '12345678-1234-1234-1234-123456789abc',
+        journal = output + '.publish-journal.json'
+      const record = {
+        projectRoot: root,
+        output,
+        operation: 'restore-manifest',
+        pid: 99999999,
+        id,
+        manifestSha256: createHash('sha256').update(retained).digest('hex'),
+        modifiedManifestSha256: createHash('sha256')
+          .update('{unfinished edit')
+          .digest('hex'),
+        modifiedManifestBackup: output + '.modified-manifest-' + id + '.json',
+        temporaryManifest: join(output, '.codebook-restore-' + id + '.json'),
+      }
+      await writeFile(journal, JSON.stringify(record))
+      await writeFile(record.modifiedManifestBackup, '{unfinished edit')
+      await writeFile(
+        record.temporaryManifest,
+        staged.bytes === 'RETAINED' ? retained : staged.bytes,
+      )
+
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: root,
+        outputDirectory: output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert: the staging file is gone when it held the retained manifest, and the manifest is untouched.
+      assert.deepEqual(
+        {
+          recovery,
+          filesInTheWiki: (await readdir(output))
+            .filter((name) => name.startsWith('.codebook-restore-'))
+            .sort(),
+          manifestIsRetained: (
+            await readFile(join(output, 'codebook-wiki.json'))
+          ).equals(retained),
+        },
+        {
+          recovery: 'manifest-restored',
+          filesInTheWiki: staged.remains,
+          manifestIsRetained: true,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}

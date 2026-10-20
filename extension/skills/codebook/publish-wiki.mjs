@@ -1547,10 +1547,15 @@ async function recoveryState(root, output, stageDirectory) {
   return { ...parsed, bytes, actual: await regularBytes(join(output, MANIFEST), true), files, legacyRecovery: true };
 }
 
-/** Ends a resumed metadata recovery whose edited manifest the learner changed again after its process stopped: the staging file it wrote in the Wiki folder is removed while it holds the retained manifest, so no file of the recovery's is left there for the next publish to carry over as the learner's, and the edit it kept beside the Wiki stays. The refusal it answers is marked, so {@link runRecovery} removes the journal and {@link recoverAt} recovers again from the manifest as it is now. Called by {@link requireRecordedEdit}. @returns The marked refusal, to be thrown. @example throw await endSupersededRestore(record, requireHeld) */
-async function endSupersededRestore(record, requireHeld) {
+/** Removes the staging file of a metadata recovery from the Wiki folder while it holds the retained manifest, the bytes the recovery wrote into it ({@link writeStagingManifest}): a file of other bytes may be the learner's, or a write a stop cut short, and stays. Without it the file is left in the Wiki folder where no manifest lists it, and the next publish carries it over as a file of the learner's. Called by {@link endSupersededRestore} and {@link restoreManifest}. @param record - The recovery's journal record. @param requireHeld - The hold of the output's path and folder, checked just before the removal. @example await removeStagingManifest(record, requireHeld) */
+async function removeStagingManifest(record, requireHeld) {
   const temporary = await regularBytes(record.temporaryManifest, true).catch(() => undefined);
   if (temporary !== undefined && digest(temporary) === record.manifestSha256) { await requireHeld(); await unlink(record.temporaryManifest); }
+}
+
+/** Ends a resumed metadata recovery whose edited manifest the learner changed again after its process stopped: the staging file it wrote in the Wiki folder is removed while it holds the retained manifest ({@link removeStagingManifest}), so no file of the recovery's is left there for the next publish to carry over as the learner's, and the edit it kept beside the Wiki stays. The refusal it answers is marked, so {@link runRecovery} removes the journal and {@link recoverAt} recovers again from the manifest as it is now. Called by {@link requireRecordedEdit}. @returns The marked refusal, to be thrown. @example throw await endSupersededRestore(record, requireHeld) */
+async function endSupersededRestore(record, requireHeld) {
+  await removeStagingManifest(record, requireHeld);
   return Object.assign(new Error('The altered Wiki manifest changed again after an interrupted recovery; that recovery was ended.'), { isSupersededRestore: true });
 }
 
@@ -1559,8 +1564,9 @@ async function restoreManifest(record, paths, writeHeld, requireHeld, isResumed)
   const { root, output } = paths;
   let state = await recoveryState(root, output, record.sourceStage);
   if (!holdsRetainedGeneration(state, record)) throw new Error('The retained Wiki generation changed; recovery was stopped.');
+  // A manifest that is the retained one needs no restore. The rename of an earlier run may stand only in the cache: its folder is on the disk before this run's journal goes. The staging file a stopped run of this recovery left goes first, while it holds the retained manifest.
   if (state.actual && digest(state.actual) === record.manifestSha256) {
-    // The rename of an earlier run may stand only in the cache: its folder is on the disk before this run's journal goes.
+    await removeStagingManifest(record, requireHeld);
     await syncFolder(output);
     return;
   }
