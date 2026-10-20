@@ -313,3 +313,92 @@ test('the pre-gate runner builds first, runs the product test before the script 
     },
   )
 })
+
+// Value: protects=the pre-gate from one test that never ends: its run is ended after the silence limit, named, and the lane fails, while the next run still runs; fails_when=the runner starts `node --test` with no silence limit, so the pre-gate waits for the hung test until its own time limit and shows nothing; why_new=Cycle 0048 task 57 (Red Team: task 25's limit covered one entry point of three); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a hanging product test and a 3 s limit passed as `--silence-seconds`; no_claim=the default limit (120 s)
+test('the pre-gate runner ends a product test that never ends, names its run, runs the script test after it and exits 1', async (context) => {
+  // Arrange
+  const hangingProduct = [
+    "import { appendFileSync } from 'node:fs'",
+    "import { test } from 'node:test'",
+    "test('product', () => {",
+    "  appendFileSync(process.env.ORDER_LOG, 'product\\n')",
+    '  return new Promise(() => setInterval(() => {}, 1_000))',
+    '})',
+    '',
+  ].join('\n')
+  const root = await createFixtureRepository(context, {
+    'product.test.js': hangingProduct,
+  })
+  await writeFile(
+    join(root, 'extension/scripts/tests/script.test.mjs'),
+    notingTest('script', true),
+  )
+
+  // Act
+  const result = await runPregateRunner(root, [
+    '--silence-seconds',
+    '3',
+    'extension/scripts/tests/script.test.mjs',
+    'extension/src/tests/product.test.ts',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      namesTheRun: result.stderr.includes(
+        '✖ extension/dist/tests/product.test.js printed nothing for 3 s and was ended',
+      ),
+      order: result.order,
+    },
+    { code: 1, namesTheRun: true, order: ['build', 'product', 'script'] },
+  )
+})
+
+// Value: protects=the pre-gate from a silence limit that ends every run at once (`Infinity`, 0, a text, more than a timer can wait): the runner stops with code 2 before it builds; fails_when=the option is not read, or read without the checks of test-shard.mjs; why_new=Cycle 0048 task 57 (the option is new) with task 54 (the limits); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build; no_claim=the shard script's own refusals, which testShards.test.mjs covers
+test('the pre-gate runner refuses a silence limit of Infinity, above a timer’s limit, 0 or no number, and builds nothing', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {})
+
+  // Act
+  const refusals = []
+  for (const seconds of ['Infinity', '3000000', '0', 'soon'])
+    refusals.push(
+      await runPregateRunner(root, [
+        '--silence-seconds',
+        seconds,
+        'extension/scripts/tests/script.test.mjs',
+      ]),
+    )
+
+  // Assert
+  assert.deepEqual(
+    refusals.map(({ code, stderr, order }) => ({ code, stderr, order })),
+    [
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --silence-seconds must be at most 2147483, the longest wait a timer allows.\n',
+        order: [],
+      },
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --silence-seconds must be at most 2147483, the longest wait a timer allows.\n',
+        order: [],
+      },
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --silence-seconds must be a number above 0.\n',
+        order: [],
+      },
+      {
+        code: 2,
+        stderr:
+          'run-pregate-tests: --silence-seconds must be a number above 0.\n',
+        order: [],
+      },
+    ],
+  )
+})
