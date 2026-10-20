@@ -107,10 +107,10 @@ async function releaseStorageLock(
 }
 
 /**
- * Releases this process's lock when a write under it has ended, and notes a lock that may still name this process for the next hold of the directory; called by {@link withStorageLock} in its `finally`.
+ * Releases this process's lock when a write under it has ended, and notes a lock that may still name this process so that it is taken back; called by {@link releaseAfterWrite}.
  * @param path - The `writer.lock` file.
  * @param holder - The owner record this process placed.
- * @throws What removing the lock threw ({@link releaseStorageLock}): the write was made, and the caller learns that the lock stayed (a study removal names it, {@link removalAfterLockFailure}); the lock is noted all the same.
+ * @throws What removing the lock threw ({@link releaseStorageLock}): the write was made, and {@link releaseAfterWrite} hands the failure on; the lock is noted all the same.
  * @example
  * await releaseOwnLock('/storage/learning/writer.lock', { pid: process.pid, hostname: 'workstation' })
  */
@@ -125,6 +125,56 @@ async function releaseOwnLock(
     // A lock that may still name this process is taken back by this process's next hold of the directory.
     if (release === 'kept') unreleasedOwnLocks.add(path)
     else unreleasedOwnLocks.delete(path)
+  }
+}
+
+/**
+ * Releases this process's lock after a write under it, without letting a failed release replace what the write did; called by {@link withStorageLock} in its `finally`.
+ * The write was made when the release runs: its result (a recording's writer, a published catalog) or its own error is what the caller needs. A release that fails is handed to `onReleaseFailure`, for a caller that names the lock in its answer (a study removal, {@link removalAfterLockFailure}); the lock is noted for a take-back all the same ({@link releaseOwnLock}).
+ * @param path - The `writer.lock` file.
+ * @param holder - The owner record this process placed.
+ * @param onReleaseFailure - Told what removing the lock threw; a caller that does not ask never learns of it.
+ * @example
+ * await releaseAfterWrite('/storage/learning/writer.lock', holder, (error) => reportLock(error))
+ */
+async function releaseAfterWrite(
+  path: string,
+  holder: RecordedOwner & StorageOwnerIdentity,
+  onReleaseFailure?: (error: unknown) => void,
+): Promise<void> {
+  try {
+    await releaseOwnLock(path, holder)
+  } catch (error) {
+    onReleaseFailure?.(error)
+  }
+}
+
+/**
+ * Runs a step in the queue of this process's holds of one storage folder, after the holds before it have ended; called by {@link withStorageLock} for each hold.
+ * @param canonical - The canonical storage directory, which names the queue.
+ * @param step - The step to run once the holds before it have ended.
+ * @returns What `step` returned.
+ * @throws What `step` threw.
+ * @example await runAfterHeldWrites('/storage/learning', async () => takeBackOwnLeftover(path, holder))
+ */
+async function runAfterHeldWrites<Value>(
+  canonical: string,
+  step: () => Promise<Value>,
+): Promise<Value> {
+  // Reserve shared process ownership before awaiting the prior writer; path aliases join the same queue.
+  const pending = (pendingWriters.get(canonical) ?? Promise.resolve()).then(
+    step,
+  )
+  const settled = pending.then(
+    () => undefined,
+    () => undefined,
+  )
+  pendingWriters.set(canonical, settled)
+  try {
+    return await pending
+  } finally {
+    if (pendingWriters.get(canonical) === settled)
+      pendingWriters.delete(canonical)
   }
 }
 
@@ -187,11 +237,12 @@ async function makeStorageFolder(directory: string): Promise<void> {
  * @param identity - The machine and the boot this process records in the lock and judges a present lock by; {@link currentStorageOwner} unless a test names its own.
  * @param holderStarts - The process starts a caller that asks for the lock again keeps for all its tries of one write, by process id ({@link withCatalogLock}), so that a present lock's live writer is read once for them, not at every try, also one whose start cannot be read; a kept answer only keeps that writer running ({@link removeStaleStorageLock}). A new one for each hold when left out.
  * @param keptTakeBacks - The lock paths whose take-back of this process's own leftover such a caller's earlier try found kept, which it keeps for all its tries of one write as it keeps `holderStarts` ({@link takeBackOwnLeftover}). Every hold tries the take-back when left out.
- * @returns What `operation` returned, after the lock is released.
+ * @param onReleaseFailure - Told what removing this process's own lock threw, when the release fails after `operation` ended; a caller that names the lock in its answer passes it (a study removal). Without it the failure is not reported: the write's result or error reaches the caller whole, and the lock is noted for the next hold's take-back.
+ * @returns What `operation` returned, after the lock is released; also when the release fails (Cycle 0048 task 21).
  * @throws
  * - "Learning storage is not a regular directory: <path>. …" when the directory's path holds a link or something that is no folder ({@link makeStorageFolder}); nothing was written
  * - {@link StorageLockHeldError} "Learning storage is locked …", naming the lock file, with the `EEXIST` system error as `cause`, while another writer holds the lock or a lock stays that cannot be judged; nothing was written
- * - What `operation` throws, and what removing this process's own lock still throws after its attempts for another reason than a lock that is already gone (the write was made; the lock is taken back by this process's next hold)
+ * - What `operation` throws; a release that fails is never thrown, it goes to `onReleaseFailure` ({@link releaseAfterWrite})
  * @example
  * await withStorageLock('/storage/learning', () => save())
  */
@@ -201,64 +252,51 @@ export async function withStorageLock<Value>(
   identity?: StorageOwnerIdentity,
   holderStarts?: Map<number, Promise<string | undefined>>,
   keptTakeBacks?: Set<string>,
+  onReleaseFailure?: (error: unknown) => void,
 ): Promise<Value> {
   await makeStorageFolder(directory)
   const canonical = await realpath(directory),
     path = join(canonical, 'writer.lock')
-  // Reserve shared process ownership before awaiting the prior writer; path aliases join the same queue.
-  const pending = (pendingWriters.get(canonical) ?? Promise.resolve()).then(
-    async () => {
-      const holder = {
-        pid: process.pid,
-        ...(identity ?? (await currentStorageOwner())),
-      }
-      const acquire = (): Promise<void> => placeStorageLock(path, holder)
-      await acquire()
-        .catch(async (error) => {
-          // This process's own lock that its last release left is taken back, and a lock left by a killed editor on this machine is taken over, once; a live or foreign one, one another window is taking over right now and one whose takeover fails stay explicit.
-          if (
-            error.code === 'EEXIST' &&
-            ((await takeBackOwnLeftover(path, holder, keptTakeBacks)) ||
-              (await removeStaleStorageLock(
-                path,
-                holder,
-                undefined,
-                holderStarts,
-              ).catch(() => false)))
+  return runAfterHeldWrites(canonical, async () => {
+    const holder = {
+      pid: process.pid,
+      ...(identity ?? (await currentStorageOwner())),
+    }
+    const acquire = (): Promise<void> => placeStorageLock(path, holder)
+    await acquire()
+      .catch(async (error) => {
+        // This process's own lock that its last release left is taken back, and a lock left by a killed editor on this machine is taken over, once; a live or foreign one, one another window is taking over right now and one whose takeover fails stay explicit.
+        if (
+          error.code === 'EEXIST' &&
+          ((await takeBackOwnLeftover(path, holder, keptTakeBacks)) ||
+            (await removeStaleStorageLock(
+              path,
+              holder,
+              undefined,
+              holderStarts,
+            ).catch(() => false)))
+        )
+          return acquire()
+        throw error
+      })
+      .catch((error) => {
+        // Only the lock's own refusal gets its type: a caller waits for it and for nothing else.
+        if (error.code === 'EEXIST')
+          throw new StorageLockHeldError(
+            `Learning storage is locked by another writer or an interrupted session (lock file: ${path}). No data changed; retry after resolving the lock.`,
+            { cause: error },
           )
-            return acquire()
-          throw error
-        })
-        .catch((error) => {
-          // Only the lock's own refusal gets its type: a caller waits for it and for nothing else.
-          if (error.code === 'EEXIST')
-            throw new StorageLockHeldError(
-              `Learning storage is locked by another writer or an interrupted session (lock file: ${path}). No data changed; retry after resolving the lock.`,
-              { cause: error },
-            )
-          throw error
-        })
-      try {
-        // The lock is held: what a window that was killed while it prepared a lock or a takeover left beside it is nobody's and goes, swept at this process's first hold of the directory. A takeover has swept through its claim already.
-        if (!sweptDirectories.has(canonical)) {
-          sweptDirectories.add(canonical)
-          await removeStaleStorageClaims(path, holder).catch(() => undefined)
-        }
-        return await operation()
-      } finally {
-        await releaseOwnLock(path, holder)
+        throw error
+      })
+    try {
+      // The lock is held: what a window that was killed while it prepared a lock or a takeover left beside it is nobody's and goes, swept at this process's first hold of the directory. A takeover has swept through its claim already.
+      if (!sweptDirectories.has(canonical)) {
+        sweptDirectories.add(canonical)
+        await removeStaleStorageClaims(path, holder).catch(() => undefined)
       }
-    },
-  )
-  const settled = pending.then(
-    () => undefined,
-    () => undefined,
-  )
-  pendingWriters.set(canonical, settled)
-  try {
-    return await pending
-  } finally {
-    if (pendingWriters.get(canonical) === settled)
-      pendingWriters.delete(canonical)
-  }
+      return await operation()
+    } finally {
+      await releaseAfterWrite(path, holder, onReleaseFailure)
+    }
+  })
 }

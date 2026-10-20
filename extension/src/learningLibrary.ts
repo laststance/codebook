@@ -1244,75 +1244,90 @@ export class LearningLibrary {
     unconfirmedWriterRule: UnconfirmedWriterRule = 'refuse',
   ): Promise<StudyRemoval> {
     const identity = studyIdSchema.parse(id)
-    // The lock call also rejects when its release fails after the steps ran; what they settled then decides the outcome.
+    // The lock call tells when its release fails after the steps ran; what they settled then decides the outcome.
     let settled: StudyRemoval | undefined
+    let releaseFailure: unknown
     // The writers of the study's recordings are judged before the storage lock is taken; under it they are only looked at again.
-    return this.writerVerdictsOf(identity)
-      .then((verdicts) =>
-        this.locked(async (): Promise<StudyRemoval> => {
-          const paths = await this.studyPaths(
-            identity,
-            await this.newerFormatOf(identity),
-          )
-          await this.refuseUnlessRemovable(
-            paths,
-            verdicts,
-            unconfirmedWriterRule,
-          )
-          // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
-          const progress = await this.readProgress().catch(() => undefined),
-            ledger = progress && withoutStudyReferences(progress, identity)
-          const changes: StudyRemovalChanges = { movedPathCount: 0 }
-          const trash = (path: string) => async (): Promise<void> => {
-            // The look right before the move tells the entry that stays from one made again at the path after the move.
-            const before = await lstat(path, { bigint: true }).catch(
-              () => undefined,
-            )
-            try {
-              await moveToTrash(path)
-            } catch (error) {
-              const after = await entryAfterRejectedMove(path, before)
-              // Only the same entry still in place is the Trash's own refusal; a mover that rejects after the entry left the library still moved it.
-              if (after.kind === 'still-there') {
-                changes.trashRefused = true
-                throw error
-              }
-              // A path that cannot be looked at may or may not have moved: the removal stops there and says so.
-              if (after.kind === 'unknown') {
-                changes.moveUnknown = true
-                throw new Error(
-                  `${thrownMessage(error)}; whether ${path} left the library could not be checked: ${after.cause}`,
+    return (
+      this.writerVerdictsOf(identity)
+        .then((verdicts) =>
+          this.locked(
+            async (): Promise<StudyRemoval> => {
+              const paths = await this.studyPaths(
+                identity,
+                await this.newerFormatOf(identity),
+              )
+              await this.refuseUnlessRemovable(
+                paths,
+                verdicts,
+                unconfirmedWriterRule,
+              )
+              // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
+              const progress = await this.readProgress().catch(() => undefined),
+                ledger = progress && withoutStudyReferences(progress, identity)
+              const changes: StudyRemovalChanges = { movedPathCount: 0 }
+              const trash = (path: string) => async (): Promise<void> => {
+                // The look right before the move tells the entry that stays from one made again at the path after the move.
+                const before = await lstat(path, { bigint: true }).catch(
+                  () => undefined,
                 )
+                try {
+                  await moveToTrash(path)
+                } catch (error) {
+                  const after = await entryAfterRejectedMove(path, before)
+                  // Only the same entry still in place is the Trash's own refusal; a mover that rejects after the entry left the library still moved it.
+                  if (after.kind === 'still-there') {
+                    changes.trashRefused = true
+                    throw error
+                  }
+                  // A path that cannot be looked at may or may not have moved: the removal stops there and says so.
+                  if (after.kind === 'unknown') {
+                    changes.moveUnknown = true
+                    throw new Error(
+                      `${thrownMessage(error)}; whether ${path} left the library could not be checked: ${after.cause}`,
+                    )
+                  }
+                }
+                changes.movedPathCount += 1
               }
-            }
-            changes.movedPathCount += 1
-          }
-          const steps: (() => Promise<void>)[] = [
-            ...paths.recordings.map(trash),
-            // The record of the recordings' writer is Codebook's own note and is deleted, not moved; one a failure leaves is swept at a later start of a recording.
-            (): Promise<void> => removeWriterRecord(this.directory, identity),
-            // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
-            ...(evidenceDirectory
-              ? [
-                  (): Promise<void> =>
-                    this.trashEvidence(evidenceDirectory, trash),
-                ]
-              : []),
-            ...paths.playback.map(trash),
-            // Learner decisions name no study; only the two navigation references to the removed study are dropped.
-            ...(ledger
-              ? [(): Promise<void> => this.rewriteLedger(ledger, changes)]
-              : []),
-            ...paths.sidecars.map(trash),
-            ...paths.archives.map(trash),
-          ]
-          settled = await this.runRemovalSteps(steps, changes)
-          return settled
-        }),
-      )
-      .catch((error): StudyRemoval =>
-        this.outcomeOfFailedRemoval(error, settled),
-      )
+              const steps: (() => Promise<void>)[] = [
+                ...paths.recordings.map(trash),
+                // The record of the recordings' writer is Codebook's own note and is deleted, not moved; one a failure leaves is swept at a later start of a recording.
+                (): Promise<void> =>
+                  removeWriterRecord(this.directory, identity),
+                // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
+                ...(evidenceDirectory
+                  ? [
+                      (): Promise<void> =>
+                        this.trashEvidence(evidenceDirectory, trash),
+                    ]
+                  : []),
+                ...paths.playback.map(trash),
+                // Learner decisions name no study; only the two navigation references to the removed study are dropped.
+                ...(ledger
+                  ? [(): Promise<void> => this.rewriteLedger(ledger, changes)]
+                  : []),
+                ...paths.sidecars.map(trash),
+                ...paths.archives.map(trash),
+              ]
+              settled = await this.runRemovalSteps(steps, changes)
+              return settled
+            },
+            (error) => {
+              releaseFailure = error
+            },
+          ),
+        )
+        .catch((error): StudyRemoval =>
+          this.outcomeOfFailedRemoval(error, settled),
+        )
+        // A lock that could not be released afterwards is named in the answer, whatever the steps settled.
+        .then((outcome) =>
+          releaseFailure === undefined
+            ? outcome
+            : removalAfterLockFailure(outcome, thrownMessage(releaseFailure)),
+        )
+    )
   }
 
   /**
@@ -1798,11 +1813,26 @@ export class LearningLibrary {
     )
   }
 
-  /** Serializes this owner and excludes other windows; stale locks remain an explicit recoverable storage error. @example this.locked(() => save()) */
-  private locked<Value>(operation: () => Promise<Value>): Promise<Value> {
+  /**
+   * Serializes this owner and excludes other windows; stale locks remain an explicit recoverable storage error.
+   * @param operation - The write to run under the lock.
+   * @param onReleaseFailure - Told what removing the lock threw after the write ended; only {@link removeStudy} asks, to name the lock in its answer ({@link removalAfterLockFailure}). Every other write returns its result whole.
+   * @example this.locked(() => save())
+   */
+  private locked<Value>(
+    operation: () => Promise<Value>,
+    onReleaseFailure?: (error: unknown) => void,
+  ): Promise<Value> {
     const pending = this.writes.then(async () => {
       await this.initialize()
-      return withStorageLock(this.directory, operation)
+      return withStorageLock(
+        this.directory,
+        operation,
+        undefined,
+        undefined,
+        undefined,
+        onReleaseFailure,
+      )
     })
     this.writes = pending.catch(() => undefined)
     return pending

@@ -1136,19 +1136,29 @@ test('a lock this window could not read while it released it is taken back by th
   )
 })
 
-// Value: protects=the learner's later writes in a window whose lock the system refused to remove after a write (on Windows EPERM or EBUSY while another program holds the file); fails_when=the lock that names this window stays, and this window refuses its own next write with "Learning storage is locked …" until it closes; why_new=Cycle 0047 row 31 (P3RT9); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=the refusal of the first release is still reported to its caller, as a study removal names it (studyRemoval.test.ts)
-test('a write whose lock the system refuses to remove is made and reports the refusal, and this window’s next write takes the lock back, goes ahead and leaves no lock', async (context) => {
+// Value: protects=the learner's later writes in a window whose lock the system refused to remove after a write (on Windows EPERM or EBUSY while another program holds the file); fails_when=the lock that names this window stays, and this window refuses its own next write with "Learning storage is locked …" until it closes; why_new=Cycle 0047 row 31 (P3RT9); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=the refusal of the first release is reported to a caller that passes onReleaseFailure, as a study removal does (studyRemoval.test.ts); Cycle 0048 task 21 changed the first outcome from the refusal's error to the write's result
+test('a write whose lock the system refuses to remove is made and returned, and reports the refusal to a caller that asks for it; this window’s next write takes the lock back, goes ahead and leaves no lock', async (context) => {
   // Arrange: a window that may not remove its lock during its first release.
   const directory = await storageDirectory(context)
   const lockPath = join(directory, 'writer.lock')
   const window = await windowWithRefusedRelease(lockPath)
   let writesMade = 0
+  let reportedRefusal = 'none'
   const firstOutcome = await window
-    .withStorageLock(directory, async () => {
-      writesMade += 1
-      window.isRemovalRefused = true
-      return 'written'
-    })
+    .withStorageLock(
+      directory,
+      async () => {
+        writesMade += 1
+        window.isRemovalRefused = true
+        return 'written'
+      },
+      undefined,
+      undefined,
+      undefined,
+      (error) => {
+        reportedRefusal = String(error)
+      },
+    )
     .catch((error: unknown) => String(error))
   const entriesAfterTheFirstWrite = await readdir(directory)
   window.isRemovalRefused = false
@@ -1165,18 +1175,61 @@ test('a write whose lock the system refuses to remove is made and reports the re
   assert.deepEqual(
     {
       firstOutcome,
+      reportedRefusal,
       entriesAfterTheFirstWrite,
       nextOutcome,
       writesMade,
       entriesAfterTheNextWrite: await readdir(directory),
     },
     {
-      firstOutcome: 'Error: EPERM: operation not permitted, unlink',
+      firstOutcome: 'written',
+      reportedRefusal: 'Error: EPERM: operation not permitted, unlink',
       entriesAfterTheFirstWrite: ['writer.lock'],
       nextOutcome: 'written',
       writesMade: 2,
       entriesAfterTheNextWrite: [],
     },
+  )
+})
+
+// Value: protects=a write that was made and whose result its caller needs (a recording's writer, a published catalog), when the system then refuses to remove the lock; fails_when=the release's failure replaces the write's result, so the caller takes a write that was made for a failure and loses what it returned (a recording started and not handed on, a config published and not recorded); why_new=Cycle 0048 task 21 (S11-N17a); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=the report of that refusal to a caller that asks for it
+test('a write whose lock the system refuses to remove still returns what the write returned', async (context) => {
+  // Arrange: a window that may not remove its lock during its first release.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+
+  // Act
+  const outcome = await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+      return { recordingWriter: 'started' }
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(outcome, { recordingWriter: 'started' })
+})
+
+// Value: protects=a write that threw and whose lock the system then refuses to remove: the caller learns why the write failed; fails_when=the release's failure replaces the write's own error, so a removal that was refused for another window's recording says that the lock could not be released; why_new=Cycle 0048 task 21 (S11-N17a); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release
+test('a write that throws keeps its own error when the system also refuses to remove the lock', async (context) => {
+  // Arrange: a window that may not remove its lock during its first release.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+
+  // Act
+  const outcome = await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+      throw new Error('Another editor window has not finished recording.')
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.equal(
+    outcome,
+    'Error: Another editor window has not finished recording.',
   )
 })
 
@@ -1224,7 +1277,7 @@ test('a window whose leftover lock another live window has replaced by its own r
       entriesAfterTheNextWrite: await readdir(directory),
     },
     {
-      firstOutcome: 'Error: EPERM: operation not permitted, unlink',
+      firstOutcome: 'written',
       nextOutcome: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
       writesMade: 1,
       lockAfterTheNextWrite: lockOfTheOtherWindow,
