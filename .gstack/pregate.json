@@ -3,6 +3,7 @@
   "dependencies": {
     ".coderabbit.yaml": [],
     ".gitignore": [],
+    "VERSION": [],
     ".codex/restore-product-context.mjs": [
       ".codex/restore-product-context.test.mjs"
     ],
