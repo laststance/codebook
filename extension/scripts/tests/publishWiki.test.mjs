@@ -21432,6 +21432,55 @@ for (const {
   })
 }
 
+// Cycle 0048 task 106 (OCR A): a refusal keeps its marks when a journal that cannot be removed wraps it, so the lock's own check still reads them.
+
+// Value: protects=the editor agent and the learner whose publish was refused because a look at its own publish lock failed before the swap and whose journal and lock both could not be removed: the refusal names both records that stay, so the agent knows --recover must end the lock too; fails_when=the wrap for the kept journal makes a new error from the refusal's message alone, so the mark that tells the lock's check that a failed look at the lock caused the refusal (unreadRecordPath) is lost and the answer names the journal only, while the lock stays and refuses the next publish; why_new=Cycle 0048 task 106 (OCR A); seam=a look at the lock that fails with EIO once the journal stands (failLookOf) and removals of the journal and the lock that fail (observeRemovals), over the real publish; no_claim=the words of the look's own sentence, which the neighbouring tests pin
+test('a publish whose look at its publish lock fails before its swap and whose journal and lock both cannot be removed is refused with the look’s sentence, and both records kept with --recover named', async () => {
+  // Arrange: the look at the lock fails once the journal stands; the removal of the journal fails with EIO, the removal of the lock with EACCES.
+  const { publishWiki: publishWhoseRecordsStay } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const lock = `${wiki.output}.publish-lock.json`,
+    journal = `${wiki.output}.publish-journal.json`
+  failLookOf((path) => path === lock && existsSync(journal), 'EIO')
+  const stopObserving = observeRemovals((path) => {
+    if (path !== journal && path !== lock) return
+    const code = path === journal ? 'EIO' : 'EACCES'
+    throw Object.assign(new Error(`${code}: unlink`), { code })
+  })
+  try {
+    // Act
+    const refusal = await publishWhoseRecordsStay({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    stopObserving()
+    const besideTheWiki = await publisherFilesBeside(wiki.output)
+
+    // Assert
+    assert.deepEqual(
+      { refusal, besideTheWiki },
+      {
+        refusal: `${unreadOwnRecordRefusalOf('Wiki publish lock', lock, 'EIO')} The publisher could not remove its Wiki publication journal ${journal} (EIO), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again. The publisher could not remove its Wiki publish lock ${lock} (EACCES), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again.`,
+        besideTheWiki: [
+          journal.slice(journal.lastIndexOf('/') + 1),
+          lock.slice(lock.lastIndexOf('/') + 1),
+        ].sort(),
+      },
+    )
+  } finally {
+    stopObserving()
+    failLookOf(() => false, 'EIO')
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Cycle 0048 task 12 (S11-N8): the refusal of a copy of a learner's file that a recovery kept in the candidate.
 
 // Value: protects=the learner's newest text of a file of their own that a recovery kept in the candidate (the recovery answers it in changedFilesKept) because the learner saved it after the recovery checked it: the next publish refuses the file, and the refusal must not tell the agent to delete it; fails_when=the refusal of a file outside the manifest says "Delete it from the stage" for a copy of a learner's file that stands in the Wiki folder too, so the agent deletes the only copy of what the learner saved; why_new=Cycle 0048 task 12 (S11-N8); seam=a published Wiki with a learner's file and a candidate that holds a file of the same name; no_claim=the recovery that keeps the copy (the test of changedFilesKept above)
