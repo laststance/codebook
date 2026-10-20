@@ -547,9 +547,10 @@ test('the pre-gate runner lets package.test.mjs stay silent longer than the defa
   )
 })
 
-// Value: protects=the lane from a package build whose commands, each within its own 180 s limit, together stay silent for longer than the run's silence limit: the step writes a line at an interval while it runs, and stops when it ends or fails; fails_when=the step writes nothing while it runs, or its timer outlives the step (a line after the step ended, a timer that keeps the process alive); why_new=Cycle 0048 task 111 (found while fixing task 110); seam=writeProgressWhileRunning with a stand-in step of 350 ms and an interval of 100 ms; no_claim=that the real hook uses it (the next test) and the real build
-test('a long step writes a progress line at each interval while it runs, none after it ended or failed, and gives back its result or its error', async () => {
+// Value: protects=the lane from a package build whose commands, each within its own 180 s limit, together stay silent for longer than the run's silence limit: the step writes a line at an interval while it runs, and stops when it ends or fails; fails_when=the step writes nothing while it runs, or its timer outlives the step (a line after the step ended); why_new=Cycle 0048 task 111 (found while fixing task 110), made independent of machine load by task 114 (pre-gate timing); seam=writeProgressWhileRunning with a stand-in step of 350 ms and an interval of 100 ms, on the mocked setInterval and setTimeout of node:test that the test ticks by hand; no_claim=that the real hook uses it (the next test), the real build, and that a surviving real timer would keep the process alive (a mocked timer cannot)
+test('a long step writes a progress line at each interval while it runs, none after it ended or failed, and gives back its result or its error', async (context) => {
   // Arrange
+  context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
   const lines = []
   const write = (line) => lines.push(line)
   const slowStep = () =>
@@ -559,35 +560,53 @@ test('a long step writes a progress line at each interval while it runs, none af
     throw new Error('build failed')
   }
 
-  // Act
-  const result = await writeProgressWhileRunning(slowStep, {
+  // Act: the slow step runs 350 ms of the mocked clock; the lines fall at 100, 200 and 300 ms
+  const slowRun = writeProgressWhileRunning(slowStep, {
     intervalMs: 100,
     write,
   })
+  context.mock.timers.tick(100)
+  context.mock.timers.tick(100)
+  context.mock.timers.tick(100)
+  const linesBeforeTheEnd = lines.length
+  context.mock.timers.tick(50)
+  const result = await slowRun
   const linesOfSlowStep = lines.length
-  const failure = await writeProgressWhileRunning(failingStep, {
+  // Act: far past the step's end, where its interval would have fired ten more times
+  context.mock.timers.tick(1_000)
+  const linesAfterSlowStepEnded = lines.length - linesOfSlowStep
+
+  // Act: the failing step ends at 150 ms, after the line at 100 ms
+  const failingRun = writeProgressWhileRunning(failingStep, {
     intervalMs: 100,
     write,
   }).catch((error) => error.message)
+  context.mock.timers.tick(100)
+  context.mock.timers.tick(50)
+  const failure = await failingRun
   const linesAfterFailure = lines.length
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  context.mock.timers.tick(1_000)
 
   // Assert
   assert.deepEqual(
     {
       result,
+      linesBeforeTheEnd,
       linesOfSlowStep,
+      linesAfterSlowStepEnded,
       failure,
       linesOfFailingStep: linesAfterFailure - linesOfSlowStep,
-      linesAfterTheEnd: lines.length - linesAfterFailure,
+      linesAfterTheFailure: lines.length - linesAfterFailure,
       firstLineStart: lines[0].startsWith('still running, '),
     },
     {
       result: 'receipt',
+      linesBeforeTheEnd: 3,
       linesOfSlowStep: 3,
+      linesAfterSlowStepEnded: 0,
       failure: 'build failed',
       linesOfFailingStep: 1,
-      linesAfterTheEnd: 0,
+      linesAfterTheFailure: 0,
       firstLineStart: true,
     },
   )
