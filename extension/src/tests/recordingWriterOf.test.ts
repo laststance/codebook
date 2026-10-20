@@ -18,6 +18,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import fsPromises from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
@@ -890,6 +891,43 @@ test('an unsealed recording whose writer record stands as a regular file and can
   // Assert
   assert.deepEqual(writer, { kind: 'unreadable' })
 })
+
+// Value: protects=the recording of another computer (same host name, same storage folder) whose folder of writer records this computer cannot look at now (permission denied, a disk error, a folder a scanner holds): Delete asks the learner, and a folder that is missing or no folder leaves the header's verdict; fails_when=a look at the folder of records that fails for another reason than ENOENT or ENOTDIR is read as no folder, so the header's gone (no process of this computer has its id) stands and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 60); why_new=Cycle 0048 task 60 (no test made the look at the folder of records fail); seam=the lstat of node:fs/promises, refused for the path of the `recording-owners` folder only, and a header that names this host and a process id of no process; no_claim=a record that stands and cannot be read (the test above), a link at the folder (the test below)
+for (const [code, expected] of [
+  ['EACCES', { kind: 'unreadable' }],
+  ['EBUSY', { kind: 'unreadable' }],
+  ['ENOENT', { kind: 'gone' }],
+  ['ENOTDIR', { kind: 'gone' }],
+] as const)
+  test(`an unsealed recording whose header calls its writer gone and whose folder of writer records is looked at with ${code} has the writer ${expected.kind}`, async (context) => {
+    // Arrange: the header names this host and a process id of no process; the look at the folder of writer records is refused with the code.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    const foldersOfRecords = join(storage.directory, 'recording-owners')
+    const lstatBefore = fsPromises.lstat
+    context.mock.method(
+      fsPromises,
+      'lstat',
+      async (...input: Parameters<typeof lstatBefore>) => {
+        if (input[0] === foldersOfRecords)
+          throw Object.assign(new Error(`${code}: lstat`), { code })
+        return lstatBefore(...input)
+      },
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, expected)
+  })
 
 // Value: protects=the judgement of a recording's writer while a link (a junction on Windows) stands at the place of the folder of writer records and leads to a valid record that names the recording; fails_when=the record is read through that link and judges the recording (here as another machine's), so a file a link puts there decides whether a recording is listed and moved (TT37, CX14's read); why_new=Cycle 0046 third testing review TT37: the file behind the link in CX14's test never parsed as a record; seam=a link at `recording-owners` to a folder of the test with a valid record that names the recording and machine-b, and the header, which names this host and a process id of no process
 test('a valid writer record behind a link at the place of the folder of writer records is not read: the recording is judged by its header', async (context) => {
