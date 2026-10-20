@@ -467,7 +467,12 @@ async function nodeRunHarness({
         factory: vscode.DebugAdapterTrackerFactory,
       ) {
         trackerFactory = factory
-        return { dispose(): void {} }
+        // A disposed factory is asked for no tracker of a session that starts later.
+        return {
+          dispose(): void {
+            if (trackerFactory === factory) trackerFactory = undefined
+          },
+        }
       },
       onDidTerminateDebugSession: (
         listener: (session: vscode.DebugSession) => void,
@@ -647,6 +652,16 @@ async function nodeRunHarness({
     endSessionAndDropIt: (): void => {
       terminate?.(session)
       listedSessions.delete(session.id)
+    },
+    /** A child debug session of the owned one starts (js-debug starts one for each worker or child process), and the editor lists it; only a factory still registered hears of it. */
+    startChildSession: async (): Promise<void> => {
+      const child = {
+        ...session,
+        id: 'owned-node-child-session',
+        parentSession: session,
+      }
+      listedSessions.add(child.id)
+      await trackerFactory?.createDebugAdapterTracker(child)
     },
     typeIntoCitedSource,
     launch,
@@ -1379,6 +1394,38 @@ test('a Node test run whose debug session could not be stopped at the first rele
         secondStop: 'released',
         stopRequests: 1,
         closeRequests: 2,
+      },
+    )
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the release of a Node test run whose first release failed at the owned test process while that process still ran and started a child debug session afterwards (js-debug starts one for each child process); fails_when=the run stops hearing of new debug sessions at its first failed release, so the retry cannot stop the child session, which keeps running under the debugger after the run is reported released; why_new=Cycle 0048 task 23 (S11-N17c); seam=the editor's debug adapter tracker factory, which hears of a new session only while it is registered, and the owned test process's close, which fails the first time; no_claim=a real js-debug child session
+test('a Node test run whose release failed at its test process stops a child debug session that started after the failure at the next stop', async () => {
+  // Arrange: the first release fails at the owned test process; the process then starts a child debug session.
+  const harness = await nodeRunHarness({ closeFailures: 1 })
+  try {
+    await harness.run.prepare()
+    const firstStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+    await harness.startChildSession()
+
+    // Act
+    const secondStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+
+    // Assert: the first stop asked for one session, the second for the owned one and the child.
+    assert.deepEqual(
+      { firstStop, secondStop, stopRequests: harness.stopRequests() },
+      {
+        firstStop: 'Error: process group still running (close 1)',
+        secondStop: 'released',
+        stopRequests: 3,
       },
     )
   } finally {
