@@ -243,6 +243,8 @@ Decisions:
 
 The gate scan after the fixes listed 28 new or changed eligible hunks of 171, and the parent read each of them, none a finding. The full gate then failed twice, and each failure is a row: a structural test pinned the place row 198 moved (row 211), and the measured health gate found functions of the fixes past its limits (rows 212 and 213, split with the same behavior). The tests that changed since `d2b17c4f` were compared block by block: each removed or renamed test is replaced or extended, and none of their assertions is weakened.
 
+After the fixing cycle the owner decided on 2026-10-20, D9 "A: ギャップとして出す (Recommended)": the skill's passages that it changed (the publish lock's refusal, another boot under this host name, the journal or the lock) ship with the named eval gap, as the owner's "Ship with named gap" did for the skill's passages before them (above); the script tests pin them.
+
 ### The second `/ship`: its second review pass (2026-10-20)
 
 The pass read the whole candidate at `e21debd2`, after the first fixing cycle and the second Step 7 audit. It used these reviewers:
