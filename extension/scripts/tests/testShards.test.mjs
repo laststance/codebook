@@ -393,14 +393,150 @@ test('a call whose test does not end is ended after its silence limit and report
   const result = await runTestInvocation(
     { files: ['hanging.test.js'] },
     directory,
-    { silenceTimeoutMs: 1_000 },
+    { silenceTimeoutMs: 3_000 },
   )
 
   // Assert
   assert.equal(result.timedOut, true)
-  // gstack-timing-ok: the bound is the contract: the call ends by its 1 s silence limit, not by the 120 s default
+  // gstack-timing-ok: the bound is the contract: the call ends by its 3 s silence limit, not by the 15 s the hanging test takes or the 120 s default
   assert.equal(result.elapsedMs < 10_000, true)
   assert.match(result.output, /✔ finishes first/)
+})
+
+/**
+ * Writes a stand-in for `node --test` into a fresh folder: a script that notes each SIGTERM it gets in `sigterms.log` beside it, prints a line at its start and at each SIGTERM, and then does what `afterSigterm` says. The real runner ends within milliseconds of a SIGTERM, so only a stand-in can stay alive long enough to show what the caller does with a runner that prints after its SIGTERM or ignores it. Called by the tests of {@link runTestInvocation}'s silence handling.
+ * @param context - The running test, whose end removes the folder.
+ * @param afterSigterm - Source of the SIGTERM handler's last statement: `setTimeout(() => process.exit(0), 2200)` to end late, or `` to stay alive.
+ * @returns `{ runnerPath, sigtermCount }`: the script to pass as `runnerArguments`, and a function that reads how many SIGTERMs it got.
+ * @example
+ * const { runnerPath, sigtermCount } = await writeStandInRunner(context, '')
+ */
+async function writeStandInRunner(context, afterSigterm) {
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-stand-in-runner-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const runnerPath = join(directory, 'runner.cjs')
+  await writeFile(
+    runnerPath,
+    [
+      "const { appendFileSync } = require('node:fs')",
+      "const { join } = require('node:path')",
+      "const marks = join(__dirname, 'sigterms.log')",
+      "process.on('SIGTERM', () => {",
+      "  appendFileSync(marks, 'SIGTERM\\n')",
+      "  console.log('winding down')",
+      `  ${afterSigterm}`,
+      '})',
+      "console.log('started')",
+      'setInterval(() => {}, 1_000)',
+    ].join('\n'),
+  )
+  const sigtermCount = async () =>
+    (await readFile(join(directory, 'sigterms.log'), 'utf8').catch(() => ''))
+      .split('\n')
+      .filter(Boolean).length
+  return { runnerPath, sigtermCount }
+}
+
+/** Counts the timers that keep this process alive now, to show that a call left none behind. @example activeTimerCount() // => 2 */
+function activeTimerCount() {
+  return process
+    .getActiveResourcesInfo()
+    .filter((resource) => resource === 'Timeout').length
+}
+
+// Value: protects=the runner that is slow to end after its SIGTERM and prints while it winds down: it gets one SIGTERM, not one more for each line it prints, and no kill timer is left to hold the shard process; fails_when=output after the silence SIGTERM starts the fired silence timer again, so the call gets a second SIGTERM and a second kill timer that replaces the first, whose timer then runs on after the call has ended; why_new=Cycle 0048 task 44 (CodeRabbit, OCR B); seam=runTestInvocation with a stand-in runner script (`runnerArguments`) that prints at its SIGTERM and ends 2.2 s later, and a 1.5 s silence limit that leaves room for the stand-in to start; no_claim=what the real Node runner does (it ends within milliseconds of SIGTERM)
+test('a call that prints while it winds down after the silence SIGTERM gets one SIGTERM and leaves no timer behind', async (context) => {
+  // Arrange
+  const { runnerPath, sigtermCount } = await writeStandInRunner(
+    context,
+    'setTimeout(() => process.exit(0), 2_200)',
+  )
+  const timersBefore = activeTimerCount()
+
+  // Act
+  const result = await runTestInvocation({ files: [] }, tmpdir(), {
+    silenceTimeoutMs: 1_500,
+    killGraceMs: 3_000,
+    runnerArguments: [runnerPath],
+  })
+  const timersAfter = activeTimerCount()
+
+  // Assert
+  assert.deepEqual(
+    {
+      timedOut: result.timedOut,
+      code: result.code,
+      sigterms: await sigtermCount(),
+      printedWhileWindingDown: /winding down/.test(result.output),
+      timersLeft: timersAfter - timersBefore,
+    },
+    {
+      timedOut: true,
+      code: 0,
+      sigterms: 1,
+      printedWhileWindingDown: true,
+      timersLeft: 0,
+    },
+  )
+})
+
+// Value: protects=the caller of a call whose process cannot be started: the promise is rejected and the silence timer is stopped, so the shard process does not wait out the silence limit (120 s) with nothing to wait for; fails_when=the error handler only rejects and the silence timer runs on; why_new=Cycle 0048 task 44 (CodeRabbit, OCR B); seam=runTestInvocation with `process.execPath` set to a path that is no program, so the spawn fails with ENOENT; no_claim=which code a spawn failure carries on other systems
+test('a call whose process cannot be started is rejected and leaves no silence timer running', async () => {
+  // Arrange
+  const realExecPath = process.execPath
+  const timersBefore = activeTimerCount()
+  process.execPath = join(tmpdir(), 'codebook-no-such-node-program')
+  let rejection
+  try {
+    // Act
+    await runTestInvocation({ files: [] }, tmpdir(), {
+      silenceTimeoutMs: 30_000,
+    }).catch((error) => {
+      rejection = error
+    })
+  } finally {
+    process.execPath = realExecPath
+  }
+  const timersAfter = activeTimerCount()
+
+  // Assert
+  assert.deepEqual(
+    { code: rejection?.code, timersLeft: timersAfter - timersBefore },
+    { code: 'ENOENT', timersLeft: 0 },
+  )
+})
+
+// Value: protects=the shard job's time limit against a runner that ignores SIGTERM: it is killed once the grace has passed, and the call reports that it was ended; fails_when=the SIGKILL after the grace is missing or never armed, so the call waits for a runner that never ends; why_new=Cycle 0048 task 47 (Testing); seam=runTestInvocation with a stand-in runner script that ignores SIGTERM, a 1.5 s silence limit that leaves room for the stand-in to start and a 1 s grace passed through the options; no_claim=the 5 s default grace
+test('a call that ignores the silence SIGTERM is killed once the grace has passed', async (context) => {
+  // Arrange
+  const { runnerPath, sigtermCount } = await writeStandInRunner(context, '')
+
+  // Act
+  const result = await runTestInvocation({ files: [] }, tmpdir(), {
+    silenceTimeoutMs: 1_500,
+    killGraceMs: 1_000,
+    runnerArguments: [runnerPath],
+  })
+
+  // Assert
+  assert.deepEqual(
+    {
+      timedOut: result.timedOut,
+      code: result.code,
+      signal: result.signal,
+      sigterms: await sigtermCount(),
+      // The kill waits for the grace; the bound is 5 s above the limit and the grace, far below the 120 s default and the stand-in's endless life.
+      killedAfterTheGrace:
+        result.elapsedMs >= 2_500 && result.elapsedMs < 7_500,
+    },
+    {
+      timedOut: true,
+      code: null,
+      signal: 'SIGKILL',
+      sigterms: 1,
+      killedAfterTheGrace: true,
+    },
+  )
 })
 
 // Value: protects=the shard script's report of a hung call: the file is named and the job fails fast with the output so far; fails_when=the script waits for the hung test, or ends the call without naming its file; why_new=Cycle 0048 task 25 (test guide, 2026-10-02); seam=test-shard.mjs started as a process on a fixture build; no_claim=the default limit
@@ -420,7 +556,7 @@ test('the shard script ends a silent call, names its file and fails the shard', 
   // Act
   const result = await runShardScript(
     root,
-    ['--shard', '1/1', '--lanes', '1', '--silence-seconds', '1'],
+    ['--shard', '1/1', '--lanes', '1', '--silence-seconds', '3'],
     12_000,
   )
 
@@ -429,7 +565,7 @@ test('the shard script ends a silent call, names its file and fails the shard', 
   assert.match(result.stdout, /✔ finishes first/)
   assert.match(
     result.stderr,
-    /✖ hanging\.test\.js printed nothing for 1 s and was ended/,
+    /✖ hanging\.test\.js printed nothing for 3 s and was ended/,
   )
 })
 

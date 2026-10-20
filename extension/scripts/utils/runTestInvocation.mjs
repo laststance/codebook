@@ -6,14 +6,19 @@ import {
   CALL_SILENCE_TIMEOUT_MS,
 } from './testShardConstants.mjs'
 
-/** Calls `onElapsed` once when `ms` pass without a `reset()`; the call stays alive until `stop()`. @example const timer = createResettingTimer(1000, () => {}); timer.reset(); timer.stop() */
+/** Calls `onElapsed` once when `ms` pass without a `reset()`; the call stays alive until `stop()`. A timer that has fired stays stopped: `reset()` does nothing then, because Node's `refresh()` would start a fired timer again and run `onElapsed` a second time. Used by {@link runTestInvocation}. @example const timer = createResettingTimer(1000, () => {}); timer.reset(); timer.stop() */
 function createResettingTimer(ms, onElapsed) {
-  const handle = setTimeout(onElapsed, ms)
+  let isStopped = false
+  const handle = setTimeout(() => {
+    isStopped = true
+    onElapsed()
+  }, ms)
   return {
     reset() {
-      handle.refresh()
+      if (!isStopped) handle.refresh()
     },
     stop() {
+      isStopped = true
       clearTimeout(handle)
     },
   }
@@ -24,6 +29,8 @@ function createResettingTimer(ms, onElapsed) {
  * @param invocation - `{ files, namePattern?, skipPattern? }` from the plan; a pattern applies to every file of the call.
  * @param testDirectory - Directory of the compiled test files.
  * @param options.silenceTimeoutMs - How long the call may print nothing before it is ended as hung; the reporter prints each test when it ends, so a quiet call is one test that does not end.
+ * @param options.killGraceMs - How long a call ended for silence may take to stop on SIGTERM before it is killed; {@link CALL_KILL_GRACE_MS} by default, so a test of the kill does not wait 5 s.
+ * @param options.runnerArguments - The arguments that start the runner, before the call's own flags; `['--test']` (Node's test runner) by default. A test passes the path of a stand-in script, because the real runner exits within milliseconds of SIGTERM and cannot show how a slow or stubborn runner is treated.
  * @returns `{ code, signal, output, elapsedMs, timedOut }` once the process and its streams have closed. `timedOut` is true when the call was ended for its silence (the process then ends with a signal, so `code` is `null`). Coverage is collected through the inherited `NODE_V8_COVERAGE`.
  * @example
  * await runTestInvocation({ files: ['service.test.js'] }, 'dist/tests')
@@ -32,7 +39,11 @@ function createResettingTimer(ms, onElapsed) {
 export function runTestInvocation(
   invocation,
   testDirectory,
-  { silenceTimeoutMs = CALL_SILENCE_TIMEOUT_MS } = {},
+  {
+    silenceTimeoutMs = CALL_SILENCE_TIMEOUT_MS,
+    killGraceMs = CALL_KILL_GRACE_MS,
+    runnerArguments = ['--test'],
+  } = {},
 ) {
   const selection = [
     ...(invocation.namePattern
@@ -51,7 +62,7 @@ export function runTestInvocation(
     const child = spawn(
       process.execPath,
       [
-        '--test',
+        ...runnerArguments,
         // A lane is one sequence: its files run one after another, as each file's own tests do.
         '--test-concurrency=1',
         '--test-reporter=spec',
@@ -76,7 +87,7 @@ export function runTestInvocation(
     const silenceTimer = createResettingTimer(silenceTimeoutMs, () => {
       timedOut = true
       child.kill('SIGTERM')
-      killTimer = setTimeout(() => child.kill('SIGKILL'), CALL_KILL_GRACE_MS)
+      killTimer = setTimeout(() => child.kill('SIGKILL'), killGraceMs)
     })
     const keep = (chunk) => {
       chunks.push(chunk)
@@ -84,7 +95,12 @@ export function runTestInvocation(
     }
     child.stdout.on('data', keep)
     child.stderr.on('data', keep)
-    child.on('error', reject)
+    child.on('error', (error) => {
+      // A call that cannot run has nothing to wait for: its timers must not outlive the rejection.
+      silenceTimer.stop()
+      clearTimeout(killTimer)
+      reject(error)
+    })
     child.on('close', (code, signal) => {
       silenceTimer.stop()
       clearTimeout(killTimer)
