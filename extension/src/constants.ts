@@ -47,7 +47,7 @@ export const LINUX_PID_NAMESPACE_PATH = '/proc/self/ns/pid'
 export const MACHINE_KEY_HEX_LENGTH = 16
 /** How long an empty lock file or an empty prepared takeover claim must have stayed empty before it counts as left by a killed window; a running window is in that state for an instant. */
 export const STORAGE_LOCK_UNWRITTEN_GRACE_MS = 10_000
-/** How often the release of this window's storage lock reads and removes the lock before it leaves the lock for this window's next write ({@link withStorageLock}); on Windows a scanner or an indexer can hold the file for a moment, so its read or its removal fails. */
+/** How often the release of this window's storage lock reads and removes the lock before it leaves the lock in place ({@link withStorageLock}); on Windows a scanner or an indexer can hold the file for a moment, so its read or its removal fails. A release that still fails is not thrown: the write's result stands, and the lock is taken back by this window's timer ({@link STORAGE_LOCK_TAKE_BACK_DELAY_MS}) or by its next hold of that folder. */
 export const STORAGE_LOCK_RELEASE_ATTEMPTS = 20
 /** How long the release of this window's storage lock waits between two attempts; with {@link STORAGE_LOCK_RELEASE_ATTEMPTS} about half a second. */
 export const STORAGE_LOCK_RELEASE_RETRY_DELAY_MS = 25
