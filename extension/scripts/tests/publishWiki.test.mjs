@@ -15826,6 +15826,78 @@ test('a publish on a mount that gives the names of its publish lock and journal 
   }
 })
 
+for (const { read, code, looksBefore } of [
+  { read: 'its look at the copy', code: 'EACCES', looksBefore: 1 },
+  { read: 'its read of the copy', code: 'EIO', looksBefore: 2 },
+]) {
+  // Value: protects=a candidate whose publish was killed past finalize, after it copied a learner's file, and the --recover whose recheck of the copy just before its removal fails at that moment (a file this user may not read, a disk error); fails_when=the recheck takes the failed look for the learner's edit, so the copy stays, the journal, its list of copies and the side file go, and the next publish refuses the copy as a file outside the manifest, with nothing left for a recovery to remove it; why_new=Cycle 0047 row 263 (P3CXA-A2); seam=a publisher process killed past finalize (scripts/tests/utils/killedPublisherProbe.mjs), and a copy of the shipped publisher whose `node:fs/promises` fails the row's look at the copy with the row's code (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failLookOf), counted from the recovery's first look at the copy, which finds it; no_claim=a look that keeps failing
+  test(`a --recover whose recheck of a learner’s copy before its removal fails at ${read} with ${code} is refused by that code and keeps the journal and the files beside it, and the next --recover removes the copy, which lets the candidate publish`, async () => {
+    // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; the row's look of the recovery at the copy fails with the row's code.
+    const { recoverWikiPublication: recoverWhoseRecheckFails } =
+      await loadMarkedCopy('publish-wiki.mjs', '?failing')
+    const { wiki, killed } = await publishWithACopyKilledPastFinalize()
+    const copy = join(wiki.next, 'manual.txt')
+    let looks = 0
+    failLookOf((path) => path === copy && looks++ === looksBefore, code)
+    try {
+      // Act: the recovery whose recheck fails, then the next one, then the candidate published again.
+      const firstRecovery = await recoverWhoseRecheckFails({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+      const keptByTheFirst = (await publisherFilesBeside(wiki.output)).map(
+        withIdsHidden,
+      )
+      const nextRecovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ status, changedFilesKept }) => ({
+          status,
+          changedFilesKept: changedFilesKept ?? 'none',
+        }),
+        (error) => error.message,
+      )
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ preservedManualFiles }) => ({ preservedManualFiles }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        { killed, firstRecovery, keptByTheFirst, nextRecovery, nextPublish },
+        {
+          killed: '',
+          firstRecovery: `The recovery could not read a file of the stopped publish (${code}), so it changed nothing more in its candidate and kept the Wiki publication journal and the files beside it. Run --recover again once the file can be read: another program may hold it open, as a scanner or an indexer can on Windows, or this user may not read it.`,
+          keptByTheFirst: [
+            'wiki.publish-journal.json',
+            'wiki.publish-journal.json.copies-<id>',
+            'wiki.publish-journal.json.prepared-<id>-<digest>',
+            'wiki.publish-lock.json',
+          ],
+          nextRecovery: {
+            status: 'published-or-restored',
+            changedFilesKept: 'none',
+          },
+          nextPublish: { preservedManualFiles: 1 },
+        },
+      )
+    } finally {
+      failLookOf(() => false, code)
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
 // Cycle 0047, second ship, fixing cycle 2: the tests of fixer PB (rows 222 to 227).
 
 // Value: protects=the tests that arm a kill or a failure halfway through a write of the publisher's list of copies, whose lines all go through one handle; fails_when=the stand-in runs its swap or its failure at every write through the wrapped handle, not once, so a second line reruns a swap that is no kill or rearms the next kill of a chain, and a later write loses its options; why_new=Cycle 0047 row 227 (P2OCR1a-1); seam=the `open` of the stand-ins themselves (scripts/tests/utils/swappedFolderFileSystem.mjs, scripts/tests/utils/failingFileSystem.mjs); no_claim=a write of the publisher's own, which the tests of the kills and of the failed writes cover
