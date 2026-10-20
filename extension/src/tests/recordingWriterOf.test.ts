@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import {
+import fsPromises, {
   lstat,
   mkdir,
   mkdtemp,
@@ -18,7 +18,6 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import fsPromises from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
