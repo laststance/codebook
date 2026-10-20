@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { mapPregateTests } from '../utils/mapPregateTests.mjs'
 import {
@@ -123,4 +125,20 @@ test('the pre-gate runner refuses a selected file that is no test it can run, an
     message:
       'The pre-gate selected extension/src/extension.ts, which is no test this runner runs (TypeScript tests under extension/src/tests/, script tests under extension/scripts/tests/, or .codex/*.test.mjs).',
   })
+})
+
+// Value: protects=the pre-gate runs workflowPins.test.mjs for a change to any workflow file; fails_when=the policy drops the .github/workflows/*.yml entry or names a missing test file; why_new=task 31 was closed by the policy file and evidence only; seam=none; no_claim=that the pre-gate reads the policy as this test does
+test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the workflow files, and that test exists', () => {
+  // Arrange
+  const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+  const policy = JSON.parse(
+    readFileSync(`${repositoryRoot}.gstack/pregate.json`, 'utf8'),
+  )
+
+  // Act
+  const lane = policy.dependencies['.github/workflows/*.yml']
+
+  // Assert
+  assert.deepEqual(lane, ['extension/scripts/tests/workflowPins.test.mjs'])
+  assert.equal(existsSync(`${repositoryRoot}${lane[0]}`), true)
 })

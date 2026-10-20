@@ -1269,6 +1269,39 @@ test('a lock the system refused to remove after a write is taken back a few seco
   )
 })
 
+// Value: protects=a left storage lock is taken back at a later wait after an earlier take-back was refused; fails_when=the first refused take-back ends the tries and the lock stays until exit; why_new=the task 22 test lets the first take-back succeed, so the retry had no test; seam=none; no_claim=a real scanner (a faked unlink and a faked timer stand in for it)
+test('a lock whose take-back is refused again after the first wait is taken back at the next wait, with no further write of this window', async (context) => {
+  // Arrange: a window whose first release was refused and whose take-back at the first wait is refused too.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  context.mock.timers.tick(5_000)
+  for (let look = 0; look < 1000; look++) await setImmediate()
+  const entriesAfterTheRefusedTry = await readdir(directory)
+  window.isRemovalRefused = false
+
+  // Act
+  for (let look = 0; look < 200 && (await readdir(directory)).length; look++) {
+    context.mock.timers.tick(5_000)
+    await setImmediate()
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      entriesAfterTheRefusedTry,
+      entriesAfterTheNextTry: await readdir(directory),
+    },
+    { entriesAfterTheRefusedTry: ['writer.lock'], entriesAfterTheNextTry: [] },
+  )
+})
+
 // Value: protects=another window's writes after this window's leftover lock was replaced by that window's own lock (the learner removed the leftover by hand, as the refusal says, and the other window then took the storage); fails_when=this window's next write takes back whatever stands at the path it noted, so it removes the other window's lock and both write; why_new=Cycle 0047 row 92 (TEST-3): the take-back of row 31 had no test where the noted path names another writer by the next hold; seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=a lock that still names this window (the test before this one)
 test('a window whose leftover lock another live window has replaced by its own refuses its next write and leaves that window’s lock byte for byte', async (context) => {
   // Arrange: this window's first release may not remove its lock, so the lock is left and noted; then the learner removes it by hand and another live window of this machine places its own lock.
