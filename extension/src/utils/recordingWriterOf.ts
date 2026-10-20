@@ -57,7 +57,7 @@ export async function recordingWriterOf(
     const holder = isSealedRecordingReleased(seen)
       ? undefined
       : await sealedRecordingWriterState(directory, header, starts)
-    // A record that stands and cannot be read, with a header that proves no writer gone, is nobody's reservation and nobody's rest.
+    // A record that stands and cannot be read, while the header calls the writer gone, is nobody's reservation and nobody's rest.
     if (holder?.kind === 'unreadable') return { kind: 'unreadable' }
     if (holder) return { ...holder, createdAt: header.createdAt }
     // A look that may have failed to read releases nothing by itself.
@@ -71,7 +71,7 @@ export async function recordingWriterOf(
     ownProcess,
     starts,
   )
-  // A record that stands and cannot be read, with a header that proves no writer gone, is nobody's reservation and nobody's rest.
+  // A record that stands and cannot be read, while the header calls the writer gone, is nobody's reservation and nobody's rest.
   if (state.kind === 'unreadable') return { kind: 'unreadable' }
   return { ...state, createdAt: header.createdAt }
 }

@@ -1,4 +1,4 @@
-import { lstat } from 'node:fs/promises'
+import { lstat, realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 import {
@@ -17,13 +17,43 @@ import { systemErrorCode } from './systemErrorCode'
 /**
  * What one look at a recording's writer record finds, the answer and the record coming from the same read.
  * - `record`: the record is readable and names this recording; `owner` is its writer
- * - `unreadable`: a regular file within the bound stands and cannot be read now, is no JSON, or is JSON that names no process (no owner record), or the folder of records or the file could not be looked at (other than with `ENOENT` or `ENOTDIR`)
- * - `none`: no record by design: a missing record or folder, a link, a folder or a pipe in either place, a larger file, and an owner record that names no recording or another one
+ * - `unreadable`: a regular file within the bound stands and cannot be read now, is no JSON, or is JSON that names no process (no owner record), or the folder of records or the file could not be looked at (other than with `ENOENT` or `ENOTDIR`), or a real folder of records stands whose real path cannot be read (`EACCES`, `EPERM`, `EIO`, a network share; Cycle 0048 task 130)
+ * - `none`: no record by design: a missing record or folder, a link, a file or a pipe at the place of the folder, a folder or a pipe at the record's place, a larger file, and an owner record that names no recording or another one
  */
 export type WriterRecordLook =
   | { kind: 'record'; owner: RecordedOwner }
   | { kind: 'unreadable' }
   | { kind: 'none' }
+
+/** Says whether a failed system call found nothing there, as `ENOENT` and `ENOTDIR` do; every other failure proves nothing absent. */
+function isMissingEntry(error: unknown): boolean {
+  return ['ENOENT', 'ENOTDIR'].includes(systemErrorCode(error))
+}
+
+/**
+ * Says what the place of the folder of writer records holds when {@link hasOwnWriterRecordFolder} found no folder of records there, so that a folder this computer cannot check is not taken for no record; called by {@link lookAtWriterRecord}.
+ * Why: the check of a real folder answers `false` also when the real path of a real folder cannot be read (`EACCES`, `EPERM`, `EIO`, a network share). That folder may hold the record of a writer on another computer with this host name and this storage folder, so it is `unreadable`; only an entry that is no folder, a link, one that leads elsewhere, or one that is gone, is none (Cycle 0048 task 130).
+ * @param learningDirectory - The private learning directory that holds the folder of records.
+ * @returns `none` for a missing place, a file, a link, a folder that leads elsewhere and a folder that vanished during the look; `unreadable` for a place that cannot be looked at, and for a real folder whose real path, or its parent's, cannot be read.
+ * @example await lookAtPlaceOfWriterRecordFolder('/storage/learning') // => { kind: 'unreadable' } while the real path of `recording-owners` is refused with EACCES
+ */
+async function lookAtPlaceOfWriterRecordFolder(
+  learningDirectory: string,
+): Promise<WriterRecordLook> {
+  const place = join(learningDirectory, RECORDING_OWNERS_DIRECTORY)
+  try {
+    const entry = await lstat(place)
+    // A link, a file or a pipe holds no record; the link is never followed.
+    if (!entry.isDirectory()) return { kind: 'none' }
+    // A real folder that failed the check: its real path and its parent's must both be readable, else the folder cannot be judged.
+    await realpath(place)
+    await realpath(learningDirectory)
+    // Both real paths are readable and the check still refused: the folder leads elsewhere.
+    return { kind: 'none' }
+  } catch (error) {
+    return isMissingEntry(error) ? { kind: 'none' } : { kind: 'unreadable' }
+  }
+}
 
 /**
  * Looks at the writer record of a recording once and says what it is, so that a header's `gone` is not believed while a record stands that names another computer or cannot be read now; called by {@link recordingWriterState} for an unsealed recording and by {@link sealedRecordingWriterState} for a sealed one, each when the read of the record gave nothing and the header judges the writer gone (Cycle 0048 tasks 1, 30, 75 and 124).
@@ -40,14 +70,7 @@ export async function lookAtWriterRecord(
 ): Promise<WriterRecordLook> {
   const learningDirectory = dirname(dirname(directory))
   if (!(await hasOwnWriterRecordFolder(learningDirectory)))
-    // A link, a file or nothing at the folder's place holds no record; a look that failed for another reason proves nothing.
-    return lstat(join(learningDirectory, RECORDING_OWNERS_DIRECTORY)).then(
-      () => ({ kind: 'none' }),
-      (error: unknown) =>
-        ['ENOENT', 'ENOTDIR'].includes(systemErrorCode(error))
-          ? { kind: 'none' }
-          : { kind: 'unreadable' },
-    )
+    return lookAtPlaceOfWriterRecordFolder(learningDirectory)
   const path = recordingOwnerRecordPath(learningDirectory, basename(directory))
   if (!(await mayHoldRegularFileWithin(path, MAX_RECORDING_HEADER_BYTES)))
     return { kind: 'none' }
