@@ -53,6 +53,7 @@ import {
   installWikiUpdateStatus,
   type WikiUpdateStatusAnswer,
 } from './utils/installWikiUpdateStatus'
+import { isInsideFolder } from './utils/isInsideFolder'
 import { isWikiSourceCandidate } from './utils/isWikiSourceCandidate'
 import { labelQuestionField } from './utils/labelQuestionField'
 import { openWithoutFollowing } from './utils/openWithoutFollowing'
@@ -743,13 +744,8 @@ export async function startDeepWikiReader(
     relativePath: string,
   ): Promise<{ filePath: string; sizeBytes: number } | undefined> {
     const filePath = await realpath(join(canonicalOutput, relativePath))
-    const canonicalRelativePath = relative(canonicalOutput, filePath)
-    // Published paths cannot follow a symlink out of the generated Wiki directory.
-    if (
-      !canonicalRelativePath ||
-      canonicalRelativePath === '..' ||
-      canonicalRelativePath.startsWith(`..${sep}`)
-    ) {
+    // Published paths cannot follow a symlink out of the generated Wiki directory, also not to another drive or a share on Windows.
+    if (!isInsideFolder(canonicalOutput, filePath)) {
       sendJson(response, 403, {
         error: 'The Wiki file is outside its output directory.',
       })
