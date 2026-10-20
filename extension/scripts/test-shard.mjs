@@ -115,7 +115,28 @@ function callLabel(invocation) {
     : `${invocation.files.length} files`
 }
 
-/** Runs one planned call and prints its report with the planned duration beside the measured one, which shows when the timings file needs a new recording; a call that printed nothing for `silenceSeconds` is ended and named. @example await runCall({ files: ['a.test.js'], ms: 300 }, 120) // => { tests: 4, failed: false } */
+/** Names a planned call with its files and, for a part, the note that a test name selects it. @example callFiles({ files: ['a.test.js'], namePattern: '/^(?:x)$/' }) // => 'a.test.js (a part selected by test name)' */
+function callFiles(invocation) {
+  return `${invocation.files.join(', ')}${invocation.namePattern || invocation.skipPattern ? ' (a part selected by test name)' : ''}`
+}
+
+/** Writes the one line that says why a call failed: ended for its silence, a failing exit code, or no test counted (a runner that died before its summary, however it exited). Writes nothing for a call that passed. @example reportFailedCall(invocation, result, 0, 120) */
+function reportFailedCall(invocation, result, tests, silenceSeconds) {
+  if (result.timedOut)
+    console.error(
+      `✖ ${callFiles(invocation)} printed nothing for ${silenceSeconds} s and was ended; the test after the last one printed above did not end.`,
+    )
+  else if (result.code !== 0)
+    console.error(
+      `✖ ${invocation.files.join(', ')} ended with exit code ${result.code} (signal ${result.signal}).`,
+    )
+  else if (tests === 0)
+    console.error(
+      `✖ ${callFiles(invocation)} ran no test: its output counts none, so the runner may have ended before its summary.`,
+    )
+}
+
+/** Runs one planned call and prints its report with the planned duration beside the measured one, which shows when the timings file needs a new recording; a call that printed nothing for `silenceSeconds` is ended and named, and a call that counted no test fails. @example await runCall({ files: ['a.test.js'], ms: 300 }, 120) // => { tests: 4, failed: false } */
 async function runCall(invocation, silenceSeconds) {
   const result = await runTestInvocation(invocation, testDirectory, {
     silenceTimeoutMs: silenceSeconds * 1000,
@@ -125,15 +146,9 @@ async function runCall(invocation, silenceSeconds) {
     `${result.output}▶ ${callLabel(invocation)}: ${tests} tests, ${(result.elapsedMs / 1000).toFixed(1)} s (planned ${(invocation.ms / 1000).toFixed(1)} s)\n`,
   )
   // A call ended for its silence fails whatever the runner exits with after the SIGTERM: a runner that winds down with 0 must not turn a hung test into a pass.
-  const failed = result.timedOut || result.code !== 0
-  if (result.timedOut)
-    console.error(
-      `✖ ${invocation.files.join(', ')}${invocation.namePattern || invocation.skipPattern ? ' (a part selected by test name)' : ''} printed nothing for ${silenceSeconds} s and was ended; the test after the last one printed above did not end.`,
-    )
-  else if (failed)
-    console.error(
-      `✖ ${invocation.files.join(', ')} ended with exit code ${result.code} (signal ${result.signal}).`,
-    )
+  // A call that counted no test ran nothing it was planned for (its plan names files), so it must not pass either.
+  const failed = result.timedOut || result.code !== 0 || tests === 0
+  if (failed) reportFailedCall(invocation, result, tests, silenceSeconds)
   return { tests, failed }
 }
 

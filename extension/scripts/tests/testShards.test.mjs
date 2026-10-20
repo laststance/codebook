@@ -342,6 +342,31 @@ async function createFixtureExtension(context, { tests, timings }) {
   return root
 }
 
+/**
+ * Makes the fixture's copy of {@link runTestInvocation} start a stand-in script instead of `node --test`, so the shard script (which has no option for it) can be run against a runner that ends at once, prints no summary or winds down with exit code 0 after a SIGTERM. The product code has no seam for this; the fixture's own copy of the file is the seam.
+ * @param root - The fixture extension made by {@link createFixtureExtension}.
+ * @param source - The source of the stand-in script (CommonJS).
+ * @example
+ * await useStandInRunner(root, "console.log('started')")
+ */
+async function useStandInRunner(root, source) {
+  const standInPath = join(root, 'stand-in-runner.cjs')
+  await writeFile(standInPath, source)
+  const utilities = join(root, 'scripts/utils')
+  await rename(
+    join(utilities, 'runTestInvocation.mjs'),
+    join(utilities, 'runTestInvocationOfNode.mjs'),
+  )
+  await writeFile(
+    join(utilities, 'runTestInvocation.mjs'),
+    [
+      "import { runTestInvocation as runWithNode } from './runTestInvocationOfNode.mjs'",
+      'export const runTestInvocation = (invocation, directory, options) =>',
+      `  runWithNode(invocation, directory, { ...options, runnerArguments: [${JSON.stringify(standInPath)}] })`,
+    ].join('\n'),
+  )
+}
+
 /** Starts the fixture's shard script and collects its exit code and both streams; a script that outlives `timeoutMs` is ended, which shows as `signal`. @example await runShardScript(root, ['--shard', '1/1', '--lanes', '1']) // => { code: 0, signal: null, stdout: '…', stderr: '' } */
 function runShardScript(root, args, timeoutMs = 60_000) {
   return new Promise((resolve, reject) => {
@@ -846,27 +871,13 @@ test('the shard script fails the shard for a call ended for its silence even whe
     tests: { 'hanging.test.js': loggingTestSource(['opens']) },
     timings: { files: { 'hanging.test.js': { totalMs: 100 } } },
   })
-  const standInPath = join(root, 'stand-in-runner.cjs')
-  await writeFile(
-    standInPath,
+  // The fixture's own copy of the call starts the stand-in instead of `node --test`; the product code has no seam for it.
+  await useStandInRunner(
+    root,
     [
       "process.on('SIGTERM', () => process.exit(0))",
       "console.log('started')",
       'setInterval(() => {}, 1_000)',
-    ].join('\n'),
-  )
-  // The fixture's own copy of the call starts the stand-in instead of `node --test`; the product code has no seam for it.
-  const utilities = join(root, 'scripts/utils')
-  await rename(
-    join(utilities, 'runTestInvocation.mjs'),
-    join(utilities, 'runTestInvocationOfNode.mjs'),
-  )
-  await writeFile(
-    join(utilities, 'runTestInvocation.mjs'),
-    [
-      "import { runTestInvocation as runWithNode } from './runTestInvocationOfNode.mjs'",
-      'export const runTestInvocation = (invocation, directory, options) =>',
-      `  runWithNode(invocation, directory, { ...options, runnerArguments: [${JSON.stringify(standInPath)}] })`,
     ].join('\n'),
   )
 
@@ -884,6 +895,27 @@ test('the shard script fails the shard for a call ended for its silence even whe
     result.stderr,
     /✖ hanging\.test\.js printed nothing for 3 s and was ended/,
   )
+})
+
+// Value: protects=the shard job from a call that ran no test and passed: a runner that died before its summary with exit code 0 counted 0 tests and passed, so the shard reported green with a call unrun; fails_when=a call with a count of 0 tests (and exit code 0) is not failed, or the line does not name the call; why_new=Cycle 0048 task 74 (native adversarial); seam=test-shard.mjs started as a process on a fixture build whose copy of runTestInvocation starts a stand-in runner that prints no summary and exits 0; no_claim=a name pattern that matches no test: Node counts the file itself as one test then ("ℹ tests 1"), so the count cannot show it; a real runner that dies, which the stand-in only models by its output
+test('the shard script fails a call that counts no test even when its runner exits 0, and names the call', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'silent.test.js': loggingTestSource(['opens']) },
+    timings: { files: { 'silent.test.js': { totalMs: 100 } } },
+  })
+  await useStandInRunner(root, "console.log('started')")
+
+  // Act
+  const result = await runShardScript(root, ['--shard', '1/1', '--lanes', '1'])
+
+  // Assert
+  assert.equal(result.code, 1)
+  assert.match(
+    result.stdout,
+    /Shard 1\/1: 0 tests in 1 calls .* 1 failed calls\./,
+  )
+  assert.match(result.stderr, /✖ silent\.test\.js ran no test/)
 })
 
 // Value: protects=the shard job from a silence limit that ends every call at once: `Infinity` and a limit above what a timer can wait (2,147,483 s) fire at once with a TimeoutOverflowWarning, so every call is ended as hung; fails_when=the option accepts a limit whose milliseconds pass 2,147,483,647 or that is not finite; why_new=Cycle 0048 task 54 (OCR B); seam=test-shard.mjs started as a process on a fixture build; no_claim=the pre-gate runner's option, which pregateTests.test.mjs covers
