@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { LearningLibrary } from '../learningLibrary'
@@ -816,6 +816,273 @@ test('an agent waiting on the next state while a completed run’s final save is
       runStatus: 'failed',
       failures: ['Error: ENOSPC: no space left on device, write'],
     },
+  )
+  await service.stop(receipt)
+})
+
+/**
+ * Starts a run of the real coordinator on a configured runtime harness, as an agent starts one beside a published book that cites the harness's source, and waits for its preparation; the service and the book store end with the test.
+ * @param context - The test, at whose end the service shuts down and the book store is disposed.
+ * @param harness - The configured runtime harness whose run the service drives.
+ * @param key - The idempotency key of the start.
+ * @returns The service, the start's receipt and the run's record.
+ * @example const { service, receipt } = await preparedRunOn(context, harness, 'final-save-polled')
+ */
+async function preparedRunOn(
+  context: TestContext,
+  harness: Awaited<ReturnType<typeof configuredRuntimeHarness>>,
+  key: string,
+) {
+  const library = new LearningLibrary(
+    join(harness.directory, '.learning'),
+    '0'.repeat(64),
+  )
+  const books = new RepositoryBookStore(harness.sources, library)
+  const service = new StudyService(
+    {
+      workspace: harness.directory,
+      host: {
+        id: 'vscode',
+        productVersion: 'test',
+        apiVersion: 'test',
+        commit: 'test',
+      },
+      build: {
+        revision: 'controlled-runtime',
+        dirty: false,
+        sourceHash: '0'.repeat(64),
+      },
+      prerequisites: async () => ({ ready: true, missing: [] }),
+      createRuntime: async () => harness.run,
+    },
+    join(harness.directory, '.service'),
+  )
+  context.after(async () => {
+    await service.shutdown()
+    books.dispose()
+  })
+  await books.publish({
+    bookId: 'interface',
+    expectedRevision: 0,
+    key: 'article',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: harness.definition.descriptor.anchors,
+          observations: [],
+        },
+      ],
+      edges: [],
+    },
+  })
+  service.repository = books
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key,
+    configuration: harness.definition.configuration,
+  })
+  const record = service.record(receipt)
+  await record.preparation
+  return { service, receipt, record }
+}
+
+/**
+ * Reads the parts of the run resource that tell an agent whether the run has shown its result, as an agent polls it.
+ * @param service - The service that answers the resource.
+ * @param runUri - The run resource.
+ * @returns The run's state, its runtime's state, the runtime's outcome and the observed result; an absent field as `undefined`.
+ * @example await polledResult(service, receipt.runUri) // => { state: 'completed', runtimeState: 'completed', runtimeOutcome: 'demonstrated', observed: { afterVerified: true } }
+ */
+async function polledResult(
+  service: StudyService,
+  runUri: string,
+): Promise<Record<string, unknown>> {
+  const content = await readResource(service, runUri)
+  const run: Record<string, unknown> =
+    'text' in content ? JSON.parse(content.text) : {}
+  return {
+    state: run.state,
+    runtimeState: run.runtimeState,
+    runtimeOutcome: run.runtimeOutcome,
+    observed: run.observed,
+  }
+}
+
+// Value: protects=an agent that polls the run resource while a completed run's final save of its events and run record is under way (also one that follows the poll instruction after a continuation that answered without next): it reads no result and no outcome before that save settled; fails_when=the run resource shows the run completed, its runtime outcome demonstrated and observed.afterVerified during that save, so the agent reports a result that the save can still fail (row 197 then fails the run); why_new=Cycle 0047 row 252 (P3CXA-C3, P3TEST-3): row 241 held back only the continuation's answer; seam=the run evidence's save of runtime.json, which holds the save that follows the completion until the test releases it, and the service's maintenance turn, which the test leaves out so that the release of the completed run does not make the run's state read stopping before the poll; no_claim=a real slow disk
+test('a poll of the run resource while a completed run’s final save is held shows the run still resuming, with no outcome and no observed result', async (context) => {
+  // Arrange: a run of the real coordinator; the save of its run record that follows its completion is held until the poll.
+  const harness = await configuredRuntimeHarness(context)
+  const { service, receipt } = await preparedRunOn(
+    context,
+    harness,
+    'final-save-polled',
+  )
+  // The maintenance turn would release the completed run; its state would then read stopping, whatever the save does.
+  context.mock.method(service, 'maintain', () => {})
+  const evidence = harness.run.evidence,
+    save = evidence.save.bind(evidence)
+  let isFinalSaveHeld = false,
+    releaseFinalSave = (): void => {}
+  const finalSaveReleased = new Promise<void>((resolve) => {
+    releaseFinalSave = resolve
+  })
+  context.mock.method(
+    evidence,
+    'save',
+    async (...input: Parameters<typeof evidence.save>) => {
+      // Only the save that follows the completion is held; once released it saves as the run asked.
+      if (harness.run.view().status === 'completed' && !isFinalSaveHeld) {
+        isFinalSaveHeld = true
+        await finalSaveReleased
+      }
+      return save(...input)
+    },
+  )
+  service.action({ ...receipt, key: 'click-once', action: 'repository-click' })
+  const snapshot = await waitUntil(
+    () => harness.run.view().snapshots[0],
+    'configured pause',
+  )
+  await service.continue({
+    ...receipt,
+    participant: 'browser',
+    ...snapshot.pause,
+  })
+  await waitUntil(() => isFinalSaveHeld, 'the final save of the run')
+
+  // Act
+  const polledDuringTheSave = await polledResult(service, receipt.runUri)
+  releaseFinalSave()
+
+  // Assert
+  assert.deepEqual(polledDuringTheSave, {
+    state: 'resuming',
+    runtimeState: 'resuming',
+    runtimeOutcome: undefined,
+    observed: undefined,
+  })
+  await service.stop(receipt)
+})
+
+// Value: protects=the result of a run whose final save succeeds after it was held: the agent that waits on its last continuation is answered with the result, and a poll after the save shows it; fails_when=the flag of the final save is not cleared after a save that succeeds (configuredBrowserRun.ts observeAfter's finally), so every real completed run reads as saving: the continuation's wait never answers the result and the run resource never shows it; why_new=Cycle 0047 row 252 (P3TEST-2, P3SM-11): only the failed save had a test; seam=the run evidence's save of runtime.json, which holds the save that follows the completion across more than one turn of the continuation's wait and then lets it save; no_claim=a real slow disk
+test('an agent waiting on the next state while a completed run’s final save is held and then succeeds is answered with the result, and a poll then shows it', async (context) => {
+  // Arrange: a run of the real coordinator; the save of its run record that follows its completion is held, then saves.
+  const harness = await configuredRuntimeHarness(context)
+  const { service, receipt } = await preparedRunOn(
+    context,
+    harness,
+    'final-save-held-then-saved',
+  )
+  const evidence = harness.run.evidence,
+    save = evidence.save.bind(evidence)
+  let isFinalSaveHeld = false,
+    releaseFinalSave = (): void => {}
+  const finalSaveReleased = new Promise<void>((resolve) => {
+    releaseFinalSave = resolve
+  })
+  context.mock.method(
+    evidence,
+    'save',
+    async (...input: Parameters<typeof evidence.save>) => {
+      // Only the save that follows the completion is held; once released it saves as the run asked.
+      if (harness.run.view().status === 'completed' && !isFinalSaveHeld) {
+        isFinalSaveHeld = true
+        await finalSaveReleased
+      }
+      return save(...input)
+    },
+  )
+  service.action({ ...receipt, key: 'click-once', action: 'repository-click' })
+  const snapshot = await waitUntil(
+    () => harness.run.view().snapshots[0],
+    'configured pause',
+  )
+
+  // Act: the agent continues and waits for the next state; the final save is held for more than one turn of that wait, then saves.
+  const answering = service.continueToNextState({
+    ...receipt,
+    participant: 'browser',
+    ...snapshot.pause,
+    answer: 'next',
+  })
+  await waitUntil(() => isFinalSaveHeld, 'the final save of the run')
+  await delay(POLL_INTERVAL_MS * 3)
+  releaseFinalSave()
+  const answer = await answering
+  // The run's own state may already read stopping or stopped: the service releases a completed run by itself.
+  const { runtimeState, runtimeOutcome, observed } = await polledResult(
+    service,
+    receipt.runUri,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      next: 'next' in answer ? answer.next : undefined,
+      polledAfterTheSave: { runtimeState, runtimeOutcome, observed },
+    },
+    {
+      next: 'result',
+      polledAfterTheSave: {
+        runtimeState: 'completed',
+        runtimeOutcome: 'demonstrated',
+        observed: { afterVerified: true },
+      },
+    },
+  )
+  await service.stop(receipt)
+})
+
+// Value: protects=the result of a real completed run whose final save settled before the agent's wait looks at it: the wait answers the result at its first look; fails_when=the guard of row 241 holds back the result of every runtime that has a final save to wait for (it asks whether the runtime has isSavingCompletion rather than whether a save is under way), so a real run is never answered with its result, which no test saw because the one test of the result uses a stand-in runtime without isSavingCompletion; why_new=Cycle 0047 row 252 (P3SM-10); seam=the runtime's continue, which returns only once the run completed and its final save settled, so the service's wait begins after it; no_claim=the order of a real adapter's acknowledgement and the run's completion
+test('an agent whose last continuation is acknowledged only after the completed run’s final save settled is answered with the result', async (context) => {
+  // Arrange: a run of the real coordinator whose runtime acknowledges the last continuation only once the run completed and its final save settled.
+  const harness = await configuredRuntimeHarness(context)
+  const { service, receipt } = await preparedRunOn(
+    context,
+    harness,
+    'final-save-settled-before-the-wait',
+  )
+  const continueBefore = harness.run.continue.bind(harness.run)
+  context.mock.method(
+    harness.run,
+    'continue',
+    async (...input: Parameters<typeof harness.run.continue>) => {
+      await continueBefore(...input)
+      await waitUntil(
+        () =>
+          harness.run.view().status === 'completed' &&
+          !harness.run.isSavingCompletion(),
+        'the completion and its final save',
+      )
+    },
+  )
+  service.action({ ...receipt, key: 'click-once', action: 'repository-click' })
+  const snapshot = await waitUntil(
+    () => harness.run.view().snapshots[0],
+    'configured pause',
+  )
+
+  // Act
+  const answer = await service.continueToNextState({
+    ...receipt,
+    participant: 'browser',
+    ...snapshot.pause,
+    answer: 'next',
+  })
+
+  // Assert
+  assert.deepEqual(
+    {
+      next: 'next' in answer ? answer.next : undefined,
+      runtimeState: 'state' in answer ? answer.state.runtimeState : undefined,
+    },
+    { next: 'result', runtimeState: 'completed' },
   )
   await service.stop(receipt)
 })

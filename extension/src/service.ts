@@ -1966,9 +1966,30 @@ export class StudyService {
     ).message
   }
 
-  /** Projects bounded current state and actionable next steps without copying the full event log. @example service.state(record).nextActions */
-  state(record: StudyRecord) {
+  /**
+   * Gives the runtime's view as the run resource shows it, with the runtime's outcome beside it; read by {@link StudyService.state} once per state.
+   * While a completed run's final save of its events and run record is under way ({@link StudyRuntime.isSavingCompletion}), the completion is no result yet: a failed save fails the run (Cycle 0047 row 197). So the run shows the state it had before its completion (`resuming`, the state of a run after its last continuation), without its runtime outcome and its observed result, until that save settled, as the continuation's answer waits for it ({@link StudyService.endedRunState}, rows 241 and 252). An agent that polls then reads no result that the save can still fail.
+   * @param record - The run.
+   * @returns The runtime's view (`undefined` without a runtime) and its outcome; during the final save the view says `resuming` and has no `observed`, and the outcome is `undefined`.
+   * @example this.shownRuntimeOf(record) // => { runtime: { status: 'resuming', observed: undefined, … }, runtimeOutcome: undefined } while runtime.json of the completed run is written
+   */
+  private shownRuntimeOf(record: StudyRecord): {
+    runtime: RuntimeView | undefined
+    runtimeOutcome: RuntimeView['runtimeOutcome'] | undefined
+  } {
     const runtime = record.runtime?.view()
+    // Only a completion whose final save is under way is held back; any other view is shown as the runtime gives it.
+    if (!runtime || !record.runtime?.isSavingCompletion?.())
+      return { runtime, runtimeOutcome: runtime?.runtimeOutcome }
+    return {
+      runtime: { ...runtime, status: 'resuming', observed: undefined },
+      runtimeOutcome: undefined,
+    }
+  }
+
+  /** Projects bounded current state and actionable next steps without copying the full event log; a completed run whose final save is under way shows no result yet ({@link StudyService.shownRuntimeOf}). @example service.state(record).nextActions */
+  state(record: StudyRecord) {
+    const { runtime, runtimeOutcome } = this.shownRuntimeOf(record)
     const evidenceFailure = this.runEvidenceFailure(record)
     // A runtime failure can quote adapter text of any length; the saved study's reason holds at most MAX_UI_TEXT_CHARS.
     const runtimeFailure = this.runtimeFailureOf(record, runtime)?.slice(
@@ -2225,7 +2246,7 @@ export class StudyService {
             `snapshots/${encodeURIComponent(snapshot.id)}/source/typescript`,
           ),
         })) ?? [],
-      runtimeOutcome: runtime?.runtimeOutcome,
+      runtimeOutcome,
       captureOutcome: runtime?.captureOutcome,
       finalOutcome,
       terminalReason,

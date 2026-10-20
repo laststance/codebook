@@ -5313,7 +5313,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Says whether the run completed and its final save of its events and run record has not settled yet; asked by {@link StudyService.endedRunState}, so that a continuation waiting for the next state answers the result only once that save succeeded, and the failure when it failed (Cycle 0047 row 241).
+   * Says whether the run completed and its final save of its events and run record has not settled yet; asked by {@link StudyService.endedRunState}, so that a continuation waiting for the next state answers the result only once that save succeeded, and the failure when it failed (Cycle 0047 row 241), and by {@link StudyService.shownRuntimeOf}, so that the run resource shows no result during that save (row 252).
    * Why: the run shows `completed` from its completion on, also during that save, as the run record it saves says (row 197's failure turns it into `failed` after the save); an agent answered with the result in between would report a run that then fails.
    * @returns `true` while the final save is under way; `false` before the completion and once the save settled.
    * @example run.isSavingCompletion() // => true while runtime.json of the completed run is written
