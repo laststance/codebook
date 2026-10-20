@@ -21938,7 +21938,11 @@ export class StudyWorkspace {
    * @example
    * ```ts
    * const ledgerCleaned = await this.forgetStudiesRemovedByHandOrReport()
-   * if (ledgerCleaned) this.errors.delete('archive')
+   * if (ledgerCleaned) {
+   *   this.errors.delete('archive')
+   *   // The History not saved line goes only when no archive waits to be written.
+   *   if (this.pendingArchives.size === 0) this.errors.delete('history-not-saved')
+   * }
    * ```
    */
   private async forgetStudiesRemovedByHandOrReport(): Promise<boolean> {

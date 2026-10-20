@@ -716,16 +716,13 @@ export class LearningLibrary {
   }
 
   /**
-   * Gives the outcome of a removal that threw, for {@link removeStudy}: a recording whose writer this computer cannot confirm is answered with its host, its start and its place, so the caller can ask the learner ({@link StudyWriterUnconfirmedError}); any other failure as {@link removalAfterLockFailure} words it.
-   * @param error - What the removal threw.
-   * @param settled - What the removal's steps settled before it threw, if they ran.
-   * @returns `nothing-moved` with `unconfirmedWriter` for such a recording; else the outcome {@link removalAfterLockFailure} gives.
-   * @example this.outcomeOfFailedRemoval(new Error('Study archive is unavailable.'), undefined) // => { outcome: 'nothing-moved', cause: 'Study archive is unavailable.' }
+   * Gives the outcome of a removal whose lock call rejected, for {@link removeStudy}: a recording whose writer this computer cannot confirm is answered with its host, its start and its place, so the caller can ask the learner ({@link StudyWriterUnconfirmedError}); any other failure as {@link removalAfterLockFailure} words it.
+   * The lock call rejects only before or in the steps (a lock held by another writer, a refusal, a failed read before the first move), because a failed release goes to `onReleaseFailure` and not to the rejection; so the steps never settled, and the answer is `nothing-moved`.
+   * @param error - What the lock call rejected with.
+   * @returns `nothing-moved` with `unconfirmedWriter` for such a recording; else `nothing-moved` with the failure as the cause.
+   * @example this.outcomeOfFailedRemoval(new Error('Study archive is unavailable.')) // => { outcome: 'nothing-moved', cause: 'Study archive is unavailable.' }
    */
-  private outcomeOfFailedRemoval(
-    error: unknown,
-    settled: StudyRemoval | undefined,
-  ): StudyRemoval {
+  private outcomeOfFailedRemoval(error: unknown): StudyRemoval {
     if (error instanceof StudyWriterUnconfirmedError) {
       const [lead, ...others] = error.writers
       return {
@@ -735,7 +732,7 @@ export class LearningLibrary {
         ...(others.length ? { otherUnconfirmedWriters: others } : {}),
       }
     }
-    return removalAfterLockFailure(settled, thrownMessage(error))
+    return removalAfterLockFailure(undefined, thrownMessage(error))
   }
 
   /**
@@ -1244,8 +1241,7 @@ export class LearningLibrary {
     unconfirmedWriterRule: UnconfirmedWriterRule = 'refuse',
   ): Promise<StudyRemoval> {
     const identity = studyIdSchema.parse(id)
-    // The lock call tells when its release fails after the steps ran; what they settled then decides the outcome.
-    let settled: StudyRemoval | undefined
+    // The lock call hands a failed release here instead of rejecting, so a rejection comes only from before or in the steps; the steps' own outcome then stands.
     let releaseFailure: unknown
     // The writers of the study's recordings are judged before the storage lock is taken; under it they are only looked at again.
     return (
@@ -1310,17 +1306,15 @@ export class LearningLibrary {
                 ...paths.sidecars.map(trash),
                 ...paths.archives.map(trash),
               ]
-              settled = await this.runRemovalSteps(steps, changes)
-              return settled
+              return this.runRemovalSteps(steps, changes)
             },
             (error) => {
               releaseFailure = error
             },
           ),
         )
-        .catch((error): StudyRemoval =>
-          this.outcomeOfFailedRemoval(error, settled),
-        )
+        // A rejection means the steps never settled: the lock was not taken, or something failed before or in them.
+        .catch((error): StudyRemoval => this.outcomeOfFailedRemoval(error))
         // A lock that could not be released afterwards is named in the answer, whatever the steps settled.
         .then((outcome) =>
           releaseFailure === undefined
