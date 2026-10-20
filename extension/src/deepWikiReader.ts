@@ -357,11 +357,11 @@ export async function startDeepWikiReader(
       if (freshnessInspection === inspection) freshnessInspection = undefined
     }
   }
-  /** The manifest read in flight for the requests that are no page, which every such request that comes meanwhile joins ({@link readManifestShared}). */
+  /** The manifest read in flight for the requests that come meanwhile, a page and a file that is no page alike ({@link readManifestShared}). */
   let sharedManifestRead: ReturnType<typeof readDeepWikiManifest> | undefined
   /**
-   * Reads the manifest for a request that is no page ({@link readManifest}): a request that comes while such a read is in flight joins it instead of reading and parsing the manifest once more, so the style sheets, images and fonts a page asks for at once cost one read between them, on the extension host's thread, however many they are.
-   * Called by the reader for a file of the Wiki that is no page and for a question; a page reads the manifest itself, under its place among the pages in hand ({@link takeWikiPagePlace}). A request that joins gets the manifest of a read that began before it came, as a read that ended just before it came would have given it.
+   * Reads the manifest for a page, a file that is no page or a question ({@link readManifest}): a request that comes while such a read is in flight joins it instead of reading and parsing the manifest once more, so the style sheets, images and fonts a page asks for at once, and the pages a browser opens at once, cost one read between them, on the extension host's thread, however many they are.
+   * Called by the reader for a file of the Wiki that is no page, for a question and, under its place among the pages in hand ({@link takeWikiPagePlace}), for a page. A request that joins gets the manifest of a read that began before it came, as a read that ended just before it came would have given it.
    * @returns The manifest, as {@link readDeepWikiManifest} answers it.
    * @throws What the read throws, to every request that joined it.
    * @example const { files } = await readManifestShared()
@@ -624,8 +624,8 @@ export async function startDeepWikiReader(
     response: ServerResponse,
     relativePath: string,
   ): Promise<void> {
-    // An agent may publish a new owned directory while this reader stays open.
-    const { files } = await readManifest()
+    // An agent may publish a new owned directory while this reader stays open. Pages asked for at once (tabs restored, a page and the pages it names) join one read, as the files that are no page do, so the manifest, up to 64 MiB, is parsed once on the host's thread however many pages are in hand.
+    const { files } = await readManifestShared()
     // A browser that went while the manifest was read gets no page: nothing more is read for it.
     if (response.destroyed) return
     // A page the last update removed or renamed sends the learner to the overview instead of a JSON error, and the overview is told which page was asked for, so it can say so.

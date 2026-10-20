@@ -2054,30 +2054,21 @@ test('while six pages are in hand, a further page request is refused at once wit
   letPagesGo()
   await Promise.all(heldPages)
 
-  // Assert: the reader's start read the manifest, the six held pages read the manifest and the publication identity once each, in any order between them, and the further page neither.
+  // Assert: the reader's start read the manifest, the six held pages read the publication identity once each and the manifest at least once (pages that come while a read is in flight join it, so how many reads they make between them depends on timing; Cycle 0048 task 18 pins that), and the further page neither.
   assert.deepEqual(
     {
       readAtTheStart,
-      readForTheHeldPages: readForTheHeldPages.sort(),
+      heldPagesReadTheManifest: readForTheHeldPages.includes('the manifest'),
+      publicationIdentityReadsForTheHeldPages: readForTheHeldPages.filter(
+        (read) => read === 'the publication identity',
+      ).length,
       further,
       readForTheFurtherPage,
     },
     {
       readAtTheStart: ['the manifest'],
-      readForTheHeldPages: [
-        'the manifest',
-        'the manifest',
-        'the manifest',
-        'the manifest',
-        'the manifest',
-        'the manifest',
-        'the publication identity',
-        'the publication identity',
-        'the publication identity',
-        'the publication identity',
-        'the publication identity',
-        'the publication identity',
-      ],
+      heldPagesReadTheManifest: true,
+      publicationIdentityReadsForTheHeldPages: 6,
       further: {
         status: 503,
         body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook is preparing as many pages as it can at once, so it did not prepare this one. Reload the page in a moment.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
@@ -4217,6 +4208,74 @@ test('a style sheet, an image and a font asked for at once cost one manifest rea
       pageAsAnImage: 403,
       filesTakenIn: 'handed',
       fileStatuses: [200, 200, 200],
+      manifestReadsAfterTheStart: 1,
+    },
+  )
+})
+
+// Value: protects=the editor's extension host against pages opened at once (tabs restored, or a page and the pages it names): each page read and parsed the whole manifest (up to 64 MiB) on the host's thread on its own, so six pages at once stalled the host six times over (a probe with a manifest of 53 MiB: 1.4 s of stall for six pages, 0.4 s for one); fails_when=a page asked for while another manifest read is in flight reads the manifest again instead of joining that read; why_new=Cycle 0048 task 18 (S11-N14); seam=the reader loaded with loadModule, a manifest reader that notes each read after the reader's start and holds it until the test lets it go, and a node:http whose server notes each request it hands the reader; no_claim=the time and the memory a read takes (the reads are counted)
+test('six pages asked for at once cost one manifest read between them and are all served', async (context) => {
+  // Arrange: the one-page Wiki, a manifest reader that notes each read after the reader's start and holds it until the test lets it go, and a server that notes each request it hands the reader.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shared-pages-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let isReaderStarted = false
+  let manifestReadsAfterTheStart = 0
+  let letReadsGoOn = (): void => {}
+  const readsMayGoOn = new Promise<void>((resolveGoOn) => {
+    letReadsGoOn = resolveGoOn
+  })
+  const holdingManifestReader: typeof readWikiFileToOpenModule = {
+    readWikiFileToOpen: async (...parameters) => {
+      // The reader's start reads the manifest as always; every later read is noted and held.
+      if (parameters[1] === 'manifest' && isReaderStarted) {
+        manifestReadsAfterTheStart += 1
+        await readsMayGoOn
+      }
+      return readWikiFileToOpen(...parameters)
+    },
+  }
+  const server = httpNotingTheReadersRequests()
+  const { startDeepWikiReader: startReaderHoldingManifestReads } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        'node:http': server.http,
+        './utils/readWikiFileToOpen': holdingManifestReader,
+      },
+      { URL },
+    )
+  const reader = await startReaderHoldingManifestReads(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // A held read is let go also when the test fails, so its requests end.
+  context.after(() => letReadsGoOn())
+  isReaderStarted = true
+
+  // Act: six pages at once, until the reader has taken all six in; then the held read goes on.
+  const pages = Array.from({ length: 6 }, () =>
+    fetch(reader.url, { headers: { 'Sec-Fetch-Dest': 'document' } }).then(
+      async (response) => {
+        await response.arrayBuffer()
+        return response.status
+      },
+    ),
+  )
+  const pagesTakenIn = await within(server.requestsHanded(6), 2_000)
+  letReadsGoOn()
+  const pageStatuses = await within(Promise.all(pages), 10_000)
+
+  // Assert
+  assert.deepEqual(
+    { pagesTakenIn, pageStatuses, manifestReadsAfterTheStart },
+    {
+      pagesTakenIn: 'handed',
+      pageStatuses: [200, 200, 200, 200, 200, 200],
       manifestReadsAfterTheStart: 1,
     },
   )
