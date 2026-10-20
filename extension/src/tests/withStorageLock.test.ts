@@ -382,6 +382,80 @@ test('an empty lock file created a moment ago stays in place, and this window’
   assert.deepEqual(await readdir(directory), ['writer.lock'])
 })
 
+// Value: protects=a live window's lock, empty for the instant between its creation and its write, on a network home whose clock runs behind this window's: a second window must not take the lock from it, or both write; fails_when=the empty lock's age is taken from this window's clock alone, so a window whose clock runs ten minutes ahead of the file system's finds a lock created this instant abandoned and takes it over (Cycle 0048 task 40); why_new=Cycle 0048 task 40 (S11-N17e); seam=this window's clock (Date), set ten minutes ahead of the file system's, and the real files; no_claim=a real network home
+test('an empty lock file created this instant stays in place, and this window’s write is refused, while this window’s clock runs ten minutes ahead of the file system’s', async (context) => {
+  // Arrange: a lock file of zero bytes created just now; then this window's clock is set ten minutes ahead.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.equal(writes, 0)
+  assert.equal(await readFile(lockPath, 'utf8'), '')
+  assert.deepEqual(await readdir(directory), ['writer.lock'])
+})
+
+// Value: protects=a killed writer's empty lock is still taken over when this window's clock runs ahead of the file system's, once the file system dates it a minute old; fails_when=the file system's clock is asked in a way that keeps every empty lock, so a killed writer's lock refuses every write; why_new=Cycle 0048 task 40 (S11-N17e): the test of a clock ahead had only a lock of this instant; seam=this window's clock (Date), ten minutes ahead, and the lock's modification time; no_claim=a real network home
+test('an empty lock file the file system dates a minute ago is taken over while this window’s clock runs ten minutes ahead of the file system’s, and the clock probe leaves no file', async (context) => {
+  // Arrange: a lock file of zero bytes that nothing has touched for a minute; then this window's clock is set ten minutes ahead.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  await leaveUntouchedFor(lockPath, 60_000)
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=a lock that may belong to a live window stays when the file system's clock cannot be read; fails_when=an empty lock old by this window's clock is taken over although no file can be created in the folder to read the file system's clock; why_new=Cycle 0048 task 40 (S11-N17e); seam=open of node:fs/promises, which refuses the clock probe's file; no_claim=a full disk or a read-only network home
+test('an empty lock file that is old by this window’s clock stays in place while no file can be created to read the file system’s clock', async (context) => {
+  // Arrange: a lock file of zero bytes untouched for a minute, and a folder that refuses the clock probe's file.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  await leaveUntouchedFor(lockPath, 60_000)
+  const open = fsPromises.open.bind(fsPromises)
+  context.mock.method(
+    fsPromises,
+    'open',
+    (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
+      if (String(path).endsWith('.clock-probe'))
+        return Promise.reject(
+          Object.assign(new Error('EACCES'), { code: 'EACCES' }),
+        )
+      return Reflect.apply(open, fsPromises, [path, ...rest])
+    },
+  )
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.equal(writes, 0)
+  assert.deepEqual(await readdir(directory), ['writer.lock'])
+})
+
 // Value: protects=a learner or an agent who is refused by a storage lock learns which file holds it, and a caller that waits for another window still recognises the refusal; fails_when=the sentence names no file (Cycle 0044 row RT-11) or the refusal loses its EEXIST cause, which the Cursor catalog retry reads; why_new=the sentence named no file; seam=the process probe
 test('the refusal of a locked storage names the lock file', async (context) => {
   // Arrange: the lock of running process 4242 of this machine.
