@@ -1207,11 +1207,11 @@ export function activate(
       },
     )
   }
-  /** Shows the status bar entry of a VS Code watch while the watch runs, and aborts the run when the learner presses the entry ({@link WIKI_CHAT_WATCH_CANCEL_COMMAND}), which stops watching, not the chat. It shows no notification: the editor stacks notifications over the Chat view, where any other notification pushes one that lasts the whole watch over the chat's approval buttons. @example await withWikiChatWatchStatus(run, watch) */
-  const withWikiChatWatchStatus = async (
+  /** Shows the status bar entry of a VS Code watch while the watch runs, and aborts the run when the learner presses the entry ({@link WIKI_CHAT_WATCH_CANCEL_COMMAND}), which stops watching, not the chat. It shows no notification: the editor stacks notifications over the Chat view, where any other notification pushes one that lasts the whole watch over the chat's approval buttons. @returns What the watch answered. @example await withWikiChatWatchStatus(run, () => watchForWikiPublish(run, reply)) // => { cancelled: true, … } */
+  const withWikiChatWatchStatus = async <Watched>(
     run: WikiRun,
-    work: () => Promise<void>,
-  ): Promise<void> => {
+    work: () => Promise<Watched>,
+  ): Promise<Watched> => {
     // An editor without the status bar API still runs the watch, without a Cancel.
     if (!vscode.window.createStatusBarItem) return work()
     const entry = showWikiChatWatchStatus(
@@ -1221,7 +1221,7 @@ export function activate(
     const cancel = (): void => run.controller.abort()
     cancelShownWikiChatWatch = cancel
     try {
-      await work()
+      return await work()
     } finally {
       // The entry and its Cancel go with the watch; a Cancel another watch set meanwhile stays.
       if (cancelShownWikiChatWatch === cancel)
@@ -1230,14 +1230,16 @@ export function activate(
     }
   }
   /** Watches for the editor agent's publish after VS Code's chat took up the request, then records the run's result for the reader; settles when the watch has stopped. For that time the status bar shows the watch and its Cancel, the same for every run ({@link withWikiChatWatchStatus}), and no notification lies over the chat's approval buttons. @param chat - Of the start in the chat: the watch of the chat's reply (when the reply ends, one more look decides and the run ends at once). @example await watchVsCodeWikiUpdate(run, chatStart) */
-  const watchVsCodeWikiUpdate = (
+  const watchVsCodeWikiUpdate = async (
     run: WikiRun,
     { reply }: WatchedWikiChat,
-  ): Promise<void> =>
-    withWikiChatWatchStatus(run, async () =>
-      // The end is recorded outside the watch's guard: only what the watch itself threw is a watch that broke off.
-      finishWikiUpdate(run, await watchForWikiPublish(run, reply)),
+  ): Promise<void> => {
+    const observed = await withWikiChatWatchStatus(run, () =>
+      watchForWikiPublish(run, reply),
     )
+    // The end is recorded after the entry is gone, so the page and the notice never tell an end while the entry still offers Cancel; and outside the watch's guard: only what the watch itself threw is a watch that broke off.
+    await finishWikiUpdate(run, observed)
+  }
   /** Watches the Wiki's output for the publish of a VS Code update and says what the run observed; called by {@link watchVsCodeWikiUpdate}, which records the end. It never rejects: a watch that throws is answered as a watch that broke off, in whose end the chat goes on. @param reply - The watch of the chat's reply. @example await watchForWikiPublish(run, reply) // => { cancelled: false, timedOut: true, blockingPaths: [], publish: undefined } */
   const watchForWikiPublish = async (
     run: WikiRun,

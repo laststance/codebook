@@ -214,6 +214,38 @@ test('cancelling a VS Code Wiki update with its status bar entry stops watching 
   }
 })
 
+// Value: protects=the status bar of a VS Code window at the end of its watch, which the page and the editor's notice must not contradict; fails_when=the end of the run is recorded (the page and the notice say it ended) while the watch's entry still offers Cancel, until the marker work after the end is done; why_new=the main-branch CI run of 6d973cea saw the entry still on screen after the cancelled end (the test above asserted it at once); no_claim=a real editor's status bar, stood in for by the fake window's entries; seam=the hold of the marker change at the end of the run
+test('when a VS Code watch is cancelled, its status bar entry is already gone at the moment the page and the editor show the end of the run', async () => {
+  // Arrange: the watch runs; the change of the Wiki's marker at the end of the run is held, so the run stays between its recorded end and its last file work.
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({ cancellable: progress })
+  try {
+    await wiki.clickUpdate()
+    const markerChange = wiki.hold('marker-change')
+
+    // Act: the learner presses the watch's entry; the run records its end and waits at the marker.
+    progress[0]!.cancel()
+    await markerChange.started
+    const atTheEnd = {
+      state: wiki.status().state,
+      notices: wiki.notices.length,
+      statusBar: wiki.visibleStatusBarTexts(),
+    }
+    markerChange.release()
+    const ended = await waitForEnd(wiki.status)
+
+    // Assert
+    assert.deepEqual(atTheEnd, {
+      state: 'cancelled',
+      notices: 1,
+      statusBar: [],
+    })
+    assert.equal(ended.state, 'cancelled')
+  } finally {
+    await wiki.close()
+  }
+})
+
 // Value: protects=the Allow and Skip buttons of an approval the chat asks for while Codebook watches a VS Code update; fails_when=the watch shows a notification for its whole length, which the editor stacks at the window's lower right over the Chat view, so any other notification pushes it over those buttons, or the watch's status bar entry stays after the update ended; why_new=Cycle 0046 row 592 (C54 native, VS Code 1.140.0: with VS Code's Docker recommendation below it, the watch's notification of 450 by 90 px rose to y 771 to 861 and lay over Allow and Skip at y 828); seam=the fake window's withProgress and createStatusBarItem
 test('while Codebook watches a VS Code update no notification of the watch stays on screen over the chat’s approval: the watch is an entry of the status bar, gone once the update has ended', async () => {
   // Arrange: the chat took up the request and waits at its first approval, so the watch has begun.
