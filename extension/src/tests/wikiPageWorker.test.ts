@@ -744,9 +744,9 @@ test('a stopped worker that kept its place past the stop limit while the lost th
   )
 })
 
-// Value: protects=every page that waits for a page worker where stopped threads do not end (a Node defect): while as many threads are lost as WIKI_PAGE_WORKER_CONCURRENCY_LIMIT, a further stopped worker keeps its place until a thread has ended (row 109), and a page waiting behind it had no time limit of its own, so it held its place in the line, and the reader its place among the pages in hand, for good (Codex saw two requests pending with no timer); fails_when=a page that has waited WIKI_PAGE_WAIT_LIMIT_MS without a worker is not answered as busy, or is answered before that limit, or stays in the line of waiting pages after its answer, so the page asked for after it is refused at once or is not served once a thread ends; why_new=Cycle 0047 row 189 (S2CXA-B2; the owner's D7 replaces the decision of row 142); seam=the page-worker module loaded with one worker at a time, no waiting page beyond the one each ending worker lets wait, a stop limit of 300 ms, a wait limit of 1 s, and a Worker class that records the threads it starts and holds every stop until the test lets it go (the threads are real); no_claim=a real thread that never ends (the held stop stands for it); the shipped wait limit of 30 s; the reader's place, which it gives back once the busy answer is sent (deepWikiReader.test.ts)
+// Value: protects=every page that waits for a page worker where stopped threads do not end (a Node defect): while as many threads are lost as WIKI_PAGE_WORKER_CONCURRENCY_LIMIT, a further stopped worker keeps its place until a thread has ended (row 109), and a page waiting behind it had no time limit of its own, so it held its place in the line, and the reader its place among the pages in hand, for good (Codex saw two requests pending with no timer); fails_when=a page that has waited WIKI_PAGE_WAIT_LIMIT_MS without a worker is not answered as busy, or is answered before that limit, or stays in the line of waiting pages after its answer, so the page asked for after it is refused at once or is not served once a thread ends; why_new=Cycle 0047 row 189 (S2CXA-B2; the owner's D7 replaces the decision of row 142); seam=the page-worker module loaded with one worker at a time, no waiting page beyond the one each ending worker lets wait, a stop limit of 300 ms, a wait limit of 3 s, and a Worker class that records the threads it starts and holds every stop until the test lets it go (the threads are real); Cycle 0047 row 273 (P3TEST-20): the wait limit of 1 s left about 700 ms for a stopped thread to end and a new worker to take the page after it, which a busy machine can pass; no_claim=a real thread that never ends (the held stop stands for it); the shipped wait limit of 30 s; the reader's place, which it gives back once the busy answer is sent (deepWikiReader.test.ts)
 test('a page that waits behind stopped workers whose threads do not end is answered as busy at the wait limit and leaves the line, so the page asked for after it waits and is served once a thread ends', async () => {
-  // Arrange: one worker at a time, no waiting page beyond the one each ending worker lets wait, a stop limit of 300 ms and a wait limit of 1 s; every stop is held until the test lets it go. The first slow page passes its deadline of 500 ms and its thread is lost at the stop limit; the second slow page, asked for then, gets its place and passes its deadline, and its stop keeps its place past the stop limit, as the lost threads are at their bound.
+  // Arrange: one worker at a time, no waiting page beyond the one each ending worker lets wait, a stop limit of 300 ms and a wait limit of 3 s; every stop is held until the test lets it go. The first slow page passes its deadline of 500 ms and its thread is lost at the stop limit; the second slow page, asked for then, gets its place and passes its deadline, and its stop keeps its place past the stop limit, as the lost threads are at their bound.
   let letTheStopsGo: () => void = () => undefined
   const stopsLetGo = new Promise<void>((resolveStops) => {
     letTheStopsGo = resolveStops
@@ -756,7 +756,7 @@ test('a page that waits behind stopped workers whose threads do not end is answe
       WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
       WIKI_PAGE_WAITING_LIMIT: 0,
       WIKI_PAGE_WORKER_STOP_LIMIT_MS: 300,
-      WIKI_PAGE_WAIT_LIMIT_MS: 1_000,
+      WIKI_PAGE_WAIT_LIMIT_MS: 3_000,
     },
     () => stopsLetGo,
   )
@@ -782,14 +782,15 @@ test('a page that waits behind stopped workers whose threads do not end is answe
     PAGE_OPTIONS,
     { deadlineMs: 10_000, signal },
   )
-  // gstack-timing-ok: the half second only looks before the wait limit of 1 s, which a timer late by far less than the other half cannot pass early; the page gets no worker meanwhile whatever the timing, as both stops are held.
-  const waitingBeforeTheLimit = await within(waiting, 500)
-  const waitingAnswer = await within(waiting, 3_000)
+  // gstack-timing-ok: the look at 1.5 s comes half the wait limit of 3 s before that limit, so only a timer 1.5 s late would look after it; the page gets no worker meanwhile whatever the timing, as both stops are held.
+  const waitingBeforeTheLimit = await within(waiting, 1_500)
+  const waitingAnswer = await within(waiting, 4_000)
   const after = pool.servedWikiPageOffThread(
     '<body><p>Page after</p></body>',
     PAGE_OPTIONS,
     { deadlineMs: 10_000, signal },
   )
+  // gstack-timing-ok: the page after waits up to its own wait limit of 3 s, so the 2.7 s left after this look give the threads time to end and a new worker time to take it.
   const afterWhileTheStopsAreHeld = await within(after, 300)
   letTheStopsGo()
   const afterAnswer = await within(after, 5_000)

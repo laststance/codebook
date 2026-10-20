@@ -411,7 +411,7 @@ export async function startDeepWikiReader(
     }
     const relativePath =
       decodeURIComponent(url.pathname.slice(prefix.length)) || WIKI_ENTRY_FILE
-    // The update state needs no manifest, so it answers while a publish is replacing the site.
+    // The update state needs no valid manifest, so it answers while a publish is replacing the site.
     if (relativePath === WIKI_UPDATE_STATUS_ROUTE) {
       await answerUpdateStatus(request, response)
       return
@@ -447,7 +447,7 @@ export async function startDeepWikiReader(
     await answerWikiFile(response, relativePath, files)
   }
   /**
-   * Answers the update state of the Wiki: the window's Wiki update run when it is for this reader's folder, when the site on disk was published, its publication identity and the source-change stamp; nothing of the manifest is read, so it answers while a publish is replacing the site.
+   * Answers the update state of the Wiki: the window's Wiki update run when it is for this reader's folder, when the site on disk was published, its publication identity and the source-change stamp. The manifest is neither parsed nor checked here, so the route answers while a publish is replacing the site: only the publication identity ({@link readWikiPublicationIdentity}) looks at the manifest's file, and reads and hashes its bytes once a publish has changed it, with no identity while the manifest is missing or mid-replacement.
    * Called by {@link handleRequest} for the update state route, which the page's script asks at every look.
    * @param request - The request; only GET is answered.
    * @param response - Its answer.
@@ -732,7 +732,7 @@ export async function startDeepWikiReader(
   }
   /**
    * Resolves a file the manifest lists to its real path in the Wiki folder and looks at it there without opening it, and refuses a file outside the folder or one that is no regular file.
-   * Called by {@link answerPageRequest} and {@link answerWikiFile} before they open the file.
+   * Called by {@link servePage} and {@link answerWikiFile} before they open the file.
    * @param response - The file's answer, which the refusals go to.
    * @param relativePath - The file's path in the Wiki.
    * @returns The real path and the size at the look; `undefined` when the file was refused (status 403).

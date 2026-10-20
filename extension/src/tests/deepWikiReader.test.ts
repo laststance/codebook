@@ -13,6 +13,7 @@ import {
   rename,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from 'node:fs/promises'
 import * as fileSystemPromises from 'node:fs/promises'
@@ -734,6 +735,137 @@ test('a question whose character of two bytes is split between two parts of its 
   assert.deepEqual(
     { status, questionsAsked },
     { status: 200, questionsAsked: ['Where is the café validated?'] },
+  )
+})
+
+// Value: protects=a learner whose question gets a long answer: a JSON answer has its head written before its body, and a body larger than one part was given a length after that, which Node refuses, so such an answer reached the browser as a broken connection; fails_when=an answer of the question route larger than WIKI_RESPONSE_PART_BYTES (64 KiB) does not reach the browser whole, as when the reader sets its length after its head was written; why_new=Cycle 0047 row 273 (P3TEST-16): the headersSent guard of row 230 had no test; seam=none (the reader's real answer); no_claim=a real model's answer (the answer function stands in for it)
+test('a question whose answer is longer than one part of an answer reaches the browser whole', async (context) => {
+  // Arrange: the one-page Wiki and an answer function whose answer is about 96 KB long, more than the 64 KiB of one part.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-long-answer-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const longAnswer = 'The source confirms it. '.repeat(4_000)
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ answer: longAnswer, citations: [], sourceChanged: false }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const answer = await fetch(new URL('api/ask', reader.url), {
+    method: 'POST',
+    headers: {
+      Origin: new URL(reader.url).origin,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ question: 'Where is it?' }),
+  }).then(
+    async (response) => ({
+      status: response.status,
+      body: await response.json(),
+    }),
+    () => 'connection broken',
+  )
+
+  // Assert
+  assert.deepEqual(answer, {
+    status: 200,
+    body: {
+      answer: 'The source confirms it. '.repeat(4_000),
+      citations: [],
+      sourceChanged: false,
+    },
+  })
+})
+
+// Value: protects=the editor's extension host against requests to the question route that the reader refuses, and a request to a page by any other method than GET: each is refused by what the request itself says, and a manifest read before those checks would read and parse up to 64 MiB on the host's thread for a request refused anyway; fails_when=the reader reads the manifest for a question of another origin, a question body over WIKI_HTTP_BODY_LIMIT_BYTES, a blank question or a POST to a page, or answers one of them otherwise than with its refusal; why_new=Cycle 0047 row 273 (P3S7-G4): a manifest read moved before the question's checks survived every test; seam=the reader loaded with loadModule and a manifest reader that counts each read after the reader's start; no_claim=the time a manifest read takes (the reads are counted)
+test('a question of another origin, a question too long, a blank question and a POST to a page are refused without a manifest read', async (context) => {
+  // Arrange: the one-page Wiki and a manifest reader that counts each read after the reader's start.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-refused-questions-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let isReaderStarted = false
+  let manifestReadsAfterTheStart = 0
+  const countingManifestReader: typeof readWikiFileToOpenModule = {
+    readWikiFileToOpen: (...parameters) => {
+      if (parameters[1] === 'manifest' && isReaderStarted)
+        manifestReadsAfterTheStart += 1
+      return readWikiFileToOpen(...parameters)
+    },
+  }
+  const { startDeepWikiReader: startReaderCountingManifestReads } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { './utils/readWikiFileToOpen': countingManifestReader },
+      { URL },
+    )
+  const reader = await startReaderCountingManifestReads(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  isReaderStarted = true
+  const ownOrigin = new URL(reader.url).origin
+  /** Posts a body to an address of the reader from an origin, and answers the status and the body of the refusal. */
+  const post = async (
+    address: string,
+    origin: string,
+    body: string,
+  ): Promise<{ status: number; body: string }> => {
+    const response = await fetch(new URL(address, reader.url), {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body,
+    })
+    return { status: response.status, body: await response.text() }
+  }
+
+  // Act
+  const otherOrigin = await post(
+    'api/ask',
+    'https://other.example',
+    JSON.stringify({ question: 'Where is it?' }),
+  )
+  const tooLong = await post(
+    'api/ask',
+    ownOrigin,
+    JSON.stringify({ question: 'a'.repeat(9_000) }),
+  )
+  const blank = await post(
+    'api/ask',
+    ownOrigin,
+    JSON.stringify({ question: '   ' }),
+  )
+  const toAPage = await post('index.html', ownOrigin, '{}')
+
+  // Assert
+  assert.deepEqual(
+    { otherOrigin, tooLong, blank, toAPage, manifestReadsAfterTheStart },
+    {
+      otherOrigin: {
+        status: 403,
+        body: '{"error":"This Wiki question must come from its reader."}',
+      },
+      tooLong: {
+        status: 413,
+        body: '{"error":"The Wiki question is too long."}',
+      },
+      blank: {
+        status: 400,
+        body: '{"error":"Enter a shorter Wiki question."}',
+      },
+      toAPage: {
+        status: 405,
+        body: '{"error":"This Wiki route only answers GET."}',
+      },
+      manifestReadsAfterTheStart: 0,
+    },
   )
 })
 
@@ -2037,7 +2169,7 @@ function httpNotingTheReadersRequests(): {
 }
 
 /**
- * Loads the reader with one place for pages in hand, whose give-back the test can wait for, and a page worker that prepares the first page as 16 MiB of text and every later page as a short one, so the first page's answer is far larger than the buffers of its connection.
+ * Loads the reader with one place for pages in hand, whose give-back the test can wait for ({@link loadReaderWithOnePlace}), and a page worker that prepares the first page as 16 MiB of text and every later page as a short one, so the first page's answer is far larger than the buffers of its connection.
  * Called by the tests of a page whose browser does not receive it.
  * @param constantOverrides - Constants the loaded reader reads instead of the shipped ones.
  * @returns The loaded reader's {@link startDeepWikiReader}, the moment the first page was prepared, and each give-back of the one place, a promise that settles with `'given back'` at the n-th (from 0).
@@ -2052,45 +2184,6 @@ async function loadReaderWithOnePlaceAndALargeFirstPage(
   firstPagePrepared: Promise<'prepared'>
   placeGivenBack: (index: number) => Promise<'given back'>
 }> {
-  const onePlace = await loadModule<typeof takeWikiPagePlaceModule>(
-    join(__dirname, '..', 'utils', 'takeWikiPagePlace.js'),
-    {
-      '../constants': {
-        ...constants,
-        WIKI_PAGE_WORKER_CONCURRENCY_LIMIT: 1,
-        WIKI_PAGE_WAITING_LIMIT: 0,
-      },
-    },
-  )
-  const giveBacks: {
-    givenBack: Promise<'given back'>
-    noteGivenBack: (givenBack: 'given back') => void
-  }[] = []
-  /** The n-th give-back, made when the test asks for it or when the place is taken, whichever comes first. */
-  const giveBackAt = (index: number): (typeof giveBacks)[number] => {
-    for (;;) {
-      const known = giveBacks[index]
-      if (known) return known
-      let noteGivenBack: (givenBack: 'given back') => void = () => undefined
-      const givenBack = new Promise<'given back'>((resolveGivenBack) => {
-        noteGivenBack = resolveGivenBack
-      })
-      giveBacks.push({ givenBack, noteGivenBack })
-    }
-  }
-  let placesTaken = 0
-  const placesNotingTheirGiveBack: typeof takeWikiPagePlaceModule = {
-    takeWikiPagePlace: () => {
-      const givePlaceBack = onePlace.takeWikiPagePlace()
-      if (!givePlaceBack) return undefined
-      const { noteGivenBack } = giveBackAt(placesTaken)
-      placesTaken += 1
-      return (): void => {
-        givePlaceBack()
-        noteGivenBack('given back')
-      }
-    },
-  }
   let noteFirstPagePrepared: (prepared: 'prepared') => void = () => undefined
   const firstPagePrepared = new Promise<'prepared'>((resolvePrepared) => {
     noteFirstPagePrepared = resolvePrepared
@@ -2105,19 +2198,14 @@ async function loadReaderWithOnePlaceAndALargeFirstPage(
       return { state: 'served', html: 'x'.repeat(16_777_216) }
     },
   }
-  const loaded = await loadModule<typeof deepWikiReaderModule>(
-    join(__dirname, '..', 'deepWikiReader.js'),
-    {
-      './constants': { ...constants, ...constantOverrides },
-      './utils/takeWikiPagePlace': placesNotingTheirGiveBack,
-      './wikiPageWorker': workerWithALargeFirstPage,
-    },
-    { URL },
+  const onePlace = await loadReaderWithOnePlace(
+    { './wikiPageWorker': workerWithALargeFirstPage },
+    constantOverrides,
   )
   return {
-    startDeepWikiReader: loaded.startDeepWikiReader,
+    startDeepWikiReader: onePlace.startDeepWikiReader,
     firstPagePrepared,
-    placeGivenBack: (index) => giveBackAt(index).givenBack,
+    placeGivenBack: onePlace.placeGivenBack,
   }
 }
 
@@ -2332,6 +2420,251 @@ test('pages whose browser goes while the reader opens them keep their places unt
   )
 })
 
+/** A read the reader makes for a page, as the tests of a page whose browser goes during one name it. */
+type PageRead =
+  | 'the manifest'
+  | 'the page’s look'
+  | 'the publication identity'
+  | 'the page’s open'
+
+/**
+ * Loads the reader with every read it makes for the overview noted in order (the manifest after the reader's start, the look at the page's size, the publication identity and the open of the page's file), one of them held until the test lets it go on, places for pages in hand of its own, and a node:http whose server notes each close of an answer and each end of the reader's handler.
+ * Called by the tests of a page whose browser goes while the reader reads for it.
+ * @param heldRead - The read that waits until the test lets it go on.
+ * @returns The loaded reader's {@link startDeepWikiReader}, after whose start the manifest reads are noted; the reads noted so far; a promise that settles with `'asked'` once the held read was asked; the step that lets it go on; and the server's waits.
+ * @example
+ * const held = await loadReaderHoldingAPageRead('the manifest')
+ * await held.readAsked // => 'asked'
+ * held.reads()         // => ['the manifest']
+ */
+async function loadReaderHoldingAPageRead(
+  heldRead: Exclude<PageRead, 'the page’s open'>,
+): Promise<{
+  startDeepWikiReader: typeof startDeepWikiReader
+  reads: () => PageRead[]
+  readAsked: Promise<'asked'>
+  letTheReadGoOn: () => void
+  answersClosed: (count: number) => Promise<'closed'>
+  handlersEnded: (count: number) => Promise<'ended'>
+}> {
+  let isReaderStarted = false
+  const reads: PageRead[] = []
+  let noteReadAsked: (asked: 'asked') => void = () => undefined
+  const readAsked = new Promise<'asked'>((resolveAsked) => {
+    noteReadAsked = resolveAsked
+  })
+  let letTheReadGoOn = (): void => {}
+  const readMayGoOn = new Promise<void>((resolveGoOn) => {
+    letTheReadGoOn = resolveGoOn
+  })
+  /** Notes a read, and holds it when it is the held one. */
+  const noteRead = async (read: PageRead): Promise<void> => {
+    reads.push(read)
+    if (read !== heldRead) return
+    noteReadAsked('asked')
+    await readMayGoOn
+  }
+  const notingManifestReader: typeof readWikiFileToOpenModule = {
+    readWikiFileToOpen: async (...parameters) => {
+      // The reader's start reads the manifest as always.
+      if (parameters[1] === 'manifest' && isReaderStarted)
+        await noteRead('the manifest')
+      return readWikiFileToOpen(...parameters)
+    },
+  }
+  const fileSystemNotingThePagesLook = {
+    ...fileSystemPromises,
+    lstat: async (...parameters: Parameters<typeof lstat>) => {
+      if (basename(String(parameters[0])) === 'index.html')
+        await noteRead('the page’s look')
+      return lstat(...parameters)
+    },
+  }
+  const notingPublicationReader: typeof readWikiPublicationIdentityModule = {
+    readWikiPublicationIdentity: async (...parameters) => {
+      await noteRead('the publication identity')
+      return readWikiPublicationIdentity(...parameters)
+    },
+  }
+  const openerNotingThePagesOpen: typeof openWithoutFollowingModule = {
+    openWithoutFollowing: async (
+      ...parameters: Parameters<typeof openWithoutFollowing>
+    ) => {
+      if (basename(parameters[0]) === 'index.html')
+        reads.push('the page’s open')
+      return openWithoutFollowing(...parameters)
+    },
+  }
+  const placesOfTheirOwn = await loadModule<typeof takeWikiPagePlaceModule>(
+    join(__dirname, '..', 'utils', 'takeWikiPagePlace.js'),
+    {},
+  )
+  const servingWorker: typeof wikiPageWorkerModule = {
+    servedWikiPageOffThread: async () => ({
+      state: 'served',
+      html: '<p>Prepared page</p>',
+    }),
+  }
+  const server = httpNotingTheReadersRequests()
+  const loaded = await loadModule<typeof deepWikiReaderModule>(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      'node:fs/promises': fileSystemNotingThePagesLook,
+      'node:http': server.http,
+      './utils/openWithoutFollowing': openerNotingThePagesOpen,
+      './utils/readWikiFileToOpen': notingManifestReader,
+      './utils/readWikiPublicationIdentity': notingPublicationReader,
+      './utils/takeWikiPagePlace': placesOfTheirOwn,
+      './wikiPageWorker': servingWorker,
+    },
+    { URL },
+  )
+  return {
+    startDeepWikiReader: async (...parameters) => {
+      const reader = await loaded.startDeepWikiReader(...parameters)
+      isReaderStarted = true
+      return reader
+    },
+    reads: () => [...reads],
+    readAsked,
+    letTheReadGoOn,
+    answersClosed: server.answersClosed,
+    handlersEnded: server.handlersEnded,
+  }
+}
+
+// Value: protects=the editor's extension host against clients that ask for pages and go while the reader reads the manifest for them: the reader stops after the read in hand once a page's browser has gone, so a gone request holds its place only while that read ends; fails_when=the reader goes on to look at the page's file after the manifest read of a page whose browser went; why_new=Cycle 0047 row 273 (P3TEST-18): of the four stops of row 228 only the one after the page's open had a test; seam=the reader loaded with loadModule, every read for the page noted and the manifest read held (loadReaderHoldingAPageRead); no_claim=a real browser's close timing
+test('a page whose browser goes while the reader reads the manifest for it gets nothing more read once that read ends', async (context) => {
+  // Arrange: the one-page Wiki and a reader whose manifest reads after its start wait until the test lets them go on.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-at-manifest-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const held = await loadReaderHoldingAPageRead('the manifest')
+  const reader = await held.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held read is let go also when the test fails, so its request ends.
+  context.after(() => held.letTheReadGoOn())
+  const browserTab = new AbortController()
+  const opening = fetch(reader.url, { signal: browserTab.signal }).then(
+    () => 'answered',
+    () => 'request gone',
+  )
+  const readAsked = await within(held.readAsked, 2_000)
+
+  // Act: the tab goes while the manifest is read; once the page's answer has closed, the read goes on.
+  browserTab.abort()
+  const tab = await opening
+  const pageAnswer = await within(held.answersClosed(1), 2_000)
+  held.letTheReadGoOn()
+  const pageHandler = await within(held.handlersEnded(1), 2_000)
+
+  // Assert
+  assert.deepEqual(
+    { readAsked, tab, pageAnswer, pageHandler, reads: held.reads() },
+    {
+      readAsked: 'asked',
+      tab: 'request gone',
+      pageAnswer: 'closed',
+      pageHandler: 'ended',
+      reads: ['the manifest'],
+    },
+  )
+})
+
+// Value: protects=the editor's extension host against clients that ask for pages and go while the reader looks at a page's file: the reader stops after the read in hand once a page's browser has gone; fails_when=the reader goes on to read the publication identity after the look of a page whose browser went; why_new=Cycle 0047 row 273 (P3TEST-18): of the four stops of row 228 only the one after the page's open had a test; seam=the reader loaded with loadModule, every read for the page noted and the look at the page's size held (loadReaderHoldingAPageRead); no_claim=a real browser's close timing
+test('a page whose browser goes while the reader looks at its file gets nothing more read once that look ends', async (context) => {
+  // Arrange: the one-page Wiki and a reader whose look at the overview's size waits until the test lets it go on.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-at-look-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const held = await loadReaderHoldingAPageRead('the page’s look')
+  const reader = await held.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held look is let go also when the test fails, so its request ends.
+  context.after(() => held.letTheReadGoOn())
+  const browserTab = new AbortController()
+  const opening = fetch(reader.url, { signal: browserTab.signal }).then(
+    () => 'answered',
+    () => 'request gone',
+  )
+  const readAsked = await within(held.readAsked, 2_000)
+
+  // Act: the tab goes while the page's file is looked at; once the page's answer has closed, the look goes on.
+  browserTab.abort()
+  const tab = await opening
+  const pageAnswer = await within(held.answersClosed(1), 2_000)
+  held.letTheReadGoOn()
+  const pageHandler = await within(held.handlersEnded(1), 2_000)
+
+  // Assert
+  assert.deepEqual(
+    { readAsked, tab, pageAnswer, pageHandler, reads: held.reads() },
+    {
+      readAsked: 'asked',
+      tab: 'request gone',
+      pageAnswer: 'closed',
+      pageHandler: 'ended',
+      reads: ['the manifest', 'the page’s look'],
+    },
+  )
+})
+
+// Value: protects=the editor's extension host against clients that ask for pages and go while the reader reads the publication identity for them: the reader stops after the read in hand once a page's browser has gone; fails_when=the reader goes on to open the page's file after the publication identity of a page whose browser went; why_new=Cycle 0047 row 273 (P3TEST-18): of the four stops of row 228 only the one after the page's open had a test; seam=the reader loaded with loadModule, every read for the page noted and the publication identity's read held (loadReaderHoldingAPageRead); no_claim=a real browser's close timing
+test('a page whose browser goes while the reader reads the publication identity for it is not opened once that read ends', async (context) => {
+  // Arrange: the one-page Wiki and a reader whose read of the publication identity waits until the test lets it go on.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-at-identity-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const held = await loadReaderHoldingAPageRead('the publication identity')
+  const reader = await held.startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held read is let go also when the test fails, so its request ends.
+  context.after(() => held.letTheReadGoOn())
+  const browserTab = new AbortController()
+  const opening = fetch(reader.url, { signal: browserTab.signal }).then(
+    () => 'answered',
+    () => 'request gone',
+  )
+  const readAsked = await within(held.readAsked, 2_000)
+
+  // Act: the tab goes while the publication identity is read; once the page's answer has closed, the read goes on.
+  browserTab.abort()
+  const tab = await opening
+  const pageAnswer = await within(held.answersClosed(1), 2_000)
+  held.letTheReadGoOn()
+  const pageHandler = await within(held.handlersEnded(1), 2_000)
+
+  // Assert
+  assert.deepEqual(
+    { readAsked, tab, pageAnswer, pageHandler, reads: held.reads() },
+    {
+      readAsked: 'asked',
+      tab: 'request gone',
+      pageAnswer: 'closed',
+      pageHandler: 'ended',
+      reads: ['the manifest', 'the page’s look', 'the publication identity'],
+    },
+  )
+})
+
 // Value: protects=the editor's extension host and every later page against a browser that stops reading its page and keeps its connection open: no answer of the reader had a send limit, so such a page kept its bytes in the host and its place among the pages in hand for as long as its connection lived; fails_when=a page whose answer is not received within WIKI_RESPONSE_SEND_LIMIT_MS is not ended, so its place stays taken and every later page is refused as busy, or its place is given back while its answer is still held; why_new=Cycle 0047 row 188 (S2CXA-B1, with S2RT-2); seam=the reader loaded with loadModule, a send limit of 1.5 s, one place for pages in hand whose give-back the test waits for, a stand-in page-worker module that prepares the first page as 16 MiB of text, and a connection of the test's that does not read until the test resumes it; no_claim=the shipped send limit of 30 s and the shipped six places
 test('a page whose browser stops reading is ended at the send limit and gives its place back: a page asked for before is refused as busy, one asked for after is served, and the browser receives less than the page', async (context) => {
   // Arrange: a page besides the overview; a send limit of 1.5 s and one place for pages in hand; the overview is prepared as 16 MiB of text and asked for by a connection that does not read it.
@@ -2406,7 +2739,7 @@ test('a page whose browser stops reading is ended at the send limit and gives it
 
 /**
  * Loads the reader with one place for pages in hand, whose give-backs the test can wait for, and with the modules the test hands it instead of the real ones, such as a page worker and a refusal page.
- * Called by the tests of the places of pages answered with a refusal.
+ * Called by the tests of the places of pages answered with a refusal, and by {@link loadReaderWithOnePlaceAndALargeFirstPage}.
  * @param dependencies - Modules the loaded reader requires instead of the real ones.
  * @param constantOverrides - Constants the loaded reader reads instead of the shipped ones.
  * @returns The loaded reader's {@link startDeepWikiReader}, and each give-back of the one place, a promise that settles with `'given back'` at the n-th (from 0).
@@ -3752,6 +4085,160 @@ test('a style sheet, an image and a font asked for at once cost one manifest rea
   )
 })
 
+// Value: protects=a learner whose Wiki an update publishes while the reader stays open: the files of the Wiki share one manifest read while it is in flight, and that read must end for them once it has ended, or a style sheet or an image the update added is refused as not published until the editor reloads; fails_when=the shared manifest read is kept after it has ended, so a file the manifest lists only since a later publish is answered with 404; why_new=Cycle 0047 row 273 (P3TEST-17): the end of the shared read (row 229) had no test; seam=none (the reader's real manifest reads); no_claim=the publisher's own swap (the test writes the new manifest in place)
+test('a style sheet that an update adds after the reader has served a file of the Wiki is served', async (context) => {
+  // Arrange: a Wiki whose manifest lists no style sheet yet, and a style sheet beside it.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-added-asset-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  /** Asks for the style sheet as a browser does, and answers its status and body. */
+  const askForTheStyleSheet = async (): Promise<{
+    status: number
+    body: string
+  }> => {
+    const response = await fetch(new URL('wiki.css', reader.url), {
+      headers: { 'Sec-Fetch-Dest': 'style' },
+    })
+    return { status: response.status, body: await response.text() }
+  }
+
+  // Act: the style sheet before the update lists it, then the update's manifest, then the style sheet again.
+  const beforeTheUpdate = await askForTheStyleSheet()
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['wiki.css'],
+      includedSources: [],
+    }),
+  )
+  const afterTheUpdate = await askForTheStyleSheet()
+
+  // Assert
+  assert.deepEqual(
+    { beforeTheUpdate, afterTheUpdate },
+    {
+      beforeTheUpdate: {
+        status: 404,
+        body: '{"error":"This file is not published by the Wiki."}',
+      },
+      afterTheUpdate: { status: 200, body: 'body { margin: 0; }' },
+    },
+  )
+})
+
+// Value: protects=a learner whose browser asks for files of the Wiki while a publish replaces its manifest: a shared manifest read that fails answers every request that joined it with its error, and the next request must read the manifest again, or every file of the Wiki is answered with that error until the editor reloads; fails_when=a failed shared read is kept after it has ended, so a request after it gets the old error, or a request that joined the read gets another answer than its error; why_new=Cycle 0047 row 273 (P3TEST-17, P3SM-12: the shared read fails × a request that is no page arrives); seam=the reader loaded with loadModule, a manifest reader whose first read after the reader's start waits until the test lets it go and then fails, and a node:http whose server notes each request it hands the reader; no_claim=the publisher's own swap (the failure stands for a manifest read during it)
+test('a shared manifest read that fails answers every file of the Wiki that joined it with its error, and a file asked for after it is read again and served', async (context) => {
+  // Arrange: a Wiki with a style sheet and an image, a manifest reader whose first read after the reader's start is held and then fails, and a server that notes each request it hands the reader.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-failed-shared-read-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(join(outputDirectory, 'wiki.css'), 'body { margin: 0; }')
+  await writeFile(join(outputDirectory, 'diagram.png'), 'PNG bytes')
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['wiki.css', 'diagram.png'],
+      includedSources: [],
+    }),
+  )
+  let isReaderStarted = false
+  let manifestReadsAfterTheStart = 0
+  let letTheFailingReadGoOn = (): void => {}
+  const failingReadMayGoOn = new Promise<void>((resolveGoOn) => {
+    letTheFailingReadGoOn = resolveGoOn
+  })
+  const manifestReaderFailingOnce: typeof readWikiFileToOpenModule = {
+    readWikiFileToOpen: async (...parameters) => {
+      // The reader's start reads the manifest as always; the first read after it is held, then fails.
+      if (parameters[1] === 'manifest' && isReaderStarted) {
+        manifestReadsAfterTheStart += 1
+        if (manifestReadsAfterTheStart === 1) {
+          await failingReadMayGoOn
+          throw new Error('The manifest is being replaced.')
+        }
+      }
+      return readWikiFileToOpen(...parameters)
+    },
+  }
+  const server = httpNotingTheReadersRequests()
+  const { startDeepWikiReader: startReaderFailingOneRead } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      'node:http': server.http,
+      './utils/readWikiFileToOpen': manifestReaderFailingOnce,
+    },
+    { URL },
+  )
+  const reader = await startReaderFailingOneRead(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // The held read is let go also when the test fails, so its requests end.
+  context.after(() => letTheFailingReadGoOn())
+  isReaderStarted = true
+  /** Asks for a file of the Wiki as a browser does, and answers its status and body. */
+  const askFor = async (
+    file: string,
+    destination: string,
+  ): Promise<{ status: number; body: string }> => {
+    const response = await fetch(new URL(file, reader.url), {
+      headers: { 'Sec-Fetch-Dest': destination },
+    })
+    return { status: response.status, body: await response.text() }
+  }
+
+  // Act: the style sheet and the image at once, until the reader has taken both in; then the held read fails; then the style sheet again.
+  const joined = Promise.all([
+    askFor('wiki.css', 'style'),
+    askFor('diagram.png', 'image'),
+  ])
+  const bothTakenIn = await within(server.requestsHanded(2), 2_000)
+  letTheFailingReadGoOn()
+  const joinedAnswers = await within(joined, 2_000)
+  const after = await within(askFor('wiki.css', 'style'), 2_000)
+
+  // Assert
+  assert.deepEqual(
+    { bothTakenIn, joinedAnswers, after, manifestReadsAfterTheStart },
+    {
+      bothTakenIn: 'handed',
+      joinedAnswers: [
+        {
+          status: 500,
+          body: '{"error":"Error: The manifest is being replaced."}',
+        },
+        {
+          status: 500,
+          body: '{"error":"Error: The manifest is being replaced."}',
+        },
+      ],
+      after: { status: 200, body: 'body { margin: 0; }' },
+      manifestReadsAfterTheStart: 2,
+    },
+  )
+})
+
 // Value: protects=the editor's extension host against a large file the manifest lists as an asset (a style sheet, a script, an image), asked for several times at once: each request read it whole into the host's memory, with no size limit; fails_when=the reader reads a file that is no page whole (the module's readFile, or readFile through the file it opened) instead of sending it from its opened file in parts, follows bytes the file gained after its stat, or no longer sends it byte for byte; why_new=Cycle 0047 row 18 (P3SEC1 = S11-F2); Cycle 0047 row 74 (TEST-1) a whole read through the opened file passed the test; seam=the reader loaded with loadModule, a file system module that records which files the reader reads whole, and an opener whose opened image records a whole read through it and grows right after its stat; no_claim=the memory the host saves (each request holds one part of the file at a time)
 test('an asset of the Wiki is sent byte for byte from its opened file in parts, only as far as its size at its stat, and no file is read whole into the editor’s process', async (context) => {
   // Arrange: an image of 300,000 bytes that the manifest names, a file system that notes the files the reader reads whole, and an opener whose opened image notes a whole read through it and grows right after its stat.
@@ -3846,6 +4333,77 @@ test('an asset of the Wiki is sent byte for byte from its opened file in parts, 
       bodyIsTheImageAtItsStat: true,
       filesReadWhole: [],
     },
+  )
+})
+
+// Value: protects=the memory of the editor's extension host against the browser: each part of a file of the Wiki is read into a buffer that Node does not clear, and a file that shrank since its stat fills only the start of it, so only that start may be sent, never the old bytes of the host's memory behind it; fails_when=the reader sends the whole buffer of a part instead of the bytes the read put there, so the browser gets more bytes than the file holds; why_new=Cycle 0047 row 273 (P3TEST-19): the test of a streamed asset only grows the file after its stat; seam=the reader loaded with loadModule and an opener whose opened image shrinks to 100,000 bytes right after its stat; no_claim=what the old bytes hold (the length and the bytes sent are compared)
+test('an image of the Wiki that shrinks after the reader looked at its size is sent only as far as the bytes it still holds', async (context) => {
+  // Arrange: an image of 300,000 bytes that the manifest names, and an opener whose opened image shrinks to 100,000 bytes right after its stat, which is not the end of a part.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shrunk-asset-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  const imagePath = join(outputDirectory, 'diagram.png')
+  const imageBytes = Buffer.alloc(300_000, 'diagram ')
+  await writeFile(imagePath, imageBytes)
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const openerWhoseImageShrinksAfterItsStat: typeof openWithoutFollowingModule =
+    {
+      openWithoutFollowing: async (
+        ...parameters: Parameters<typeof openWithoutFollowing>
+      ) => {
+        const file = await openWithoutFollowing(...parameters)
+        // Only the image is watched: the manifest and the pages are opened as always.
+        if (basename(parameters[0]) !== 'diagram.png') return file
+        const statOfTheImage = file.stat.bind(file)
+        return Object.assign(file, {
+          stat: async (...statParameters: Parameters<typeof file.stat>) => {
+            const status = await statOfTheImage(...statParameters)
+            await truncate(imagePath, 100_000)
+            return status
+          },
+        })
+      },
+    }
+  const { startDeepWikiReader: startReaderWhoseImageShrinks } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      { './utils/openWithoutFollowing': openerWhoseImageShrinksAfterItsStat },
+      { URL },
+    )
+  const reader = await startReaderWhoseImageShrinks(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+
+  // Act
+  const response = await fetch(new URL('diagram.png', reader.url), {
+    headers: { 'Sec-Fetch-Dest': 'image' },
+  })
+  const body = Buffer.from(await response.arrayBuffer())
+
+  // Assert: the body is the 100,000 bytes the image still holds.
+  assert.deepEqual(
+    {
+      status: response.status,
+      bodyBytes: body.length,
+      bodyIsWhatTheImageStillHolds: body.equals(
+        imageBytes.subarray(0, 100_000),
+      ),
+    },
+    { status: 200, bodyBytes: 100_000, bodyIsWhatTheImageStillHolds: true },
   )
 })
 

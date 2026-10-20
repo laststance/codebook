@@ -164,7 +164,7 @@ function isRefusedAddress(name: string, written: string): boolean {
  * - an `http-equiv` of `refresh`, by which a page moves the browser to another address by itself;
  * - a `srcdoc`, whose value is a whole page of its own that the filter does not read;
  * - an svg animation's `attributeName` of `href` or `xlink:href` ({@link ANIMATED_ADDRESSES}), which gives a link the address of its `to`, `from`, `by` or `values`.
- * Called by {@link editOf}.
+ * Called by {@link editOf} and {@link renamesUnder}.
  * @param attribute - The attribute: its name in lower case and its value as written.
  * @returns Whether the attribute is renamed.
  * @example
