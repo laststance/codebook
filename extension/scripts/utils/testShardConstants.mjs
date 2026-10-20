@@ -16,3 +16,5 @@ export const TIMING_RECORD_CONCURRENCY = 4
 export const CALL_SILENCE_TIMEOUT_MS = 120_000
 /** How long a call ended for silence may take to stop on SIGTERM before it is killed. */
 export const CALL_KILL_GRACE_MS = 5_000
+/** The longest delay `setTimeout` accepts; Node fires a timer set above it at once, so a silence limit above it would end every call as hung. */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647

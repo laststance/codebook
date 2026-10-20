@@ -5,24 +5,7 @@ import {
   CALL_KILL_GRACE_MS,
   CALL_SILENCE_TIMEOUT_MS,
 } from './testShardConstants.mjs'
-
-/** Calls `onElapsed` once when `ms` pass without a `reset()`; the call stays alive until `stop()`. A timer that has fired stays stopped: `reset()` does nothing then, because Node's `refresh()` would start a fired timer again and run `onElapsed` a second time. Used by {@link runTestInvocation}. @example const timer = createResettingTimer(1000, () => {}); timer.reset(); timer.stop() */
-function createResettingTimer(ms, onElapsed) {
-  let isStopped = false
-  const handle = setTimeout(() => {
-    isStopped = true
-    onElapsed()
-  }, ms)
-  return {
-    reset() {
-      if (!isStopped) handle.refresh()
-    },
-    stop() {
-      isStopped = true
-      clearTimeout(handle)
-    },
-  }
-}
+import { watchCallSilence } from './watchCallSilence.mjs'
 
 /**
  * Runs one planned `node --test` call and keeps its output together, so two lanes of a shard never interleave their reports; called by `scripts/test-shard.mjs` for every invocation of {@link planTestShards}.
@@ -80,36 +63,30 @@ export function runTestInvocation(
         ),
       },
     )
+    // A call that prints nothing for the silence limit is ended by {@link watchCallSilence}: on POSIX the runner gets SIGTERM, ends the
+    // test-file processes it started and prints what it was running, and SIGKILL follows only for a runner that ignores it; on Windows the
+    // runner's whole process tree is ended at once, because `child.kill()` there ends the runner alone.
+    const watch = watchCallSilence(child, { silenceTimeoutMs, killGraceMs })
     const chunks = []
-    let timedOut = false
-    let killTimer
-    // The runner ends its own file processes when it gets SIGTERM and prints what it was running; SIGKILL is only for a runner that ignores it.
-    const silenceTimer = createResettingTimer(silenceTimeoutMs, () => {
-      timedOut = true
-      child.kill('SIGTERM')
-      killTimer = setTimeout(() => child.kill('SIGKILL'), killGraceMs)
-    })
     const keep = (chunk) => {
       chunks.push(chunk)
-      silenceTimer.reset()
+      watch.keepAlive()
     }
     child.stdout.on('data', keep)
     child.stderr.on('data', keep)
     child.on('error', (error) => {
       // A call that cannot run has nothing to wait for: its timers must not outlive the rejection.
-      silenceTimer.stop()
-      clearTimeout(killTimer)
+      watch.stop()
       reject(error)
     })
     child.on('close', (code, signal) => {
-      silenceTimer.stop()
-      clearTimeout(killTimer)
+      watch.stop()
       resolve({
         code,
         signal,
         output: Buffer.concat(chunks).toString('utf8'),
         elapsedMs: performance.now() - startedAt,
-        timedOut,
+        timedOut: watch.timedOut,
       })
     })
   })

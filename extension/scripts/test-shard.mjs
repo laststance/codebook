@@ -3,19 +3,20 @@
 //   node scripts/test-shard.mjs --shard 3/8 --lanes 2   one CI job's share
 //   node scripts/test-shard.mjs                         the whole suite on this machine
 //   node scripts/test-shard.mjs --shard 3/8 --lanes 2 --list   print that share's plan without running it
-//   node scripts/test-shard.mjs --record                run every file and rewrite test-timings.json
+//   node scripts/test-shard.mjs --record                run every file and rewrite test-timings.json; a test that takes longer than the silence limit fails the recording
 //   node scripts/test-shard.mjs --whole-split-files     run the files the plan splits, whole and with Node's default exit
-//   --silence-seconds 120                               end a call that prints nothing for this long
+//   --silence-seconds 120                               end a call that prints nothing for this long (at most 2147483)
 //
 // Build first (`pnpm build` or `pnpm build:fast`); this script only reads dist/tests.
 import { readdir, writeFile } from 'node:fs/promises'
 import { availableParallelism } from 'node:os'
-import { basename, join } from 'node:path'
-import { run } from 'node:test'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
 import { buildTestTimings } from './utils/buildTestTimings.mjs'
+import { collectTestRun } from './utils/collectTestRun.mjs'
+import { parseSilenceSeconds } from './utils/parseSilenceSeconds.mjs'
 import { planTestShards } from './utils/planTestShards.mjs'
 import { planWholeSplitFiles } from './utils/planWholeSplitFiles.mjs'
 import { readTestTimings } from './utils/readTestTimings.mjs'
@@ -55,9 +56,7 @@ function readOptions() {
       },
     },
   })
-  const silenceSeconds = Number(values['silence-seconds'])
-  if (!(silenceSeconds > 0))
-    throw new Error('--silence-seconds must be a number above 0.')
+  const silenceSeconds = parseSilenceSeconds(values['silence-seconds'])
   const lanes = Number(values.lanes)
   if (!(Number.isInteger(lanes) && lanes >= 1))
     throw new Error('--lanes must be a positive integer.')
@@ -81,29 +80,18 @@ async function readTestFiles() {
   return files
 }
 
-/** Reads one finished top-level test from a runner event; a nested test belongs to its top-level test, which is the unit a name pattern can select. @example finishedTest(event) // => { file: 'service.test.js', name: 'opens', ms: 12.4, failed: false } */
-function finishedTest(event) {
-  if (event.type !== 'test:pass' && event.type !== 'test:fail') return undefined
-  if (event.data.nesting !== 0) return undefined
-  return {
-    file: basename(event.data.file),
-    name: event.data.name,
-    ms: event.data.details.duration_ms,
-    failed: event.type === 'test:fail',
-  }
-}
-
-/** Runs every test file once and rewrites the timings file from the observed durations; refuses to record a failing run. @example await recordTimings(files) */
-async function recordTimings(files) {
-  const results = []
-  const events = run({
+/** Runs every test file once and rewrites the timings file from the observed durations; refuses to record a failing run, and ends a test that does not end within `silenceSeconds`. @example await recordTimings(files, 120) */
+async function recordTimings(files, silenceSeconds) {
+  const { results, timedOutTests } = await collectTestRun({
     files: files.map((file) => join(testDirectory, file)),
     concurrency: TIMING_RECORD_CONCURRENCY,
+    testTimeoutMs: silenceSeconds * 1000,
   })
-  for await (const event of events) {
-    const finished = finishedTest(event)
-    if (finished) results.push(finished)
-  }
+  const [hung] = timedOutTests
+  if (hung)
+    throw new Error(
+      `${hung.file}: ${JSON.stringify(hung.name)} did not end within ${silenceSeconds} s and was ended; timings were not recorded.`,
+    )
   const failed = results.filter((result) => result.failed).length
   if (failed > 0)
     throw new Error(`${failed} tests failed; timings were not recorded.`)
@@ -136,7 +124,8 @@ async function runCall(invocation, silenceSeconds) {
   process.stdout.write(
     `${result.output}▶ ${callLabel(invocation)}: ${tests} tests, ${(result.elapsedMs / 1000).toFixed(1)} s (planned ${(invocation.ms / 1000).toFixed(1)} s)\n`,
   )
-  const failed = result.code !== 0
+  // A call ended for its silence fails whatever the runner exits with after the SIGTERM: a runner that winds down with 0 must not turn a hung test into a pass.
+  const failed = result.timedOut || result.code !== 0
   if (result.timedOut)
     console.error(
       `✖ ${invocation.files.join(', ')}${invocation.namePattern || invocation.skipPattern ? ' (a part selected by test name)' : ''} printed nothing for ${silenceSeconds} s and was ended; the test after the last one printed above did not end.`,
@@ -170,7 +159,7 @@ if (options.wholeSplitFiles && options.shards !== 1)
   throw new Error('--whole-split-files runs on one runner; leave out --shard.')
 const files = await readTestFiles()
 if (options.record) {
-  await recordTimings(files)
+  await recordTimings(files, options.silenceSeconds)
 } else {
   // A refusal is one line for the reader, not a stack trace of this script.
   const timings = await readTestTimings(timingsPath).catch((error) => {
