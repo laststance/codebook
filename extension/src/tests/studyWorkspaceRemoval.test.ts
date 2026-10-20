@@ -9189,6 +9189,104 @@ test('a stopped and saved run whose study another window deletes with its record
   }
 })
 
+// Value: protects=the pane's storage line of a study that another window deleted with its recording after one of its saves failed here: once the next save is refused and this window forgets the study, no "History not saved: …" line is left for a study that no longer waits; fails_when=the refused save forgets the study and its pending archive but keeps the line of the earlier failure until Retry storage / refresh, so the learner reads that a history is not saved, and is offered a retry, for a study that was deleted (Cycle 0047 row 256); why_new=Cycle 0047 row 256 (P3MAINT-6): row 162's test had no earlier failed save; seam=the library's study save, which fails once with ENOSPC, a second LearningLibrary over the same storage, which removes the study as another window's Delete does (its mover deletes what it is given), and the reader's own refresh timer, stopped so that the test's refreshes are the only checkpoints; no_claim=a real full disk, a second editor process
+test('a study whose save failed and that another window then deletes with its recording leaves no "History not saved: …" line once its next save is refused', async (context) => {
+  // Arrange: a recorded run of this window, stopped and saved; the save of its next checkpoint fails once, and another window then deletes its study, archive and recording.
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const directory = harness.reader.inspect().libraryDirectory!,
+      library = await harness.reader.learningStorage()
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    let hasSaveFailed = false
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        ...input: Parameters<LearningLibrary['saveStudy']>
+      ) {
+        // Only the first save of the test fails, as a full disk refuses it.
+        if (!hasSaveFailed) {
+          hasSaveFailed = true
+          throw Object.assign(
+            new Error('ENOSPC: no space left on device, write'),
+            { code: 'ENOSPC' },
+          )
+        }
+        return saveStudy.apply(this, input)
+      },
+    )
+    const explainAndCheckpoint = async (
+      key: string,
+      interpretation: string,
+      endsWhen: (status: string) => boolean,
+    ): Promise<void> => {
+      await harness.service.explain({
+        instanceId: harness.service.instanceId,
+        runId: harness.record.id,
+        key,
+        snapshotUri: harness.service.state(harness.record).participants.browser
+          .snapshotUri!,
+        sourceHash: sha256('const nextTheme = "dark";\n'),
+        valuePaths: ['value:nextTheme'],
+        interpretation,
+      })
+      await readerSeams(harness).refresh()
+      await waitUntil(
+        () =>
+          endsWhen(harness.service.state(harness.record).historyOutcome.status),
+        'the end of the checkpoint',
+        2_000,
+      )
+    }
+    await explainAndCheckpoint(
+      'before-the-deletion',
+      'The theme was dark when the run stopped.',
+      (status) => status === 'failed',
+    )
+    const linesAfterTheFailedSave = structuredClone(
+      harness.reader.inspect().view!.errors,
+    )
+    const removal = await new LearningLibrary(
+      directory,
+      library.workspaceKey,
+    ).removeStudy(harness.studyId, async (path) => {
+      await rm(path, { recursive: true })
+    })
+
+    // Act: an agent saves another explanation of the stopped run, and the reader takes its checkpoint, whose save the library refuses.
+    await explainAndCheckpoint(
+      'after-the-deletion',
+      'The theme stayed dark after the stop.',
+      (status) => status === 'unavailable',
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        linesAfterTheFailedSave,
+        removal: { ...removal },
+        linesAfterTheRefusedSave: structuredClone(
+          harness.reader.inspect().view!.errors,
+        ),
+        listed: (await library.list()).map((entry) => entry.id),
+      },
+      {
+        linesAfterTheFailedSave: [
+          'Error: History not saved: Error: ENOSPC: no space left on device, write',
+        ],
+        removal: { outcome: 'moved' },
+        linesAfterTheRefusedSave: [],
+        listed: [],
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=a recorded run of this window whose first saves cannot look at its recording folder (a permission denied, a disk error, a folder Windows is deleting or a scanner holds): the study stays this window's, the failure is told in the line "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at again; fails_when=the save counts every failure of that look as the recording having left the library with the study, so the reader forgets the study and drops its pending checkpoint as if another window had deleted it, and the run's learning is never saved although nothing was removed (Cycle 0047 row 170); why_new=Cycle 0047 row 170 (S2CR-2, S2CXA-C2-1, S2OCR2-1, S2CLA-2, S2CXS-1): row 162's test has only a recording folder that is gone; seam=the look at the run's recording folder that the library's study save makes, refused with EACCES while the test says so (every other look reaches the disk)
 test('a recorded run whose saves cannot look at its recording folder keeps its study, tells "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at', async (context) => {
   // Arrange: a recorded run of this window; while it runs and stops, every study save's look at the run's recording folder is refused.

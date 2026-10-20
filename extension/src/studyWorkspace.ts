@@ -10536,9 +10536,7 @@ export class StudyWorkspace {
           } catch (error) {
             // Another window removed the study with its recording, or its files were removed by hand: the study is forgotten like one removed by hand, and nothing is written back without its recording (Cycle 0047 row 162).
             if (error instanceof StudyRemovedWithItsRecordingError) {
-              await this.forgetRemovedStudy(id, 'archive-removed')
-              this.leaveStudyThatLeftLibrary(id)
-              this.publish()
+              await this.forgetStudyRemovedWithItsRecording(id)
               break
             }
             this.reportCheckpoint(
@@ -10575,6 +10573,25 @@ export class StudyWorkspace {
       })
     this.archiveWrites.set(id, pending)
     return pending
+  }
+
+  /**
+   * Forgets a study whose save the library refused because it left the library with its recording ({@link StudyRemovedWithItsRecordingError}: another window removed it, or its files were removed by hand), and takes the line of a failed save ("History not saved: …") from the pane once no other archive waits, as a save that succeeds does; called by {@link persistArchive} (Cycle 0047 rows 162 and 256).
+   * Why: the study no longer waits for a save, so a line left from one of its earlier failed saves would offer Retry storage / refresh for a study that is gone.
+   * @param studyId - The study whose save was refused.
+   * @example await this.forgetStudyRemovedWithItsRecording(studyId) // the study is forgotten and no "History not saved" line is left for it
+   */
+  private async forgetStudyRemovedWithItsRecording(
+    studyId: string,
+  ): Promise<void> {
+    // The line goes before the study is forgotten, so a failed read of the list there reports anew; it stays while another archive waits.
+    if (
+      [...this.pendingArchives.keys()].every((pending) => pending === studyId)
+    )
+      this.errors.delete('archive')
+    await this.forgetRemovedStudy(studyId, 'archive-removed')
+    this.leaveStudyThatLeftLibrary(studyId)
+    this.publish()
   }
 
   /** Retains only accepted checkpoint receipts after {@link retire} detaches execution ownership. @example this.reportCheckpoint(service, record, signature, 2, 'failed') */
@@ -21855,7 +21872,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Drops what the reader shows of a study that left the library without a removal of this reader: its archives held for the live run and the selection, and the selection itself when it names the study; called by {@link forgetStudiesRemovedByHand} for every such study, and by {@link persistArchive} once the library refused to write again the archive of a study removed with its recording (Cycle 0047 row 162).
+   * Drops what the reader shows of a study that left the library without a removal of this reader: its archives held for the live run and the selection, and the selection itself when it names the study; called by {@link forgetStudiesRemovedByHand} for every such study, and by {@link persistArchive}, through {@link forgetStudyRemovedWithItsRecording}, once the library refused to write again the archive of a study removed with its recording (Cycle 0047 row 162).
    * @param studyId - The study that left the library.
    * @example this.leaveStudyThatLeftLibrary(studyId) // the reader selects no study when it showed that one
    */
@@ -22356,7 +22373,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Makes this window forget a study that was removed: it is never written again, its run is excluded from history, and the list is read again. Called by {@link moveSavedStudy} once something of the study went to the Trash, and by {@link forgetStudiesRemovedByHand} for a study whose archive left the library without a removal of this window.
+   * Makes this window forget a study that was removed: it is never written again, its run is excluded from history, and the list is read again. Called by {@link moveSavedStudy} once something of the study went to the Trash, by {@link forgetStudiesRemovedByHand} for a study whose archive left the library without a removal of this window, and by {@link persistArchive}, through {@link forgetStudyRemovedWithItsRecording}, for a study whose save the library refused because it left with its recording (Cycle 0047 row 162).
    * @param studyId - The removed study.
    * @param exclusion - How it was removed: `removed-by-learner` for this window's delete, `archive-removed` for a study that left the library otherwise, so an agent is not told of a Trash the study never went to.
    * @example await this.forgetRemovedStudy(studyId, 'archive-removed')
