@@ -319,7 +319,7 @@ export async function sealedRecordingWriterState(
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.
  * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
- * @returns `true` while the writer may still run, on this machine or on another one; `false` once it is gone from this machine, for a writer this computer cannot confirm (`unconfirmed-here`), and with `ignored` for this process.
+ * @returns `true` while the writer may still run, on this machine or on another one; `false` once it is gone from this machine, for a writer this computer cannot confirm (`unconfirmed-here`), for a writer record that stands and cannot be read (`unreadable`, {@link isWriterRecordUnreadable}), and with `ignored` for this process. The caller {@link RecordingStore.ownerState} reads `false` as `interrupted`, which the learner's view shows as `partial`, as for `unconfirmed-here`; only the removal treats `unreadable` apart (its dialog).
  * @example
  * await isRecordingWriterLive('/storage/learning/recordings.v2/<id>', header) // => false for a crashed editor whose process id another process has now
  * await isRecordingWriterLive(directory, header, 'counts', starts) // every recording of one list with one `starts`
