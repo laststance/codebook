@@ -184,6 +184,70 @@ test('a page that renders to exactly the reader’s page file limit with LF line
   }
 })
 
+/**
+ * Answers the Wiki manifest of one overview page whose paragraph holds 1,000 lines that end with CRLF already, as an agent on Windows may write them, and then the given number of letters `a`, and writes the project's one source ({@link overviewOfLetters}).
+ * Called by the test of a page whose text holds CRLF line ends, which a checkout with CRLF line ends leaves as they are.
+ * @param root - The project folder.
+ * @param letterCount - How many letters follow the lines.
+ * @returns The manifest, as an agent writes it into a candidate.
+ * @example await overviewOfCrlfLinesAndLetters('/tmp/project', 3) // => { …, pages: [{ path: 'index.html', contentHtml: '<h2 id="flow">Flow</h2><p>line\r\n…line\r\naaa</p>', … }] }
+ */
+async function overviewOfCrlfLinesAndLetters(root, letterCount) {
+  const manifest = await overviewOfLetters(root, letterCount)
+  manifest.pages[0].contentHtml = `<h2 id="flow">Flow</h2><p>${'line\r\n'.repeat(1_000)}${'a'.repeat(letterCount)}</p>`
+  return manifest
+}
+
+// Value: protects=every learner whose Wiki the agent writes with CRLF line ends in a page's text, as an editor on Windows may: such a line end is two bytes on disk already, and a checkout with CRLF line ends leaves it as it is, so the renderer counts no byte more for it; fails_when=the renderer counts a byte more for each LF of a page, also for one a CR precedes, so a page that a Windows checkout holds within the reader's limit is refused; why_new=Cycle 0047 row 274 (P3S7-G3): the CR lookbehind of row 233's count had no test, as the renderer clears CR from the sources and the shell but not from a page's text; seam=none (the constants source and the real renderer); no_claim=Git's own conversion (the test writes each LF that no CR precedes as CRLF, as core.autocrlf does)
+test('a page whose text holds CRLF line ends already is rendered at exactly the reader’s page file limit with the CRLF line ends of a Windows checkout, and one byte more is refused', async () => {
+  // Arrange: an overview whose paragraph holds 1,000 lines that end with CRLF, sized to take the reader's limit with CRLF line ends, and the same overview one letter longer.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-render-page-limit-crlf-text-')),
+  )
+  try {
+    const output = join(root, '.codebook/wiki')
+    const pageOfOneLetter =
+      (
+        await renderWikiPages(await overviewOfCrlfLinesAndLetters(root, 1), {
+          projectRoot: root,
+          outputDirectory: output,
+        })
+      ).get('index.html') ?? ''
+    const lettersAtTheLimit =
+      WIKI_PAGE_FILE_LIMIT_BYTES -
+      (Buffer.byteLength(withCrlfLineEnds(pageOfOneLetter)) - 1)
+
+    // Act
+    const atTheLimit = await renderWikiPages(
+      await overviewOfCrlfLinesAndLetters(root, lettersAtTheLimit),
+      { projectRoot: root, outputDirectory: output },
+    ).then(
+      (pages) =>
+        Buffer.byteLength(withCrlfLineEnds(pages.get('index.html') ?? '')),
+      (error) => error.message,
+    )
+    const overTheLimit = await renderWikiPages(
+      await overviewOfCrlfLinesAndLetters(root, lettersAtTheLimit + 1),
+      { projectRoot: root, outputDirectory: output },
+    ).then(
+      () => 'rendered',
+      (error) => error.message,
+    )
+
+    // Assert: the page at the limit is rendered, and its size with CRLF line ends is the limit.
+    assert.deepEqual(
+      { atTheLimit, overTheLimit },
+      {
+        atTheLimit: 2_097_152,
+        overTheLimit:
+          'Wiki page index.html renders to 2097153 bytes with CRLF line ends, as a Windows checkout may hold it, more than the 2097152 bytes (2 MiB) the Codebook reader opens; split its article into smaller pages, each with its own sources and outline, and link them from the page.',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the learner's published Wiki and the agent's candidate against a page larger than the reader opens: the preview (--render-only) and the publish must refuse it before any page is written; fails_when=the publisher writes the rendered pages into the candidate, or publishes them, before it checks their size; why_new=Cycle 0047 row 78 (ADV-6 = RT-2); seam=none (the real preparation and publisher); no_claim=the command line's own printing of the refusal (it prints the error's message)
 test('the preview and the publish of a candidate whose page renders larger than the reader opens are refused before any page is written, and no Wiki is published', async () => {
   // Arrange: a prepared candidate whose overview renders one byte over the reader's limit.
