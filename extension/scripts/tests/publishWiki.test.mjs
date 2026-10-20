@@ -16408,6 +16408,134 @@ test('a --recover whose stopped ancestor claim is removed meanwhile completes, e
   }
 })
 
+/**
+ * A module loaded before the publisher (`--import`) that records the publisher's calls of the file system that the order of its syncs depends on, one JSON line each, in `log`: each write, sync and close through a handle (`write`, `sync`, `close`, with the handle's path: a file's, or a folder's that is opened to sync it), each hard link (`link`, with the new name), each move (`rename`, with its source and its target) and each removal (`unlink`).
+ * @param {string} log - The file the calls are appended to.
+ * @returns {string} The module as a `data:` URL.
+ * @example
+ * runPublisherWith(fileSystemCallsRecordedIn('/tmp/x/calls.jsonl'), ['--project', root, '--output', output, '--stage', next])
+ */
+const fileSystemCallsRecordedIn = (log) =>
+  `data:text/javascript,${encodeURIComponent(
+    `import fileSystem from 'node:fs/promises'; import { appendFileSync } from 'node:fs'; import { syncBuiltinESMExports } from 'node:module'; const record = (...call) => appendFileSync(${JSON.stringify(log)}, JSON.stringify(call) + '\\n'); const { open, link, rename, unlink } = fileSystem; fileSystem.open = async (path, ...rest) => { const handle = await open(path, ...rest), name = String(path), { writeFile, sync, close } = handle; handle.writeFile = (...data) => { record('write', name); return writeFile.apply(handle, data) }; handle.sync = () => { record('sync', name); return sync.call(handle) }; handle.close = () => { record('close', name); return close.call(handle) }; return handle }; fileSystem.link = (from, to) => { record('link', String(to)); return link(from, to) }; fileSystem.rename = (from, to) => { record('rename', String(from), String(to)); return rename(from, to) }; fileSystem.unlink = (path) => { record('unlink', String(path)); return unlink(path) }; syncBuiltinESMExports();`,
+  )}`
+
+// Value: protects=the learner's Wiki and the learner's own files on a power cut during or right after a publish, where the file system may keep the moves of the swap and lose the bytes or the names they rely on (ext4 can keep a journal empty, NTFS of NUL bytes); fails_when=the publish closes a file it wrote, links its journal, writes a copy of a learner's file, moves the Wiki or removes its journal before it synced the bytes and the names the next step relies on, so a power cut can leave an empty journal beside a missing Wiki folder, or a published Wiki without the learner's files; why_new=Cycle 0047 row 265 (P3CLA-4); seam=a publisher process whose file system calls a module loaded first records in their order (`--import`); no_claim=that a real power cut keeps what the syncs promise, which only the file system and the disk can keep and no test here can cut the power to show
+test('a publish syncs each file it writes before its close, the journal’s folder once the journal has its name, each line of its list of copies before the copy it names, the candidate’s folders before the swap and the Wiki’s folder before the journal goes', async () => {
+  // Arrange: a Wiki with a learner's file and a candidate with a page in a folder of its own; the calls of its publish are recorded.
+  const wiki = await publishedWikiWithACandidate('guide.html')
+  const log = join(wiki.directory, 'calls.jsonl'),
+    folder = dirname(wiki.output)
+  await writeFile(
+    join(wiki.output, 'manual.txt'),
+    'The learner kept these notes',
+  )
+  try {
+    // Act
+    const { code } = runPublisherWith(fileSystemCallsRecordedIn(log), [
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      wiki.next,
+    ])
+
+    // Assert: each call beside the Wiki or in it, its path relative to the folder that holds the Wiki, each run's id and each digest hidden.
+    const calls = (await readFile(log, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter(([, path]) => path === folder || path.startsWith(`${folder}/`))
+      .map((call) =>
+        call
+          .map((part, index) =>
+            index === 0
+              ? part
+              : (relative(folder, part) || '.')
+                  .replace(
+                    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+                    '<id>',
+                  )
+                  .replace(/[0-9a-f]{64}/g, '<digest>'),
+          )
+          .join(' '),
+      )
+    assert.deepEqual(
+      { code, calls },
+      {
+        code: 0,
+        calls: [
+          // The lock: its bytes synced before the link gives them its name.
+          'write wiki.publish-lock.json.pending-<id>',
+          'sync wiki.publish-lock.json.pending-<id>',
+          'close wiki.publish-lock.json.pending-<id>',
+          'link wiki.publish-lock.json',
+          'unlink wiki.publish-lock.json.pending-<id>',
+          // The pages, each synced before its close.
+          'unlink next/index.html',
+          'write next/index.html',
+          'sync next/index.html',
+          'close next/index.html',
+          'unlink next/pages/guide.html',
+          'write next/pages/guide.html',
+          'sync next/pages/guide.html',
+          'close next/pages/guide.html',
+          // The side file and the journal, each synced before its close, and the journal before its link.
+          'write wiki.publish-journal.json.prepared-<id>-<digest>',
+          'sync wiki.publish-journal.json.prepared-<id>-<digest>',
+          'close wiki.publish-journal.json.prepared-<id>-<digest>',
+          'write wiki.publish-journal.json.pending-<id>',
+          'sync wiki.publish-journal.json.pending-<id>',
+          'close wiki.publish-journal.json.pending-<id>',
+          'link wiki.publish-journal.json',
+          'unlink wiki.publish-journal.json.pending-<id>',
+          // The folder that holds the journal and the lock, once the journal has its name.
+          'sync .',
+          'close .',
+          // The list of copies: its name, then its line, synced before the copy it names begins.
+          'sync .',
+          'close .',
+          'write wiki.publish-journal.json.copies-<id>',
+          'sync wiki.publish-journal.json.copies-<id>',
+          // The copy of the learner's file, synced before its close.
+          'write next/manual.txt',
+          'sync next/manual.txt',
+          'close next/manual.txt',
+          'close wiki.publish-journal.json.copies-<id>',
+          // The finalized manifest and record, each synced before it is moved into place.
+          'write next/.codebook-publish-<id>-codebook-wiki.json',
+          'sync next/.codebook-publish-<id>-codebook-wiki.json',
+          'close next/.codebook-publish-<id>-codebook-wiki.json',
+          'rename next/.codebook-publish-<id>-codebook-wiki.json next/codebook-wiki.json',
+          'write next/.codebook-publish-<id>-codebook-publication.json',
+          'sync next/.codebook-publish-<id>-codebook-publication.json',
+          'close next/.codebook-publish-<id>-codebook-publication.json',
+          'rename next/.codebook-publish-<id>-codebook-publication.json next/codebook-publication.json',
+          // The candidate's folders, before the swap.
+          'sync next',
+          'close next',
+          'sync next/pages',
+          'close next/pages',
+          // The swap.
+          'rename wiki wiki.previous-<id>',
+          'rename next wiki',
+          // The folder of the Wiki, before the journal that guards the swap goes.
+          'sync .',
+          'close .',
+          // The removals of the list, the side file and the journal, then the release of the lock.
+          'unlink wiki.publish-journal.json.copies-<id>',
+          'unlink wiki.publish-journal.json.prepared-<id>-<digest>',
+          'unlink wiki.publish-journal.json',
+          'unlink wiki.publish-lock.json',
+        ],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Cycle 0047, second ship, fixing cycle 2: the tests of fixer PB (rows 222 to 227).
 
 // Value: protects=the tests that arm a kill or a failure halfway through a write of the publisher's list of copies, whose lines all go through one handle; fails_when=the stand-in runs its swap or its failure at every write through the wrapped handle, not once, so a second line reruns a swap that is no kill or rearms the next kill of a chain, and a later write loses its options; why_new=Cycle 0047 row 227 (P2OCR1a-1); seam=the `open` of the stand-ins themselves (scripts/tests/utils/swappedFolderFileSystem.mjs, scripts/tests/utils/failingFileSystem.mjs); no_claim=a write of the publisher's own, which the tests of the kills and of the failed writes cover
