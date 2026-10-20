@@ -24,7 +24,7 @@ async function restoreProductContext() {
   const context = [
     'CODEBOOK: RESTORE PRODUCT CONTEXT AFTER COMPACTION',
     `Repository root: ${root}`,
-    'Before continuing implementation or runtime trials, perform the Mandatory entry below again using the current files on disk. Read every required document in full, find the active cycle record (the one record in docs/cycles with a `## Current state` section), and open the approved PNG with an image-viewing tool. A compacted summary or this reminder is not evidence of those reads or image inspection.',
+    'Before continuing implementation or runtime trials, perform the Mandatory entry below again, as its step for a context compaction says, using the current files on disk: read the active cycle Issue (the open Issue with the label `cycle`) with its comments and the sections of PRODUCT_GOAL.md that the next task touches, and for UI work open the approved PNG with an image-viewing tool. A compacted summary or this reminder is not evidence of those reads or image inspection.',
     'Reconcile the current source and affected acceptance gaps, then resume the latest owner-authorized task. Preserve pending owner instructions and any explicit pause; this reminder grants no additional work scope.',
     'Current AGENTS.md follows; resolve its relative links from the repository root:',
     instructions,

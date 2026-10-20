@@ -25,7 +25,6 @@ extension/.fallow/
 !/.codex/hooks.json
 !/.codex/restore-product-context.mjs
 !/.codex/restore-product-context.test.mjs
-!/.codex/README.md
 
 # Share only the Claude Code compaction hook registration; keep other local Claude state private.
 !/.claude/

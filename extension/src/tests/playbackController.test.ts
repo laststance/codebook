@@ -577,7 +577,7 @@ test('failed frame reads pause playback and clear misleading pixels without chan
 
 // Regression: 465 — native App visibility must not retire a failed recording load.
 // Found by /qa on 2026-10-11.
-// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md
+// Report: https://github.com/laststance/codebook/blob/docs-archive-2026-10-20/docs/cycles/0046-carried-defects-of-cycle-0045.md
 // Value: protects=failed-load diagnostics through App cover/return; fails_when=visibility changes failure to idle or retries without explicit Open; why_new=existing hide cases cover pending/ready frames only; seam=none
 test('covering and returning to an unreadable recording keeps its failure until the learner explicitly reloads it', async () => {
   // Arrange
@@ -630,7 +630,7 @@ test('covering and returning to an unreadable recording keeps its failure until 
 
 // Regression: 465 — returning to App must not replace a failed seek with its cached old moment.
 // Found by /qa on 2026-10-11.
-// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md
+// Report: https://github.com/laststance/codebook/blob/docs-archive-2026-10-20/docs/cycles/0046-carried-defects-of-cycle-0045.md
 // Value: protects=failed-seek diagnostics when an older bundle survives; fails_when=hide marks it ready or reveal repaints the cached bundle; why_new=the failed-frame case never changes App visibility; seam=none
 test('covering and returning after a recorded frame fails keeps pixels cleared and its error until explicit reload', async () => {
   // Arrange

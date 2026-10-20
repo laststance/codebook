@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -1760,24 +1760,6 @@ test('configured help says that any column declared on a blank line is taken as 
   )
 })
 
-// Cycle 0045 (SM-17): red while the README kept the rule counted from the declared line and said nothing about the second request.
-// Cycle 0046 (row 56): red while the README kept the rule of mapped lines alone, without the debugger's break locations.
-// Cycle 0046 (row 77): red while the README counted every line with a break location, wherever that location lies in the generated module.
-test('the extension README states the binding rule from the requested line, as the help does', async () => {
-  // Arrange
-  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
-  // Act
-  const statesRule = readme.includes(
-      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one). When a mapped line lies between them, Codebook asks the debugger for the module's break locations and counts only a line that has one between the place the breakpoint was requested at and the place it was bound at in the generated module: a mapped line the debugger cannot pause on, such as a function head or its parameters, is passed over, and so is a line whose break location the build placed elsewhere in the generated module, such as a call it appends at the module's end and maps to a function's name. This also holds for a binding first known at a pause, where the place the program is paused at is the bound place; when either generated place cannot be determined, every line with a break location counts. The run's journal records `breakpoint.rule-from-break-locations` with the lines that counted and, when both are known, the two generated places (and `breakpoint.requested-again-after-break-locations` when a server registration is requested again for it). When the debugger cannot list break locations, the mapped lines decide. Codebook uses an accepted binding like a moved column: `source` names the bound line.",
-    ),
-    statesSecondRequest = readme.includes(
-      "The line is the declaration and the column is a preference: Codebook accepts the debugger's verified binding anywhere on that line and reports the bound position as `source` beside `requestedSource` in the observation's inspection resource. Declare the column where the statement begins. When the debugger binds a stop on a later line although the line the breakpoint was requested on has a break location, Codebook requests the breakpoint once more, at that line's break location before the requested column; the stop fails while it is armed only when that second request is bound on a later line again or the line has no break location before the requested column. A binding that is first known at a pause (a server stop whose registration was still pending when it was armed) is not refused for this: the stop is accepted where it paused, and its inspection's `place` names the column that can pause on the requested line.",
-    )
-  // Assert
-  assert.equal(statesRule, true)
-  assert.equal(statesSecondRequest, true)
-})
-
 // Value: protects=the help naming the same deadline the run enforces; fails_when=the help keeps a hard-coded "20 seconds" after the active-progress deadline changes; why_new=Cycle 0036 C08b; seam=none
 test('configured help names the active-progress deadline the run uses, in seconds, in all six places', async (context) => {
   // Arrange
@@ -1895,11 +1877,10 @@ test('the configured help names every journal entry of a pause and its resume an
   assert.doesNotMatch(help.text, /records every pause|every resume/)
 })
 
-// Value: protects=an agent that declares a server stop in a "use server" module knowing that the page's pause at that breakpoint is Codebook's to resume, not a reason to change the declaration; fails_when=the help or the README no longer says that Codebook resumes that page pause, or names another journal entry for it than the run writes; why_new=Cycle 0046 row 56: row 7 made the run resume that pause, and only the source said so; seam=none
-test('the configured help and the README say that Codebook resumes a page pause at a server stop’s breakpoint in the page’s stub of a "use server" module', async (context) => {
+// Value: protects=an agent that declares a server stop in a "use server" module knowing that the page's pause at that breakpoint is Codebook's to resume, not a reason to change the declaration; fails_when=the help no longer says that Codebook resumes that page pause, or names another journal entry for it than the run writes; why_new=Cycle 0046 row 56: row 7 made the run resume that pause, and only the source said so; seam=none
+test('the configured help says that Codebook resumes a page pause at a server stop’s breakpoint in the page’s stub of a "use server" module', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
-  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
   // Act
   const help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
@@ -1910,12 +1891,6 @@ test('the configured help and the README say that Codebook resumes a page pause 
   assert.equal(
     additionalStops.includes(
       'Server stops use the owned Next worker and sealed action-browser modules; pending breakpoint registration is not a verified pause. The editor sets a server stop\'s breakpoint in the page too; when the page pauses there, in its stub of a "use server" module, Codebook resumes the page itself and goes on waiting for the stop in the server. Codebook arms only the next expected stop:',
-    ),
-    true,
-  )
-  assert.equal(
-    readme.includes(
-      'One announced pause is expected: the editor sets a server stop\'s breakpoint in the page too, and when the page pauses there, in its stub of a `"use server"` module, Codebook resumes the page itself (`dap.server-breakpoint-browser-stop-resumed` in the run\'s journal) and goes on waiting for the stop in the server.',
     ),
     true,
   )
@@ -2024,10 +1999,9 @@ test('the Study help names save-learning-summary and saveLearningSummary in the 
 })
 
 // Cycle 0044 (0041-DOC1): red while only the CHANGELOG said that an after condition already true before input is refused, and the README left the per-phase fix to the help.
-test('configured help and the extension README tell an agent that an after condition already true before the click is refused, and how to fix a condition of each phase', async (context) => {
+test('configured help tells an agent that an after condition already true before the click is refused, and how to fix a condition of each phase', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
-  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
   // Act
   const help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
@@ -2040,34 +2014,6 @@ test('configured help and the extension README tell an agent that an after condi
       "A condition timeout identifies the failing one-based predicate and its phase without exposing page values: correct a before condition against the fresh page before input, an after condition against the page the action leaves. Codebook also reads action.after just before the click; when the after conditions already hold there, the run ends with 'Configured after conditions were already true before application input' and sends no input, because such a result cannot prove the action caused it; declare an after condition only the action makes true.",
     ),
     true,
-  )
-  assert.equal(
-    readme.includes(
-      'A condition timeout names its phase: correct a before condition against the fresh page before input, an after condition against the page the action leaves. Codebook also reads the after conditions just before the click; when they already hold there, the run ends with "Configured after conditions were already true before application input" and sends no input, so declare an after condition only the action makes true.',
-    ),
-    true,
-  )
-})
-
-// Cycle 0044 (0042-DOC2): red while the README labelled its setup section and current preview as 0.2.12 although the manifest is newer.
-test('the extension README names no release other than the manifest version as its current preview', async () => {
-  // Arrange
-  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
-  const manifest = z
-    .object({ version: z.string() })
-    .parse(
-      JSON.parse(await readFile(join(__dirname, '../../package.json'), 'utf8')),
-    )
-  // Act
-  const namedCurrentVersions = [
-    ...readme.matchAll(
-      /existing (\d+\.\d+\.\d+) preview|identified\*\* (\d+\.\d+\.\d+) preview|current [^.]*?\*\*extension (\d+\.\d+\.\d+)/g,
-    ),
-  ].map((match) => match[1] ?? match[2] ?? match[3])
-  // Assert
-  assert.deepEqual(
-    namedCurrentVersions.filter((version) => version !== manifest.version),
-    [],
   )
 })
 
@@ -4010,20 +3956,6 @@ test("configured help says that a binding the stop's own line declares has no va
     ),
     true,
   )
-})
-
-// Value: protects=a reader of the extension README learning what the help says about a binding the stop's own line declares; fails_when=the README's inspection step does not say that Codebook requests such a stop on the next line that can pause; why_new=Cycle 0045 N14d-15 (DX-1 b), rewritten for Cycle 0047 row 49 (D14.5-1: the README said such a partly scanned server stop stays on its line, which is refused at its arming); seam=none
-test('the extension README says that Codebook requests a stop whose own line declares its required binding on the first line after it that can pause, as the help does', async () => {
-  // Arrange
-  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
-
-  // Act
-  const saysIt = readme.includes(
-    "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's `armed` and `place`, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), or the sealed map is too large to scan completely and the debugger lists no place after the statement where it can pause, the stop stays on its line and its failure names the line to follow; a server stop in such a map whose module the server has not loaded when the stop is armed cannot be asked for that place, so it is refused when it is armed, before its breakpoint is set, and its failure names the first line after the statement; when you know the statement spans several lines, declare the stop on a statement after it.",
-  )
-
-  // Assert
-  assert.equal(saysIt, true)
 })
 
 // Value: protects=an agent that publishes an article under a book id an earlier question already took getting to a run on its own citations; fails_when=the conflict only says "read the current book", so the agent runs on the article it found, whose citations do not cover its stop (the Cursor run's second refused start); why_new=Cycle 0045 cause 5; seam=none

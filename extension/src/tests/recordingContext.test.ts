@@ -1157,18 +1157,3 @@ test('the saved-study help says that recorded facts appear from their own time, 
     await harness.close()
   }
 })
-
-// Value: protects=the README's replay step saying the same as the help about a stop's explanation; fails_when=the step still tells the reader to inspect "later annotations at their recorded times"; why_new=Cycle 0045 cause 10; seam=none
-test('the extension README says in its replay step what the Study pane shows as a stop’s explanation, as the help does', async () => {
-  // Arrange
-  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
-
-  // Act
-  const statesRule = readme.includes(
-    "Inspect the pause-associated source/values at their recorded times: recorded facts appear only from their own recorded time. While the selected time lies in a stop's own recorded pause, the Study pane shows that stop's explanation: every explanation saved before that pause ended and the stop's first saved explanation, each with a note when it was saved later than the selected time (while this pause was held, after this pause ended, or after the recording ended); every other explanation saved later stays under **Later annotations**.",
-  )
-
-  // Assert
-  assert.equal(statesRule, true)
-  assert.doesNotMatch(readme, /later annotations at their recorded times/)
-})
