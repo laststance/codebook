@@ -42,6 +42,7 @@ import {
   failRenameOf,
   failStatOf,
   failWriteOf,
+  observeCloses,
   observeRemovals,
   observeWrites,
   open as openThroughFailingFileSystem,
@@ -2351,7 +2352,7 @@ const markedCopies = new Map()
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
- * - `?failing`: the write of the file a test names with {@link failWriteOf} through a handle stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write through a handle tells the observer of {@link observeWrites} its path and byte count first, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
+ * - `?failing`: the write of the file a test names with {@link failWriteOf} through a handle stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write through a handle tells the observer of {@link observeWrites} its path and byte count first, each close of a handle tells the observer of {@link observeCloses} its path once the file is closed, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
  * - `?aliased-folder`: the folder a test names with {@link nameFolderAlso} answers to another name beside it too, as one folder does to names of another case on macOS and Windows (`aliasedFolderFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
  * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing' | '?aliased-folder'} mark - The mark of its stand-in.
@@ -14633,6 +14634,61 @@ test('the aliased-folder stand-in gives a file under the other name of a folder 
   } finally {
     nameFolderAlso(undefined)
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who follows the refusal of a publish whose status read of the list of copies it just made beside its journal failed (a read error of the disk); fails_when=the publish removes the list it cannot tell from a file another process put at its name, leaves its handle open, or answers a refusal that does not name the file it kept; why_new=Cycle 0047 row 269 (P3TEST-13: row 175's refusal of a new list of copies had no test); seam=a copy of the shipped publisher whose `node:fs/promises` fails the status read through the handle of the list with EIO and tells the test each close of a handle (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, {@link failStatOf}, {@link observeCloses}); no_claim=a status read that fails on a real file system
+test('a publish whose status read of the list of copies it just made fails keeps the list, names it in its refusal, closes its handle, and leaves nothing else beside the Wiki folder', async () => {
+  // Arrange: the published Wiki holds a file of the learner's, so the publish makes its list of copies; the status read through the list's handle fails with EIO.
+  const { publishWiki: publishWhoseListStatusFails } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const isTheList = (path) =>
+    path.startsWith(`${wiki.output}.publish-journal.json.copies-`)
+  const closedLists = []
+  const stopFailing = failStatOf(isTheList, 'EIO')
+  const stopObserving = observeCloses((path) => {
+    if (isTheList(path)) closedLists.push(withIdsHidden(basename(path)))
+  })
+  try {
+    await writeFile(join(wiki.output, 'manual.txt'), 'The learner’s own notes')
+
+    // Act
+    const refusal = await publishWhoseListStatusFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => ({ message: error.message, cause: error.cause?.code }),
+    )
+    const besideTheWiki = await publisherFilesBeside(wiki.output)
+    const list = besideTheWiki.find((name) => name.includes('.copies-'))
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        besideTheWiki: besideTheWiki.map(withIdsHidden),
+        listText: await readFile(join(dirname(wiki.output), list), 'utf8'),
+        closedLists,
+      },
+      {
+        refusal: {
+          message: `The publisher made ${join(dirname(wiki.output), list)} but could not read its status: EIO: the stat of the file failed. The file there may be another one now, so it was kept. Delete it if it holds nothing of yours, then try again.`,
+          cause: 'EIO',
+        },
+        besideTheWiki: ['wiki.publish-journal.json.copies-<id>'],
+        listText: '',
+        closedLists: ['wiki.publish-journal.json.copies-<id>'],
+      },
+    )
+  } finally {
+    stopObserving()
+    stopFailing()
+    await rm(wiki.directory, { recursive: true, force: true })
   }
 })
 

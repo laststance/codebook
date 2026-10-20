@@ -175,8 +175,47 @@ function handleWhoseWritesAreObserved(handle, path) {
   })
 }
 
+/** The optional observer of {@link observeCloses}. */
+let closeObserver
+
 /**
- * Opens a file as `open` does; the handle of the file {@link failWriteOf} waits for fails its write partway, once, the handle of the file {@link failCloseOf} or {@link failStatOf} waits for fails that call, once, and every handle tells the observer of {@link observeWrites} each `writeFile` through it.
+ * Asks every close of a handle of its `open` that closed the file to tell `observer` the file's path, once the close is done, as long as the observer is not stopped; so a test sees that a step closed the handle of a file it refused.
+ * @param {(path: string) => void} observer - Receives the path of each file whose handle a close closed.
+ * @returns {() => void} Stops this observer without clearing a newer one.
+ * @example
+ * const stop = observeCloses((path) => closed.push(path)); stop()
+ */
+export function observeCloses(observer) {
+  closeObserver = observer
+  return () => {
+    if (closeObserver === observer) closeObserver = undefined
+  }
+}
+
+/**
+ * Wraps an open handle so that its `close` tells the observer of {@link observeCloses} the path once the close is done; a close that fails tells it nothing, and every other member is the handle's own.
+ * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered, maybe wrapped to fail or to tell its writes.
+ * @param {string} path - The file's path.
+ * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
+ * @example
+ * await handleWhoseClosesAreObserved(await fileSystem.open(path, 'wx'), path).close() // tells the observer (path)
+ */
+function handleWhoseClosesAreObserved(handle, path) {
+  return new Proxy(handle, {
+    get(target, property) {
+      if (property === 'close')
+        return async () => {
+          await target.close()
+          closeObserver?.(path)
+        }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
+/**
+ * Opens a file as `open` does; the handle of the file {@link failWriteOf} waits for fails its write partway, once, the handle of the file {@link failCloseOf} or {@link failStatOf} waits for fails that call, once, every handle tells the observer of {@link observeWrites} each `writeFile` through it, and the observer of {@link observeCloses} each close of it.
  * @param {string} path - The file to open.
  * @param {...unknown} rest - The caller's flags and mode, handed on unchanged.
  * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers, wrapped for the awaited file.
@@ -185,7 +224,10 @@ function handleWhoseWritesAreObserved(handle, path) {
  */
 export async function open(path, ...rest) {
   const handle = await openFailing(path, ...rest)
-  return handleWhoseWritesAreObserved(handle, String(path))
+  return handleWhoseClosesAreObserved(
+    handleWhoseWritesAreObserved(handle, String(path)),
+    String(path),
+  )
 }
 
 /**
