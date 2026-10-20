@@ -17345,6 +17345,213 @@ test('a --recover that cannot read the publish lock that stands keeps, as it end
   }
 })
 
+/**
+ * Makes a project with no Wiki yet and the candidate prepared for its first one, as a learner has it before the first publish.
+ * @returns {Promise<{ directory: string, root: string, output: string, next: string }>} The temporary folder, the project, the Wiki folder `.codebook/wiki`, which does not exist, and the candidate `.codebook/next`.
+ * @example
+ * const firstWiki = await candidateOfAFirstWiki()
+ */
+async function candidateOfAFirstWiki() {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-first-candidate-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook/wiki'),
+    next = join(root, '.codebook/next')
+  await mkdir(root)
+  await writeStage(next, root, '<h1>First</h1>', undefined, output)
+  return { directory, root, output, next }
+}
+
+// Value: protects=the folder beside a learner's first Wiki after its first publish was killed just before the link that gives its publish lock its name, which leaves no Wiki, no lock and no journal; fails_when=--recover looks for a retained publication before its sweep and refuses as none stands, so the file the killed publish left beside the lock stays until a publish ends it; why_new=Cycle 0047 row 264 (P3CXA-A3); seam=a publisher process killed just before that link (scripts/tests/utils/killedPublisherProbe.mjs); no_claim=a first publish killed after its journal, whose recovery puts the candidate back and names it (`no-prior-wiki` with the stage)
+test('a --recover after the first publish of a Wiki was killed just before the link of its publish lock removes the file that publish left beside the lock, answers that no prior Wiki stands, and the candidate then publishes', async () => {
+  // Arrange: the first publish of the candidate is killed just before its lock gets its name.
+  const firstWiki = await candidateOfAFirstWiki()
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: firstWiki.root,
+        outputDirectory: firstWiki.output,
+        stageDirectory: firstWiki.next,
+      },
+      killAt: [
+        {
+          call: 'linking',
+          folder: dirname(firstWiki.output),
+          name: '^wiki\\.publish-lock\\.json$',
+        },
+      ],
+    })
+    const leftByTheKill = (await publisherFilesBeside(firstWiki.output)).map(
+      withIdsHidden,
+    )
+
+    // Act: the recovery, then the candidate published.
+    const recovery = await recoverWikiPublication({
+      projectRoot: firstWiki.root,
+      outputDirectory: firstWiki.output,
+    }).catch((error) => error.message)
+    const besideTheWiki = await publisherFilesBeside(firstWiki.output)
+    const nextPublish = await publishWiki({
+      projectRoot: firstWiki.root,
+      outputDirectory: firstWiki.output,
+      stageDirectory: firstWiki.next,
+    }).then(
+      ({ publishedFiles }) => ({ publishedFiles }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, leftByTheKill, recovery, besideTheWiki, nextPublish },
+      {
+        killed: '',
+        leftByTheKill: ['wiki.publish-lock.json.pending-<id>'],
+        recovery: { status: 'no-prior-wiki', output: firstWiki.output },
+        besideTheWiki: [],
+        nextPublish: { publishedFiles: 1 },
+      },
+    )
+  } finally {
+    await rm(firstWiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder beside a learner's first Wiki after its first publish was killed in a place that cannot come back (a dev container rebuilt since) just before the link of its publish lock; fails_when=--recover with the pair of that place refuses as no retained publication stands, before its sweep, so that file stays beside the Wiki folder through every publish, whose sweep never takes a pair; why_new=Cycle 0047 row 264 (P3CXA-A3: a leftover of another machine stays through publishes); seam=the file the kill leaves, written by the test with that place as its writer's; no_claim=a real container
+test('a --recover with the --gone-host and --gone-space pair of a rebuilt dev container, before the first Wiki, removes the file a publish killed there left beside the publish lock and answers that no prior Wiki stands', async () => {
+  // Arrange: no Wiki yet; beside the lock's name, the file through which the killed publish was to give its lock its name, naming the rebuilt container as its writer's place.
+  const firstWiki = await candidateOfAFirstWiki()
+  const id = '00000000-0000-4000-8000-0000002640a1'
+  const fileBesideTheLock = join(
+    dirname(firstWiki.output),
+    `wiki.publish-lock.json.pending-${id}`,
+  )
+  try {
+    await writeFile(
+      fileBesideTheLock,
+      JSON.stringify({
+        pid: 4242,
+        owner: {
+          ...REBUILT_CONTAINER,
+          boot: { id: 'boot-of-the-rebuilt-container' },
+          start: 'linux:16362446',
+        },
+        id,
+      }),
+    )
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: firstWiki.root,
+      outputDirectory: firstWiki.output,
+      goneOwners: [REBUILT_CONTAINER],
+    }).catch((error) => error.message)
+
+    // Assert
+    assert.deepEqual(
+      {
+        recovery,
+        fileBesideTheLock: existsSync(fileBesideTheLock) ? 'kept' : 'removed',
+      },
+      {
+        recovery: { status: 'no-prior-wiki', output: firstWiki.output },
+        fileBesideTheLock: 'removed',
+      },
+    )
+  } finally {
+    await rm(firstWiki.directory, { recursive: true, force: true })
+  }
+})
+
+/** A module loaded before the publisher (`--import`) under which every hard link fails with EPERM, as on a FAT or exFAT volume, so the publish journal is created at its name and written after, and which kills the publisher's process as soon as the exclusive create of that journal made the file, before a byte of it is written. */
+const WITHOUT_HARD_LINKS_KILLED_AT_THE_JOURNAL_CREATE = `data:text/javascript,${encodeURIComponent(
+  "import fileSystem from 'node:fs/promises'; import { syncBuiltinESMExports } from 'node:module'; const open = fileSystem.open; fileSystem.link = async () => { throw Object.assign(new Error('EPERM: operation not permitted, link'), { code: 'EPERM' }) }; fileSystem.open = async (path, flags, ...rest) => { const handle = await open(path, flags, ...rest); if (flags === 'wx' && String(path).endsWith('.publish-journal.json')) process.kill(process.pid, 'SIGKILL'); return handle }; syncBuiltinESMExports();",
+)}`
+
+for (const wikiBefore of [
+  { names: 'beside a Wiki that stands', made: publishedWikiWithACandidate },
+  { names: 'before the first Wiki', made: candidateOfAFirstWiki },
+]) {
+  // Value: protects=the next publish after a publish on a volume without hard links was killed between the create of its journal and its write, which leaves its publish lock, the file that keeps the candidate's prepared bytes and an empty journal; fails_when=--recover ends the empty journal alone and answers as if nothing more stood, so the lock refuses the next publish until a second --recover that no answer names; why_new=Cycle 0047 row 264 (P3TEST-11); seam=a publisher process whose hard links all fail with EPERM and which is killed right after the journal's exclusive create (a module loaded first, `--import`; scripts/tests/utils/killedPublisherProbe.mjs, whose own kill halfway through the journal's write is never reached), then the journal's last change dated a minute back, past the grace; no_claim=a real FAT or exFAT volume
+  test(`a publish on a volume without hard links killed between the create of its journal and its write, ${wikiBefore.names}, is ended by one --recover, journal and publish lock, with nothing left beside the Wiki folder, and the candidate then publishes`, async () => {
+    // Arrange: the publish is killed once its journal is made, before a byte of it is written; the empty journal has stood a minute.
+    const wiki = await wikiBefore.made()
+    const journal = `${wiki.output}.publish-journal.json`
+    try {
+      const killed = runKilledPublisher(
+        {
+          operation: 'publishWiki',
+          options: {
+            projectRoot: wiki.root,
+            outputDirectory: wiki.output,
+            stageDirectory: wiki.next,
+          },
+          killAt: [
+            {
+              call: 'writing-halfway',
+              folder: dirname(wiki.output),
+              name: '^wiki\\.publish-journal\\.json$',
+            },
+          ],
+        },
+        ['--import', WITHOUT_HARD_LINKS_KILLED_AT_THE_JOURNAL_CREATE],
+      )
+      const leftByTheKill = (await publisherFilesBeside(wiki.output)).map(
+        withIdsHidden,
+      )
+      const journalText = await readFile(journal, 'utf8').catch(() => 'missing')
+      const aMinuteAgo = new Date(Date.now() - 60_000)
+      await utimes(journal, aMinuteAgo, aMinuteAgo).catch(() => undefined)
+
+      // Act: one recovery, then the candidate published.
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+      const besideTheWiki = await publisherFilesBeside(wiki.output)
+      const nextPublish = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ publishedFiles }) => ({ publishedFiles }),
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          leftByTheKill,
+          journalText,
+          recovery,
+          besideTheWiki,
+          nextPublish,
+        },
+        {
+          killed: '',
+          leftByTheKill: [
+            'wiki.publish-journal.json',
+            'wiki.publish-journal.json.pending-<id>',
+            'wiki.publish-journal.json.prepared-<id>-<digest>',
+            'wiki.publish-lock.json',
+          ],
+          journalText: '',
+          recovery: 'publish-lock-removed',
+          besideTheWiki: [],
+          nextPublish: { publishedFiles: 1 },
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
 // The tests of Cycle 0047's second /ship, fixing cycle 2, fixer PA (rows 215 to 221 and 244 to 246): the owner judgement and the computer's id, the recovery's reads, the copy's recheck, the publish lock, the journal and the candidate's look.
 
 /** What the stand-in systems of row 215 print for their computer's id: macOS's ioreg the Mac's hardware UUID, Windows's reg.exe the machine GUID; each answers its exact query alone. */
@@ -18364,7 +18571,8 @@ test('a publish on a volume without hard links whose journal a --recover ended w
         nextPublish,
       },
       {
-        recoveryMeanwhile: 'unwritten-journal-removed',
+        // The recovery ends the empty journal, then refuses the publish lock of this process, which runs (row 264).
+        recoveryMeanwhile: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
         publish: lostJournalRefusalOf(wiki.output),
         finalizedFileMoved: false,
         wikiIsUnchanged: true,
