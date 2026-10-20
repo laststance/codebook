@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, renameSync, writeFileSync } from 'node:fs'
 import {
   access,
   cp,
@@ -48,7 +48,9 @@ import {
 } from './utils/failingFileSystem.mjs'
 import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
+  observeFileReads,
   open as openThroughSwappedFolderFileSystem,
+  swapBeforeLinking,
   swapBeforeMaking,
   swapBeforeReading,
   swapBeforeRenaming,
@@ -16994,9 +16996,6 @@ test('a recovery that puts a stopped publish’s candidate back keeps the learne
   // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; right after the recovery's second read of the copy, the learner's editor puts its save in the copy's place.
   const { recoverWikiPublication: recoverWhileTheEditorSaves } =
     await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
-  const { observeFileReads } =
-    await import('./utils/swappedFolderFileSystem.mjs')
-  const { renameSync, writeFileSync } = await import('node:fs')
   const { wiki, killed } = await publishWithACopyKilledPastFinalize()
   const copy = join(wiki.next, 'manual.txt'),
     save = join(wiki.directory, 'manual.txt.save')
@@ -17052,8 +17051,6 @@ test('a publish on a volume without hard links whose publish lock a --recover en
     'publish-wiki.mjs',
     '?swapped-folder',
   )
-  const { swapBeforeLinking } =
-    await import('./utils/swappedFolderFileSystem.mjs')
   const wiki = await publishedWikiWithACandidate()
   const lock = `${wiki.output}.publish-lock.json`
   let recoveryMeanwhile = 'no recovery'
@@ -17692,8 +17689,6 @@ test('a publish on a volume without hard links whose journal a --recover ended w
     'publish-wiki.mjs',
     '?swapped-folder',
   )
-  const { swapBeforeLinking } =
-    await import('./utils/swappedFolderFileSystem.mjs')
   const wiki = await publishedWikiWithACandidate()
   const journal = `${wiki.output}.publish-journal.json`
   let recoveryMeanwhile = 'no recovery',
