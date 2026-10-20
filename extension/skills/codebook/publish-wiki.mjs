@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { link, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises';
 import { hostname, uptime } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep, win32 } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { renderWikiPages } from './render-wiki.mjs';
 
@@ -2216,7 +2217,18 @@ function commandOf(args) {
   return { operation: COMMAND_OPERATIONS[mode], options: { projectRoot: values.project, outputDirectory: values.output, stageDirectory: values.stage, adoptExisting: values['adopt-existing'] === true, renderOnly: values['render-only'] === true, goneOwners, system: SYSTEM_HERE } };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+/** Tells whether this file is the script Node was started with. Node runs a main script by its real path (it resolves links, Windows junctions included), so `import.meta.url` names the target while the path given on the command line may pass through a link; comparing the two as written made the command line do nothing, with exit 0, when started through a linked folder. Both sides are compared by their real paths. Called once by the command line at the end of this file; importing the module (a test, the renderer) starts nothing. @param startedPath - The script path as given to Node (`process.argv[1]`); undefined when Node has none (a REPL, `-e`). @param moduleUrl - The `file:` URL of this module. @returns True when the two name the same file; false when either path cannot be resolved (a missing file counts as no start of the script). @example isStartedAsScript('/linked/skills/publish-wiki.mjs', import.meta.url) // => true when /linked/skills links to this file's folder */
+function isStartedAsScript(startedPath, moduleUrl) {
+  if (!startedPath) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(resolve(startedPath));
+  } catch {
+    // A path that cannot be resolved is no start of the script.
+    return false;
+  }
+}
+
+if (isStartedAsScript(process.argv[1], import.meta.url)) {
   const command = commandOf(process.argv.slice(2));
   if (command === undefined) {
     console.error(USAGE);

@@ -21475,3 +21475,57 @@ test('the bundled skill documents changedFilesKept, unwrittenJournalRemoved and 
     },
   )
 })
+
+// Value: protects=the editor agent that starts the publisher through a folder that holds a link (an extensions folder moved by a link, a Windows junction, a linked home folder): it gets the usage and the JSON answer, not silence with exit 0; fails_when=the command line compares the script's path as given with the real path Node runs it by, so a linked path starts nothing and the agent reads success with no stage; why_new=Cycle 0048 task 52 (QA captures 001-003); seam=none (the shipped CLI as the agent runs it); no_claim=every link kind of every system, only the directory link of the host (a junction on Windows)
+test('the publisher started through a linked skill folder prints its usage and exits 2 for no arguments, and answers --prepare with its JSON', async () => {
+  // Arrange
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-linked-skill-cli-')),
+  )
+  const linkedSkillFolder = join(directory, 'linked-skills'),
+    root = join(directory, 'project'),
+    output = join(root, '.codebook', 'wiki')
+  try {
+    await symlink(
+      fileURLToPath(new URL('../../skills/codebook', import.meta.url)),
+      linkedSkillFolder,
+      'junction',
+    )
+    await mkdir(root)
+    const linkedCommand = join(linkedSkillFolder, 'publish-wiki.mjs')
+
+    // Act
+    const withoutArguments = spawnSync(process.execPath, [linkedCommand], {
+      encoding: 'utf8',
+    })
+    const prepared = spawnSync(
+      process.execPath,
+      [linkedCommand, '--prepare', '--project', root, '--output', output],
+      { encoding: 'utf8' },
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        usageStatus: withoutArguments.status,
+        usageStdout: withoutArguments.stdout,
+        usageStartsWith: withoutArguments.stderr.slice(0, 13),
+        preparedStatus: prepared.status,
+        preparedStderr: prepared.stderr,
+        preparedKeys: Object.keys(JSON.parse(prepared.stdout || '{}')),
+        preparedOutput: JSON.parse(prepared.stdout || '{}').output,
+      },
+      {
+        usageStatus: 2,
+        usageStdout: '',
+        usageStartsWith: 'Usage: node p',
+        preparedStatus: 0,
+        preparedStderr: '',
+        preparedKeys: ['stage', 'manifest', 'output', 'legacyAdopted'],
+        preparedOutput: output,
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
