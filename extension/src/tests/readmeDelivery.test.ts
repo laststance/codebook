@@ -343,6 +343,24 @@ test('the packaged README states, among the limits of a lock and an update marke
   assert.equal(isUnderTheLimits, true)
 })
 
+// Value: protects=a learner who commits the Wiki folder and checks it out on Windows, learning to mark it -text and the way out of the publisher's refusal of CRLF line ends; fails_when=the README leaves out the -text line or the Git commands, or names another way, so the learner keeps a Wiki the publisher refuses; why_new=Cycle 0047 row 266 (P3CLA-5, the owner's D13); seam=none; no_claim=a real Windows checkout
+test('the packaged README tells a learner who commits the Wiki folder to mark it -text in .gitattributes, and names the Git commands that write a checkout with CRLF line ends again with LF', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const paragraph =
+    'A Wiki folder you commit to Git must keep the publisher\'s bytes: mark it `-text` in `.gitattributes` (the line `".codebook/wiki/**" -text`, with your folder\'s path), so that a checkout with `core.autocrlf`, the default of Git for Windows, keeps its LF line ends. The skill\'s publisher refuses a Wiki whose files a checkout gave CRLF line ends, with a sentence that names them and the way out: add that line to the `.gitattributes` file in the folder the sentence names (the project\'s, for a Wiki folder inside it) and commit that file; then, in that folder, run `git rm -r --cached --quiet -- ".codebook/wiki"` and `git checkout HEAD -- ".codebook/wiki"` (with your folder\'s path from there), which write the folder\'s committed files again with LF line ends (a change of them that is not committed is lost), and run the step again.'
+
+  // Act: the paragraph, and where it stands: in the section of the LLM Wiki, before the next section.
+  const paragraphAt = readme.indexOf(paragraph)
+  const isInTheWikiSection =
+    paragraphAt > readme.indexOf('## LLM Wiki: open and update\n') &&
+    paragraphAt < readme.indexOf('## Install the private VSIX\n')
+
+  // Assert
+  assert.notEqual(paragraphAt, -1)
+  assert.equal(isInTheWikiSection, true)
+})
+
 // Cycle 0045 (S1a-F2): red while the README said that a focused editor that is no text editor refuses a presentation selection; since cause 7 such a tab is admitted, stays where it is and gets its focus back.
 test('the packaged README says that a focused tab that is no text editor is admitted and gets its focus back, and names the two focused tabs that still refuse a selection', async () => {
   // Arrange

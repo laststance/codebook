@@ -322,7 +322,25 @@ const isValidBaseline = baseline => baseline === null || Boolean(baseline) && HA
 /** Whether a published record retains its manifest's text with that text's SHA-256 digest; a candidate's record retains none. Called by {@link parseReceipt}. @example retainsItsManifest({ kind: 'candidate' }) // => true */
 const retainsItsManifest = receipt => receipt.kind !== 'published' || typeof receipt.manifestText === 'string' && HASH.test(receipt.manifestSha256) && digest(receipt.manifestText) === receipt.manifestSha256;
 
-/** Checks current output against its retained manifest before preview, replacement or recovery. @example await inspectOutput('/wiki', '/repo') */
+/** The characters of a path that a `.gitattributes` pattern and a Git command line take as they stand between double quotes, in every shell the skill names: letters, digits, spaces, dots, hyphens and underscores, in names joined by `/`. Read by {@link lineEndRefusalOf}. */
+const QUOTABLE_GIT_PATH = /^[A-Za-z0-9 ._-]+(?:\/[A-Za-z0-9 ._-]+)*$/;
+
+/** Whether a published file's bytes are those its publication record names with each LF written as CRLF, as Git's line-end conversion (`core.autocrlf`, or a `text` attribute) writes a text file it checks out: they hold a CRLF, and with each CRLF read as LF they have the recorded SHA-256 digest. Called by {@link changedFileRefusalOf}. @param bytes - The file's bytes; undefined for a file that is missing. @param recordedSha256 - The digest the record names for it. @example isOfCrlfCheckout(Buffer.from('{\r\n}\r\n'), digest('{\n}\n')) // => true */
+const isOfCrlfCheckout = (bytes, recordedSha256) => bytes !== undefined && bytes.includes('\r\n') && digest(Buffer.from(bytes.toString('latin1').replaceAll('\r\n', '\n'), 'latin1')) === recordedSha256;
+
+/** The refusal of a committed Wiki that Git checked out with CRLF line ends (the owner's D13), which names that cause and the way out, as Git's documentation gives it and as tried in a repository checked out with `core.autocrlf`: mark the Wiki folder `-text` in a `.gitattributes` file (a later line of it overrides an earlier one for that folder alone), then take the folder's files out of the index and check them out of the last commit again, which writes the bytes the commit holds, with LF line ends, where a plain checkout keeps a file the index counts as unchanged. The `.gitattributes` file is the project's for a Wiki inside it (the default `.codebook/wiki`), else the one in the Wiki folder's parent folder; a path of other characters than {@link QUOTABLE_GIT_PATH} stands as a placeholder, since a shell or the pattern may read it otherwise. No text of the manifest or of a page is repeated, since a cloned repository carries them. Called by {@link changedFileRefusalOf}. @param output - The Wiki folder. @param root - The project. @returns The sentence. @example lineEndRefusalOf('/repo/.codebook/wiki', '/repo') // => 'A file of the published Wiki has CRLF line ends where the publisher wrote LF: … add the line ".codebook/wiki/**" -text to the .gitattributes file in /repo …' */
+function lineEndRefusalOf(output, root) {
+  const [folder, path] = isInProject(root, output) ? [root, relative(root, output).split(sep).join('/')] : [dirname(output), basename(output)];
+  // A path that a shell or the pattern may read otherwise is named by a placeholder the agent fills in.
+  const shown = QUOTABLE_GIT_PATH.test(path) ? path : '<path>', placeholder = shown === path ? '' : ', with the path of the Wiki folder from there as <path>,';
+  return 'A file of the published Wiki has CRLF line ends where the publisher wrote LF: read with LF line ends, it matches the publication record, so Git’s line-end conversion (core.autocrlf, or a text attribute) changed it when it checked the Wiki folder out. Nothing was changed. Mark the Wiki folder -text: add the line "' + shown + '/**" -text to the .gitattributes file in ' + folder + placeholder +
+    ' and commit that file; then, in that folder, run git rm -r --cached --quiet -- "' + shown + '" and git checkout HEAD -- "' + shown + '", which write the folder’s committed files again with LF line ends (a change of them that is not committed is lost), and run this command again.';
+}
+
+/** The refusal of a published file whose bytes differ from those its publication record names ({@link inspectOutput}): {@link lineEndRefusalOf} where they are the record's with CRLF line ends ({@link isOfCrlfCheckout}), so the learner learns the cause, which no recovery undoes; the step's own refusal otherwise. Called by {@link inspectOutput} for the manifest and for each owned file. @param bytes - The file's bytes; undefined for a missing manifest. @param recordedSha256 - The digest the record names for it. @param refusal - The step's own sentence. @returns The error to throw. @example changedFileRefusalOf(bytes, hash, 'A published Wiki file changed after generation: index.html', '/repo/.codebook/wiki', '/repo').message */
+const changedFileRefusalOf = (bytes, recordedSha256, refusal, output, root) => new Error(isOfCrlfCheckout(bytes, recordedSha256) ? lineEndRefusalOf(output, root) : refusal);
+
+/** Checks current output against its retained manifest before preview, replacement or recovery. A changed manifest or owned file is refused by {@link changedFileRefusalOf}, which names CRLF line ends that a checkout wrote. @example await inspectOutput('/wiki', '/repo') */
 async function inspectOutput(output, root, { allowLegacy = false, allowManifestDrift = false } = {}) {
   const stat = await lstat(output).catch(error => { if (isMissing(error)) return undefined; throw error; });
   if (!stat) return null;
@@ -336,11 +354,12 @@ async function inspectOutput(output, root, { allowLegacy = false, allowManifestD
   if (receipt && !validHashes(parsed.manifest.ownedFiles)) throw new Error('The retained Wiki ownership inventory is invalid.');
   // The receipt is independent of the mutable manifest that previously escaped every ownership check.
   if (receipt && !allowManifestDrift && (actual === undefined || digest(actual) !== receipt.manifestSha256))
-    throw new Error('The published Wiki manifest changed after generation. Preserve the edit and run --recover; do not adopt or republish it.');
+    throw changedFileRefusalOf(actual, receipt.manifestSha256, 'The published Wiki manifest changed after generation. Preserve the edit and run --recover; do not adopt or republish it.', output, root);
   for (const path of parsed.owned) {
-    hashes[path] = digest(await regularBytes(join(output, path)));
+    const fileBytes = await regularBytes(join(output, path));
+    hashes[path] = digest(fileBytes);
     if (parsed.manifest.ownedFiles && parsed.manifest.ownedFiles[path] !== hashes[path])
-      throw new Error('A published Wiki file changed after generation: ' + path);
+      throw changedFileRefusalOf(fileBytes, parsed.manifest.ownedFiles[path], 'A published Wiki file changed after generation: ' + path, output, root);
   }
   return { ...parsed, bytes, actual, receipt, files, hashes };
 }

@@ -19987,3 +19987,169 @@ test('a publish of a candidate whose manifest starts with a UTF-8 byte order mar
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+/**
+ * Writes every text file of a published Wiki again with CRLF line ends, as Git's line-end conversion (`core.autocrlf`) checks out a committed Wiki folder: a file without a NUL byte counts as text, and each LF in it becomes CRLF; a binary file stays as it is.
+ * @param {string} output - The Wiki folder.
+ * @returns {Promise<string[]>} The paths under the folder that were written again, sorted.
+ * @example
+ * await checkOutWithCrlf(wiki.output) // => ['codebook-publication.json', 'codebook-wiki.json', 'index.html', …]
+ */
+async function checkOutWithCrlf(output) {
+  const written = []
+  for (const entry of await readdir(output, {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    // Folders hold no bytes; a file with a NUL byte is binary, which the conversion leaves alone.
+    if (!entry.isFile()) continue
+    const path = join(entry.parentPath, entry.name)
+    const bytes = await readFile(path)
+    if (bytes.includes(0) || !bytes.includes('\n')) continue
+    await writeFile(
+      path,
+      Buffer.from(bytes.toString('latin1').replaceAll('\n', '\r\n'), 'latin1'),
+    )
+    written.push(relative(output, path).split('\\').join('/'))
+  }
+  return written.sort()
+}
+
+for (const { step, run } of [
+  {
+    step: 'a --prepare',
+    run: (wiki) =>
+      prepareWikiStage({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }),
+  },
+  {
+    step: 'a publish of a candidate',
+    run: (wiki) =>
+      publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }),
+  },
+  {
+    step: 'a --recover',
+    run: (wiki) =>
+      recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }),
+  },
+]) {
+  // Value: protects=the learner who commits the Wiki folder and checks it out with core.autocrlf (the default of Git for Windows), whose publisher's files get CRLF line ends: the refusal names the cause and the way out; fails_when=the step refuses with the sentence of a manifest or a page changed by hand, whose ways (--recover, --adopt-existing) are refused as well, so the learner has no way out, or the refusal names a page path a cloned repository's manifest carries; why_new=Cycle 0047 row 266 (P3CLA-5, the owner's D13); seam=the published files written again with CRLF line ends, as Git's conversion writes them ({@link checkOutWithCrlf}); no_claim=a real Git checkout (tried by hand in a repository with core.autocrlf)
+  test(`${step} of a Wiki whose published files a checkout gave CRLF line ends is refused with a sentence that names the CRLF line ends and the .gitattributes line and Git commands that write the files again, and changes nothing`, async () => {
+    // Arrange: a published Wiki with a prepared candidate, whose text files are written again with CRLF line ends.
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      const converted = await checkOutWithCrlf(wiki.output)
+      const wikiBefore = await readFile(join(wiki.output, 'index.html'))
+
+      // Act
+      const outcome = await run(wiki).then(
+        () => 'not refused',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          converted,
+          outcome,
+          wikiIsUnchanged: (
+            await readFile(join(wiki.output, 'index.html'))
+          ).equals(wikiBefore),
+          journal: existsSync(`${wiki.output}.publish-journal.json`)
+            ? 'a journal'
+            : 'no journal',
+        },
+        {
+          converted: ['codebook-wiki.json', 'index.html'],
+          outcome: `A file of the published Wiki has CRLF line ends where the publisher wrote LF: read with LF line ends, it matches the publication record, so Git’s line-end conversion (core.autocrlf, or a text attribute) changed it when it checked the Wiki folder out. Nothing was changed. Mark the Wiki folder -text: add the line ".codebook/wiki/**" -text to the .gitattributes file in ${wiki.root} and commit that file; then, in that folder, run git rm -r --cached --quiet -- ".codebook/wiki" and git checkout HEAD -- ".codebook/wiki", which write the folder’s committed files again with LF line ends (a change of them that is not committed is lost), and run this command again.`,
+          wikiIsUnchanged: true,
+          journal: 'no journal',
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=the editor agent whose publish, --prepare or --recover is refused for a committed Wiki checked out with CRLF line ends; fails_when=the skill does not tell the agent to ask the learner before it marks the Wiki folder -text and checks it out again, or lets it rewrite the files or work around the refusal with --adopt-existing or --recover, so it drops the learner's changes or keeps a Wiki the publisher refuses; why_new=Cycle 0047 row 266 (P3CLA-5, the owner's D13; D9 and D12: a changed SKILL.md sentence is pinned); seam=none; no_claim=what an agent does with the sentence
+test('the bundled skill tells the agent, after a refusal of CRLF line ends, to mark the Wiki folder -text and check it out again with the learner’s agreement, and not to work around the refusal', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      "If the publisher refuses because a file of the published Wiki has CRLF line ends (Git checked a committed Wiki folder out with `core.autocrlf` or a `text` attribute), do not rewrite those files, and do not try `--adopt-existing` or `--recover` around the refusal: tell the learner, and with their agreement add the `.gitattributes` line that refusal names, which marks the Wiki folder `-text`, and run its two Git commands in the folder it names (they write the folder's committed files again with LF line ends, and a change of them that is not committed is lost); then run the step again.",
+    ),
+    true,
+  )
+})
+
+for (const { place, outputOf, steps } of [
+  {
+    place: 'a Wiki folder outside the project, named from its parent folder',
+    outputOf: (directory) => join(directory, 'site', 'wiki'),
+    steps: (directory) =>
+      `add the line "wiki/**" -text to the .gitattributes file in ${join(directory, 'site')} and commit that file; then, in that folder, run git rm -r --cached --quiet -- "wiki" and git checkout HEAD -- "wiki"`,
+  },
+  {
+    place:
+      'a Wiki folder whose path holds a character a shell may read otherwise, named by a placeholder',
+    outputOf: (directory) =>
+      join(directory, 'project', '.codebook', 'wiki&notes'),
+    steps: (directory) =>
+      `add the line "<path>/**" -text to the .gitattributes file in ${join(directory, 'project')}, with the path of the Wiki folder from there as <path>, and commit that file; then, in that folder, run git rm -r --cached --quiet -- "<path>" and git checkout HEAD -- "<path>"`,
+  },
+]) {
+  // Value: protects=the learner whose committed Wiki folder lies outside the project or has a name a shell may read otherwise, checked out with CRLF line ends: the refusal's Git steps still work as written; fails_when=the steps name a path from the project that does not hold the folder, or write out a path a shell or the .gitattributes pattern reads otherwise; why_new=Cycle 0047 row 266 (P3CLA-5, the owner's D13); seam=the published files written again with CRLF line ends ({@link checkOutWithCrlf}); no_claim=a real Git checkout
+  test(`a --prepare of ${place}, whose published files a checkout gave CRLF line ends, is refused with the .gitattributes line and the Git commands for that folder`, async () => {
+    // Arrange: a Wiki published into the row's folder, whose text files are written again with CRLF line ends.
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-crlf-checkout-')),
+    )
+    const root = join(directory, 'project'),
+      output = outputOf(directory),
+      first = join(dirname(output), 'first')
+    try {
+      await mkdir(dirname(output), { recursive: true })
+      await mkdir(root, { recursive: true })
+      await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+      await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: first,
+      })
+      await checkOutWithCrlf(output)
+
+      // Act
+      const outcome = await prepareWikiStage({
+        projectRoot: root,
+        outputDirectory: output,
+      }).then(
+        () => 'not refused',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.equal(
+        outcome,
+        `A file of the published Wiki has CRLF line ends where the publisher wrote LF: read with LF line ends, it matches the publication record, so Git’s line-end conversion (core.autocrlf, or a text attribute) changed it when it checked the Wiki folder out. Nothing was changed. Mark the Wiki folder -text: ${steps(directory)}, which write the folder’s committed files again with LF line ends (a change of them that is not committed is lost), and run this command again.`,
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+}
