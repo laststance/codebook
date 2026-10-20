@@ -22,6 +22,10 @@ import {
   runSummaryLine,
 } from '../utils/planPregateRuns.mjs'
 import { silenceLimitOfRun } from '../utils/silenceLimitOfRun.mjs'
+import {
+  CALL_SILENCE_TIMEOUT_MS,
+  PROGRESS_LINE_INTERVAL_MS,
+} from '../utils/testShardConstants.mjs'
 import { writeProgressWhileRunning } from '../utils/writeProgressWhileRunning.mjs'
 
 // Value: protects=the pre-gate's local lane when it selects product tests together with the package tests, which rebuild extension/dist while they run; fails_when=both are passed to one node --test call, so product tests fail to load their modules from dist (906 of 5,725 failed on Cycle 0048's branch), or the script tests run with more than four at a time; why_new=Cycle 0048 task 32 (found while the pre-gate ran on PR #106); seam=none; no_claim=the run itself, which run-pregate-tests.mjs makes from this plan
@@ -608,6 +612,50 @@ test('a long step writes a progress line at each interval while it runs, none af
       linesOfFailingStep: 1,
       linesAfterTheFailure: 0,
       firstLineStart: true,
+    },
+  )
+})
+
+// Value: protects=the pre-gate's lane from a silent package build: the default interval of the progress line stays well under the run's silence limit, so a build that holds the test is seen alive; fails_when=PROGRESS_LINE_INTERVAL_MS is raised to CALL_SILENCE_TIMEOUT_MS or above (or not used as the default), so the step writes its first line only when the silence limit has run out and the lane ends as hung again; why_new=Cycle 0048 task 115 (Step 7: no test read the default; tasks 110 and 111); seam=writeProgressWhileRunning called without intervalMs on the mocked setInterval of node:test, ticked by hand, and the two constants; no_claim=the length of the real build
+test('a long step called without an interval writes its first progress line after 30 s and two lines fit inside the silence limit', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setInterval'] })
+  const lines = []
+  let finishStep
+  const step = () =>
+    new Promise((resolve) => {
+      finishStep = resolve
+    })
+
+  // Act
+  const run = writeProgressWhileRunning(step, {
+    write: (line) => lines.push(line),
+  })
+  context.mock.timers.tick(29_999)
+  const linesAt29999Ms = lines.length
+  context.mock.timers.tick(1)
+  const linesAt30000Ms = lines.length
+  context.mock.timers.tick(30_000)
+  const linesAt60000Ms = lines.length
+  finishStep('done')
+  await run
+
+  // Assert
+  assert.deepEqual(
+    {
+      linesAt29999Ms,
+      linesAt30000Ms,
+      linesAt60000Ms,
+      defaultIntervalMs: PROGRESS_LINE_INTERVAL_MS,
+      twoIntervalsFitInTheSilenceLimit:
+        2 * PROGRESS_LINE_INTERVAL_MS < CALL_SILENCE_TIMEOUT_MS,
+    },
+    {
+      linesAt29999Ms: 0,
+      linesAt30000Ms: 1,
+      linesAt60000Ms: 2,
+      defaultIntervalMs: 30_000,
+      twoIntervalsFitInTheSilenceLimit: true,
     },
   )
 })
