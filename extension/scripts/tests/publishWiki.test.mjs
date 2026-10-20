@@ -14692,6 +14692,88 @@ test('a publish whose status read of the list of copies it just made fails keeps
   }
 })
 
+for (const meanwhile of [
+  {
+    names:
+      'keeps the new manifest another writer put at the manifest’s name meanwhile',
+    change: async (manifestPath) => {
+      await rm(manifestPath)
+      await writeFile(manifestPath, '{"the agent’s":"new manifest"}')
+    },
+    manifestAfterRefusal: '{"the agent’s":"new manifest"}',
+  },
+  {
+    names:
+      'puts the prepared manifest back at the name another writer emptied meanwhile',
+    change: (manifestPath) => rm(manifestPath),
+    manifestAfterRefusal: 'as prepared',
+  },
+]) {
+  // Value: protects=the agent's edit of a candidate, and the candidate itself, when a publish refused after it finalized the candidate's manifest puts the prepared bytes back; fails_when=the restore writes the prepared manifest over whatever stands at its name, so a new manifest the agent saved meanwhile is lost, or it leaves a name another writer emptied without a manifest, so the candidate cannot publish again; why_new=Cycle 0047 row 269 (P3TEST-12: neither branch of restoreFinalized beside the publish's own file had a test); seam=a copy of the shipped publisher whose `node:fs/promises` adds a learner's file to the published Wiki and runs the row's change of the candidate's finalized manifest just before the publish writes the candidate's finalized record (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a change of the name between the restore's look and its move, which no call of the file system closes
+  test(`a publish refused after it finalized the candidate ${meanwhile.names}, and puts the prepared record back`, async () => {
+    // Arrange: just before the publish writes the candidate's finalized record, the learner adds a file to the published Wiki, which the publish's last check refuses, and the candidate's finalized manifest changes as the row says.
+    const { publishWiki: publishWhileTheManifestChanges } =
+      await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+    const wiki = await publishedWikiWithACandidate()
+    const manifestPath = join(wiki.next, 'codebook-wiki.json'),
+      recordPath = join(wiki.next, 'codebook-publication.json')
+    try {
+      const preparedManifest = await readFile(manifestPath, 'utf8'),
+        preparedRecord = await readFile(recordPath, 'utf8')
+      swapBeforeWriting(
+        (path) =>
+          dirname(path) === wiki.next &&
+          path.endsWith('codebook-publication.json'),
+        async () => {
+          await writeFile(
+            join(wiki.output, 'later.txt'),
+            'Notes added meanwhile',
+          )
+          await meanwhile.change(manifestPath)
+        },
+      )
+
+      // Act
+      const refusal = await publishWhileTheManifestChanges({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => 'published',
+        (error) => error.message,
+      )
+      const manifestNow = await readFile(manifestPath, 'utf8').catch(
+        () => 'missing',
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          manifest:
+            manifestNow === preparedManifest ? 'as prepared' : manifestNow,
+          recordIsAsPrepared:
+            (await readFile(recordPath, 'utf8')) === preparedRecord,
+          besideTheWiki: await publisherFilesBeside(wiki.output),
+        },
+        {
+          refusal:
+            'Manual Wiki files changed during publication; output was preserved.',
+          manifest: meanwhile.manifestAfterRefusal,
+          recordIsAsPrepared: true,
+          besideTheWiki: [],
+        },
+      )
+    } finally {
+      swapBeforeWriting(
+        () => false,
+        async () => undefined,
+      )
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
 // Cycle 0047, second /ship, fixing cycle 1, fixer P1's follow-up: rows 206 to 210, found while rows 172 to 178 were fixed.
 
 for (const lock of [
