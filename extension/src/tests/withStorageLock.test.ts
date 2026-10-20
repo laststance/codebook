@@ -1463,8 +1463,13 @@ test('a lock whose take-back is refused again after the first wait is taken back
       window.isRemovalRefused = true
     })
     .catch(() => undefined)
+  const refusedBeforeTheFirstWait = window.refusedRemovals
   context.mock.timers.tick(5_000)
-  for (let look = 0; look < 1000; look++) await setImmediate()
+  // The first take-back ends with its 20th refused removal, however long its 20 real file reads take; no count of event-loop turns bounds that.
+  await untilReached(
+    () => window.refusedRemovals >= refusedBeforeTheFirstWait + 20,
+    'the end of the first take-back (20 refused removals)',
+  )
   const entriesAfterTheRefusedTry = await readdir(directory)
   window.isRemovalRefused = false
 
