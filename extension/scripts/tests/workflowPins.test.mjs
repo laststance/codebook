@@ -1692,3 +1692,23 @@ test('the dependency cache of the Test workflow changes with the extension manif
     "'extension/patches/**'",
   ])
 })
+
+// Value: protects=the errors a split file raises after its last test, which the Test shards hide (their parts end with `--test-force-exit`); fails_when=the Test workflow no longer runs the split files whole after a push to main, or runs them before the shards have passed, or runs them with a name pattern or the forced exit; why_new=Cycle 0048 task 26 (test guide, 2026-10-02: no CI job ran the split files without --test-force-exit); seam=none; no_claim=that pull requests run it (it costs about four minutes of two processors)
+test('the Test workflow runs the split files whole, with Node’s default exit, after a push to main whose shards passed', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+
+  // Act
+  const job = /^ {2}split-files:\n((?: {4}.*\n| *\n)+)/m.exec(workflow)?.[1]
+
+  // Assert
+  assert.equal(job?.includes('    needs: test\n'), true)
+  assert.equal(job?.includes("    if: github.event_name == 'push'\n"), true)
+  assert.equal(
+    job?.includes(
+      '        run: node scripts/test-shard.mjs --whole-split-files --lanes 2\n',
+    ),
+    true,
+  )
+  assert.equal(job?.includes('--test-force-exit'), false)
+})

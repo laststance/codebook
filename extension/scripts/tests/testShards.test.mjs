@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import {
+  cp,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { buildTestTimings } from '../utils/buildTestTimings.mjs'
 import { planTestShards } from '../utils/planTestShards.mjs'
@@ -287,4 +297,308 @@ test('a failing test makes its call end with a failure exit code and names the t
   // Assert
   assert.equal(result.code, 1)
   assert.match(result.output, /✖ reports the refusal/)
+})
+
+const scriptsDirectory = fileURLToPath(new URL('../', import.meta.url))
+
+/** Source of a compiled test file whose tests only note their file and name in `executed.log` beside it, so a test can read which tests a real `node --test` call ran. @example loggingTestSource(['opens']) // => "const { test } = require('node:test') …" */
+function loggingTestSource(names, extra = '') {
+  return [
+    "const { appendFileSync } = require('node:fs')",
+    "const { basename, join } = require('node:path')",
+    "const { test } = require('node:test')",
+    'const note = (name) => appendFileSync(join(__dirname, "executed.log"), `${basename(__filename)}::${name}\\n`)',
+    ...names.map(
+      (name) =>
+        `test(${JSON.stringify(name)}, () => note(${JSON.stringify(name)}))`,
+    ),
+    extra,
+  ].join('\n')
+}
+
+/** Lays out a copy of the shard script and its helpers beside a `dist/tests` of fixture test files and a timings file, so the script can be started as a process without touching the real build. @example await createFixtureExtension(context, { tests: { 'a.test.js': '…' }, timings: { files: {} } }) // => '/tmp/codebook-test-shard-…' */
+async function createFixtureExtension(context, { tests, timings }) {
+  const root = await mkdtemp(join(tmpdir(), 'codebook-test-shard-script-'))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'dist/tests'), { recursive: true })
+  await cp(join(scriptsDirectory, 'utils'), join(root, 'scripts/utils'), {
+    recursive: true,
+  })
+  await copyFile(
+    join(scriptsDirectory, 'test-shard.mjs'),
+    join(root, 'scripts/test-shard.mjs'),
+  )
+  for (const [file, source] of Object.entries(tests))
+    await writeFile(join(root, 'dist/tests', file), source)
+  if (timings !== undefined)
+    await writeFile(
+      join(root, 'test-timings.json'),
+      typeof timings === 'string' ? timings : JSON.stringify(timings),
+    )
+  return root
+}
+
+/** Starts the fixture's shard script and collects its exit code and both streams; a script that outlives `timeoutMs` is ended, which shows as `signal`. @example await runShardScript(root, ['--shard', '1/1', '--lanes', '1']) // => { code: 0, signal: null, stdout: '…', stderr: '' } */
+function runShardScript(root, args, timeoutMs = 60_000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [join(root, 'scripts/test-shard.mjs'), ...args],
+      {
+        cwd: root,
+        timeout: timeoutMs,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([name]) => name !== 'NODE_TEST_CONTEXT',
+          ),
+        ),
+      },
+    )
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => (stdout += chunk))
+    child.stderr.on('data', (chunk) => (stderr += chunk))
+    child.on('error', reject)
+    child.on('close', (code, signal) =>
+      resolve({ code, signal, stdout, stderr }),
+    )
+  })
+}
+
+/** Reads the sorted `file::name` lines that a fixture's tests noted, or none when no test ran. @example await readExecuted(root) // => ['a.test.js::opens'] */
+async function readExecuted(root) {
+  const text = await readFile(
+    join(root, 'dist/tests/executed.log'),
+    'utf8',
+  ).catch(() => '')
+  return text.split('\n').filter(Boolean).toSorted()
+}
+
+// Value: protects=the shard job's time limit and its log: a test that never ends is named after a short silence and not after the job's 10-minute timeout with nothing shown; fails_when=a call that prints nothing is left running until its test ends or the job is cancelled; why_new=Cycle 0048 task 25 (test guide, 2026-10-02: no per-call timeout); seam=runTestInvocation with a short silence limit and a real `node --test` child; no_claim=what limit CI uses (CALL_SILENCE_TIMEOUT_MS)
+test('a call whose test does not end is ended after its silence limit and reports that it was ended', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-test-shard-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'hanging.test.js'),
+    [
+      "const { test } = require('node:test')",
+      "test('finishes first', () => {})",
+      "test('never ends', () => new Promise((resolve) => setTimeout(resolve, 15_000)))",
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runTestInvocation(
+    { files: ['hanging.test.js'] },
+    directory,
+    { silenceTimeoutMs: 1_000 },
+  )
+
+  // Assert
+  assert.equal(result.timedOut, true)
+  assert.equal(result.elapsedMs < 10_000, true)
+  assert.match(result.output, /✔ finishes first/)
+})
+
+// Value: protects=the shard script's report of a hung call: the file is named and the job fails fast with the output so far; fails_when=the script waits for the hung test, or ends the call without naming its file; why_new=Cycle 0048 task 25 (test guide, 2026-10-02); seam=test-shard.mjs started as a process on a fixture build; no_claim=the default limit
+test('the shard script ends a silent call, names its file and fails the shard', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'hanging.test.js': [
+        "const { test } = require('node:test')",
+        "test('finishes first', () => {})",
+        "test('never ends', () => new Promise((resolve) => setTimeout(resolve, 15_000)))",
+      ].join('\n'),
+    },
+    timings: { files: { 'hanging.test.js': { totalMs: 100 } } },
+  })
+
+  // Act
+  const result = await runShardScript(
+    root,
+    ['--shard', '1/1', '--lanes', '1', '--silence-seconds', '1'],
+    12_000,
+  )
+
+  // Assert
+  assert.equal(result.code, 1)
+  assert.match(result.stdout, /✔ finishes first/)
+  assert.match(
+    result.stderr,
+    /✖ hanging\.test\.js printed nothing for 1 s and was ended/,
+  )
+})
+
+// Value: protects=the refusal a person reads when the timings file is gone or damaged; fails_when=the script shows a raw read or parse error without naming the file and `test:shard --record`; why_new=Cycle 0048 task 29 (test guide, 2026-10-02); seam=test-shard.mjs started as a process on a fixture build; no_claim=--record itself
+test('a missing, unreadable-as-JSON or wrongly shaped timings file is refused with its name and the way to record it again', async (context) => {
+  // Arrange
+  const tests = { 'a.test.js': loggingTestSource(['opens']) }
+  const missing = await createFixtureExtension(context, { tests })
+  const malformed = await createFixtureExtension(context, {
+    tests,
+    timings: '{"files": ',
+  })
+  const wrongShape = await createFixtureExtension(context, {
+    tests,
+    timings: { totals: {} },
+  })
+
+  // Act
+  const refusals = []
+  for (const root of [missing, malformed, wrongShape])
+    refusals.push(
+      await runShardScript(root, ['--shard', '1/1', '--lanes', '1']),
+    )
+
+  // Assert
+  for (const refusal of refusals) {
+    assert.equal(refusal.code, 1)
+    assert.match(refusal.stderr, /test-timings\.json/)
+    assert.match(refusal.stderr, /pnpm --dir extension test:shard --record/)
+    assert.doesNotMatch(refusal.stderr, /SyntaxError|TypeError|\n\s+at /)
+  }
+})
+
+// Value: protects=the shard job's result: a failed call must fail the job; fails_when=test-shard.mjs ends with exit code 0 although a call failed, or prints no failure line; why_new=Cycle 0048 task 27 (test guide, 2026-10-02: the script's own exit code had no test); seam=test-shard.mjs started as a process on a fixture build
+test('the shard script exits 1 and reports the failed call when a test fails, and 0 when every test passes', async (context) => {
+  // Arrange
+  const failing = await createFixtureExtension(context, {
+    tests: {
+      'failing.test.js': [
+        "const { test } = require('node:test')",
+        "test('reports the refusal', () => { throw new Error('refused') })",
+      ].join('\n'),
+    },
+    timings: { files: { 'failing.test.js': { totalMs: 100 } } },
+  })
+  const passing = await createFixtureExtension(context, {
+    tests: { 'passing.test.js': loggingTestSource(['opens']) },
+    timings: { files: { 'passing.test.js': { totalMs: 100 } } },
+  })
+
+  // Act
+  const failed = await runShardScript(failing, [
+    '--shard',
+    '1/1',
+    '--lanes',
+    '1',
+  ])
+  const passed = await runShardScript(passing, [
+    '--shard',
+    '1/1',
+    '--lanes',
+    '1',
+  ])
+
+  // Assert
+  assert.equal(failed.code, 1)
+  assert.match(failed.stdout, /✖ reports the refusal/)
+  assert.match(
+    failed.stdout,
+    /Shard 1\/1: 1 tests in 1 calls on 1 lanes, \d+ s, 1 failed calls\./,
+  )
+  assert.match(failed.stderr, /✖ failing\.test\.js ended with exit code 1/)
+  assert.equal(passed.code, 0)
+  assert.match(passed.stdout, /0 failed calls\./)
+})
+
+// Value: protects=the claim that the shards together run the suite exactly once; fails_when=the planned patterns, sent through Node's own name selection, run a test twice or not at all (a name with regular-expression characters, a name that is the start of another, a quote, a backslash, non-ASCII text, or a test the timings do not know); why_new=Cycle 0048 tasks 26 and 27 (test guide, 2026-10-02: the planner's tests used their own regular expression, and nothing compared the shards' test names with the suite's); seam=planTestShards plus runTestInvocation on a fixture build, every shard of two layouts; no_claim=the 3,000 tests of the product suite, whose names are not enumerable without running them
+test('every test of a split file and of a whole file runs exactly once across all shards when the planned patterns go through the real runner', async (context) => {
+  // Arrange
+  const splitNames = [
+    'refuses a (b) [c] {d} 1+1 /x/ $5 ^ a.b | c?',
+    'refuses a (b) [c] {d} 1+1 /x/ $5 ^ a.b | c? twice',
+    'refuses a (b)',
+    'ünïcode ✓ name',
+    'quote\'s "double" and back\\slash',
+    'a/b',
+    'plain',
+  ]
+  const unknownName = 'added after the recording'
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'split.test.js': loggingTestSource([...splitNames, unknownName]),
+      'whole.test.js': loggingTestSource(['whole one', 'whole two']),
+    },
+    timings: {},
+  })
+  const timings = {
+    files: {
+      'split.test.js': {
+        totalMs: 28_000,
+        tests: Object.fromEntries(splitNames.map((name) => [name, 4_000])),
+      },
+      'whole.test.js': { totalMs: 100 },
+    },
+  }
+  const expected = [
+    ...[...splitNames, unknownName].map((name) => `split.test.js::${name}`),
+    'whole.test.js::whole one',
+    'whole.test.js::whole two',
+  ].toSorted()
+
+  // Act
+  const executedPerLayout = []
+  for (const layout of [
+    { shards: 3, lanes: 2 },
+    { shards: 5, lanes: 1 },
+  ]) {
+    await rm(join(root, 'dist/tests/executed.log'), { force: true })
+    const plan = planTestShards({
+      files: ['split.test.js', 'whole.test.js'],
+      timings,
+      ...layout,
+    })
+    const exitCodes = []
+    for (const invocation of plan.flat(2))
+      exitCodes.push(
+        (await runTestInvocation(invocation, join(root, 'dist/tests'))).code,
+      )
+    executedPerLayout.push({ exitCodes, executed: await readExecuted(root) })
+  }
+
+  // Assert
+  for (const { exitCodes, executed } of executedPerLayout) {
+    assert.equal(
+      exitCodes.every((code) => code === 0),
+      true,
+    )
+    assert.deepEqual(executed, expected)
+  }
+})
+
+// Value: protects=the errors a split file raises after its last test, which the parts hide by ending with their last selected test; fails_when=no run of the split files keeps Node's default exit, so a late rejection or a leaked handle goes unreported on CI; why_new=Cycle 0048 task 26 (test guide, 2026-10-02: no job ran the split files without --test-force-exit); seam=test-shard.mjs --whole-split-files on a fixture build; no_claim=that CI runs it for pull requests (the workflow runs it after a push to main)
+test('running the split files whole reports an error raised after their last test and runs only the split files', async (context) => {
+  // Arrange
+  const lateFailure = `test('leaves a late failure', () => { setTimeout(() => { throw new Error('late boom') }, 500) })`
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'late.test.js': loggingTestSource(['first'], lateFailure),
+      'quick.test.js': loggingTestSource(['quick one']),
+    },
+    timings: {
+      files: {
+        'late.test.js': {
+          totalMs: 18_000,
+          tests: { first: 9_000, 'leaves a late failure': 9_000 },
+        },
+        'quick.test.js': { totalMs: 100 },
+      },
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, [
+    '--whole-split-files',
+    '--lanes',
+    '1',
+  ])
+
+  // Assert
+  assert.equal(result.code, 1)
+  assert.match(result.stdout, /late boom/)
+  assert.deepEqual(await readExecuted(root), ['late.test.js::first'])
 })
