@@ -20951,3 +20951,58 @@ for (const staged of [
     }
   })
 }
+
+// Cycle 0048 task 16 (S11-N12): the answer of a recovery that ends an empty journal and the publish lock beside it.
+
+// Value: protects=the editor agent that reads the answer of --recover after a publish on a volume without hard links was killed between the create of its journal and its write: it learns that the empty journal was removed as well as the publish lock; fails_when=the answer names the lock's removal alone, so the agent cannot tell that the journal that kept every step out is gone; why_new=Cycle 0048 task 16 (S11-N12); seam=a publisher process whose hard links fail and which is killed once its journal is created, then the real recovery; no_claim=the files left beside the Wiki folder (the test of Cycle 0047 row 264 above)
+test('a --recover that ends an empty journal and the publish lock beside it answers that the journal was removed as well as the lock', async () => {
+  // Arrange: the publish is killed once its journal is made, before a byte of it is written; the empty journal has stood a minute.
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const killed = runKilledPublisher(
+      {
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          {
+            call: 'writing-halfway',
+            folder: dirname(wiki.output),
+            name: '^wiki\\.publish-journal\\.json$',
+          },
+        ],
+      },
+      ['--import', WITHOUT_HARD_LINKS_KILLED_AT_THE_JOURNAL_CREATE],
+    )
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      (answer) => answer,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, recovery },
+      {
+        killed: '',
+        recovery: {
+          status: 'publish-lock-removed',
+          output: wiki.output,
+          unwrittenJournalRemoved: true,
+        },
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
