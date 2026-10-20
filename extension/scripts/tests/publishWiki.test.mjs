@@ -21529,3 +21529,47 @@ test('the publisher started through a linked skill folder prints its usage and e
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+// Cycle 0048 task 65 (CodeRabbit): a page the published Wiki owns keeps the plain refusal of a stray file.
+
+// Value: protects=the agent whose candidate holds a page that the published Wiki owns but its manifest dropped (a page --render-only wrote into the candidate): the refusal must tell it to delete the page from the stage, since the copy sentence tells it to write into that owned page, and the next publish refuses the owned page as changed; fails_when=the refusal calls every stray file that stands in the Wiki folder a copy of a learner's file, owned pages included; why_new=Cycle 0048 task 65 (CodeRabbit strayFileRefusalOf); seam=a published Wiki with an extra page and a candidate that holds that page but lists only the overview; no_claim=a candidate whose Wiki has no publication record (a legacy one)
+test('a publish of a candidate that holds a page the published Wiki owns but its manifest dropped is refused with the plain sentence that tells the agent to delete it from the stage', async () => {
+  // Arrange: a published Wiki that owns pages/dropped.html; the candidate holds that file but its manifest lists only the overview.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-dropped-owned-page-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', 'dropped.html', output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+    await mkdir(join(next, 'pages'), { recursive: true })
+    await writeFile(join(next, 'pages/dropped.html'), '<p>rendered</p>')
+
+    // Act
+    const refusal = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      "The staged Wiki contains a file outside its published manifest: pages/dropped.html. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
