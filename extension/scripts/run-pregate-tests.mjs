@@ -15,6 +15,7 @@ import { parseArgs } from 'node:util'
 import { mapPregateTests } from './utils/mapPregateTests.mjs'
 import { parseSecondsOption } from './utils/parseSecondsOption.mjs'
 import { parseSilenceSeconds } from './utils/parseSilenceSeconds.mjs'
+import { plainOutputEnvironment } from './utils/plainOutputEnvironment.mjs'
 import {
   combinedSummary,
   planPregateRuns,
@@ -102,6 +103,8 @@ function runTests({ files, args }) {
     const child = spawn(process.execPath, ['--test', ...args, ...files], {
       cwd: extension,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // The summary lines are read as text (`ℹ tests 12`); FORCE_COLOR would put colour codes around them.
+      env: plainOutputEnvironment(process.env),
     })
     // Output on either stream shows that the run is alive.
     const watch = watchCallSilence(child, {

@@ -417,6 +417,32 @@ function scriptedTest(name, body) {
   ].join('\n')
 }
 
+// Value: protects=the count the pre-gate reads on a machine whose environment sets FORCE_COLOR: the spec reporter then colours its summary lines also on a pipe (`ESC[34mℹ tests 1ESC[39m`), which the runner's summary pattern did not match, so the summary said `ℹ tests 0` although the tests ran; fails_when=the runner starts `node --test` with FORCE_COLOR still in its environment; why_new=Cycle 0048 task 109 (Red Team); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build and FORCE_COLOR=1 in its environment; no_claim=other colour variables of other tools
+test('the pre-gate runner prints the true test count when FORCE_COLOR is set in its environment', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {
+    'product.test.js': notingTest('product', true),
+  })
+
+  // Act
+  const result = await runPregateRunner(
+    root,
+    ['extension/src/tests/product.test.ts'],
+    { FORCE_COLOR: '1' },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      combinedSummary: result.stdout
+        .split('\n')
+        .filter((line) => /^ℹ (tests|pass|fail) \d+$/.test(line)),
+    },
+    { code: 0, combinedSummary: ['ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'] },
+  )
+})
+
 // Value: protects=the pre-gate's silence watch from a run that talks only on stderr (Node's runner prints a test's own stderr on its stdout, so what reaches the runner's stderr is its own: a warning, a crash report): that text is passed through to the pre-gate runner's own stderr and counts as activity, so the run is not ended as hung; fails_when=stderr is not piped on, or a chunk of it does not restart the silence time (the run is ended after the limit although it printed all the time); why_new=Cycle 0048 task 87 (Step 7: stderr became piped in fixing cycle 2); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a product test that prints nothing for 5 s under a 3 s limit, and NODE_OPTIONS=--require of a file that makes the `node --test` process (the one with `--test` in its execArgv, not the pre-gate runner that has none) write a line to its stderr every second; the test is red on a runner that drops the run's stderr (Cycle 0048 task 102); no_claim=output on stdout, which the hanging test above covers by its absence
 test('the pre-gate runner keeps a run alive that writes only to stderr for longer than the limit, and passes the text to its own stderr', async (context) => {
   // Arrange

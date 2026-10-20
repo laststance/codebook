@@ -367,8 +367,8 @@ async function useStandInRunner(root, source) {
   )
 }
 
-/** Starts the fixture's shard script and collects its exit code and both streams; a script that outlives `timeoutMs` is ended, which shows as `signal`. @example await runShardScript(root, ['--shard', '1/1', '--lanes', '1']) // => { code: 0, signal: null, stdout: '…', stderr: '' } */
-function runShardScript(root, args, timeoutMs = 60_000) {
+/** Starts the fixture's shard script and collects its exit code and both streams; `extraEnvironment` adds variables to the script's own (for example `FORCE_COLOR`); a script that outlives `timeoutMs` is ended, which shows as `signal`. @example await runShardScript(root, ['--shard', '1/1', '--lanes', '1']) // => { code: 0, signal: null, stdout: '…', stderr: '' } */
+function runShardScript(root, args, timeoutMs = 60_000, extraEnvironment = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
@@ -377,11 +377,14 @@ function runShardScript(root, args, timeoutMs = 60_000) {
         cwd: root,
         timeout: timeoutMs,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([name]) => name !== 'NODE_TEST_CONTEXT',
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([name]) => name !== 'NODE_TEST_CONTEXT',
+            ),
           ),
-        ),
+          ...extraEnvironment,
+        },
       },
     )
     let stdout = ''
@@ -781,6 +784,31 @@ test('the shard script writes each refused option as one line and nothing else, 
   assert.match(
     unknownOption.stderr,
     /^✖ Unknown option '--unknown-option'[^\n]*\n$/,
+  )
+})
+
+// Value: protects=the shard job on a machine whose environment sets FORCE_COLOR (a CI runner, a terminal wrapper): the spec reporter then colours its summary lines also on a pipe (`ESC[34mℹ tests 1ESC[39m`), so the count read 0 and task 74's rule failed every call as one that ran no test; fails_when=the call starts `node --test` with FORCE_COLOR still in its environment, so the summary line does not match the count; why_new=Cycle 0048 task 109 (Red Team); seam=test-shard.mjs started as a process on a fixture build with FORCE_COLOR=1 and a real `node --test` call; no_claim=other colour variables of other tools
+test('the shard script counts the tests of a call and passes when FORCE_COLOR is set in its environment', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'a.test.js': loggingTestSource(['opens']) },
+    timings: { files: { 'a.test.js': { totalMs: 10 } } },
+  })
+
+  // Act
+  const result = await runShardScript(
+    root,
+    ['--shard', '1/1', '--lanes', '1'],
+    60_000,
+    { FORCE_COLOR: '1' },
+  )
+
+  // Assert
+  assert.equal(result.code, 0)
+  assert.equal(result.stderr, '')
+  assert.match(
+    result.stdout,
+    /Shard 1\/1: 1 tests in 1 calls on 1 lanes, \d+ s, 0 failed calls\./,
   )
 })
 

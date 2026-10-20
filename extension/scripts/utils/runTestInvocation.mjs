@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 
+import { plainOutputEnvironment } from './plainOutputEnvironment.mjs'
 import {
   CALL_KILL_GRACE_MS,
   CALL_SILENCE_TIMEOUT_MS,
@@ -56,9 +57,12 @@ export function runTestInvocation(
         stdio: ['ignore', 'pipe', 'pipe'],
         // A call started from inside a test (the package suite tests this function) must not look like a nested
         // file of that test run, or `node --test` skips its files.
-        env: Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([name]) => name !== 'NODE_TEST_CONTEXT',
+        // The caller reads the counts from the summary lines as text, so the call gets no colour codes in them.
+        env: plainOutputEnvironment(
+          Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([name]) => name !== 'NODE_TEST_CONTEXT',
+            ),
           ),
         ),
       },
