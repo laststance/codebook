@@ -21,6 +21,7 @@ import {
   planPregateRuns,
   runSummaryLine,
 } from '../utils/planPregateRuns.mjs'
+import { silenceLimitOfRun } from '../utils/silenceLimitOfRun.mjs'
 
 // Value: protects=the pre-gate's local lane when it selects product tests together with the package tests, which rebuild extension/dist while they run; fails_when=both are passed to one node --test call, so product tests fail to load their modules from dist (906 of 5,725 failed on Cycle 0048's branch), or the script tests run with more than four at a time; why_new=Cycle 0048 task 32 (found while the pre-gate ran on PR #106); seam=none; no_claim=the run itself, which run-pregate-tests.mjs makes from this plan
 test('the pre-gate runs the selected product tests first, then the script tests four at a time, in two calls', () => {
@@ -440,6 +441,99 @@ test('the pre-gate runner prints the true test count when FORCE_COLOR is set in 
         .filter((line) => /^ℹ (tests|pass|fail) \d+$/.test(line)),
     },
     { code: 0, combinedSummary: ['ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'] },
+  )
+})
+
+// Value: protects=the pre-gate lane from failing a valid package build: package.test.mjs builds the package in its `before` hook and prints nothing for up to the build's limit (180 s), more than the default silence limit (120 s); fails_when=a run that holds package.test.mjs gets the default limit, or a limit the caller gave is replaced; why_new=Cycle 0048 task 110 (Red Team); seam=silenceLimitOfRun, which run-pregate-tests.mjs calls for each run; no_claim=the real build time, which the process test below shows with a shortened build limit
+test('the pre-gate allows a run that holds the package test a silence longer than the package build’s limit, and keeps a limit the caller gave', () => {
+  // Arrange
+  const productRun = ['/repo/extension/dist/tests/citation.test.js']
+  const packageRun = [
+    '/repo/extension/scripts/tests/health.test.mjs',
+    '/repo/extension/scripts/tests/package.test.mjs',
+  ]
+
+  // Act
+  const limits = {
+    product: silenceLimitOfRun(productRun, undefined),
+    package: silenceLimitOfRun(packageRun, undefined),
+    windowsPath: silenceLimitOfRun(
+      ['C:\\repo\\extension\\scripts\\tests\\package.test.mjs'],
+      undefined,
+    ),
+    productGiven: silenceLimitOfRun(productRun, 3_000),
+    packageGiven: silenceLimitOfRun(packageRun, 3_000),
+  }
+
+  // Assert
+  assert.deepEqual(limits, {
+    product: 120_000,
+    package: 300_000,
+    windowsPath: 300_000,
+    productGiven: 3_000,
+    packageGiven: 3_000,
+  })
+})
+
+// Value: protects=the pre-gate lane from ending a package build that stays silent longer than the default silence limit but within the build's own limit; fails_when=the runner gives the run that holds package.test.mjs the same limit as any other run, so a silent `before` hook is ended as hung; why_new=Cycle 0048 task 110 (Red Team); seam=run-pregate-tests.mjs started as a process in a fixture repository whose copies of the two constants are shortened (default silence limit 2 s, package command limit 6 s) and whose script tests stay silent for 4 s; no_claim=the real constants, which the test above reads
+test('the pre-gate runner lets package.test.mjs stay silent longer than the default silence limit and ends another test that does the same', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {})
+  const utilities = join(root, 'extension/scripts/utils')
+  const shorten = async (file, from, to) => {
+    const text = await readFile(join(utilities, file), 'utf8')
+    assert.ok(text.includes(from), `${file} no longer holds ${from}`)
+    await writeFile(join(utilities, file), text.replace(from, to))
+  }
+  await shorten(
+    'testShardConstants.mjs',
+    'CALL_SILENCE_TIMEOUT_MS = 120_000',
+    'CALL_SILENCE_TIMEOUT_MS = 2_000',
+  )
+  await shorten(
+    'packageConstants.mjs',
+    'PACKAGE_COMMAND_TIMEOUT_MS = 180_000',
+    'PACKAGE_COMMAND_TIMEOUT_MS = 6_000',
+  )
+  const quietFor4Seconds = scriptedTest(
+    'quiet',
+    'await new Promise((resolve) => setTimeout(resolve, 4_000))',
+  )
+  await writeFile(
+    join(root, 'extension/scripts/tests/package.test.mjs'),
+    quietFor4Seconds,
+  )
+  await writeFile(
+    join(root, 'extension/scripts/tests/other.test.mjs'),
+    quietFor4Seconds,
+  )
+
+  // Act
+  const packageRun = await runPregateRunner(root, [
+    'extension/scripts/tests/package.test.mjs',
+  ])
+  const otherRun = await runPregateRunner(root, [
+    'extension/scripts/tests/other.test.mjs',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    {
+      package: {
+        code: packageRun.code,
+        endedAsHung: packageRun.stderr.includes('printed nothing'),
+      },
+      other: {
+        code: otherRun.code,
+        endedAsHung: otherRun.stderr.includes(
+          '✖ extension/scripts/tests/other.test.mjs printed nothing for 2 s and was ended',
+        ),
+      },
+    },
+    {
+      package: { code: 0, endedAsHung: false },
+      other: { code: 1, endedAsHung: true },
+    },
   )
 })
 

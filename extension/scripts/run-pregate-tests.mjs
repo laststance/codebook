@@ -5,7 +5,8 @@
 // The pre-gate calls it through `runner` in `.gstack/pregate.json` from the repository root. It writes dist with
 // `build-fast` first, so the TypeScript tests run as the JavaScript of the current tree, then runs the product tests
 // and, after them, the other tests four at a time (the package tests rebuild dist), and prints one summary of both.
-// A run that prints nothing for the silence limit (120 s by default, as in test-shard.mjs) is ended, named, and fails the lane.
+// A run that prints nothing for the silence limit (120 s by default, as in test-shard.mjs; 300 s for a run that holds package.test.mjs, whose
+// `before` hook builds the package without output; --silence-seconds sets one limit for every run) is ended, named, and fails the lane.
 // The build is ended, and the lane fails, when it takes longer than the build limit (300 s by default).
 import { spawn, spawnSync } from 'node:child_process'
 import { relative } from 'node:path'
@@ -21,9 +22,9 @@ import {
   planPregateRuns,
   runSummaryLine,
 } from './utils/planPregateRuns.mjs'
+import { silenceLimitOfRun } from './utils/silenceLimitOfRun.mjs'
 import {
   CALL_KILL_GRACE_MS,
-  CALL_SILENCE_TIMEOUT_MS,
   PREGATE_BUILD_TIMEOUT_MS,
 } from './utils/testShardConstants.mjs'
 import { watchCallSilence } from './utils/watchCallSilence.mjs'
@@ -31,17 +32,15 @@ import { watchCallSilence } from './utils/watchCallSilence.mjs'
 const extension = fileURLToPath(new URL('../', import.meta.url))
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
 
-/** Reads the command line: the optional silence limit, the optional build limit and the selected files. A mistake of the caller stops the runner with code 2 before it builds. @example readCommandLine(['--silence-seconds', '60', 'a.test.mjs']) // => { silenceSeconds: 60, buildSeconds: 300, selected: ['a.test.mjs'] } */
+/** Reads the command line: the optional silence limit, the optional build limit and the selected files. A mistake of the caller stops the runner with code 2 before it builds. @example readCommandLine(['--silence-seconds', '60', 'a.test.mjs']) // => { silenceSeconds: 60 (undefined when not given), buildSeconds: 300, selected: ['a.test.mjs'] } */
 function readCommandLine(argv) {
   try {
     const { values, positionals } = parseArgs({
       args: argv,
       allowPositionals: true,
       options: {
-        'silence-seconds': {
-          type: 'string',
-          default: String(CALL_SILENCE_TIMEOUT_MS / 1000),
-        },
+        // No default here: a run chooses its own limit unless the caller gave one ({@link silenceLimitOfRun}).
+        'silence-seconds': { type: 'string' },
         'build-seconds': {
           type: 'string',
           default: String(PREGATE_BUILD_TIMEOUT_MS / 1000),
@@ -49,7 +48,10 @@ function readCommandLine(argv) {
       },
     })
     return {
-      silenceSeconds: parseSilenceSeconds(values['silence-seconds']),
+      silenceSeconds:
+        values['silence-seconds'] === undefined
+          ? undefined
+          : parseSilenceSeconds(values['silence-seconds']),
       buildSeconds: parseSecondsOption(
         '--build-seconds',
         values['build-seconds'],
@@ -107,8 +109,12 @@ function runTests({ files, args }) {
       env: plainOutputEnvironment(process.env),
     })
     // Output on either stream shows that the run is alive.
+    const silenceTimeoutMs = silenceLimitOfRun(
+      files,
+      silenceSeconds === undefined ? undefined : silenceSeconds * 1000,
+    )
     const watch = watchCallSilence(child, {
-      silenceTimeoutMs: silenceSeconds * 1000,
+      silenceTimeoutMs,
       killGraceMs: CALL_KILL_GRACE_MS,
     })
     let output = ''
@@ -139,7 +145,7 @@ function runTests({ files, args }) {
       if (pending) process.stdout.write(runSummaryLine(pending) + '\n')
       if (watch.timedOut)
         console.error(
-          `✖ ${files.map((file) => relative(repositoryRoot, file)).join(', ')} printed nothing for ${silenceSeconds} s and was ended; the test after the last one printed above did not end.`,
+          `✖ ${files.map((file) => relative(repositoryRoot, file)).join(', ')} printed nothing for ${silenceTimeoutMs / 1000} s and was ended; the test after the last one printed above did not end.`,
         )
       resolveRun({ code: code ?? 1, output, timedOut: watch.timedOut })
     })
