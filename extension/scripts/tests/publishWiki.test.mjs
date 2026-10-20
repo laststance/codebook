@@ -21683,3 +21683,62 @@ test('a publish whose learner’s file is touched right after its bytes are read
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Cycle 0048 task 83 (Performance): the conflict of a learner's file with an owned path is found by lookups, with the same answers.
+for (const conflict of [
+  {
+    names: 'the name of a folder the candidate puts a page in',
+    learnerPath: 'pages',
+    expectedRefusal: 'A manual Wiki file conflicts with the update: pages',
+  },
+  {
+    names: 'a file inside a folder named like a page of the candidate',
+    learnerPath: 'pages/notes.html/readme.txt',
+    expectedRefusal:
+      'A manual Wiki file conflicts with the update: pages/notes.html/readme.txt',
+  },
+]) {
+  // Value: protects=the learner whose file stands where the update needs a folder or a page: the publish refuses it before it writes a copy, whichever side of the path is the folder; fails_when=the check of the learner's files against the owned paths finds only the same path, so a file named like a folder of a page, or a file inside a folder named like a page, is copied into the candidate and breaks the swap; why_new=Cycle 0048 task 83 (Performance copyLearnerFiles); seam=the real publish over a Wiki whose learner's file shares a name with a folder or a page of the candidate; no_claim=the speed of the lookups
+  test(`a publish refuses a learner’s file with ${conflict.names} and names it`, async () => {
+    // Arrange: a published Wiki with the learner's file; the candidate adds the page pages/notes.html.
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-conflict-kinds-')),
+    )
+    const root = join(directory, 'project'),
+      output = join(root, '.codebook/wiki'),
+      first = join(root, '.codebook/first'),
+      next = join(root, '.codebook/next')
+    try {
+      await mkdir(root)
+      await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+      await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: first,
+      })
+      await mkdir(dirname(join(output, conflict.learnerPath)), {
+        recursive: true,
+      })
+      await writeFile(
+        join(output, conflict.learnerPath),
+        'The learner’s own notes',
+      )
+      await writeStage(next, root, '<h1>Next</h1>', 'notes.html', output)
+
+      // Act
+      const refusal = await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: next,
+      }).then(
+        () => 'published',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.equal(refusal, conflict.expectedRefusal)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+}

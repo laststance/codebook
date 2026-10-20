@@ -810,12 +810,24 @@ async function readLearnerFile(path) {
   }
 }
 
+/** Builds the test of whether a learner's file stands where the update has an owned file or folder, with lookups in place of a scan of the owned paths for each file: the path itself is owned, a folder above the path is owned (an owned file where the learner's file needs a folder), or the path is a folder above an owned path (a learner's file where the update needs a folder). The folders above the owned paths are collected once. Called by {@link copyLearnerFiles}. @param owned - The paths the update owns. @returns The test, given a learner's path. @example conflictsWithOwnedOf(new Set(['pages/notes.html']))('pages') // => true */
+function conflictsWithOwnedOf(owned) {
+  const ownedFolders = new Set();
+  for (const ownedPath of owned) for (let slash = ownedPath.indexOf('/'); slash !== -1; slash = ownedPath.indexOf('/', slash + 1)) ownedFolders.add(ownedPath.slice(0, slash));
+  return path => {
+    if (owned.has(path) || ownedFolders.has(path)) return true;
+    // A folder above the learner's file that the update owns as a file.
+    for (let slash = path.indexOf('/'); slash !== -1; slash = path.indexOf('/', slash + 1)) if (owned.has(path.slice(0, slash))) return true;
+    return false;
+  };
+}
+
 /** Copies the learner's files of the prior Wiki into the candidate, each held and new ({@link heldWriterOf}, {@link writeOwnFile}), after refusing one that stands where the update has an owned file or folder; each copy keeps the permission bits and the times of its original ({@link writeOwnFile}); the journal names each copy before it begins (`recordCopyBegun`, {@link publishJournalWriterOf}), and the list of copies is closed once they are made, or once a copy is refused. Called by {@link publishWiki}. @returns The SHA-256 digest of each copy's bytes, by path, for {@link requireLearnerFilesUnchanged}. @throws The refusal of a conflicting file. @example await copyLearnerFiles(['manual.txt'], owned, '/repo/.codebook/wiki', '/repo/.codebook/next', writeHeld, journalNow) // => { 'manual.txt': '…' } */
 async function copyLearnerFiles(manual, owned, output, stage, writeHeld, journalNow) {
-  const manualHashes = Object.create(null);
+  const manualHashes = Object.create(null), conflictsWithOwned = conflictsWithOwnedOf(owned);
   try {
     for (const path of manual) {
-      if ([...owned].some(ownedPath => ownedPath === path || ownedPath.startsWith(path + '/') || path.startsWith(ownedPath + '/')))
+      if (conflictsWithOwned(path))
         throw new Error('A manual Wiki file conflicts with the update: ' + path);
       // The bytes and the status are of one file, read through one handle ({@link readLearnerFile}).
       const { bytes: content, status: original } = await readLearnerFile(join(output, path));
