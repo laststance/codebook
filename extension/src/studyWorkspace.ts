@@ -288,6 +288,7 @@ import {
 import { unconfirmedWritersInLocalTime } from './utils/unconfirmedWritersInLocalTime'
 import { unmatchedByKey } from './utils/unmatchedByKey'
 import { unreportedEditorFocusObstacle } from './utils/unreportedEditorFocusObstacle'
+import { unsavedHistoryLine } from './utils/unsavedHistoryLine'
 import { untilAborted } from './utils/untilAborted'
 import { withoutEditorLayoutLeaves } from './utils/withoutEditorLayoutLeaves'
 import { withoutErrorName } from './utils/withoutErrorName'
@@ -8332,7 +8333,7 @@ export class StudyWorkspace {
         await this.checkpoint(service, record, true)
       } catch (error) {
         failure = error
-        this.report('history-not-saved', error)
+        this.reportUnsavedHistory(error)
       }
     }
     await this.library?.flush()
@@ -8623,8 +8624,8 @@ export class StudyWorkspace {
               this.selectedArchive = archive
           }
         } catch (error) {
-          // A write of a waiting archive keeps the line of its own place.
-          if (isArchiveWriteFailed) this.report('history-not-saved', error)
+          // A write of a waiting archive keeps the line of its own place, in the one sentence; a write {@link persistArchive} reported already keeps its line as it is.
+          if (isArchiveWriteFailed) this.reportUnsavedHistory(error)
           // A write a forced checkpoint awaited has reported that line already ({@link persistArchive}); only another step's failure is the `archive` line's.
           else if (!this.isReportedArchiveWriteFailure(error))
             this.report('archive', error)
@@ -10408,10 +10409,7 @@ export class StudyWorkspace {
       await this.checkpoint(service, record, true)
     } catch (error) {
       // A write that failed has reported this very line ({@link persistArchive}); a capture that failed before any write has no line yet.
-      this.report(
-        'history-not-saved',
-        new Error(`History not saved: ${String(error)}`),
-      )
+      this.reportUnsavedHistory(error)
     }
   }
 
@@ -10504,6 +10502,17 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Tells a failed write of a study's archive on the `history-not-saved` line in the one sentence "History not saved: …", unless {@link persistArchive} has told this very failure already; called by {@link retire}, {@link checkpointStoppedRun} and the catch of Retry storage / refresh in {@link action}, so that every path shows the learner the same sentence (Cycle 0048 task 61).
+   * @param error - What the checkpoint or the write of the waiting archive threw.
+   * @example this.reportUnsavedHistory(error) // => the line "Error: History not saved: Error: disk is read-only"
+   */
+  private reportUnsavedHistory(error: unknown): void {
+    // The line that {@link persistArchive} worded stays; telling the bare error again would replace it.
+    if (this.isReportedArchiveWriteFailure(error)) return
+    this.report('history-not-saved', unsavedHistoryLine(error))
+  }
+
   /** Coalesces writes while only a matching latest receipt can change the combined study outcome. @example await this.persistArchive(study.id) */
   private persistArchive(id: string): Promise<void> {
     const existing = this.archiveWrites.get(id)
@@ -10593,10 +10602,7 @@ export class StudyWorkspace {
                 'failed',
                 `Previous history write failed; latest checkpoint was not saved. ${String(error)}`,
               )
-            this.report(
-              'history-not-saved',
-              new Error(`History not saved: ${String(error)}`),
-            )
+            this.report('history-not-saved', unsavedHistoryLine(error))
             this.lastReportedArchiveWriteFailure = { error }
             throw error
           }

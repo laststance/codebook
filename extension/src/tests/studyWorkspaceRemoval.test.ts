@@ -5475,9 +5475,9 @@ test('a Retry storage / refresh that writes one of two studies whose saves faile
     assert.deepEqual(afterFirstRetry, {
       queued: 1,
       histories: ['saved', 'failed'],
-      // The line of the Retry whose second write failed, and the line of the selection, which names the second study and cannot be written before its archive exists. Retry storage / refresh answers both.
+      // The line of the Retry whose second write failed (the sentence of {@link persistArchive}), and the line of the selection, which names the second study and cannot be written before its archive exists. Retry storage / refresh answers both.
       errors: [
-        'Error: disk is read-only',
+        'Error: History not saved: Error: disk is read-only',
         'Error: Study archive is unavailable.',
       ],
       unretryableErrorCount: 0,
@@ -5486,6 +5486,55 @@ test('a Retry storage / refresh that writes one of two studies whose saves faile
     assert.equal(
       harness.service.state(second.record).historyOutcome.status,
       'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the one sentence "History not saved: …" the learner reads on the History not saved line after a Retry storage / refresh whose write of a waiting archive fails; fails_when=the Retry's catch reports the failed write again with the bare error text, so the line that {@link persistArchive} worded loses "History not saved:" and reads "Error: disk is read-only"; why_new=Cycle 0048 task 61 (OCR A, CodeRabbit: the Retry and the retirement reported the bare text); seam=the library's study save, which fails until the disk is writable again, and the reader's error lines; no_claim=the line of the selection ("Study archive is unavailable.") beside it
+test('a Retry storage / refresh whose write of a waiting archive fails shows the line “History not saved: …” once, with its sentence', async (context) => {
+  // Arrange: a stopped run of this window whose archive could not be saved; the disk still refuses.
+  const harness = await workspaceHarness(true, true)
+  try {
+    await stopRunOnRefusingDisk(context, harness)
+    // Act: the learner presses Retry storage / refresh while the disk refuses.
+    await harness.reader.action('retry')
+    // Assert: one History not saved line with its sentence once; the selection's own line is another kind.
+    const lines = readerSeams(harness).errorLines()
+    assert.deepEqual(lines, [
+      'Error: History not saved: Error: disk is read-only',
+      'Error: Study archive is unavailable.',
+    ])
+    assert.equal(readerSeams(harness).hasErrorOfKind('history-not-saved'), true)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the one sentence "History not saved: …" the learner reads after the retirement of a reader whose final write of a study fails; fails_when=the retirement reports the failed write with the bare error text over the sentence that {@link persistArchive} worded, so the line reads "Error: disk is read-only"; why_new=Cycle 0048 task 61 (OCR A, CodeRabbit: the retirement reported the bare text); seam=the library's study save, which fails until the disk is writable again, and the reader's error lines; no_claim=what the retirement rejects with (the tests of the hand-over state it)
+test('the retirement of a reader whose last write of a study fails leaves the line “History not saved: …” with its sentence', async (context) => {
+  // Arrange: a stopped run whose archive could not be saved, the disk still refusing.
+  const harness = await workspaceHarness(true, true)
+  try {
+    await stopRunOnRefusingDisk(context, harness)
+    // Act: the reader is retired, which writes the final history of its run again.
+    const retirement = await harness.reader.retire(harness.service).then(
+      () => 'retired',
+      (error: unknown) => String(error),
+    )
+    // Assert
+    assert.equal(
+      retirement,
+      'Error: Runtime released; final reader history was not saved: Error: disk is read-only',
+    )
+    assert.deepEqual(
+      readerSeams(harness)
+        .errorLines()
+        .filter((line) => line.includes('disk is read-only')),
+      ['Error: History not saved: Error: disk is read-only'],
     )
   } finally {
     context.mock.restoreAll()
@@ -5560,7 +5609,7 @@ test('a Retry storage / refresh pressed while a study whose archive still waits 
       queued: 1,
       // The archive's line of the Retry before the removal, and the line of the selection, which names the unsaved study.
       errors: [
-        'Error: disk is read-only',
+        'Error: History not saved: Error: disk is read-only',
         'Error: Study archive is unavailable.',
       ],
     })
@@ -5571,7 +5620,7 @@ test('a Retry storage / refresh pressed while a study whose archive still waits 
       selected: unsaved.studyId,
       // The Retry tried the archive once the move had ended: its line, with Retry storage / refresh beside it, and the selection's line as before the press, because the selected study still has no archive.
       errors: [
-        'Error: disk is read-only',
+        'Error: History not saved: Error: disk is read-only',
         'Error: Study archive is unavailable.',
       ],
       unretryableErrorCount: 0,
