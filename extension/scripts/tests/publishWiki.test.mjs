@@ -21742,3 +21742,22 @@ for (const conflict of [
     }
   })
 }
+
+// Cycle 0048 task 84 (Red Team): the skill says that the file the agent writes into is the learner's own.
+
+// Value: protects=the agent that follows the skill's rule that published output is read-only and also its step that puts a learner's kept text into the file of the same name in the Wiki folder: it learns the two do not clash, since that file is the learner's own and the edit needs their agreement; fails_when=the skill drops the sentence, so the step reads against the read-only rule and the agent either skips the step and loses the learner's text, or edits a page the publisher wrote; why_new=Cycle 0048 task 84 (Red Team SKILL.md); seam=none; no_claim=what an agent does with the sentence, an eval gap the owner named (D9, D12)
+test('the bundled skill says that the file of the same name in the Wiki folder is the learner’s own, so the kept text goes in with their agreement and not against the read-only rule', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      "The file of the same name in the Wiki folder is the learner's own file, not a page the publisher wrote, so that edit is the learner's, made with their agreement; it does not break the rule that published output is read-only.",
+    ),
+    true,
+  )
+})
