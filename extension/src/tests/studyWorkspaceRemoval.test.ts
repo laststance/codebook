@@ -6258,6 +6258,109 @@ test('after the archive of the study of this window’s own stopped run was remo
   }
 })
 
+/**
+ * Removes every file of a recorded reader's saved study from its library, as the learner does by hand: the archive, the catalog file and the recording of the run.
+ * @param harness - A recorded reader whose study was saved once.
+ * @example await removeStudyFilesByHand(harness) // the library lists nothing of the study
+ */
+async function removeStudyFilesByHand(
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+): Promise<void> {
+  const directory = harness.reader.inspect().libraryDirectory!
+  await rm(join(directory, `${harness.studyId}.study.v3.json`))
+  await rm(join(directory, `${harness.studyId}.study.meta.v3.json`))
+  await rm(join(directory, 'recordings.v2', harness.studyId), {
+    recursive: true,
+  })
+}
+
+// Value: protects=the pane of a study whose newest save failed and whose files the learner then removed by hand: the press on Retry storage / refresh forgets the study, writes nothing for it and leaves no line "History not saved: …"; fails_when=the forget of a study that left the library keeps its waiting archive or its failed receipt, so Retry writes the study back beside the removal, or the line stays for a study that is gone; why_new=Cycle 0048 task 126 (Step 7 gap): the tests of forgetRemovedStudy reach it through a move to the Trash and through a deletion with the recording, not through the study that Retry finds removed by hand; seam=the library's study save, which refuses every write while the test says so, and the file system, on which the test removes the study's files; no_claim=wording of the line
+test('after the study of a failed save had its files removed by hand, Retry storage / refresh writes nothing for it and leaves no “History not saved: …” line', async (context) => {
+  // Arrange: a recorded run of this window, saved once; the disk then refuses the next checkpoint, which leaves the line and a waiting archive. The learner removes every file of the study.
+  const disk = refuseStudySaves(context)
+  disk.refusesEveryStudy = false
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    disk.refusesEveryStudy = true
+    await explainStoppedRunAndCheckpoint(harness, 'after-the-failure')
+    const afterTheFailedSave = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+    })
+    await removeStudyFilesByHand(harness)
+    disk.refusesEveryStudy = false
+
+    // Act: the learner presses Retry storage / refresh while the disk writes again.
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      {
+        afterTheFailedSave,
+        afterRetry: {
+          queued: readerSeams(harness).queuedStudyWrites(),
+          errors: structuredClone(harness.reader.inspect().view!.errors),
+          listed: (await (await harness.reader.learningStorage()).list()).map(
+            (entry) => entry.id,
+          ),
+        },
+      },
+      {
+        afterTheFailedSave: {
+          queued: 1,
+          errors: ['Error: History not saved: Error: disk is read-only'],
+        },
+        afterRetry: { queued: 0, errors: [], listed: [] },
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the pane of a study whose newest save failed and whose files the learner removed by hand, when a later step of the same Retry storage / refresh fails: the learner reads the failure of that step and no line "History not saved: …" for the study that is gone; fails_when=only the Retry's last step retires the line, and a step that throws before it (here the library's reconcile) leaves the line and a Retry offer for a study that no longer waits, as the removal to the Trash and the deletion with the recording do not; why_new=Cycle 0048 task 126 (Step 7 gap): without a failing step after the forget, the Retry's own retirement hides a forget that keeps the line; seam=the library's study save, which refuses every write while the test says so, the library's reconcile, which fails while the test says so, and the file system, on which the test removes the study's files; no_claim=wording of the lines
+test('after the study of a failed save had its files removed by hand, a Retry storage / refresh whose later step fails shows that failure and no “History not saved: …” line', async (context) => {
+  // Arrange: as above, and the library's reconcile fails during the press.
+  const disk = refuseStudySaves(context)
+  disk.refusesEveryStudy = false
+  let isReconcileFailing = false
+  const reconcile = LearningLibrary.prototype.reconcile
+  context.mock.method(
+    LearningLibrary.prototype,
+    'reconcile',
+    function (this: LearningLibrary) {
+      return isReconcileFailing
+        ? Promise.reject(new Error('reconcile is unavailable'))
+        : reconcile.call(this)
+    },
+  )
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    disk.refusesEveryStudy = true
+    await explainStoppedRunAndCheckpoint(harness, 'after-the-failure')
+    await removeStudyFilesByHand(harness)
+    isReconcileFailing = true
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      {
+        queued: readerSeams(harness).queuedStudyWrites(),
+        errors: structuredClone(harness.reader.inspect().view!.errors),
+      },
+      { queued: 0, errors: ['Error: reconcile is unavailable'] },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=an agent that reads a run of this window after the learner removed the study's files by hand: the run and its evidence answer with what Codebook found; fails_when=the reader forgets such a run as "removed by the learner", so the run resource and every evidence read say "The learner moved this saved study to the Trash.", which names a Trash the study never went to and a window without a Trash does not have; why_new=Cycle 0046 row 201; seam=the file system, on which the test removes the archive, and the resources an agent reads
 test('after the archive of the study of this window’s own stopped run was removed by hand and Retry storage / refresh was pressed, an agent that reads the run or its evidence is told that the archive is no longer in the library, not that the study went to the Trash', async () => {
   // Arrange: a recorded run of this window that was stopped and saved.
@@ -9733,6 +9836,61 @@ test('the line “History not saved: …” of a study whose capture failed stay
         },
         errorsAfterRetry: [],
         secondHistory: 'saved',
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the line "History not saved: …" going once the only study with a failed checkpoint has no run in this window any more, when another study is saved: Retry storage / refresh cannot checkpoint a run this window does not hold, so the line would offer it for ever; fails_when=a failed receipt of a study without a run here keeps the line (the check for the study's run in the count of unsaved history is dropped), so the learner reads that a history is not saved after another study was saved, and Retry saves nothing; why_new=Cycle 0048 task 127 (Step 7 gap): the test of task 64 uses a study that has a run; seam=the capture step ({@link captureStudy}), which fails for the stopped second run, the service's run list, from which the test drops that run, and the reader's own refresh timer, stopped so that the test's refresh is the only checkpoint; no_claim=how a run leaves the service, wording of the line
+test('the line “History not saved: …” of a study whose capture failed and whose run this window no longer holds goes when another study is saved', async (context) => {
+  // Arrange: a recorded run of this window, stopped and saved; a second run stops and its capture fails, which leaves the line and no waiting archive; then the service no longer holds the second run.
+  const capture = captureStudyModule.captureStudy
+  let failedStudyId: string | undefined
+  context.mock.method(
+    captureStudyModule,
+    'captureStudy',
+    (...args: Parameters<typeof capture>) =>
+      failedStudyId === `${args[0].instanceId}_${args[1].id}`
+        ? Promise.reject(new Error('capture is unavailable'))
+        : capture(...args),
+  )
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const failed = await startRun(harness)
+    failedStudyId = `${harness.service.instanceId}_${failed.record.id}`
+    await harness.reader.action('stop')
+    const afterCaptureFailure = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+    })
+    harness.service.records.delete(failed.record.id)
+
+    // Act: a third run of the same server is saved by the reader's checkpoint.
+    const third = await startRun(harness)
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.service.state(third.record).historyOutcome.status === 'saved',
+      'the save of the third run',
+      2_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        afterCaptureFailure,
+        afterOtherSave: structuredClone(harness.reader.inspect().view!.errors),
+      },
+      {
+        afterCaptureFailure: {
+          queued: 0,
+          errors: ['Error: History not saved: Error: capture is unavailable'],
+        },
+        afterOtherSave: [],
       },
     )
   } finally {
