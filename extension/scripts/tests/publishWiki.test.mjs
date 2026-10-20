@@ -21023,10 +21023,10 @@ test('a --recover that ends an empty journal and the publish lock beside it answ
   }
 })
 
-// Cycle 0048 task 10 (S11-N6): the refusal of an empty journal beside a missing Wiki folder names the newest prior Wiki.
+// Cycle 0048 task 10 (S11-N6), changed by task 139 (OCR A): the refusal of an empty journal beside a missing Wiki folder names every prior Wiki and leaves the choice to the learner.
 
-// Value: protects=the learner's prior Wiki and files after a power cut left the Wiki folder missing and the journal empty while several folders keep a prior Wiki (one for each earlier publish): the agent is told which folder is the newest, so it moves back the Wiki that was current and not an older one by the order of the random names; fails_when=the refusal says "the newest of those folders" and names none, so the agent picks one by name; why_new=Cycle 0048 task 10 (S11-N6); seam=a publisher process killed between the two moves of its swap, with two older prior Wikis made beside it, one named to sort before and one to sort after the kept one; no_claim=a real power cut, and which folder the learner finally agrees to move back
-test('a --recover beside an empty journal and a missing Wiki folder, with three folders that keep a prior Wiki, names the newest of them by its last change', async () => {
+// Value: protects=the learner's prior Wiki and files after a power cut left the Wiki folder missing and the journal empty while several folders keep a prior Wiki (one for each earlier publish): the agent is told every folder and that the learner chooses, so it never moves back an older Wiki that a time named as the newest; fails_when=the refusal names one folder as the newest by a time that an edit inside a folder does not change, or names none and no choice; why_new=Cycle 0048 tasks 10 and 139 (S11-N6, OCR A); seam=a publisher process killed between the two moves of its swap, with two older prior Wikis made beside it, one named to sort before and one to sort after the kept one; no_claim=a real power cut, and which folder the learner finally agrees to move back
+test('a --recover beside an empty journal and a missing Wiki folder, with three folders that keep a prior Wiki, names all of them and none as the newest', async () => {
   // Arrange: the publish is killed between the two moves of its swap, so its prior Wiki is the newest folder; its journal is empty and a minute old; two older prior Wikis stand beside it.
   const wiki = await publishedWikiWithACandidate()
   const journal = `${wiki.output}.publish-journal.json`
@@ -21070,14 +21070,77 @@ test('a --recover beside an empty journal and a missing Wiki folder, with three 
       (error) => error.message,
     )
 
-    // Assert: the refusal names the three folders in the order of their names, and the newest by its path.
+    // Assert: the refusal names the three folders in the order of their names, and leaves the choice to the learner.
     const [first, last] = olderFolders
     const kept = [first, newest, last].sort()
     assert.deepEqual(
       { killed, recovery },
       {
         killed: '',
-        recovery: `The Wiki publication journal is empty, and the Wiki folder ${wiki.output} is missing, while the folders ${kept.join(', ')} stand beside it, where a publish keeps the prior Wiki and the learner’s files when it replaces the Wiki: a publish stopped by a power cut or a system crash after it moved the Wiki there can leave its journal empty. Nothing was moved, and the journal was kept. Show this to the learner; once they agree, move the newest of those folders, ${newest} (the one changed last), back to ${wiki.output}, then run --recover again.`,
+        recovery: `The Wiki publication journal is empty, and the Wiki folder ${wiki.output} is missing, while the folders ${kept.join(', ')} stand beside it, where a publish keeps the prior Wiki and the learner’s files when it replaces the Wiki: a publish stopped by a power cut or a system crash after it moved the Wiki there can leave its journal empty. Nothing was moved, and the journal was kept. Show this to the learner; once they agree, move the one of those folders that holds the Wiki they want back to ${wiki.output}, then run --recover again. The publisher cannot tell which of them was the Wiki last, as a change inside a folder does not change the folder’s own time: let the learner choose by what each folder holds.`,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner's prior Wiki and files after a power cut left the Wiki folder missing and the journal empty while several folders keep a prior Wiki (one for each earlier publish): the agent is told every folder and that the learner chooses, so it never moves back an older Wiki that a time named as the newest; fails_when=the refusal names one folder as the newest by a time that an edit inside a folder does not change, or names none and no choice; why_new=Cycle 0048 task 139 (OCR A); seam=a publisher process killed between the two moves of its swap, with two older prior Wikis made beside it, one touched after the kept one moved (an edit inside an older Wiki), one named to sort before and one to sort after the kept one; no_claim=a real power cut, and which folder the learner finally agrees to move back
+test('a --recover beside an empty journal and a missing Wiki folder, with three folders that keep a prior Wiki, names all of them and none as the newest, though an older folder was touched later', async () => {
+  // Arrange: the publish is killed between the two moves of its swap, so its prior Wiki is the newest folder; its journal is empty and a minute old; two older prior Wikis stand beside it.
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'renaming', folder: dirname(wiki.output), name: '^next$' },
+      ],
+    })
+    await writeFile(journal, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+    const newestName = String(
+      (await readdir(dirname(wiki.output))).find((name) =>
+        name.startsWith('wiki.previous-'),
+      ),
+    )
+    const longAgo = new Date('2020-01-01T00:00:00Z')
+    const touchedLater = new Date(Date.now() + 3_600_000)
+    const olderFolders = [
+      'wiki.previous-00000000-0000-4000-8000-000000000000',
+      'wiki.previous-ffffffff-ffff-4fff-8fff-ffffffffffff',
+    ].map((name) => join(dirname(wiki.output), name))
+    for (const folder of olderFolders) {
+      await mkdir(folder)
+      await utimes(folder, longAgo, longAgo)
+    }
+    // The older folder that sorts last is edited later: its time is now ahead of the kept folder's.
+    await utimes(olderFolders[1], touchedLater, touchedLater)
+    const newest = join(dirname(wiki.output), newestName)
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert: the refusal names the three folders in the order of their names, and leaves the choice to the learner.
+    const [first, last] = olderFolders
+    const kept = [first, newest, last].sort()
+    assert.deepEqual(
+      { killed, recovery },
+      {
+        killed: '',
+        recovery: `The Wiki publication journal is empty, and the Wiki folder ${wiki.output} is missing, while the folders ${kept.join(', ')} stand beside it, where a publish keeps the prior Wiki and the learner’s files when it replaces the Wiki: a publish stopped by a power cut or a system crash after it moved the Wiki there can leave its journal empty. Nothing was moved, and the journal was kept. Show this to the learner; once they agree, move the one of those folders that holds the Wiki they want back to ${wiki.output}, then run --recover again. The publisher cannot tell which of them was the Wiki last, as a change inside a folder does not change the folder’s own time: let the learner choose by what each folder holds.`,
       },
     )
   } finally {
@@ -21525,7 +21588,7 @@ test('a publish of a candidate that holds a copy of a learner’s file outside i
 })
 
 // Value: protects=the editor agent that reads the answer of --recover: it learns what changedFilesKept lists and not to delete those copies, that unwrittenJournalRemoved says an empty journal was ended with the lock, and which folder to move back among several; fails_when=the skill leaves any of the three undocumented, so the agent deletes a learner's saved text or cannot read the answer; why_new=Cycle 0048 tasks 10, 12 and 16 (S11-N6, S11-N8, S11-N12); seam=none; no_claim=what an agent does with the sentences, an eval gap the owner named (D9, D12)
-test('the bundled skill documents changedFilesKept, unwrittenJournalRemoved and the newest folder to move back, and tells the agent not to delete a kept copy', async () => {
+test('the bundled skill documents changedFilesKept, unwrittenJournalRemoved and that the learner chooses among several folders to move back, and tells the agent not to delete a kept copy', async () => {
   // Arrange / Act
   const skill = await readFile(
     new URL('../../skills/codebook/SKILL.md', import.meta.url),
@@ -21545,7 +21608,7 @@ test('the bundled skill documents changedFilesKept, unwrittenJournalRemoved and 
         'Where an empty journal stood beside that lock, the recovery ended it too and its result also has `unwrittenJournalRemoved: true`.',
       ),
       newestFolder: skill.includes(
-        'Where the refusal names several such folders, it names the newest too (the one changed last): that is the folder to move back.',
+        'Where the refusal names several such folders, the publisher cannot tell which was the Wiki last (a change inside a folder does not change the folder’s own time): let the learner choose the one that holds the Wiki they want back, by what each folder holds.',
       ),
     },
     {
