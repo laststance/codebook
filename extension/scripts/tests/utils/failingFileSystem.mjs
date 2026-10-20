@@ -179,8 +179,8 @@ function handleWhoseWritesAreObserved(handle, path) {
 let closeObserver
 
 /**
- * Asks every close of a handle of its `open` that closed the file to tell `observer` the file's path, once the close is done, as long as the observer is not stopped; so a test sees that a step closed the handle of a file it refused.
- * @param {(path: string) => void} observer - Receives the path of each file whose handle a close closed.
+ * Asks every close of a handle of its `open` that succeeds to tell `observer` the file's path, once the close is done, as long as the observer is not stopped; so a test sees that a step closed the handle of a file it refused. A close that {@link failCloseOf} fails tells it nothing.
+ * @param {(path: string) => void} observer - Receives the path of each file whose handle a close closed without an error.
  * @returns {() => void} Stops this observer without clearing a newer one.
  * @example
  * const stop = observeCloses((path) => closed.push(path)); stop()
