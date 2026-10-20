@@ -7,7 +7,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
  */
 export const API_VERSION = '1.7'
-export const EXTENSION_VERSION = '0.2.31'
+export const EXTENSION_VERSION = '0.2.32'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'

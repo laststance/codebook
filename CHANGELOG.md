@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.2.32.0] - 2026-10-21 (development candidate)
+
+Cycle 0048 is a bug-fix cycle with no increment ([Issue #105](https://github.com/laststance/codebook/issues/105)). It holds the 24 defects that the adversarial review of Cycle 0047's final candidate found, 5 that the archived test guide carried, and the 67 found while it ran: 96 tasks, and its delivery closes every one. It is the fifth cycle under the rule that every defect a cycle leaves is fixed in the next one, and the first whose Issue holds its tasks and state. Most changes are in the skill's Wiki publisher, the Wiki reader and the test runners.
+
+**Saved studies and recordings.**
+
+- **A writer record that cannot be read now.** When the record of a recording's writer stands but cannot be read at that moment, Codebook no longer judges the writer by the recording's header. Delete asks first, as for a writer that this computer cannot confirm, so on two computers with one host name and one storage folder it does not move the other computer's study without asking. This holds for a sealed and an unsealed recording, for a record that is valid JSON but no writer record, and when Codebook cannot look at the folder of the writer records (tasks 1, 30, 60, 75).
+- **A read that fails during a removal.** When a read failed before the removal's lock and passes under it, Delete says `Codebook could not read a recording of this study just now. Delete the study again.`, not that another window records the study, also when that read hid the header or the writer record (tasks 20, 38).
+- **History not saved.** The line `History not saved: …` has a place of its own, so its clear no longer clears a failed list, refresh or Node history line (task 19). When **Retry storage / refresh** or the retirement of a study forces a checkpoint and its archive write fails, the line says so once, with the sentence of a failed save (tasks 37, 61). The line and its **Retry storage / refresh** stay while a study whose capture failed before any write is not saved, also when another study is saved or another window deletes another study with its recording (task 64).
+
+**Runs, the storage lock and Cursor.**
+
+- **A Node test run** keeps hearing of new debug sessions until its release succeeds, so a retry also stops a child session that started after a failed release (task 23).
+- **The storage lock.** A write that finished keeps its result when only the release of its lock fails, and the release's error comes apart (task 21). A lock that a failed release left in place is taken back soon, with no wait for this window's next write, so other windows no longer fail on the Cursor catalog until this editor exits (task 22). An empty lock or takeover claim counts as left by a killed window only when it is old by this window's clock and by the clock of the file system, so two windows do not hold the lock at once where the clock of a network home runs behind (task 40).
+- **Cursor.** The age of a staged MCP config is judged by the clock of the file system, as the marker's is (task 24).
+
+**The Wiki reader.**
+
+- **Requests for another host.** The reader refuses a request whose Host is not its own loopback address or the loopback address the editor forwards it to, so a page that a cloned repository crafted cannot use DNS rebinding to send the reader's address and its token to another site. It removes the effect of a page's `referrerpolicy` attributes and `<meta name="referrer">` element (tasks 6, 63). As before, a forward to another host (a tunnel, a browser-based editor) gets no page; the 403 and the README now say so (task 42).
+- **Page size.** The reader adds at most 2 MiB to a page beside its rail entries' links, counted in UTF-8 bytes; an entry past that keeps its link alone (tasks 17, 41).
+- **Pages opened at once** share one read of the manifest (task 18).
+
+**The skill's Wiki publisher.**
+
+- **Syncs.** A publish syncs every file and folder of its candidate before the swap, the agent's assets too, and keeps its journal when a sync fails. The recovery of an edited manifest syncs the folder of the kept copy before the rename, and every path it restored before the journal goes (tasks 2, 3).
+- **A save during a publish.** The publisher syncs before its last check of the learner's files and, after the swap, compares them in the prior Wiki with their digests. A file saved after the last check is named in `manualFilesSavedAfterCheck` and not counted in `preservedManualFiles`; its newest bytes are in `previousOutput` (tasks 4, 43).
+- **The learner's files.** Their copies keep the mode and times of the very file the publisher read, never a setuid, setgid or sticky bit (tasks 14, 66, 80).
+- **Owners.** A recovery probes the process of an owner on this host and space also when its place is named gone, and refuses while a live process has that id and start (task 5).
+- **Answers and refusals.** A lock that cannot be read is told from a missing one, and a kept lock is named with its code (task 7). After a failed look at its own lock or journal, the refusal names `--recover` and keeps the removal's failure as its cause, never a raw `EBUSY` (task 9). The refusal of an empty journal beside a missing Wiki folder names the newest prior Wiki (task 10). Two recoveries at once answer with the publisher's sentence, never a raw `ENOENT` or `EEXIST` (task 15). The recovery of an empty journal and its lock says that the journal was removed too (task 16). A recovery that returns early removes its temporary manifest, so that file never counts as a learner's (task 11). A stray file at a path the published Wiki owns gets the plain stray-file refusal, and a kept copy of a learner's file gets a sentence that does not tell the agent to delete it (tasks 12, 65).
+- **Line ends.** Pages are written with LF line ends only, also when the text of a page held CRLF, so the way out of the CRLF refusal restores every page (task 8).
+- **NTFS.** The short and the long name of one Wiki folder give one lock and one journal (task 13).
+- **A linked folder.** The command line works when it is started through a path that holds a link (an extensions folder moved by a link or a Windows junction, a linked home folder). Before, it printed nothing and exited 0 (task 52).
+
+**Development.**
+
+- **Silent test calls.** A shard call that prints nothing for 120 s is ended and named, and fails its shard whatever its exit code; on Windows the system's `taskkill.exe` ends the runner's whole process tree, and a forced step follows after a grace (tasks 25, 44, 53, 56, 67, 68). `--silence-seconds` refuses a limit under 1 ms or above a timer's limit (tasks 54, 69). The pre-gate runner ends a silent run the same way and fails its lane; it ends its build after 300 s (`--build-seconds`), names a runner that cannot start, and writes its whole summary (tasks 57, 71 to 73). A call that counts no test fails (task 74), and `test:shard --record` stops at a test that does not end (task 57).
+- **Shards and CI.** The shards' name patterns are checked through the real runner, and the `split-files` job runs the split files whole after a push to `main` (tasks 26, 27). A missing or malformed `extension/test-timings.json`, or an entry that is no `{ totalMs, tests? }`, is refused with the way out, `test:shard --record` (tasks 29, 62). The dependency cache key holds `extension/package.json` and the runner's architecture in every workflow (tasks 28, 45). The pre-gate's policy declares the workflows' test lane, and its runner runs the product tests first, then the script tests (tasks 31, 32). The Windows job's path filter names every source its tests load (task 40).
+- **Tests.** Each fix comes with a test that fails without it, or with recorded evidence. Tests that waited a fixed number of event-loop turns or a tight time now wait on signals or leave room (tasks 46, 58, 59, 82), and new tests cover the lock's timer take-back, the stopped sessions of a Node test run, the Cursor sweep, the Windows tree end, `test:shard --record` and the pre-gate runner's stderr and silence (tasks 39, 47, 48, 79, 81, 85 to 88).
+
+**Compatibility.** The MCP API is 1.7, as in 0.2.31.1. The bundled skill is 1.0.45: it tells the agent that a learner's file saved after the publisher's last check is not counted as preserved and where its newest bytes are (task 43), what to do with `changedFilesKept` (task 12), and that the file of the same name in the Wiki folder is the learner's own, so an edit to it needs their agreement (task 84).
+
+**Not observed.** An editor on Windows or macOS: the Windows tree end of the test runners ran with stand-ins in tests only. A network home whose clock runs behind, and a power cut: tests cover them with stand-ins. No model run checks the skill's changed sentences; script tests pin them.
+
 ## [0.2.31.1] - 2026-10-21 (development candidate)
 
 A maintenance release between Cycle 0047 and Cycle 0048. The extension version stays 0.2.31, as only the fourth part changes; the MCP API stays 1.7 and the bundled skill 1.0.44.
