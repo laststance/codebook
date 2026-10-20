@@ -9,6 +9,12 @@
     "extension/test-timings.json": [],
     ".github/workflows/*.yml": [
       "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    ".github/workflows/*.yaml": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    ".github/actions/**": [
+      "extension/scripts/tests/workflowPins.test.mjs"
     ]
   },
   "strays": {

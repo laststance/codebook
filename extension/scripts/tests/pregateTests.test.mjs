@@ -140,8 +140,8 @@ test('the pre-gate runner refuses a selected file that is no test it can run, an
   })
 })
 
-// Value: protects=the pre-gate runs workflowPins.test.mjs for a change to any workflow file; fails_when=the policy drops the .github/workflows/*.yml entry or names a missing test file; why_new=task 31 was closed by the policy file and evidence only; seam=none; no_claim=that the pre-gate reads the policy as this test does
-test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the workflow files, and that test exists', () => {
+// Value: protects=the pre-gate runs workflowPins.test.mjs for a change to any CI definition that test reads: a workflow written as `.yml` or `.yaml` and a composite action anywhere under `.github/actions`; fails_when=the policy drops one of the three entries, names a missing test file, or leaves `.yaml` workflows or the actions out (a change there then selects no test); why_new=task 31 was closed by the policy file and evidence only; Cycle 0048 task 105 (OCR B) added the `.yaml` and actions entries; seam=none; no_claim=that the pre-gate reads the policy as this test does (its glob has `*` for one path part and `**` for any)
+test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the workflow files and composite actions, and that test exists', () => {
   // Arrange
   const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
   const policy = JSON.parse(
@@ -149,11 +149,20 @@ test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the
   )
 
   // Act
-  const lane = policy.dependencies['.github/workflows/*.yml']
+  const lanes = {
+    yml: policy.dependencies['.github/workflows/*.yml'],
+    yaml: policy.dependencies['.github/workflows/*.yaml'],
+    actions: policy.dependencies['.github/actions/**'],
+  }
 
   // Assert
-  assert.deepEqual(lane, ['extension/scripts/tests/workflowPins.test.mjs'])
-  assert.equal(existsSync(`${repositoryRoot}${lane[0]}`), true)
+  const workflowPins = ['extension/scripts/tests/workflowPins.test.mjs']
+  assert.deepEqual(lanes, {
+    yml: workflowPins,
+    yaml: workflowPins,
+    actions: workflowPins,
+  })
+  assert.equal(existsSync(`${repositoryRoot}${workflowPins[0]}`), true)
 })
 
 /**
