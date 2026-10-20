@@ -904,6 +904,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/processStartFormHere.ts',
     'extension/src/utils/psProgramPath.ts',
     'extension/src/utils/readBootIdentity.ts',
+    'extension/src/utils/readFileSystemNowMs.ts',
     'extension/src/utils/readLiveWikiUpdateMarker.ts',
     'extension/src/utils/readProcessStart.ts',
     'extension/src/utils/readRecordedOwner.ts',
