@@ -657,13 +657,21 @@ async function removeOwnedRecord(path, bytes, remove = unlink) {
 /** The refusal of a removal of a journal, a claim, a publish lock or a side file that no longer holds the bytes of the step that removes it; the record is kept. Called by {@link removeOwnedRecord} and {@link releaseClaims}. @example ownershipRefusalOf('/repo/.codebook/wiki.publish-journal.json') // => 'Publication ownership changed; the recovery record was preserved: /repo/.codebook/wiki.publish-journal.json' */
 const ownershipRefusalOf = path => 'Publication ownership changed; the recovery record was preserved: ' + path;
 
+/** The refusal of a candidate that holds a file its manifest does not list ({@link readCandidateManifest}). A file that stands at the same path in the Wiki folder is a copy of a learner's file: a recovery of a stopped publish keeps such a copy in the candidate when it changed after the recovery checked it, because the learner saved it, and answers it in `changedFilesKept` ({@link changedFilesKeptOf}); it may hold the learner's newest text, so the refusal does not tell the agent to delete it but to show it to the learner first. Any other file is the agent's to delete or to list. Called by {@link readCandidateManifest}. @param stray - The file's path in the candidate. @param output - The Wiki folder, where the file of the same name is looked for. @returns The sentence. @example await strayFileRefusalOf('manual.txt', '/repo/.codebook/wiki') // => 'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. …' */
+async function strayFileRefusalOf(stray, output) {
+  // A look that fails says nothing of the file, so the plain sentence stays.
+  const inWiki = await lookAt(join(output, stray)).catch(() => undefined);
+  if (inWiki?.isFile()) return 'The staged Wiki contains a copy of the learner’s file outside its published manifest: ' + stray + '. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.';
+  return 'The staged Wiki contains a file outside its published manifest: ' + stray + ". Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.";
+}
+
 /** Reads a candidate's manifest and refuses a candidate that holds a file its manifest does not list, named so the step that removes it is clear, or an asset that is no raster image, before anything is rendered or written. Called by {@link publishWiki}. @returns The manifest's bytes, the manifest and the paths it owns. @throws The refusal of the stray file or of the asset. @example await readCandidateManifest('/repo/.codebook/next', '/repo') // => { bytes, manifest, owned } */
-async function readCandidateManifest(stage, root) {
+async function readCandidateManifest(stage, root, output) {
   const bytes = await regularBytes(join(stage, MANIFEST)), { manifest, owned } = parseManifest(bytes, root);
   const files = await listFiles(stage);
   // A file of the stage the manifest does not list is named, so the step that removes it is clear.
   const stray = files.find(path => ![MANIFEST, RECEIPT].includes(path) && !owned.has(path));
-  if (stray !== undefined) throw new Error('The staged Wiki contains a file outside its published manifest: ' + stray + ". Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.");
+  if (stray !== undefined) throw new Error(await strayFileRefusalOf(stray, output));
   // An asset is a raster image or nothing; checked before anything is rendered or written.
   for (const path of manifest.assets) await requireRasterAsset(stage, path);
   return { bytes, manifest, owned };
@@ -843,7 +851,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   // The candidate's look is taken before it is read, so a candidate another publish moved into the Wiki, or one removed, while this one waited for the lock is told under it.
   await isFolderWhereItWas(stage);
   await requireNoJournal(journal, paths.lock);
-  const { bytes, manifest, owned } = await readCandidateManifest(stage, root);
+  const { bytes, manifest, owned } = await readCandidateManifest(stage, root, output);
   // Validate authored content without modifying either the stage or published output.
   const rendered = await renderWikiPages(manifest, { projectRoot: root, outputDirectory: output });
   const { receiptBytes, receipt } = await readCandidateRecord(stage, root, output, bytes);

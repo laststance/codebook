@@ -3892,7 +3892,7 @@ for (const atTheName of [
           },
           fileAtTheCopysName: atTheName.bytes,
           nextPublish:
-            "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+            'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
           manualFile: 'The learner’s own notes',
         },
       )
@@ -8064,7 +8064,7 @@ for (const otherBytes of [
           recovery: 'published-or-restored',
           fileInTheCandidate: otherBytes.text,
           nextPublish:
-            "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+            'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
         },
       )
     } finally {
@@ -8138,7 +8138,7 @@ for (const learnerBytes of [
           recovery: 'published-or-restored',
           fileInTheCandidate: learnerBytes.text,
           nextPublish:
-            "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+            'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
         },
       )
     } finally {
@@ -8259,7 +8259,7 @@ for (const atTheCopysPlace of [
     learnerPuts: 'The learner kept',
     fileInTheCandidate: 'The learner kept',
     nextPublish:
-      "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+      'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
   },
 ]) {
   // Value: protects=the next publish of a candidate after a publish killed while it appended the line of its list of copies that names the copy of the learner's file, before that copy began, and a file the learner then put at the copy's place; fails_when=the recovery reads the list's cut line as a whole one, or the list as none and the bytes alone, or refuses the list for it, so it takes the learner's file at the copy's place for a copy and removes it, or leaves the journal, or the list is no list of lines and the recovery reads none of it; why_new=Cycle 0047 row 175 (S2PERF-1 = S2CLA-4: the list of copies is appended to, one line for each copy, in place of row 135's list written again whole through a file in the candidate before each copy, which this test's kill before that move pinned), and row 226 (P2OCR1b-3: the file at the copy's place, which the kill alone never leaves); seam=a publisher process killed halfway through that line (scripts/tests/utils/killedPublisherProbe.mjs), then the learner's file written by the test; no_claim=a kill after the line and before the copy's file is made, which leaves no file in the candidate
@@ -14069,7 +14069,7 @@ test('a recovery that puts a stopped publish’s candidate back keeps the copy o
         fileInTheCandidate:
           'The learner kept these notes, and saved them again',
         nextPublish:
-          "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+          'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
       },
     )
   } finally {
@@ -21401,3 +21401,72 @@ for (const {
     }
   })
 }
+
+// Cycle 0048 task 12 (S11-N8): the refusal of a copy of a learner's file that a recovery kept in the candidate.
+
+// Value: protects=the learner's newest text of a file of their own that a recovery kept in the candidate (the recovery answers it in changedFilesKept) because the learner saved it after the recovery checked it: the next publish refuses the file, and the refusal must not tell the agent to delete it; fails_when=the refusal of a file outside the manifest says "Delete it from the stage" for a copy of a learner's file that stands in the Wiki folder too, so the agent deletes the only copy of what the learner saved; why_new=Cycle 0048 task 12 (S11-N8); seam=a published Wiki with a learner's file and a candidate that holds a file of the same name; no_claim=the recovery that keeps the copy (the test of changedFilesKept above)
+test('a publish of a candidate that holds a copy of a learner’s file outside its manifest is refused with a sentence that keeps the copy for the learner and does not tell the agent to delete it', async () => {
+  // Arrange: a published Wiki that holds a learner's file; the candidate holds a file of the same name, as a recovery leaves one it kept.
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    await writeFile(
+      join(wiki.output, 'manual.txt'),
+      'The learner kept these notes',
+    )
+    await writeFile(
+      join(wiki.next, 'manual.txt'),
+      'The learner kept these notes, and saved them again',
+    )
+
+    // Act
+    const refusal = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the editor agent that reads the answer of --recover: it learns what changedFilesKept lists and not to delete those copies, that unwrittenJournalRemoved says an empty journal was ended with the lock, and which folder to move back among several; fails_when=the skill leaves any of the three undocumented, so the agent deletes a learner's saved text or cannot read the answer; why_new=Cycle 0048 tasks 10, 12 and 16 (S11-N6, S11-N8, S11-N12); seam=none; no_claim=what an agent does with the sentences, an eval gap the owner named (D9, D12)
+test('the bundled skill documents changedFilesKept, unwrittenJournalRemoved and the newest folder to move back, and tells the agent not to delete a kept copy', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      changedFilesKept: skill.includes(
+        "If a recovery of a stopped publish answers `changedFilesKept` (a list of paths in the candidate), it kept each of those files there on purpose: each is a copy of a learner's file that changed after the recovery checked it, because the learner saved it, so it may hold the learner's newest text.",
+      ),
+      doNotDelete: skill.includes(
+        'Do not delete it: show the learner its path, and once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete the copy from the candidate, and publish again.',
+      ),
+      unwrittenJournalRemoved: skill.includes(
+        'Where an empty journal stood beside that lock, the recovery ended it too and its result also has `unwrittenJournalRemoved: true`.',
+      ),
+      newestFolder: skill.includes(
+        'Where the refusal names several such folders, it names the newest too (the one changed last): that is the folder to move back.',
+      ),
+    },
+    {
+      changedFilesKept: true,
+      doNotDelete: true,
+      unwrittenJournalRemoved: true,
+      newestFolder: true,
+    },
+  )
+})
