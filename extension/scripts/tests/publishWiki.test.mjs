@@ -9074,6 +9074,13 @@ for (const { platform, system, environment, idQuery, machine } of [
       outcome: 'recovers the Wiki: another boot, apart in the other direction',
       recovered: 'published-or-restored',
     },
+    // Value: protects=a publisher that may still run under this boot, whose journal names a boot time that a correction of the clock moved later; fails_when=the tolerance holds only for a boot time before this one, so a boot time 59 seconds after this boot's counts as another boot and the recovery moves the Wiki beside a publisher that may still run; why_new=Cycle 0047 row 269 (P3OCR1b-2): the after side had only the 61-second row; seam=as the rows above; no_claim=as the rows above
+    {
+      apartMs: -59_000,
+      outcome:
+        'is refused as one that may still be running: the same boot, moved by a correction of the clock the other way',
+      recovered: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+    },
   ]) {
     // Value: protects=the learner's --recover on a system that names its boot by no id after a killed publish whose journal names no process start, judged by the boot time with a tolerance of one minute; fails_when=the boot times are not compared, compared without the tolerance or only in one direction, so a journal of an earlier boot whose process id a process of this boot has keeps the Wiki locked as "may still be running", or a boot time moved by a correction of the clock counts as another boot and a publisher that may still run is recovered around, or the computer's id is read by another program, other arguments or another digest, so an earlier boot of this computer is refused as one of another computer; why_new=Cycle 0047 row 64 (TEST-5): the boot-time rule never ran on CI, where Linux names its boot by an id; row 171 (the owner's D5): an earlier boot is this computer's by the digest of its id; row 226 (P2OCR1b-6): a boot time apart in the other direction; seam=the publisher's `system` option, here macOS or Windows whose queries print the computer's id alone (ioreg's hardware UUID, reg.exe's machine GUID), so no boot session and no start is read, and the journal names the digest of that id (the CLI passes the system it runs on); no_claim=a clock corrected while the test runs, and a real ioreg or reg.exe
     test(`a recovery on ${system} of a killed publish whose journal names no start, this computer’s id and a boot time ${Math.abs(apartMs) / 1000} seconds ${apartMs > 0 ? 'before' : 'after'} this one ${outcome}`, async () => {
