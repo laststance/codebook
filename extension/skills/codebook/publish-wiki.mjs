@@ -874,8 +874,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       // The Wiki is updated: the swap's moves are on the disk before the journal that guards them goes, and a journal this publish cannot remove now, after every try, is named in its answer for --recover to end, and fails nothing.
       const journalKept = await syncFolder(dirname(output)).then(() => journalNow.remove()).then(() => ({}), () => ({ publishJournalKept: journal }));
       // A learner's file saved after the last check went into the prior Wiki, now at `backup`: the answer names it instead of counting it preserved.
-      const savedLate = backup ? await manualFilesChangedSince(manualHashes, backup) : [];
-      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length, ...(savedLate.length > 0 && { manualFilesSavedAfterCheck: savedLate }), ...journalKept };
+      const savedLate = await lateSavesOf(manualHashes, backup);
+      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length, ...savedLate, ...journalKept };
     } catch (error) {
       if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
       const undoFailure = await undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas, refusal: error });
@@ -886,6 +886,12 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       throw error;
     }
   });
+}
+
+/** The part of a publish's answer that names the learner's files saved after the publish's last check ({@link manualFilesChangedSince}): `{ manualFilesSavedAfterCheck }` with their paths, or nothing where none changed or no prior Wiki was moved aside. Called by {@link publishWiki} once the Wiki moved. @param manualHashes - The SHA-256 digest of each learner's file as the publish copied it, by path. @param backup - The folder the prior Wiki was moved to; undefined where there was none. @example await lateSavesOf({}, undefined) // => {} */
+async function lateSavesOf(manualHashes, backup) {
+  const changed = !backup ? [] : await manualFilesChangedSince(manualHashes, backup);
+  return changed.length === 0 ? {} : { manualFilesSavedAfterCheck: changed };
 }
 
 /** The learner's files of the prior Wiki that no longer hold the bytes the publish copied from them: after the swap the prior Wiki lies at `backup`, and an editor that kept the file open, or a save made after the publish's last check, writes there. A file that cannot be read now counts as changed, since nothing says what it holds. Called by {@link publishWiki} once the Wiki moved. @param manualHashes - The SHA-256 digest of each learner's file as the publish copied it, by path. @param backup - The folder the prior Wiki was moved to. @returns The paths whose bytes differ, in the order of `manualHashes`; empty when none changed. @example await manualFilesChangedSince({ 'notes.txt': digest(Buffer.from('a')) }, '/repo/.codebook/wiki.previous-1') // => [] */
