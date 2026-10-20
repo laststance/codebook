@@ -15082,32 +15082,14 @@ test('a recovery killed while its clock file stands beside an empty journal leav
 // Value: protects=a publish or a recovery that runs while another --recover ends what stopped runs left beside the Wiki folder; fails_when=the recovery removes the file through which a run that still runs gives its lock its name, an empty file beside a journal that a run has just created, a clock file just created, or a side file of a run it did not end, so that run loses its record or the learner a file; why_new=Cycle 0047 row 206 (a stopped run's leftovers are removed, never a file of a run that runs); seam=a copy of the shipped publisher whose `node:fs/promises` reads the publish lock this test's process holds while it publishes (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`), which stands in for the record of a run that runs; no_claim=a run on another computer, whose record the owner gate refuses as it refuses its journal
 test('a --recover keeps the file beside the publish lock of a run whose process still runs, an empty file beside the journal and a clock file both just created, and a side file of a run it did not end', async () => {
   // Arrange: the candidate published by this test's process, whose lock is read while it holds it; then the four files of runs that run, beside the Wiki folder.
-  const { publishWiki: publishWhoseLockIsRead } = await loadMarkedCopy(
-    'publish-wiki.mjs',
-    '?swapped-folder',
-  )
   const wiki = await publishedWikiWithACandidate()
   const besideTheWiki = dirname(wiki.output)
-  let lockOfThisProcess = '{}'
   try {
-    swapBeforeWriting(
-      (path) => path === join(wiki.next, 'index.html'),
-      async () => {
-        lockOfThisProcess = await readFile(
-          `${wiki.output}.publish-lock.json`,
-          'utf8',
-        )
-      },
-    )
-    await publishWhoseLockIsRead({
-      projectRoot: wiki.root,
-      outputDirectory: wiki.output,
-      stageDirectory: wiki.next,
-    })
+    const lockOfThisProcess = await lockRecordOfThisProcess(wiki)
     const id = '00000000-0000-4000-8000-0000000000aa'
     const filesOfRunsThatRun = {
       [`wiki.publish-lock.json.pending-${id}`]: JSON.stringify({
-        ...JSON.parse(lockOfThisProcess),
+        ...lockOfThisProcess,
         id,
       }),
       'wiki.publish-journal.json.pending-00000000-0000-4000-8000-0000000000bb':
@@ -15145,10 +15127,6 @@ test('a --recover keeps the file beside the publish lock of a run whose process 
       { recovery: 'published-current', filesAfter: filesOfRunsThatRun },
     )
   } finally {
-    swapBeforeWriting(
-      () => false,
-      async () => undefined,
-    )
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
@@ -15711,6 +15689,7 @@ for (const record of [
  * The publish lock this test's process writes while it publishes a Wiki: its process id, its owner and an id, as a record of a run that runs here, read while the publish holds it through the copy of the publisher whose `node:fs/promises` runs a test's swap before a write (`?swapped-folder`).
  * @param {{ root: string, output: string, next: string }} wiki - A published Wiki with a candidate ({@link publishedWikiWithACandidate}), which this publishes.
  * @returns {Promise<{ pid: number, owner: object, id: string }>} The lock's record.
+ * @throws When the swap before the write of the candidate's page never ran, or the lock it read names no owner or another process: a record without both names no writer, which every sweep keeps by its age alone, so a test of the owner gate would pass without that gate.
  * @example
  * const { pid, owner } = await lockRecordOfThisProcess(await publishedWikiWithACandidate())
  */
@@ -15719,7 +15698,7 @@ async function lockRecordOfThisProcess(wiki) {
     'publish-wiki.mjs',
     '?swapped-folder',
   )
-  let lockText = '{}'
+  let lockText = 'the lock was not read'
   swapBeforeWriting(
     (path) => path === join(wiki.next, 'index.html'),
     async () => {
@@ -15738,7 +15717,17 @@ async function lockRecordOfThisProcess(wiki) {
       async () => undefined,
     )
   }
-  return JSON.parse(lockText)
+  const record = lockText.startsWith('{') ? JSON.parse(lockText) : {}
+  // Only a record of this process with its owner names a writer the owner gate judges as running.
+  if (
+    record.pid !== process.pid ||
+    typeof record.owner !== 'object' ||
+    record.owner === null
+  )
+    throw new Error(
+      `The publish lock of this test's process was not read with its process id and its owner: ${lockText}`,
+    )
+  return record
 }
 
 // Value: protects=a recovery that runs, and the chain of claims of a publish lock that stands, while another --recover ends what stopped runs left beside the Wiki folder; fails_when=the sweep removes the claim of a recovery whose process still runs because no record leads to it, or a stopped claim at the head of the chain of a lock that stands, so a recovery of that lock skips the claim after it; why_new=Cycle 0047 row 222 (P2SM-32: a claim no standing record leads to goes once its writer is gone, no other); seam=the claims and the lock, written by the test: one of this test's process (its publish lock's record), and a stopped one of an earlier version at the head of the chain of a lock that a recovery of another run's journal leaves; no_claim=a claim of a recovery on another computer, which the owner gate keeps as it keeps its journal
