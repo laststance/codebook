@@ -444,8 +444,9 @@ async function writeStandInRunner(context, afterSigterm) {
  * Runs {@link runTestInvocation} in a fresh Node process that runs nothing else, and answers what the call returned and how many timers that process held once the call had ended. A fresh process makes the timer count the call's own: another test's timer that ends in the meantime cannot change it, as it could change a count of the timers of the test process.
  * Called by the tests of {@link runTestInvocation}'s timers.
  * @param context - The running test, whose end removes the folder of the small script that makes the call.
- * @param options - `{ silenceTimeoutMs, killGraceMs?, runnerArguments?, execPath? }`: the options of the call, and a path to set as `process.execPath` before the call (a path that is no program makes the spawn fail).
+ * @param options - `{ silenceTimeoutMs, killGraceMs?, runnerArguments?, execPath?, platform?, systemRoot? }`: the options of the call, a path to set as `process.execPath` before the call (a path that is no program makes the spawn fail), a value to set as `process.platform` (the call then plans the end of a silent runner for that system), and a folder to set as the `SystemRoot` variable (where the call looks for `System32/taskkill.exe` when `platform` is `win32`).
  * @returns `{ result, rejectionCode, timersLeft }`: the call's `{ timedOut, code, signal, output }` or `undefined` when it was rejected, the rejection's `code`, and the timers the process held after the call minus the timers before it.
+ * @throws When the helper process printed no JSON result (it crashed or was ended), with its exit code, signal, output and error output in the message.
  * @example
  * const { timersLeft } = await runCallInFreshProcess(context, { silenceTimeoutMs: 2_500, runnerArguments: [runnerPath] })
  */
@@ -458,9 +459,11 @@ async function runCallInFreshProcess(context, options) {
     [
       "import { tmpdir } from 'node:os'",
       `import { runTestInvocation } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/runTestInvocation.mjs')).href)}`,
-      'const { execPath, ...callOptions } = JSON.parse(process.argv[2])',
+      'const { execPath, platform, systemRoot, ...callOptions } = JSON.parse(process.argv[2])',
       "const countTimers = () => process.getActiveResourcesInfo().filter((resource) => resource === 'Timeout').length",
       'if (execPath) process.execPath = execPath',
+      "if (platform) Object.defineProperty(process, 'platform', { value: platform })",
+      'if (systemRoot !== undefined) process.env.SystemRoot = systemRoot',
       'const timersBefore = countTimers()',
       'let rejectionCode',
       'const result = await runTestInvocation({ files: [] }, tmpdir(), callOptions).catch((error) => { rejectionCode = error.code })',
@@ -471,12 +474,25 @@ async function runCallInFreshProcess(context, options) {
     const child = spawn(
       process.execPath,
       [scriptPath, JSON.stringify(options)],
-      { timeout: 60_000, stdio: ['ignore', 'pipe', 'inherit'] },
+      { timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] },
     )
     let stdout = ''
+    let stderr = ''
     child.stdout.on('data', (chunk) => (stdout += chunk))
+    child.stderr.on('data', (chunk) => (stderr += chunk))
     child.on('error', reject)
-    child.on('close', () => resolve(JSON.parse(stdout)))
+    child.on('close', (code, signal) => {
+      // A helper that crashed or printed nothing must fail the test with what it did, not with a JSON error from inside this handler.
+      try {
+        resolve(JSON.parse(stdout))
+      } catch {
+        reject(
+          new Error(
+            `The call helper printed no result (exit code ${code}, signal ${signal}). Output: ${JSON.stringify(stdout)}. Error output: ${JSON.stringify(stderr)}`,
+          ),
+        )
+      }
+    })
   })
 }
 
@@ -906,27 +922,157 @@ test('the shard script refuses a silence limit of Infinity or above what a timer
   assert.deepEqual(await readExecuted(root), [])
 })
 
-// Value: protects=the Windows shard job from test-file processes that outlive a call reported as ended, and the Linux and macOS jobs from a change of the SIGTERM-then-SIGKILL order that lets the runner report what it was running; fails_when=win32 gets only `child.kill()` (TerminateProcess on the runner alone) or a POSIX system gets the forced step first; why_new=Cycle 0048 task 56 (Red Team); seam=planCallEnd, the answer runTestInvocation takes for process.platform; no_claim=any run on Windows: no Windows process is started, so that `taskkill` ends the tree there is not shown by this test
-test('a silent call is ended through its whole process tree on Windows and by SIGTERM then SIGKILL on other systems', () => {
+// Value: protects=the Windows shard job from test-file processes that outlive a call reported as ended, from a `taskkill` that Windows finds in the working folder (a cloned repository could carry one), and the Linux and macOS jobs from a change of the SIGTERM-then-SIGKILL order that lets the runner report what it was running; fails_when=win32 gets only `child.kill()` (TerminateProcess on the runner alone), the program is started by its bare name `taskkill`, win32 has no forced step after the grace, or a POSIX system gets the forced step first; why_new=Cycle 0048 task 56 (Red Team), extended by tasks 67 and 68 (Security, OCR B, Codex); seam=planCallEnd, the answer watchCallSilence takes for process.platform and the SystemRoot variable; no_claim=any run on Windows: no Windows process is started, so that `taskkill` ends the tree there is not shown by this test
+test('a silent call is ended through its whole process tree by the system taskkill.exe on Windows, with a forced step after the grace, and by SIGTERM then SIGKILL on other systems', () => {
   // Arrange
   const pid = 4242
 
   // Act
-  const windows = planCallEnd('win32', pid)
-  const linux = planCallEnd('linux', pid)
-  const macos = planCallEnd('darwin', pid)
+  const windows = planCallEnd('win32', pid, { SystemRoot: '/windows' })
+  const windowsWithoutRoot = planCallEnd('win32', pid, {})
+  const linux = planCallEnd('linux', pid, {})
+  const macos = planCallEnd('darwin', pid, {})
 
   // Assert
-  assert.deepEqual(windows, {
-    terminate: { command: 'taskkill', args: ['/pid', '4242', '/T', '/F'] },
-    force: undefined,
-  })
+  // The path separators differ by the system the test runs on; the folders and the file name are the contract.
+  assert.deepEqual(
+    {
+      command: windows.terminate.command.replaceAll('\\', '/'),
+      args: windows.terminate.args,
+      force: windows.force,
+      defaultCommand: windowsWithoutRoot.terminate.command.replaceAll(
+        '\\',
+        '/',
+      ),
+    },
+    {
+      command: '/windows/System32/taskkill.exe',
+      args: ['/pid', '4242', '/T', '/F'],
+      force: { signal: 'SIGKILL' },
+      defaultCommand: 'C:/Windows/System32/taskkill.exe',
+    },
+  )
   const posix = {
     terminate: { signal: 'SIGTERM' },
     force: { signal: 'SIGKILL' },
   }
   assert.deepEqual([linux, macos], [posix, posix])
 })
+
+/**
+ * Writes a stand-in for the system's `taskkill.exe` into `<folder>/System32/`: an executable script (found through its first line) that notes its arguments in `taskkill.log` beside it, can end the process it is told to end, and exits with the given code. Called by the tests of {@link watchCallSilence}'s Windows path, which run on a POSIX system with the platform set to `win32` and `SystemRoot` set to the returned folder.
+ * @param context - The running test, whose end removes the folder.
+ * @param options.endsTheProcess - Whether the stand-in ends the process of the `/pid` argument with SIGKILL, as the real `taskkill /T /F` does.
+ * @param options.exitCode - The exit code of the stand-in: 0 as the real program does when it succeeded, 1 as it does for an access denied.
+ * @returns `{ systemRoot, taskkillArguments }`: the folder to set as `SystemRoot`, and a function that reads the argument lines the stand-in noted.
+ * @example
+ * const { systemRoot, taskkillArguments } = await writeStandInTaskkill(context, { endsTheProcess: false, exitCode: 1 })
+ */
+async function writeStandInTaskkill(context, { endsTheProcess, exitCode }) {
+  const systemRoot = await mkdtemp(join(tmpdir(), 'codebook-stand-in-root-'))
+  context.after(() => rm(systemRoot, { recursive: true, force: true }))
+  await mkdir(join(systemRoot, 'System32'))
+  const programPath = join(systemRoot, 'System32', 'taskkill.exe')
+  await writeFile(
+    programPath,
+    [
+      `#!${process.execPath}`,
+      "const { appendFileSync } = require('node:fs')",
+      "const { join } = require('node:path')",
+      "appendFileSync(join(__dirname, '..', 'taskkill.log'), process.argv.slice(2).join(' ') + '\\n')",
+      ...(endsTheProcess
+        ? ["process.kill(Number(process.argv[3]), 'SIGKILL')"]
+        : []),
+      `process.exitCode = ${exitCode}`,
+    ].join('\n'),
+    { mode: 0o755 },
+  )
+  const taskkillArguments = async () =>
+    (await readFile(join(systemRoot, 'taskkill.log'), 'utf8').catch(() => ''))
+      .split('\n')
+      .filter(Boolean)
+  return { systemRoot, taskkillArguments }
+}
+
+// Value: protects=the Windows shard job from a silent call that is never ended: the system's taskkill.exe is started with the runner's pid, and when it cannot start or starts and fails (access denied) the runner is ended alone, with the forced step after the grace; fails_when=the program is not started, a taskkill that exits non-zero leaves the runner alive with no step after it (the call then waits for the job's limit), or only a program that cannot start has a fallback; why_new=Cycle 0048 tasks 68 and 85 (OCR B, Codex, Red Team, Step 7); seam=runTestInvocation in fresh processes with `process.platform` set to win32 and `SystemRoot` set to a folder with a stand-in System32/taskkill.exe, and a stand-in runner script (`runnerArguments`); no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started)
+test(
+  'on Windows a silent call is ended by taskkill, and by the runner alone with a forced step when taskkill fails or cannot start',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const runnerForTaskkill = await writeStandInRunner(context, '')
+    const runnerForFailure = await writeStandInRunner(context, '')
+    const runnerForMissing = await writeStandInRunner(
+      context,
+      'process.exit(0)',
+    )
+    const ending = await writeStandInTaskkill(context, {
+      endsTheProcess: true,
+      exitCode: 0,
+    })
+    const failing = await writeStandInTaskkill(context, {
+      endsTheProcess: false,
+      exitCode: 1,
+    })
+    const windowsCall = (runner, systemRoot) =>
+      runCallInFreshProcess(context, {
+        silenceTimeoutMs: 2_500,
+        killGraceMs: 1_500,
+        runnerArguments: [runner.runnerPath],
+        platform: 'win32',
+        systemRoot,
+      })
+
+    // Act
+    const [taskkillEnds, taskkillFails, taskkillMissing] = await Promise.all([
+      windowsCall(runnerForTaskkill, ending.systemRoot),
+      windowsCall(runnerForFailure, failing.systemRoot),
+      windowsCall(runnerForMissing, join(tmpdir(), 'codebook-no-such-root')),
+    ])
+
+    // Assert
+    const lines = (taskkillArguments) =>
+      taskkillArguments.map((line) => line.replace(/\d+/, '<pid>'))
+    assert.deepEqual(
+      {
+        endedByTaskkill: {
+          timedOut: taskkillEnds.result.timedOut,
+          signal: taskkillEnds.result.signal,
+          // The runner never got a SIGTERM of the call itself: the stand-in program ended it.
+          sigterms: await runnerForTaskkill.sigtermCount(),
+          taskkill: lines(await ending.taskkillArguments()),
+        },
+        failedTaskkill: {
+          timedOut: taskkillFails.result.timedOut,
+          signal: taskkillFails.result.signal,
+          // The fallback ends the runner with one SIGTERM, which it ignores; the forced step follows.
+          sigterms: await runnerForFailure.sigtermCount(),
+          taskkill: lines(await failing.taskkillArguments()),
+        },
+        missingTaskkill: {
+          timedOut: taskkillMissing.result.timedOut,
+          code: taskkillMissing.result.code,
+          sigterms: await runnerForMissing.sigtermCount(),
+        },
+      },
+      {
+        endedByTaskkill: {
+          timedOut: true,
+          signal: 'SIGKILL',
+          sigterms: 0,
+          taskkill: ['/pid <pid> /T /F'],
+        },
+        failedTaskkill: {
+          timedOut: true,
+          signal: 'SIGKILL',
+          sigterms: 1,
+          taskkill: ['/pid <pid> /T /F'],
+        },
+        missingTaskkill: { timedOut: true, code: 0, sigterms: 1 },
+      },
+    )
+  },
+)
 
 // Value: protects=the timings recording from a test that never ends: the recording ends with that test named and failed, and writes no timings file; fails_when=`--record` runs with no limit, so one hung test holds the recording until the job is cancelled; why_new=Cycle 0048 task 57 (Red Team: task 25's limit covered one entry point of three); seam=test-shard.mjs --record started as a process on a fixture build with a 3 s limit; no_claim=the default limit (120 s) and the timings of a recording that passes
 test('the timings recording ends a test that never ends, names it and writes no timings file', async (context) => {

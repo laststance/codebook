@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { createResettingTimer } from './createResettingTimer.mjs'
 import { planCallEnd } from './planCallEnd.mjs'
 
-/** Takes one step of {@link planCallEnd} against a call: a signal for the runner, or a program (`taskkill`) that ends its tree. A program that cannot start falls back to ending the runner alone, so a call is never left running for want of `taskkill`. */
+/** Takes one step of {@link planCallEnd} against a call: a signal for the runner, or a program (`taskkill`) that ends its tree. A program that cannot start, or starts and exits with a failure (access denied, no process id), falls back to ending the runner alone, so a call is never left running for want of `taskkill`; the forced step of the plan follows after the grace. */
 function takeEndStep(child, step) {
   if (step.signal) {
     child.kill(step.signal)
@@ -13,7 +13,17 @@ function takeEndStep(child, step) {
     stdio: 'ignore',
     windowsHide: true,
   })
-  ender.on('error', () => child.kill())
+  // A failed start emits 'error' and may emit 'exit' too; the runner is ended alone once, and only while it still runs.
+  let fellBack = false
+  const endRunnerAlone = () => {
+    if (fellBack || child.exitCode !== null || child.signalCode !== null) return
+    fellBack = true
+    child.kill()
+  }
+  ender.on('error', endRunnerAlone)
+  ender.on('exit', (code) => {
+    if (code !== 0) endRunnerAlone()
+  })
 }
 
 /**
@@ -34,7 +44,11 @@ export function watchCallSilence(child, { silenceTimeoutMs, killGraceMs }) {
   let killTimer
   const silenceTimer = createResettingTimer(silenceTimeoutMs, () => {
     timedOut = true
-    const { terminate, force } = planCallEnd(process.platform, child.pid)
+    const { terminate, force } = planCallEnd(
+      process.platform,
+      child.pid,
+      process.env,
+    )
     takeEndStep(child, terminate)
     if (force)
       killTimer = setTimeout(() => takeEndStep(child, force), killGraceMs)
