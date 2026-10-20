@@ -180,6 +180,8 @@ async function nodeRunHarness({
   let closeRequests = 0
   // How many times the run asked the editor to stop a debug session, and the sessions the editor still lists, as VS Code's debug model does.
   let stopRequests = 0
+  // The id of the session each of those requests asks the editor to stop, in order.
+  const stoppedSessionIds: string[] = []
   const listedSessions = new Set<string>()
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
@@ -508,6 +510,7 @@ async function nodeRunHarness({
       async stopDebugging(stopped?: vscode.DebugSession): Promise<void> {
         calls.push('stop-debugging')
         stopRequests += 1
+        stoppedSessionIds.push(stopped?.id ?? 'no session named')
         // As VS Code 1.120 to 1.142 answer for a session their debug model no longer lists; an ended session it still lists is stopped again without a refusal.
         if (stopped && !listedSessions.has(stopped.id))
           throw new Error('debug session not found')
@@ -648,6 +651,8 @@ async function nodeRunHarness({
     launchPreparations: (): number => launchPreparations,
     closeRequests: (): number => closeRequests,
     stopRequests: (): number => stopRequests,
+    /** The ids of the sessions the run asked the editor to stop, one entry for each request, in order. */
+    stoppedSessionIds: (): string[] => [...stoppedSessionIds],
     /** The owned debug session ends, and the editor drops it from its list, as VS Code does when a newer session of the same name starts: a listener still registered hears of the end, and a later stop of the session is refused with "debug session not found". */
     endSessionAndDropIt: (): void => {
       terminate?.(session)
@@ -1419,13 +1424,23 @@ test('a Node test run whose release failed at its test process stops a child deb
       (error: unknown) => String(error),
     )
 
-    // Assert: the first stop asked for one session, the second for the owned one and the child.
+    // Assert: the first stop asked for the owned session; the second asked for the owned one again (its release failed) and for the child session that started later, by its id.
     assert.deepEqual(
-      { firstStop, secondStop, stopRequests: harness.stopRequests() },
+      {
+        firstStop,
+        secondStop,
+        stopRequests: harness.stopRequests(),
+        stoppedSessionIds: harness.stoppedSessionIds(),
+      },
       {
         firstStop: 'Error: process group still running (close 1)',
         secondStop: 'released',
         stopRequests: 3,
+        stoppedSessionIds: [
+          'owned-node-session',
+          'owned-node-session',
+          'owned-node-child-session',
+        ],
       },
     )
   } finally {
