@@ -149,8 +149,13 @@ function jsonSyntaxErrorOffsetOf(text) {
   }
 }
 
-/** The refusal of a Wiki manifest that is no JSON, with the line and the column where its syntax breaks ({@link jsonSyntaxErrorOffsetOf}), both numbers, so the agent finds its own error in a candidate it edits and no text of the manifest is repeated; {@link INVALID_MANIFEST_REFUSAL} where no place is found. Called by {@link parseRecordOf} for {@link parseManifest}. @param text - The manifest as the parser read it. @example manifestSyntaxRefusalOf('{\n  "pages": [1,]\n}') // => 'The Wiki manifest is not a JSON object: its JSON syntax breaks at line 2, column 15; its text is not repeated here.' */
+/** The refusal of a Wiki manifest that starts with a UTF-8 byte order mark, which JSON does not allow and the parser reads as a break at line 1, column 1: a tool may write one before the text (PowerShell 5.1's `Set-Content -Encoding UTF8`), and the agent sees no error in the text itself. The publisher does not read past the mark, since the extension's reader parses the manifest too. Read by {@link manifestSyntaxRefusalOf}. */
+const BYTE_ORDER_MARK_MANIFEST_REFUSAL = 'The Wiki manifest is not a JSON object: it starts with a UTF-8 byte order mark, which JSON does not allow before its first value (PowerShell 5.1’s Set-Content -Encoding UTF8 writes one). Write the file again as UTF-8 without that mark; its text is not repeated here.';
+
+/** The refusal of a Wiki manifest that is no JSON, with the line and the column where its syntax breaks ({@link jsonSyntaxErrorOffsetOf}), both numbers, so the agent finds its own error in a candidate it edits and no text of the manifest is repeated; {@link BYTE_ORDER_MARK_MANIFEST_REFUSAL} for one that starts with a UTF-8 byte order mark, the first break there; {@link INVALID_MANIFEST_REFUSAL} where no place is found. Called by {@link parseRecordOf} for {@link parseManifest}. @param text - The manifest as the parser read it, where a UTF-8 byte order mark stands as U+FEFF. @example manifestSyntaxRefusalOf('{\n  "pages": [1,]\n}') // => 'The Wiki manifest is not a JSON object: its JSON syntax breaks at line 2, column 15; its text is not repeated here.' */
 function manifestSyntaxRefusalOf(text) {
+  // The mark is no whitespace of JSON: the parser refuses it before the first value.
+  if (text.startsWith('\uFEFF')) return BYTE_ORDER_MARK_MANIFEST_REFUSAL;
   const offset = jsonSyntaxErrorOffsetOf(text);
   if (offset === undefined) return INVALID_MANIFEST_REFUSAL;
   const before = text.slice(0, offset);

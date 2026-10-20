@@ -19937,3 +19937,53 @@ for (const { pid, outcome, recovered } of [
     }
   })
 }
+
+// Value: protects=the agent that writes a candidate's manifest through a tool that puts a UTF-8 byte order mark before it (PowerShell 5.1's `Set-Content -Encoding UTF8`) and must learn what to change; fails_when=the refusal names line 1, column 1 alone, where the agent sees no error in its text, or the publisher reads past the mark, which the extension's reader refuses; why_new=Cycle 0047 row 267 (P3TEST-14); seam=none (the shipped CLI as the agent runs it); no_claim=a byte order mark of UTF-16
+test('a publish of a candidate whose manifest starts with a UTF-8 byte order mark is refused through the CLI with a sentence that names the mark and none of the manifest’s text', async () => {
+  // Arrange: a published Wiki with a prepared candidate, whose manifest, a JSON object, is written again behind the three bytes of a UTF-8 byte order mark.
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    const manifestPath = join(wiki.next, 'codebook-wiki.json')
+    await writeFile(
+      manifestPath,
+      Buffer.concat([
+        Buffer.from([0xef, 0xbb, 0xbf]),
+        await readFile(manifestPath),
+      ]),
+    )
+
+    // Act
+    const result = spawnSync(
+      process.execPath,
+      [
+        PUBLISHER_COMMAND,
+        '--project',
+        wiki.root,
+        '--output',
+        wiki.output,
+        '--stage',
+        wiki.next,
+      ],
+      { encoding: 'utf8', timeout: 10_000 },
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        status: result.status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        status: 1,
+        stdout: '',
+        stderr:
+          'Error: The Wiki manifest is not a JSON object: it starts with a UTF-8 byte order mark, which JSON does not allow before its first value (PowerShell 5.1’s Set-Content -Encoding UTF8 writes one). Write the file again as UTF-8 without that mark; its text is not repeated here.\n',
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
