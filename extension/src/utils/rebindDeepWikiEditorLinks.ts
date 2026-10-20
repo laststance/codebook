@@ -156,7 +156,7 @@ export function rebindDeepWikiEditorLinks(
     )
   // The id of the added description is chosen once for the page, in one reading of its ids, and only when an entry gets a target.
   let targetId: string | undefined
-  // What the targets added so far make the page longer, so that a page of crafted entries is not served many times its file ({@link WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT}).
+  // What the targets added so far make the page longer, in UTF-8 bytes, so that a page of crafted entries is not served many times its file ({@link WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT}).
   let addedBytes = 0
   // A site published by 0.2.29.0 carries the link alone; it gets the target the publisher prints today.
   const editedPage = relabeledPage.replace(
@@ -172,13 +172,13 @@ export function rebindDeepWikiEditorLinks(
       if (target === undefined) return entry
       targetId ??= freeOpenTargetIdIn(relabeledPage)
       const withTarget = `${opening}${linkAttributes} aria-describedby="${targetId}"${link} ${openTargetHtml(target, targetId)}${closing}`
+      // The page is served as UTF-8, so the bound counts bytes: a character of a CJK path is one UTF-16 code unit and three bytes.
+      const entryAddedBytes =
+        Buffer.byteLength(withTarget) - Buffer.byteLength(entry)
       // An entry that would take the page past the bound keeps its link alone.
-      if (
-        addedBytes + withTarget.length - entry.length >
-        WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT
-      )
+      if (addedBytes + entryAddedBytes > WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT)
         return entry
-      addedBytes += withTarget.length - entry.length
+      addedBytes += entryAddedBytes
       return withTarget
     },
   )
