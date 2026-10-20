@@ -24,6 +24,7 @@ import { RecordingStore } from '../recordingStore'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import * as captureStudyModule from '../utils/captureStudy'
 import { lookAtRecording } from '../utils/lookAtRecording'
 import { readProcessStart } from '../utils/readProcessStart'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
@@ -5431,6 +5432,59 @@ test('the line “History not saved: …” of a study that still waits stays, w
       unretryableErrorCount: 0,
     })
     assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.equal(
+      harness.service.state(first.record).historyOutcome.status,
+      'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the line "History not saved: …" and the Retry button beside it for a study whose last checkpoint failed before any write (its capture failed, so no archive waits for it), also when another study is saved meanwhile; fails_when=the successful save of the second study retires the line because no archive waits, so the learner loses the line and its Retry although the first study is unsaved; why_new=Cycle 0048 task 64 (CodeRabbit: the line was cleared by another study's save); seam=the capture step ({@link captureStudy}), which fails for the first study until the learner presses Retry, and the reader's refresh, which saves the second run
+test('the line “History not saved: …” of a study whose capture failed before any write stays, with Retry storage / refresh beside it, when another study is saved meanwhile, and is gone once Retry saved that study', async (context) => {
+  // Arrange: the checkpoint of a first, stopped run fails in its capture, so the study never waits in the write queue; a second run of the same server has started.
+  const capture = captureStudyModule.captureStudy
+  let failedStudyId: string | undefined
+  context.mock.method(
+    captureStudyModule,
+    'captureStudy',
+    (...args: Parameters<typeof capture>) =>
+      failedStudyId === `${args[0].instanceId}_${args[1].id}`
+        ? Promise.reject(new Error('capture is unavailable'))
+        : capture(...args),
+  )
+  const harness = await workspaceHarness()
+  try {
+    const first = await startRun(harness)
+    failedStudyId = `${harness.service.instanceId}_${first.record.id}`
+    await harness.reader.action('stop')
+    const second = await startRun(harness)
+    // Act: the reader's refresh saves the second run's study; then the capture works again and the learner presses Retry storage / refresh.
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.service.state(second.record).historyOutcome.status === 'saved',
+      'the save of the second run',
+      1_000,
+    )
+    const afterOtherSave = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    failedStudyId = undefined
+    await harness.reader.action('retry')
+    // Assert
+    assert.deepEqual(afterOtherSave, {
+      queued: 0,
+      errors: ['Error: History not saved: Error: capture is unavailable'],
+      // Retry storage / refresh is still offered.
+      unretryableErrorCount: 0,
+    })
     assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
     assert.equal(
       harness.service.state(first.record).historyOutcome.status,

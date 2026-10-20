@@ -8608,7 +8608,7 @@ export class StudyWorkspace {
           // The line of a ledger that could not be cleaned above stays, although these later steps succeeded.
           if (ledgerCleaned) {
             this.errors.delete('archive')
-            if (this.pendingArchives.size === 0)
+            if (!this.hasUnsavedHistory())
               this.errors.delete('history-not-saved')
           }
           if (this.selection.studyId) {
@@ -10570,8 +10570,8 @@ export class StudyWorkspace {
               this.selectedArchive = archive
             if (this.pendingArchives.get(id) === checkpoint)
               this.pendingArchives.delete(id)
-            // The line stays while another archive still waits: retired by this save, it would take Retry storage / refresh from the pane although a study is unsaved.
-            if (current && this.pendingArchives.size === 0) {
+            // The line stays while another archive still waits or another study's last checkpoint failed before any write: retired by this save, it would take Retry storage / refresh from the pane although a study is unsaved (Cycle 0048 task 64).
+            if (current && !this.hasUnsavedHistory()) {
               this.errors.delete('history-not-saved')
               // A save that succeeds also retires the line of a removal whose storage lock could not be released ({@link reportUnreleasedLock}).
               this.errors.delete('archive')
@@ -10618,6 +10618,28 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether any study of this window still has history that is not saved: an archive waits for its write, or the last checkpoint of a run of this window failed (its capture failed before any write, so no archive waits for it); called before the `history-not-saved` line is taken from the pane by {@link persistArchive}, {@link forgetStudyRemovedWithItsRecording} and Retry storage / refresh in {@link action}.
+   * Why: the line carries Retry storage / refresh, which is the learner's only way to save such a study; a save of another study must not take it away.
+   * @param exceptStudyId - A study that is not counted, because the caller is settling it (it is forgotten or saved right now).
+   * @returns `true` while another study has a waiting archive or a failed receipt of a run this window can checkpoint again; `false` when the line may go.
+   * @example
+   * if (!this.hasUnsavedHistory()) this.errors.delete('history-not-saved')
+   */
+  private hasUnsavedHistory(exceptStudyId?: string): boolean {
+    for (const id of this.pendingArchives.keys())
+      if (id !== exceptStudyId) return true
+    for (const [id, receipt] of this.historyReceipts)
+      // Only a run of this window's service can be checkpointed again by Retry storage / refresh; a failed receipt of any other study would keep the line for ever.
+      if (
+        id !== exceptStudyId &&
+        receipt.status === 'failed' &&
+        this.recordOfStudy(id)
+      )
+        return true
+    return false
+  }
+
+  /**
    * Forgets a study whose save the library refused because it left the library with its recording ({@link StudyRemovedWithItsRecordingError}: another window removed it, or its files were removed by hand), and takes the line of a failed save ("History not saved: …", the reader's `history-not-saved` line) from the pane once no other archive waits, as a save that succeeds does; called by {@link persistArchive} (Cycle 0047 rows 162 and 256). The `archive` line, which the study list, the refresh and the Node history failures use, is left as it is (Cycle 0048 task 19).
    * Why: the study no longer waits for a save, so a line left from one of its earlier failed saves would offer Retry storage / refresh for a study that is gone.
    * @param studyId - The study whose save was refused.
@@ -10627,9 +10649,7 @@ export class StudyWorkspace {
     studyId: string,
   ): Promise<void> {
     // The line goes before the study is forgotten, so a failed read of the list there reports anew; it stays while another archive waits.
-    if (
-      [...this.pendingArchives.keys()].every((pending) => pending === studyId)
-    )
+    if (!this.hasUnsavedHistory(studyId))
       this.errors.delete('history-not-saved')
     await this.forgetRemovedStudy(studyId, 'archive-removed')
     this.leaveStudyThatLeftLibrary(studyId)
@@ -21964,8 +21984,8 @@ export class StudyWorkspace {
    * const ledgerCleaned = await this.forgetStudiesRemovedByHandOrReport()
    * if (ledgerCleaned) {
    *   this.errors.delete('archive')
-   *   // The History not saved line goes only when no archive waits to be written.
-   *   if (this.pendingArchives.size === 0) this.errors.delete('history-not-saved')
+   *   // The History not saved line goes only when no study's history is unsaved.
+   *   if (!this.hasUnsavedHistory()) this.errors.delete('history-not-saved')
    * }
    * ```
    */
