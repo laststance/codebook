@@ -9249,6 +9249,10 @@ const PUBLISHER_COMMAND = fileURLToPath(
   new URL('../../skills/codebook/publish-wiki.mjs', import.meta.url),
 )
 
+/** What the shipped publisher prints to stderr, whole, when its command line is refused with the usage: the three forms of the command and a line end. Written out here, not read from the publisher, so a changed or lost option of the usage fails the tests that expect it. */
+const PUBLISHER_USAGE_STDERR =
+  'Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...\n'
+
 for (const { when, rewrite, named, outcome, ended } of [
   {
     when: 'name the host name and the space of the journal’s owner, which ran in a space of process ids that cannot come back',
@@ -9383,9 +9387,7 @@ test('a --recover with --gone-host and --gone-space where no publication journal
         withBoth: { code: withBoth.status, stderr: withBoth.stderr.trim() },
         withHostAlone: {
           code: withHostAlone.status,
-          usage: withHostAlone.stderr.startsWith(
-            'Usage: node publish-wiki.mjs',
-          ),
+          usage: withHostAlone.stderr,
         },
         wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
       },
@@ -9395,7 +9397,7 @@ test('a --recover with --gone-host and --gone-space where no publication journal
           stderr:
             'Error: --gone-host and --gone-space name "rebuilt-container" (linux@0), but no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.',
         },
-        withHostAlone: { code: 2, usage: true },
+        withHostAlone: { code: 2, usage: PUBLISHER_USAGE_STDERR },
         wikiPage: wiki.wikiPage,
       },
     )
@@ -9892,13 +9894,13 @@ test('a --recover with two --gone-host options and one --gone-space is refused w
       {
         killed,
         code: result.status,
-        usage: result.stderr.startsWith('Usage: node publish-wiki.mjs'),
+        usage: result.stderr,
         journal: await access(`${wiki.output}.publish-journal.json`).then(
           () => 'kept',
           () => 'gone',
         ),
       },
-      { killed: '', code: 2, usage: true, journal: 'kept' },
+      { killed: '', code: 2, usage: PUBLISHER_USAGE_STDERR, journal: 'kept' },
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
@@ -20327,10 +20329,15 @@ for (const { refused, argumentsOf } of [
         {
           code: result.status,
           stdout: result.stdout,
-          usage: result.stderr.startsWith('Usage: node publish-wiki.mjs'),
+          usage: result.stderr,
           wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
         },
-        { code: 2, stdout: '', usage: true, wikiPage: wiki.wikiPage },
+        {
+          code: 2,
+          stdout: '',
+          usage: PUBLISHER_USAGE_STDERR,
+          wikiPage: wiki.wikiPage,
+        },
       )
     } finally {
       await rm(wiki.directory, { recursive: true, force: true })
@@ -20861,7 +20868,7 @@ test('a publish of a candidate after a Wiki with CRLF line ends in a page’s te
       stageDirectory: next,
     }).then(
       () => 'not refused',
-      (error) => error.message.slice(0, 113),
+      (error) => error.message,
     )
 
     // Assert
@@ -20869,8 +20876,7 @@ test('a publish of a candidate after a Wiki with CRLF line ends in a page’s te
       { publishedHasCarriageReturn: published.includes('\r'), outcome },
       {
         publishedHasCarriageReturn: false,
-        outcome:
-          'A file of the published Wiki has CRLF line ends where the publisher wrote LF: read with LF line ends, it matches ',
+        outcome: `A file of the published Wiki has CRLF line ends where the publisher wrote LF: read with LF line ends, it matches the publication record, so Git’s line-end conversion (core.autocrlf, or a text attribute) changed it when it checked the Wiki folder out. Nothing was changed. Mark the Wiki folder -text: add the line ".codebook/wiki/**" -text to the .gitattributes file in ${root} and commit that file; then, in that folder, run git rm -r --cached --quiet -- ".codebook/wiki" and git checkout HEAD -- ".codebook/wiki", which write the folder’s committed files again with LF line ends (a change of them that is not committed is lost), and run this command again.`,
       },
     )
   } finally {
@@ -21583,7 +21589,7 @@ test('the publisher started through a linked skill folder prints its usage and e
       {
         usageStatus: withoutArguments.status,
         usageStdout: withoutArguments.stdout,
-        usageStartsWith: withoutArguments.stderr.slice(0, 13),
+        usageStderr: withoutArguments.stderr,
         preparedStatus: prepared.status,
         preparedStderr: prepared.stderr,
         preparedKeys: Object.keys(JSON.parse(prepared.stdout || '{}')),
@@ -21592,7 +21598,7 @@ test('the publisher started through a linked skill folder prints its usage and e
       {
         usageStatus: 2,
         usageStdout: '',
-        usageStartsWith: 'Usage: node p',
+        usageStderr: PUBLISHER_USAGE_STDERR,
         preparedStatus: 0,
         preparedStderr: '',
         preparedKeys: ['stage', 'manifest', 'output', 'legacyAdopted'],
