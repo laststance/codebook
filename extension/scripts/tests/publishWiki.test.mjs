@@ -20153,3 +20153,173 @@ for (const { place, outputOf, steps } of [
     }
   })
 }
+
+for (const { refused, argumentsOf } of [
+  {
+    refused: 'a single option given twice',
+    argumentsOf: (wiki) => [
+      '--recover',
+      '--project',
+      wiki.root,
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+    ],
+  },
+  {
+    refused: 'a flag given twice',
+    argumentsOf: (wiki) => [
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      wiki.next,
+      '--render-only',
+      '--render-only',
+    ],
+  },
+  {
+    refused: 'a flag of another step',
+    argumentsOf: (wiki) => [
+      '--prepare',
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--render-only',
+    ],
+  },
+  {
+    refused: 'a --gone-host and --gone-space pair outside --recover',
+    argumentsOf: (wiki) => [
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      wiki.next,
+      '--gone-host',
+      'rebuilt-container',
+      '--gone-space',
+      'linux@0',
+    ],
+  },
+  {
+    refused: 'an option without its value, before the next option',
+    argumentsOf: (wiki) => ['--recover', '--project', '--output', wiki.output],
+  },
+  {
+    refused: 'an option whose value is empty',
+    argumentsOf: (wiki) => [
+      '--recover',
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      '',
+    ],
+  },
+  {
+    refused: 'an option at the end without its value',
+    argumentsOf: (wiki) => [
+      '--recover',
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+    ],
+  },
+  {
+    refused: 'a word that is no option',
+    argumentsOf: (wiki) => [
+      '--recover',
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      'now',
+    ],
+  },
+  {
+    refused: 'the end of the options, --',
+    argumentsOf: (wiki) => [
+      '--recover',
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--',
+    ],
+  },
+  {
+    refused: 'a flag given a value',
+    argumentsOf: (wiki) => [
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      wiki.next,
+      '--render-only=yes',
+    ],
+  },
+  {
+    refused: 'a step’s word after the first argument',
+    argumentsOf: (wiki) => [
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--recover',
+    ],
+  },
+  {
+    refused: 'a short option',
+    argumentsOf: (wiki) => [
+      '--recover',
+      '-p',
+      wiki.root,
+      '--output',
+      wiki.output,
+    ],
+  },
+  {
+    refused: 'a publish without --stage',
+    argumentsOf: (wiki) => ['--project', wiki.root, '--output', wiki.output],
+  },
+  {
+    refused: 'a recovery without --output',
+    argumentsOf: (wiki) => ['--recover', '--project', wiki.root],
+  },
+]) {
+  // Value: protects=the learner and the agent whose command line of the publisher holds a slip: it is refused with the usage before any step runs; fails_when=the command line takes a single option twice (the last one wins), a value that is empty or is the next option, an option of another step, a word that is no option or `--`, so a step runs with another meaning than the agent wrote; why_new=Cycle 0047 row 275 (P3SIMP-3, the owner's D14): the hand-written loop became node:util's parseArgs with the same refusals; seam=none (the shipped CLI as the agent runs it); no_claim=the forms parseArgs accepts in addition (--option=value)
+  test(`the publisher’s command line refuses ${refused} with the usage and runs no step`, async () => {
+    // Arrange: a published Wiki with a prepared candidate.
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      // Act
+      const result = spawnSync(
+        process.execPath,
+        [PUBLISHER_COMMAND, ...argumentsOf(wiki)],
+        { encoding: 'utf8', timeout: 10_000 },
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          code: result.status,
+          stdout: result.stdout,
+          usage: result.stderr.startsWith('Usage: node publish-wiki.mjs'),
+          wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+        },
+        { code: 2, stdout: '', usage: true, wikiPage: wiki.wikiPage },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}

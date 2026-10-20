@@ -5,6 +5,7 @@ import { hostname, uptime } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep, win32 } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import { renderWikiPages } from './render-wiki.mjs';
 
 const MANIFEST = 'codebook-wiki.json';
@@ -2052,34 +2053,47 @@ async function restorePriorWiki(record, paths, requirePathHeld) {
   return { status: 'previous-restored', output, ...changedFilesKeptOf(changedCopies) };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const args = process.argv.slice(2);
-  const mode = ['--prepare', '--recover'].includes(args[0]) ? args.shift() : 'publish';
-  // A recovery alone takes the places the learner confirmed gone, one --gone-host and --gone-space pair for each place.
-  const repeated = new Set(mode === '--recover' ? ['--gone-host', '--gone-space'] : []);
-  const allowed = new Set(['--project', '--output', '--stage', ...repeated]);
-  const flags = new Set(mode === '--prepare' ? ['--adopt-existing'] : mode === 'publish' ? ['--render-only'] : []);
-  const options = {}, gone = { '--gone-host': [], '--gone-space': [] }, seen = new Set();
-  let valid = true;
-  for (let index = 0; index < args.length; index++) {
-    const key = args[index];
-    if (seen.has(key) && !repeated.has(key)) { valid = false; break; }
-    seen.add(key);
-    if (flags.has(key)) options[key] = true;
-    else if (allowed.has(key) && args[index + 1] && !args[index + 1].startsWith('--')) {
-      if (repeated.has(key)) gone[key].push(args[++index]);
-      else options[key] = args[++index];
-    } else { valid = false; break; }
-  }
+/** What the command line prints for arguments it refuses ({@link commandOf}), with exit code 2. Read by the command line at the end of this file. */
+const USAGE = 'Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...';
+
+/** The options each step of the command line takes, as `node:util`'s `parseArgs` reads them: the project, the output and the stage, each once; a flag of the step's own (`--adopt-existing` for `--prepare`, `--render-only` for a publish); and for `--recover` alone the places the learner confirmed gone, one `--gone-host` and `--gone-space` pair for each place. Read by {@link commandOf}. */
+const COMMAND_OPTIONS = {
+  '--prepare': { project: { type: 'string' }, output: { type: 'string' }, stage: { type: 'string' }, 'adopt-existing': { type: 'boolean' } },
+  publish: { project: { type: 'string' }, output: { type: 'string' }, stage: { type: 'string' }, 'render-only': { type: 'boolean' } },
+  '--recover': { project: { type: 'string' }, output: { type: 'string' }, stage: { type: 'string' }, 'gone-host': { type: 'string', multiple: true }, 'gone-space': { type: 'string', multiple: true } },
+};
+
+/** Reads the arguments after the step's word with `node:util`'s `parseArgs`, strict, as the step's options name them ({@link COMMAND_OPTIONS}): an option of another step, a word that is no option, a value that starts with a dash or that is the next option, and a value given to a flag are refused by `parseArgs` itself; a single option given twice, the end of the options (`--`) and an empty value by the tokens it answers. Called by {@link commandOf}. @returns The values; undefined for arguments it refuses. @example parsedArgumentsOf(['--project', '/repo', '--project', '/repo'], COMMAND_OPTIONS['--recover']) // => undefined */
+function parsedArgumentsOf(args, options) {
+  let parsed;
+  try { parsed = parseArgs({ args, options, strict: true, allowPositionals: false, tokens: true }); } catch { return undefined; }
+  const named = parsed.tokens.filter(token => token.kind === 'option');
+  // An option that is no pair's is given once: parseArgs keeps the last of two, which would run a step the agent did not write.
+  const isRepeated = token => !options[token.name].multiple && named.some(other => other !== token && other.name === token.name);
+  const isWhole = parsed.tokens.every(token => token.kind !== 'option-terminator') && !named.some(isRepeated) && Object.values(parsed.values).flat().every(value => value !== '');
+  return isWhole ? parsed.values : undefined;
+}
+
+/** Reads the command line: its first argument names the step (`--prepare`, `--recover`, or a publish without one), and the rest its options ({@link parsedArgumentsOf}), which must name the project and the output, the stage for a publish, and as many `--gone-host` as `--gone-space` options, the nth host name paired with the nth space. Called by the command line at the end of this file. @param args - The arguments after the script's path. @returns The step and the options it is called with, the system the publisher runs on among them ({@link SYSTEM_HERE}); undefined for arguments it refuses, for which the usage is printed. @example commandOf(['--recover', '--project', '/repo', '--output', '/repo/.codebook/wiki']).options.goneOwners // => [] */
+function commandOf(args) {
+  const mode = ['--prepare', '--recover'].includes(args[0]) ? args[0] : 'publish';
+  const values = parsedArgumentsOf(mode === 'publish' ? args : args.slice(1), COMMAND_OPTIONS[mode]);
+  const hosts = values?.['gone-host'] ?? [], spaces = values?.['gone-space'] ?? [];
   // Each place confirmed gone has its host name and its space: the nth --gone-host pairs with the nth --gone-space.
-  if (!valid || !options['--project'] || !options['--output'] || mode === 'publish' && !options['--stage'] || gone['--gone-host'].length !== gone['--gone-space'].length) {
-    console.error('Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...');
+  if (!values || !values.project || !values.output || mode === 'publish' && !values.stage || hosts.length !== spaces.length) return undefined;
+  const operation = mode === '--prepare' ? prepareWikiStage : mode === '--recover' ? recoverWikiPublication : publishWiki;
+  return { operation, options: { projectRoot: values.project, outputDirectory: values.output, stageDirectory: values.stage, adoptExisting: values['adopt-existing'] === true, renderOnly: values['render-only'] === true,
+    goneOwners: hosts.map((host, index) => ({ host, space: spaces[index] })), system: SYSTEM_HERE } };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const command = commandOf(process.argv.slice(2));
+  if (command === undefined) {
+    console.error(USAGE);
     process.exitCode = 2;
   } else {
-    const operation = mode === '--prepare' ? prepareWikiStage : mode === '--recover' ? recoverWikiPublication : publishWiki;
-    const goneOwners = gone['--gone-host'].map((host, index) => ({ host, space: gone['--gone-space'][index] }));
     // The system the publisher runs on is the one its owner judgement asks ({@link SYSTEM_HERE}).
-    operation({ projectRoot: options['--project'], outputDirectory: options['--output'], stageDirectory: options['--stage'], adoptExisting: options['--adopt-existing'] === true, renderOnly: options['--render-only'] === true, goneOwners, system: SYSTEM_HERE })
+    command.operation(command.options)
       .then(result => console.log(JSON.stringify(result)))
       .catch(error => { console.error(String(error)); process.exitCode = 1; });
   }
