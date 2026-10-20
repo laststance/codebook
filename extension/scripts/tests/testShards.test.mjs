@@ -398,6 +398,7 @@ test('a call whose test does not end is ended after its silence limit and report
 
   // Assert
   assert.equal(result.timedOut, true)
+  // gstack-timing-ok: the bound is the contract: the call ends by its 1 s silence limit, not by the 120 s default
   assert.equal(result.elapsedMs < 10_000, true)
   assert.match(result.output, /✔ finishes first/)
 })
