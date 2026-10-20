@@ -22,8 +22,10 @@ const CLOSED_SVG_PAGE_BOUND_RATIO = 6
 const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
 /** How many times as long as the HTML parser alone the reader may take for select pairs after deep nesting, where the parser's own time grows with the square of the nesting. The reader keeps the mode a select was pushed in, where the parser alone walks the stack at each select end: on the development host the reader took 0.16 to 0.18 times the parser's time (0.09 under c8); when each select start and end walked the stack to reset the mode, 2.2 times (2.9 under c8). */
 const SELECT_PAIRS_PARSER_BOUND_RATIO = 1.5
-/** How long the timing test waits for its worker before it takes the filtering for unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
+/** How long the timing test waits for its worker's warm-up and ordinary page before it takes the filtering for unfinished, in milliseconds; a two-core CI runner under coverage takes several times as long as the development host. */
 const FILTER_DEADLINE_MS = 30_000
+/** How many times as long as {@link ORDINARY_PAGE} the timing test waits for each crafted page before it takes the filtering for unfinished: more than every bound of these tests ({@link CLOSED_SVG_PAGE_BOUND_RATIO} the largest), so a page that misses its bound is measured, and a page that never ends is stopped. One fixed deadline for the whole worker cut the last page of the closed-svg test on a CI runner under coverage, where the ordinary page took 1,835 ms and the four pages together about 28 s more. */
+const PAGE_DEADLINE_RATIO = 10
 /** An ordinary Wiki page of more than 1 MB, sections of a heading, text, a link and code; each crafted page of the timing tests is compared with it. */
 const ORDINARY_PAGE =
   '<section><h2 id="s">Title</h2><p>Some text with <a href="https://example.com/x">a link</a> and <code>code</code>.</p></section>'.repeat(
@@ -35,7 +37,7 @@ const WARM_UP_PAGE = '<p><a href="x">warm</a></p>'.repeat(2_000)
 const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 
 /**
- * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers how long each took, or `unfinished` for the pages left when the deadline passed; the reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
+ * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers how long each took, or `unfinished` for the pages left when a deadline passed: {@link FILTER_DEADLINE_MS} until the ordinary page's time is known, then {@link PAGE_DEADLINE_RATIO} times that time for each crafted page. The reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
  * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`, so that each crafted page is compared with an ordinary page in the same thread under the same load, served by the same call.
  * @param moduleName - The compiled module under `dist/utils`, without `.js`.
  * @param exportName - The function it exports.
@@ -82,11 +84,18 @@ for (const [name, page] of Object.entries(workerData.pages)) {
     },
   )
   await new Promise<void>((resolve) => {
-    const deadline = setTimeout(() => {
+    const stop = (): void => {
       void worker.terminate().then(() => resolve())
-    }, FILTER_DEADLINE_MS)
+    }
+    let deadline = setTimeout(stop, FILTER_DEADLINE_MS)
     worker.on('message', ([name, milliseconds]: [string, number]) => {
       times[name] = milliseconds
+      // Each crafted page gets its own deadline, a multiple of the ordinary page's time on this machine, so a slow runner measures every page.
+      clearTimeout(deadline)
+      deadline = setTimeout(
+        stop,
+        PAGE_DEADLINE_RATIO * (times.ordinary as number),
+      )
     })
     worker.on('exit', () => {
       clearTimeout(deadline)

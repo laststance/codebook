@@ -65,13 +65,14 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), or a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open), or the change of the run's marker at its end (its removal or its turn into a reservation: held, the run's end is already recorded and told, and the run waits there). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
   | 'candidate-listing'
   | 'journal-wait'
   | 'publish-token-read'
+  | 'marker-change'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -466,7 +467,7 @@ export async function openWikiUpdateWindow(options: {
           return candidates
         },
       },
-      // The real claim on the marker runs; the window records each change of its marker (its removal, its turn into a stopped watch's reservation) and what that change answered.
+      // The real claim on the marker runs; the window records each change of its marker (its removal, its turn into a stopped watch's reservation) and what that change answered, and a test can hold that change open.
       './utils/claimWikiUpdateMarker': {
         claimWikiUpdateMarker: async (
           ...claimed: Parameters<typeof claimWikiUpdateMarker>
@@ -474,9 +475,17 @@ export async function openWikiUpdateWindow(options: {
           const claim = await claimWikiUpdateMarker(...claimed)
           if (!('release' in claim)) return claim
           return {
-            release: () => recordMarkerChange('release', claim.release()),
-            reserve: (watchEndedAtMs: number) =>
-              recordMarkerChange('reserve', claim.reserve(watchEndedAtMs)),
+            release: async () => {
+              await passHold('marker-change')
+              return recordMarkerChange('release', claim.release())
+            },
+            reserve: async (watchEndedAtMs: number) => {
+              await passHold('marker-change')
+              return recordMarkerChange(
+                'reserve',
+                claim.reserve(watchEndedAtMs),
+              )
+            },
           }
         },
       },
