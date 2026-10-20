@@ -10635,24 +10635,17 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether any study of this window still has history that is not saved: an archive waits for its write, or the last checkpoint of a run of this window failed (its capture failed before any write, so no archive waits for it); called before the `history-not-saved` line is taken from the pane by {@link persistArchive}, {@link forgetStudyRemovedWithItsRecording} and Retry storage / refresh in {@link action}.
+   * Says whether any study of this window still has history that is not saved: an archive waits for its write, or the last checkpoint of a run of this window failed (its capture failed before any write, so no archive waits for it); called before the `history-not-saved` line is taken from the pane by {@link persistArchive}, {@link forgetRemovedStudy} and Retry storage / refresh in {@link action}.
    * Why: the line carries Retry storage / refresh, which is the learner's only way to save such a study; a save of another study must not take it away.
-   * @param exceptStudyId - A study that is not counted, because the caller is settling it (it is forgotten or saved right now).
-   * @returns `true` while another study has a waiting archive or a failed receipt of a run this window can checkpoint again; `false` when the line may go.
+   * @returns `true` while a study has a waiting archive or a failed receipt of a run this window can checkpoint again; `false` when the line may go.
    * @example
    * if (!this.hasUnsavedHistory()) this.errors.delete('history-not-saved')
    */
-  private hasUnsavedHistory(exceptStudyId?: string): boolean {
-    for (const id of this.pendingArchives.keys())
-      if (id !== exceptStudyId) return true
+  private hasUnsavedHistory(): boolean {
+    if (this.pendingArchives.size > 0) return true
     for (const [id, receipt] of this.historyReceipts)
       // Only a run of this window's service can be checkpointed again by Retry storage / refresh; a failed receipt of any other study would keep the line for ever.
-      if (
-        id !== exceptStudyId &&
-        receipt.status === 'failed' &&
-        this.recordOfStudy(id)
-      )
-        return true
+      if (receipt.status === 'failed' && this.recordOfStudy(id)) return true
     return false
   }
 
