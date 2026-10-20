@@ -1498,6 +1498,82 @@ test('a claim on the marker that a window of another machine left 150 s ago by t
   }
 })
 
+// Value: protects=the claim a window of another machine holds on the marker of a shared project folder while this window cannot create the file that reads the file system's clock for a passing reason (too many open files, a busy or failing disk); fails_when=every failure to create that file counts as a folder that takes no new file, so the claim is judged by this window's clock alone, which may run minutes ahead of the clock that stamped it, and a live claim is removed while its window changes the marker; why_new=Cycle 0047 row 255 (P3CLA-10): only ENOSPC had a test; seam=a claim loaded with loadModule whose creation of the file that reads the file system's clock fails with EMFILE, and the claim file's modification time; no_claim=a real process out of file handles
+test('a claim on the marker that a window of another machine placed 150 s ago by this window’s clock keeps a stale marker in place while the file that reads the file system’s clock cannot be created for want of a file handle', async () => {
+  // Arrange: a killed editor's marker, a claim with the digests of another machine stamped 150 s ago, and a process that has no file handle left for the empty file created beside the marker to read its clock.
+  const wiki = await createWikiFolder()
+  await leaveKilledEditorsMarker(wiki.markerPath)
+  const claimDirectory = `${wiki.markerPath}.takeover`
+  const placedClaim = join(
+    claimDirectory,
+    'placed-by-a-window-of-another-machine',
+  )
+  await mkdir(claimDirectory)
+  await writeFile(
+    placedClaim,
+    JSON.stringify({
+      pid: process.pid,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: '5f0c1a8d2e3b4a69',
+      processStart: 'linux@4026531836:777',
+    }),
+  )
+  const placedAt = new Date(Date.now() - 150_000)
+  await utimes(placedClaim, placedAt, placedAt)
+  const isBesideTheMarker = (path: unknown): boolean =>
+    typeof path === 'string' && path.startsWith(`${wiki.markerPath}.pending-`)
+  const { claimWikiUpdateMarker: claimWithoutAFileHandle } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    'node:fs/promises': {
+      ...fileSystem,
+      open: async (...openInputs: Parameters<typeof fileSystem.open>) => {
+        if (isBesideTheMarker(openInputs[0]))
+          throw Object.assign(new Error('EMFILE: too many open files, open'), {
+            code: 'EMFILE',
+          })
+        return fileSystem.open(...openInputs)
+      },
+    },
+  })
+  try {
+    // Act
+    const start = await outcomeOf(
+      claimWithoutAFileHandle(wiki.outputDirectory, {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      }),
+    )
+
+    // Assert: the claim of the other machine stays, and so does the stale marker it guards.
+    assert.deepEqual(
+      {
+        start,
+        claimsAfterTheStart: await readdir(claimDirectory).catch(
+          () => 'no claim folder',
+        ),
+        besideTheWiki: (await readdir(wiki.directory)).toSorted(),
+        windowOfTheMarker: JSON.parse(await readFile(wiki.markerPath, 'utf8'))
+          .windowId,
+      },
+      {
+        start: 'refused while another window changes the marker',
+        claimsAfterTheStart: ['placed-by-a-window-of-another-machine'],
+        besideTheWiki: [
+          'wiki',
+          'wiki.update-run.json',
+          'wiki.update-run.json.takeover',
+        ],
+        windowOfTheMarker: 'killed-editor',
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the running update of another computer on a shared project folder (iCloud Documents, NFS, a synced folder) when both computers have one host name, as two Macs with the default "<User>s-MacBook-Pro" do; fails_when=an equal host-name digest makes the other computer's marker this machine's although its machine-id digest and its boot id differ, so its boot id is read as an earlier boot of this machine (or its process id is probed here), its live marker is removed and a second update of the same Wiki starts beside the first; why_new=Cycle 0046 second ship, red team RT1; seam=none; no_claim=two computers with one host name where either side names no boot id (Windows) still look like one machine
 test('a marker of another computer with the same host name, another editor machine id and another boot is not removed, and a start beside it is refused', async () => {
   // Arrange: the marker of a running update on another computer also named "workstation": this window's host-name digest, its own machine-id digest and kernel boot id, and a Linux start in the initial pid namespace 4026531836, which every Linux computer has. No process of this machine has its process id.

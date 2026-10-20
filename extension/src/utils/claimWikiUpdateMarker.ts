@@ -67,8 +67,11 @@ export type WikiUpdateMarkerClaimInputs = {
 /** The inputs of one step of a claim with every default filled in ({@link judgementFrom}). */
 type MarkerClaimJudgement = Required<WikiUpdateMarkerClaimInputs>
 
-/** Why the clock of the file system beside the marker could not be read ({@link readFileSystemClockLag}): `no-probe` when no file can be created there at all, `probe-unread` when the file was created but its time could not be read. */
+/** Why the clock of the file system beside the marker could not be read ({@link readFileSystemClockLag}): `no-probe` when no file can be created there at all ({@link NO_NEW_FILE_CODES}), `probe-unread` when the file was created but its time could not be read, or its creation failed for another reason. */
 type FileSystemClockUnread = 'no-probe' | 'probe-unread'
+
+/** The codes with which a folder refuses every new file, whatever file it is: a full disk (`ENOSPC`), a full quota (`EDQUOT`) and a read-only file system (`EROFS`). Any other failure to create the file that reads the file system's clock (`EMFILE`, `EBUSY`, `EIO`, a refused permission) may pass and says nothing of the folder ({@link readFileSystemClockLag}, Cycle 0047 row 255). */
+const NO_NEW_FILE_CODES = new Set(['ENOSPC', 'EDQUOT', 'EROFS'])
 
 /** What one sweep of the entries beside the marker judges their age by: the inputs of the claim and the present by the clock of the file system that holds them, this window's present less how far that clock runs behind, which is measured once for the sweep when an entry needs it ({@link readFileSystemClockLag}), or why that clock could not be read. */
 type MarkerSweepJudgement = MarkerClaimJudgement & {
@@ -244,7 +247,7 @@ async function readOwnerOfEntry(
  * Why: a file server, or the Windows host under a WSL2 window, stamps a file by its own clock, which this machine's clock can run minutes ahead of (WSL2 after a sleep), and every entry beside the marker then looks older than it is. A stamp less than {@link WIKI_UPDATE_MARKER_STAMP_STEP_MS} behind is the file system's own rounding, not a clock that lags. The file is named like a prepared marker (`<marker>.pending-<uuid>`) and has no owner, so one that a window killed in this instant left is removed by a later sweep by its age ({@link removeExpiredPreparations}).
  * The time is read through the handle that created the file, before it is closed: another window's sweep removes an empty file beside the marker that its own clock calls old ({@link removeStaleStorageClaims}), and a look at the path after that removal would find nothing, while the handle still names the file.
  * @param markerPath - `<output>.update-run.json`.
- * @returns How many milliseconds the new file's stamp lies before the wall clock right before its creation, or 0 when it lies less than {@link WIKI_UPDATE_MARKER_STAMP_STEP_MS} before or after it; `no-probe` when no file can be created there at all (a full disk, a quota, a read-only folder); `probe-unread` when the file was created but its time could not be read.
+ * @returns How many milliseconds the new file's stamp lies before the wall clock right before its creation, or 0 when it lies less than {@link WIKI_UPDATE_MARKER_STAMP_STEP_MS} before or after it; `no-probe` when no file can be created there at all, which only a full disk, a full quota or a read-only file system answers ({@link NO_NEW_FILE_CODES}); `probe-unread` when the file was created but its time could not be read, and when its creation failed for any other reason (too many open files, a busy or failing disk).
  * @example
  * await readFileSystemClockLag('/repo/.codebook/wiki.update-run.json') // => 120_000 on a file server whose clock runs 2 minutes behind
  */
@@ -253,10 +256,15 @@ async function readFileSystemClockLag(
 ): Promise<number | FileSystemClockUnread> {
   const probePath = `${markerPath}${PREPARED_LOCK_SUFFIX}${randomUUID()}`
   const createdAtMs = Date.now()
-  const probe = await open(probePath, 'wx', WIKI_UPDATE_MARKER_FILE_MODE).catch(
-    () => undefined,
-  )
-  if (!probe) return 'no-probe'
+  let probe
+  try {
+    probe = await open(probePath, 'wx', WIKI_UPDATE_MARKER_FILE_MODE)
+  } catch (error) {
+    // Only a folder that takes no new file at all leaves this window's clock to decide alone; any other failure leaves the clock unknown, as an unread time does.
+    return NO_NEW_FILE_CODES.has(systemErrorCode(error))
+      ? 'no-probe'
+      : 'probe-unread'
+  }
   const probeStamp = await probe.stat().catch(() => undefined)
   await probe.close().catch(() => undefined)
   await removeWithoutFollowing(probePath).catch(() => undefined)
@@ -269,11 +277,11 @@ async function readFileSystemClockLag(
  * Says whether a claim on the marker, or a file prepared beside it, is nobody's by its age; called by {@link removeIfExpired} for each entry the sweeps find.
  * Why: a claim is held for the time of one read and one removal, and a prepared file exists for the time of one write, so an old one was left by a killed window. Age decides only where the owner cannot be judged by this process ({@link canJudgeOwnerHere}): an entry of another machine, of another system or pid namespace of this computer, of a Linux window whose pid namespace could not be read, of 0.2.29.0, of a window whose process start could not be read, or one whose record cannot be read. An entry whose owner can be judged here is left to that judgement ({@link removeStaleStorageClaims}), so a live window that was suspended while it held the claim keeps it.
  * These paths lie in the learner's project folder, where a cloned repository can put anything: the entry is looked at without following a link, a link is judged by its age alone, and an owner's record is read only as a regular file of bounded size ({@link readRecordedOwner}), so a link to an endless device or to a pipe costs neither time nor memory.
- * The age is the present minus the time the file system stamped on the entry, and the entry must be older than the expiry both by this window's clock and by the clock that stamped it ({@link readFileSystemClockLag}): a file server, or the Windows host under a WSL2 window, stamps by its own clock, and this window's clock may run minutes ahead of it, so a claim placed a moment ago would look expired by the local clock alone. Where a file was created to read that clock and its time could not be read, the entry stays for a later sweep; only where no file can be created beside the marker at all does this window's clock decide alone, so a claim a killed window left on a full disk does not stay for good.
+ * The age is the present minus the time the file system stamped on the entry, and the entry must be older than the expiry both by this window's clock and by the clock that stamped it ({@link readFileSystemClockLag}): a file server, or the Windows host under a WSL2 window, stamps by its own clock, and this window's clock may run minutes ahead of it, so a claim placed a moment ago would look expired by the local clock alone. Where a file was created to read that clock and its time could not be read, or its creation failed for a reason that may pass (too many open files, a busy disk), the entry stays for a later sweep; only where no file can be created beside the marker at all (a full disk, a full quota, a read-only file system: {@link NO_NEW_FILE_CODES}) does this window's clock decide alone, so a claim a killed window left on a full disk does not stay for good.
  * @param path - What age is taken from and what would be removed: a claim's owner file, a claim folder that was prepared and never put into place, or a marker file that was prepared and never linked or moved into place.
  * @param ownerPath - The file that records the owner of that entry.
  * @param judgement - The identity of this process, the clock and the file system's present of the sweep.
- * @returns `true` for an entry that cannot be judged here and is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} by this window's clock and by the file system's, or by this window's clock alone where no file can be created beside the marker to read the file system's clock, also a link whatever it leads to; `false` for a younger one, for one whose owner can be judged here, for one whose age by the file system's clock cannot be told because the file created to read it could not be read, and for a path that cannot be inspected.
+ * @returns `true` for an entry that cannot be judged here and is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} by this window's clock and by the file system's, or by this window's clock alone where no file can be created beside the marker to read the file system's clock, also a link whatever it leads to; `false` for a younger one, for one whose owner can be judged here, for one whose age by the file system's clock cannot be told because the file created to read it could not be read or could not be created for a reason that may pass, and for a path that cannot be inspected.
  * @example
  * await isExpiredMarkerClaim(claimPath, claimPath, judgement) // => true for a claim a killed window of another machine left two minutes ago
  */
@@ -289,9 +297,9 @@ async function isExpiredMarkerClaim(
   if (now() - entry.mtimeMs <= WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS) return false
   // This window's clock may run ahead of the clock that stamped the entry: the entry must be as old by that clock.
   const fileSystemNowMs = await fileSystemNow()
-  // No file can be created beside the marker (a full disk, a read-only folder): this window's clock alone decides, so a killed window's claim does not stay for good.
+  // No file can be created beside the marker (a full disk, a quota, a read-only file system): this window's clock alone decides, so a killed window's claim does not stay for good.
   if (fileSystemNowMs === 'no-probe') return true
-  // A file was created but its time could not be read: that clock is unknown, and the entry stays for a later sweep.
+  // A file was created but its time could not be read, or its creation failed for a reason that may pass: that clock is unknown, and the entry stays for a later sweep.
   if (fileSystemNowMs === 'probe-unread') return false
   return fileSystemNowMs - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
 }
