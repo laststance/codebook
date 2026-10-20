@@ -5496,6 +5496,84 @@ test('the line “History not saved: …” of a study whose capture failed befo
   }
 })
 
+// Value: protects=the line "History not saved: …" and the Retry button beside it when a run that started while Retry storage / refresh was under way could not be saved, although every step of that Retry succeeded and the Retry saved the study that had failed before; fails_when=the Retry takes the line from the pane after its steps although another study waits in the write queue, so the learner reads no failure and has no Retry for a study that is unsaved; why_new=Cycle 0048 task 96 (second /ship, coverage audit of the Retry block that retires the line only when no history is unsaved); seam=the library's reconcile, which the test holds so that a second run starts and its first save is refused during the Retry, and the library's study save, which refuses that run's study only; no_claim=a study that moves to the Trash during the Retry
+test('a Retry storage / refresh that saved the earlier study keeps the line “History not saved: …” and Retry beside it when a run that started during the Retry could not be saved', async (context) => {
+  // Arrange: the study of a first, stopped run could not be saved, so the line shows. The disk writes again, but not the study of a second run that has not started yet.
+  const disk = refuseStudySaves(context)
+  const reconcile = LearningLibrary.prototype.reconcile
+  let holdsReconcile = true
+  let reachReconcile: () => void = () => undefined
+  let continueReconcile: () => void = () => undefined
+  const reconcileReached = new Promise<void>((resolve) => {
+    reachReconcile = resolve
+  })
+  const reconcileMayContinue = new Promise<void>((resolve) => {
+    continueReconcile = resolve
+  })
+  context.mock.method(
+    LearningLibrary.prototype,
+    'reconcile',
+    async function (this: LearningLibrary) {
+      if (holdsReconcile) {
+        holdsReconcile = false
+        reachReconcile()
+        await reconcileMayContinue
+      }
+      return reconcile.call(this)
+    },
+  )
+  const harness = await workspaceHarness()
+  try {
+    const first = await startRun(harness)
+    await harness.reader.action('stop')
+    readerSeams(harness).stopOwnTimer()
+    disk.refusesEveryStudy = false
+    // Act: the learner presses Retry storage / refresh. After its write of the first study, while it reconciles the library, a second run starts and the reader's refresh cannot save it.
+    const retry = harness.reader.action('retry')
+    await reconcileReached
+    const second = await startRun(harness)
+    disk.refusedStudyIds.add(
+      `${harness.service.instanceId}_${second.record.id}`,
+    )
+    await readerSeams(harness).refresh()
+    continueReconcile()
+    await retry
+    const afterRetry = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    disk.refusedStudyIds.clear()
+    await harness.reader.action('retry')
+    // Assert
+    assert.deepEqual(afterRetry, {
+      queued: 1,
+      // The line of the second run's refused save, and two lines of the selection, which follows the second run and cannot read an archive that does not exist. Retry storage / refresh answers all three.
+      errors: [
+        'Error: History not saved: Error: disk is read-only',
+        'Error: Study archive is unavailable.',
+        'Error: Study archive is unavailable.',
+      ],
+      // Retry storage / refresh is still offered.
+      unretryableErrorCount: 0,
+    })
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.equal(
+      harness.service.state(first.record).historyOutcome.status,
+      'saved',
+    )
+    assert.equal(
+      harness.service.state(second.record).historyOutcome.status,
+      'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the line and the Retry button while one of two studies whose saves failed is still unsaved after a Retry that wrote the other; fails_when=the Retry that wrote one study leaves no line although the other still waits; why_new=Cycle 0046 row 300 (the row's own order of events; it holds without the row's change as well, because Retry tries every waiting archive in turn and tells the failure of the second again); seam=the library's study save, which refuses one study by its id
 test('a Retry storage / refresh that writes one of two studies whose saves failed leaves the line and Retry for the other, and the Retry that writes that one leaves no line', async (context) => {
   // Arrange: the studies of two stopped runs of one server could not be saved.
