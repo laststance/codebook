@@ -12100,7 +12100,7 @@ for (const wikiFolder of [
 
 // Value: protects=the agent that reads the refusal of --recover when a cloned repository carries a publish journal whose stage's name is text of its own and the recovery's look into that candidate fails; fails_when=the recovery passes on the failure as the file system words it, with the candidate's path, so the journal's text reaches the agent in the refusal; why_new=Cycle 0047 row 133 (P3CXA-1 = P3CXS-1: the recovery now changes nothing in such a candidate, so a failed put-back, which row 131's test drove, no longer reaches the rewording; a failed look still does); seam=a copy of the shipped publisher whose `node:fs/promises` fails the look at the candidate's finalizing file with EACCES (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a real folder this user may not search
 test('a recovery whose look into a candidate named by a name of the journal’s own fails refuses without repeating that name, and keeps the journal and the candidate', async () => {
-  // Arrange: a candidate whose name holds shell syntax and an instruction; a journal of a first publication, whose process is gone, names it and its manifest as finalized; the look at the file beside the manifest through which a publish finalizes it fails as in a folder this user may not search.
+  // Arrange: a candidate whose name holds shell syntax and an instruction; a journal of a first publication, whose process is gone, names it with digests that are not its manifest's or its record's, so nothing in it is finalized and only the failed look refuses; the look at the file beside the manifest through which a publish finalizes it fails as in a folder this user may not search.
   const { recoverWikiPublication: recoverWhoseLookFails } =
     await loadMarkedCopy('publish-wiki.mjs', '?failing')
   const shellSyntax = '$(touch pwned)',
@@ -12122,9 +12122,7 @@ test('a recovery whose look into a candidate named by a name of the journal’s 
       pid: 99999999,
       id,
       operation: 'publish',
-      manifestSha256: createHash('sha256')
-        .update(candidateBefore['codebook-wiki.json'])
-        .digest('hex'),
+      manifestSha256: '1'.repeat(64),
       priorLegacy: false,
       finalizedReceiptSha256: '2'.repeat(64),
       prepared: {
