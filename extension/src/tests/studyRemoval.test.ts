@@ -1573,17 +1573,16 @@ test('a recording that is still being written for a study that is not saved yet 
 })
 
 /**
- * Records and seals the recording of a run whose study is not saved yet, as another editor window leaves it when its run has ended and its first save has not happened: the recording names a live process of this machine, the other window, in its header and in the record of its writer.
- * @param context - The test, at whose end the other window's process is killed.
+ * Starts the recording of a distinct study that is not saved yet, as another editor's run starts it: the recording's header and the record of its writer name that editor's process and host instead of this test process. The tests that use it show what they vary themselves: the record of another machine, the saves of the study and the seal, in their order.
  * @param storage - The removal storage of the test.
- * @returns The study the other window has not saved yet, whose id the recording has.
- * @example const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+ * @param writer - The editor process the recording names: its id and its host name.
+ * @returns The study, which is not saved, and the writer of its recording, which is not sealed.
+ * @example const { study, recording } = await recordingStartedBy(storage, { pid: otherWindow.pid!, hostname: hostname() })
  */
-async function sealedRecordingOfAnotherWindow(
-  context: TestContext,
+async function recordingStartedBy(
   storage: Awaited<ReturnType<typeof removalStorage>>,
+  writer: { pid: number; hostname: string },
 ) {
-  const otherWindow = await idleChild(context)
   const study = createConfiguredStudy(),
     runId = randomUUID()
   for (const observation of study.observations)
@@ -1609,7 +1608,23 @@ async function sealedRecordingOfAnotherWindow(
     },
     0,
   )
-  await nameWriterOfRecording(storage, study.id, {
+  await nameWriterOfRecording(storage, study.id, writer)
+  return { study, recording }
+}
+
+/**
+ * Records and seals the recording of a run whose study is not saved yet, as another editor window leaves it when its run has ended and its first save has not happened: the recording names a live process of this machine, the other window, in its header and in the record of its writer.
+ * @param context - The test, at whose end the other window's process is killed.
+ * @param storage - The removal storage of the test.
+ * @returns The study the other window has not saved yet, whose id the recording has.
+ * @example const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+ */
+async function sealedRecordingOfAnotherWindow(
+  context: TestContext,
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+) {
+  const otherWindow = await idleChild(context)
+  const { study, recording } = await recordingStartedBy(storage, {
     pid: otherWindow.pid!,
     hostname: hostname(),
   })
@@ -1750,32 +1765,7 @@ test('the study of another window that its run saved before sealing the recordin
   // Arrange: another window of this machine records a study, its checkpoint saves the study while the run goes on, and the run then seals the recording.
   const storage = await removalStorage(context, 4)
   const otherWindow = await idleChild(context)
-  const study = createConfiguredStudy(),
-    runId = randomUUID()
-  for (const observation of study.observations)
-    observation.snapshotUri = observation.snapshotUri.replace(
-      study.runId,
-      runId,
-    )
-  study.runId = runId
-  study.id = `${study.instanceId}_${runId}`
-  const recording = await storage.recordings.start(
-    {
-      workspaceKey: study.workspaceKey,
-      studyId: study.id,
-      instanceId: study.instanceId,
-      runId,
-      runtimeId: randomUUID(),
-      profile: study.profile,
-      sourceBuild: {
-        revision: 'removal-test',
-        dirty: false,
-        sourceHash: '1'.repeat(64),
-      },
-    },
-    0,
-  )
-  await nameWriterOfRecording(storage, study.id, {
+  const { study, recording } = await recordingStartedBy(storage, {
     pid: otherWindow.pid!,
     hostname: hostname(),
   })
@@ -1900,32 +1890,7 @@ async function studySavedBeforeItsSealedRecording(
   storage: Awaited<ReturnType<typeof removalStorage>>,
 ): Promise<string> {
   const otherWindow = await idleChild(context)
-  const study = createConfiguredStudy(),
-    runId = randomUUID()
-  for (const observation of study.observations)
-    observation.snapshotUri = observation.snapshotUri.replace(
-      study.runId,
-      runId,
-    )
-  study.runId = runId
-  study.id = `${study.instanceId}_${runId}`
-  const recording = await storage.recordings.start(
-    {
-      workspaceKey: study.workspaceKey,
-      studyId: study.id,
-      instanceId: study.instanceId,
-      runId,
-      runtimeId: randomUUID(),
-      profile: study.profile,
-      sourceBuild: {
-        revision: 'removal-test',
-        dirty: false,
-        sourceHash: '1'.repeat(64),
-      },
-    },
-    0,
-  )
-  await nameWriterOfRecording(storage, study.id, {
+  const { study, recording } = await recordingStartedBy(storage, {
     pid: otherWindow.pid!,
     hostname: hostname(),
   })
@@ -2228,41 +2193,16 @@ test('the study of another window whose checkpoint taken before the seal is save
   // Arrange: another window of this machine records a study; a checkpoint of its study is taken while its run stops, and the run seals the recording before that checkpoint's save ends.
   const storage = await removalStorage(context, 4)
   const otherWindow = await idleChild(context)
-  const finalStudy = createConfiguredStudy(),
-    runId = randomUUID()
-  for (const observation of finalStudy.observations)
-    observation.snapshotUri = observation.snapshotUri.replace(
-      finalStudy.runId,
-      runId,
-    )
-  finalStudy.runId = runId
-  finalStudy.id = `${finalStudy.instanceId}_${runId}`
+  const { study: finalStudy, recording } = await recordingStartedBy(storage, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
   finalStudy.savedAt = '2026-09-20T00:00:20.000Z'
   const checkpointTakenBeforeTheSeal = {
     ...finalStudy,
     state: 'stopping',
     savedAt: '2026-09-20T00:00:10.000Z',
   }
-  const recording = await storage.recordings.start(
-    {
-      workspaceKey: finalStudy.workspaceKey,
-      studyId: finalStudy.id,
-      instanceId: finalStudy.instanceId,
-      runId,
-      runtimeId: randomUUID(),
-      profile: finalStudy.profile,
-      sourceBuild: {
-        revision: 'removal-test',
-        dirty: false,
-        sourceHash: '1'.repeat(64),
-      },
-    },
-    0,
-  )
-  await nameWriterOfRecording(storage, finalStudy.id, {
-    pid: otherWindow.pid!,
-    hostname: hostname(),
-  })
   await recording.finish(1)
   await storage.library.saveStudy(checkpointTakenBeforeTheSeal)
 
@@ -2383,36 +2323,11 @@ test('the finished recording of a run on another computer that has not saved its
 test('the study of a run on another computer whose final save failed after a checkpoint saved it before the seal keeps its recording held, and the refusal and its dialog say a window there may still have to save it', async (context) => {
   // Arrange: an editor of another machine records a study; a checkpoint taken while its run stopped saved the study; the run sealed the recording, and its save of the final state failed there.
   const storage = await removalStorage(context, 4)
-  const study = createConfiguredStudy(),
-    runId = randomUUID()
-  for (const observation of study.observations)
-    observation.snapshotUri = observation.snapshotUri.replace(
-      study.runId,
-      runId,
-    )
-  study.runId = runId
-  study.id = `${study.instanceId}_${runId}`
-  study.state = 'stopping'
-  const recording = await storage.recordings.start(
-    {
-      workspaceKey: study.workspaceKey,
-      studyId: study.id,
-      instanceId: study.instanceId,
-      runId,
-      runtimeId: randomUUID(),
-      profile: study.profile,
-      sourceBuild: {
-        revision: 'removal-test',
-        dirty: false,
-        sourceHash: '1'.repeat(64),
-      },
-    },
-    0,
-  )
-  await nameWriterOfRecording(storage, study.id, {
+  const { study, recording } = await recordingStartedBy(storage, {
     pid: ID_OF_NO_PROCESS,
     hostname: 'old-laptop.local',
   })
+  study.state = 'stopping'
   await rewriteWriterRecord(storage.directory, study.id, {
     machineId: 'machine-b',
   })
