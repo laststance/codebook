@@ -463,7 +463,7 @@ const UNSYNCABLE_ERRORS = ['EISDIR', 'EPERM', 'EACCES', 'EINVAL', 'ENOTSUP', 'EN
 /** Runs a sync of a file or a folder, and lets pass one that the system or the file system cannot make there ({@link UNSYNCABLE_ERRORS}); any other failure, such as a disk error, is passed on. Called by {@link writeOwnFile} for each file it writes, by {@link publishJournalWriterOf} for each line of the list of copies, and by {@link syncFolder}. @param sync - The sync, as `() => handle.sync()`. @throws What the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}. @example await syncWhereAble(() => handle.sync()) */
 const syncWhereAble = sync => sync().catch(error => { if (!UNSYNCABLE_ERRORS.includes(error.code)) throw error; });
 
-/** Syncs a folder's names to the disk: it is opened read-only and synced, where the platform allows ({@link UNSYNCABLE_ERRORS}; Windows cannot sync a folder), so the names of the files a publish wrote or moved into it survive a power cut after the step that relies on them. Called by {@link publishWiki} for the folder that holds the journal and the lock, once the journal has its name and again once the swap moved the Wiki, and for the folders of the candidate before the swap, and by {@link publishJournalWriterOf} once the list of copies has its name. @throws What the open or the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}. @example await syncFolder('/repo/.codebook') */
+/** Syncs a folder's names to the disk: it is opened read-only and synced, where the platform allows ({@link UNSYNCABLE_ERRORS}; Windows cannot sync a folder), so the names of the files a publish wrote or moved into it survive a power cut after the step that relies on them. Called by {@link publishWiki} for the folder that holds the journal and the lock, once the journal has its name and again once the swap moved the Wiki, and for the files and folders of the candidate before the swap ({@link syncCandidate}; a file is opened read-only and synced as a folder is), by {@link restoreManifest} for the folders of a metadata recovery, and by {@link publishJournalWriterOf} once the list of copies has its name. @throws What the open or the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}. @example await syncFolder('/repo/.codebook') */
 async function syncFolder(folder) {
   const handle = await open(folder, 'r').catch(error => { if (UNSYNCABLE_ERRORS.includes(error.code)) return undefined; throw error; });
   // A folder the system does not open, as Windows does not, is not synced.
@@ -807,7 +807,7 @@ async function restoreFinalizedFiles(finalized, stage) {
   return failure === undefined ? undefined : new Error('Publication failed; the candidate’s prepared manifest and record could not be put back in ' + stage + ': ' + failure.message + '. Run --recover.', { cause: failure });
 }
 
-/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview. Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. Each file the publish writes is synced before its close ({@link writeOwnFile}), the folder that holds the journal and the lock once the journal has its name, the candidate's folders before the swap ({@link foldersWrittenIn}) and the folder of the Wiki again after it ({@link syncFolder}), so a power cut leaves a journal that a recovery can read wherever it guards a change; that a crash leaves these bytes is the file system's promise, which no test here can show. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
+/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview. Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. Each file the publish writes is synced before its close ({@link writeOwnFile}), the folder that holds the journal and the lock once the journal has its name, every file and folder of the candidate before the last check of the learner's files and the swap ({@link syncCandidate}; a failed sync keeps the journal), the folder of the Wiki again after it ({@link syncFolder}), and the learner's files in the prior Wiki are compared with their copies after it ({@link manualFilesChangedSince}; the answer names a file saved late as `manualFilesSavedAfterCheck`), so a power cut leaves a journal that a recovery can read wherever it guards a change; that a crash leaves these bytes is the file system's promise, which no test here can show. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
 export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false, system = SYSTEM_HERE }) {
   // The read of the owner the lock and the journal name (PowerShell and reg.exe on Windows, sysctl, ps and ioreg on macOS) starts now and runs beside the rendering.
   ownerHere(system);
@@ -849,12 +849,12 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       // The manifest and the record take the place of the entries at their names, which a link put there after they were read does not lead out of the candidate, and which a stop never leaves empty.
       await finalize(MANIFEST, manifestText, bytes);
       await finalize(RECEIPT, finalizedReceiptText, receiptBytes);
+      // Every file and folder of the candidate, the agent's assets and the folders above them included, is on the disk before the candidate becomes the Wiki; the syncs run before the last check, so a save during them is seen by it.
+      await syncCandidate(stage);
       // Recheck after acquiring the journal and copying files; a stale generation cannot win a later swap.
       const current = await inspectPrior();
       assertBaseline(receipt.baseline, current);
       await requireLearnerFilesUnchanged(current, manual, manualHashes, output);
-      // The names of the candidate's pages, copies and finalized files are on the disk before the candidate becomes the Wiki.
-      for (const folder of foldersWrittenIn(stage, written, made)) await syncFolder(folder);
       // The lock and the journal must still be this publish's when the Wiki moves: a recovery may have ended either since.
       await lock.requireHeld();
       await journalNow.requireHeld();
@@ -864,19 +864,45 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       swapped = true;
       // The Wiki is updated: the swap's moves are on the disk before the journal that guards them goes, and a journal this publish cannot remove now, after every try, is named in its answer for --recover to end, and fails nothing.
       const journalKept = await syncFolder(dirname(output)).then(() => journalNow.remove()).then(() => ({}), () => ({ publishJournalKept: journal }));
-      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length, ...journalKept };
+      // A learner's file saved after the last check went into the prior Wiki, now at `backup`: the answer names it instead of counting it preserved.
+      const savedLate = backup ? await manualFilesChangedSince(manualHashes, backup) : [];
+      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length, ...(savedLate.length > 0 && { manualFilesSavedAfterCheck: savedLate }), ...journalKept };
     } catch (error) {
       if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
       const undoFailure = await undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas, refusal: error });
       if (undoFailure !== undefined) throw undoFailure;
+      // A candidate that could not be synced leaves the journal, so the next step is a recovery that looks at the candidate again, not a publish that trusts it.
+      if (error.isUnsyncedCandidate) throw error;
       await journalNow.remove();
       throw error;
     }
   });
 }
 
-/** The folders of a candidate whose names a publish wrote or made: the candidate itself, which holds its finalized manifest and record, the folder of each page and each copy of a learner's file it wrote, and the folder that holds each folder it made, each once. Called by {@link publishWiki}, which syncs them before its swap ({@link syncFolder}). @example foldersWrittenIn('/repo/.codebook/next', [{ path: '/repo/.codebook/next/pages/a.html' }], ['/repo/.codebook/next/pages']) // => ['/repo/.codebook/next', '/repo/.codebook/next/pages'] */
-const foldersWrittenIn = (stage, written, made) => [...new Set([stage, ...written.map(file => dirname(file.path)), ...made.map(folder => dirname(folder))])];
+/** The learner's files of the prior Wiki that no longer hold the bytes the publish copied from them: after the swap the prior Wiki lies at `backup`, and an editor that kept the file open, or a save made after the publish's last check, writes there. A file that cannot be read now counts as changed, since nothing says what it holds. Called by {@link publishWiki} once the Wiki moved. @param manualHashes - The SHA-256 digest of each learner's file as the publish copied it, by path. @param backup - The folder the prior Wiki was moved to. @returns The paths whose bytes differ, in the order of `manualHashes`; empty when none changed. @example await manualFilesChangedSince({ 'notes.txt': digest(Buffer.from('a')) }, '/repo/.codebook/wiki.previous-1') // => [] */
+async function manualFilesChangedSince(manualHashes, backup) {
+  const changed = [];
+  for (const [path, copied] of Object.entries(manualHashes)) {
+    const isSame = await regularBytes(join(backup, path)).then(bytes => digest(bytes) === copied, () => false);
+    if (!isSame) changed.push(path);
+  }
+  return changed;
+}
+
+/** Syncs every file and every folder of a candidate to the disk, folders after what they hold, in the order of their names: the pages and copies the publish wrote, and the assets and folders the agent made while it prepared the candidate, which no write of the publish synced. Called by {@link publishWiki} before the last check of the learner's files and the swap. @param directory - The candidate or a folder in it. @throws An error with `isUnsyncedCandidate`, naming the path, when a sync fails other than as {@link UNSYNCABLE_ERRORS} says a system cannot make it; the cause is the system's error. @example await syncCandidate('/repo/.codebook/next') */
+async function syncCandidate(directory) {
+  const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : 1);
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    // A link or a special file is no part of a candidate the publish accepts; it is not followed here.
+    if (entry.isDirectory()) await syncCandidate(path);
+    else if (entry.isFile()) await syncUnlessFailed(path);
+  }
+  await syncUnlessFailed(directory);
+}
+
+/** Syncs one file or folder of a candidate ({@link syncFolder}, which opens a file read-only as it opens a folder) and gives a failure the sentence of a candidate that could not be synced. Called by {@link syncCandidate}. @example await syncUnlessFailed('/repo/.codebook/next/assets/flow.png') */
+const syncUnlessFailed = path => syncFolder(path).catch(cause => { throw Object.assign(new Error('The candidate could not be synced to the disk before the swap: ' + path + ' (' + cause.message + '). Nothing was moved and the Wiki is as it was, and the publication journal was kept. Run --recover, then prepare a candidate and publish again.', { cause }), { isUnsyncedCandidate: true }); });
 
 /** Refuses a publish or a preview under its lock whose candidate is no longer the folder it read before the lock ({@link folderLookOf}): another publish of the same candidate moved it into the Wiki while this one waited for the lock (on macOS and Windows its owner read may take a while), or it was removed or put in place again. Without it, a path inside the project that names the candidate would be refused as a link on the Wiki's path, and a candidate outside the project would be made again and written into. Called by {@link publishWiki} first under the lock, before anything is written. @throws The refusal, which names the candidate. @example await requireCandidateHere('/repo/.codebook/next', isFolderWhereItWas) // throws once another publish moved the candidate into the Wiki */
 async function requireCandidateHere(stage, isFolderWhereItWas) {

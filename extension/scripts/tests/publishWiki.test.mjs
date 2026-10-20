@@ -16484,7 +16484,7 @@ const fileSystemCallsRecordedIn = (log) =>
   )}`
 
 // Value: protects=the learner's Wiki and the learner's own files on a power cut during or right after a publish, where the file system may keep the moves of the swap and lose the bytes or the names they rely on (ext4 can keep a journal empty, NTFS of NUL bytes); fails_when=the publish closes a file it wrote, links its journal, writes a copy of a learner's file, moves the Wiki or removes its journal before it synced the bytes and the names the next step relies on, so a power cut can leave an empty journal beside a missing Wiki folder, or a published Wiki without the learner's files; why_new=Cycle 0047 row 265 (P3CLA-4); seam=a publisher process whose file system calls a module loaded first records in their order (`--import`); no_claim=that a real power cut keeps what the syncs promise, which only the file system and the disk can keep and no test here can cut the power to show
-test('a publish syncs each file it writes before its close, the journal’s folder once the journal has its name, each line of its list of copies before the copy it names, the candidate’s folders before the swap and the Wiki’s folder before the journal goes', async () => {
+test('a publish syncs each file it writes before its close, the journal’s folder once the journal has its name, each line of its list of copies before the copy it names, every file and folder of the candidate before the swap and the Wiki’s folder before the journal goes', async () => {
   // Arrange: a Wiki with a learner's file and a candidate with a page in a folder of its own; the calls of its publish are recorded.
   const wiki = await publishedWikiWithACandidate('guide.html')
   const log = join(wiki.directory, 'calls.jsonl'),
@@ -16575,11 +16575,21 @@ test('a publish syncs each file it writes before its close, the journal’s fold
           'sync next/.codebook-publish-<id>-codebook-publication.json',
           'close next/.codebook-publish-<id>-codebook-publication.json',
           'rename next/.codebook-publish-<id>-codebook-publication.json next/codebook-publication.json',
-          // The candidate's folders, before the swap.
-          'sync next',
-          'close next',
+          // Every file and folder of the candidate, each folder after what it holds, before the swap (Cycle 0048 task 3).
+          'sync next/codebook-publication.json',
+          'close next/codebook-publication.json',
+          'sync next/codebook-wiki.json',
+          'close next/codebook-wiki.json',
+          'sync next/index.html',
+          'close next/index.html',
+          'sync next/manual.txt',
+          'close next/manual.txt',
+          'sync next/pages/guide.html',
+          'close next/pages/guide.html',
           'sync next/pages',
           'close next/pages',
+          'sync next',
+          'close next',
           // The swap.
           'rename wiki wiki.previous-<id>',
           'rename next wiki',
@@ -20407,6 +20417,222 @@ test('a recovery of an edited manifest syncs the folder of the kept copy and the
       },
     )
   } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+/**
+ * A module loaded before the publisher (`--import`) that changes the sync of the files whose path matches `pattern`: the sync fails with `EIO` (a disk error), or, with `saveToFile`, it first appends a line to that file, as a learner's save during it.
+ * @param {string} pattern - The source of the regular expression the path of the file or folder must match.
+ * @param {{ saveToFile?: string }} [action] - The learner's save that runs instead of the failure.
+ * @returns {string} The module as a `data:` URL.
+ * @example
+ * runPublisherWith(syncChangedFor('/assets/flow\\.png$'), ['--project', root, '--output', output, '--stage', next])
+ */
+const syncChangedFor = (pattern, { saveToFile } = {}) =>
+  `data:text/javascript,${encodeURIComponent(
+    `import fileSystem from 'node:fs/promises'; import { appendFileSync } from 'node:fs'; import { syncBuiltinESMExports } from 'node:module'; const { open } = fileSystem; fileSystem.open = async (path, ...rest) => { const handle = await open(path, ...rest); if (new RegExp(${JSON.stringify(pattern)}).test(String(path))) { const { sync } = handle; handle.sync = ${saveToFile === undefined ? "() => Promise.reject(Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' }))" : `() => { appendFileSync(${JSON.stringify(saveToFile)}, ' and saved during the syncs'); return sync.call(handle) }`} } return handle }; syncBuiltinESMExports();`,
+  )}`
+
+/**
+ * Gives the candidate of {@link publishedWikiWithACandidate} an asset the agent wrote while it prepared the candidate, in a folder of its own, and lists it in the candidate's manifest.
+ * @param {{ next: string }} wiki - The wiki of {@link publishedWikiWithACandidate}.
+ * @returns {Promise<void>}
+ * @example
+ * await addPreparedAsset(wiki) // writes `next/assets/flow.png`
+ */
+async function addPreparedAsset(wiki) {
+  const manifestPath = join(wiki.next, 'codebook-wiki.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  manifest.assets = ['assets/flow.png']
+  await mkdir(join(wiki.next, 'assets'))
+  await writeFile(join(wiki.next, 'assets/flow.png'), PNG_ASSET_BYTES)
+  await writeFile(manifestPath, JSON.stringify(manifest))
+}
+
+// Value: protects=the assets an agent wrote while it prepared a candidate (images of a diagram), which a power cut right after the swap could leave empty or without their names in a Wiki that lists them; fails_when=the publish syncs only the folders and files it wrote itself, so an asset the agent wrote, and the folder it stands in, are not synced before the candidate becomes the Wiki; why_new=Cycle 0048 task 3 (S11-XA2); seam=a publisher process whose file system calls a module loaded first records in their order (`--import`); no_claim=that a real power cut keeps what the syncs promise
+test('a publish syncs an asset the agent wrote while it prepared the candidate and the folder of that asset before the swap', async () => {
+  // Arrange: a published Wiki and a candidate whose manifest lists an asset in a folder the agent made.
+  const wiki = await publishedWikiWithACandidate()
+  await addPreparedAsset(wiki)
+  const log = join(wiki.directory, 'calls.jsonl')
+  try {
+    // Act
+    const { code } = runPublisherWith(fileSystemCallsRecordedIn(log), [
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      wiki.next,
+    ])
+
+    // Assert: what the publish synced between the move of the finalized record and the swap.
+    const calls = await recordedCallsBeside(log, dirname(wiki.output))
+    const beforeTheSwap = calls.slice(
+      calls.findIndex(
+        (call) =>
+          call.startsWith('rename next/.codebook-publish-') &&
+          call.endsWith('next/codebook-publication.json'),
+      ) + 1,
+      calls.indexOf('rename wiki wiki.previous-<id>'),
+    )
+    assert.deepEqual(
+      { code, beforeTheSwap },
+      {
+        code: 0,
+        beforeTheSwap: [
+          'sync next/assets/flow.png',
+          'close next/assets/flow.png',
+          'sync next/assets',
+          'close next/assets',
+          'sync next/codebook-publication.json',
+          'close next/codebook-publication.json',
+          'sync next/codebook-wiki.json',
+          'close next/codebook-wiki.json',
+          'sync next/index.html',
+          'close next/index.html',
+          'sync next',
+          'close next',
+        ],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner whose disk fails a sync of the candidate before the swap, after which the file system may have dropped bytes it reported written; fails_when=the publish answers the failed sync as a plain refusal and removes its journal, so the next publish trusts the same candidate and swaps it in; why_new=Cycle 0048 task 3 (S11-XA2); seam=a publisher process whose sync of an asset fails with EIO (`--import`); no_claim=what a real disk does after a failed sync
+test('a publish whose sync of the candidate fails moves nothing, keeps its journal and tells the agent to run --recover', async () => {
+  // Arrange: a published Wiki and a candidate with an asset whose sync will fail.
+  const wiki = await publishedWikiWithACandidate()
+  await addPreparedAsset(wiki)
+  try {
+    // Act
+    const { code, answer } = runPublisherWith(
+      syncChangedFor('/next/assets/flow\\.png$'),
+      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+    )
+
+    const besideAfterTheFailure = (await publisherFilesBeside(wiki.output)).map(
+      withIdsHidden,
+    )
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        code,
+        answer,
+        recovery,
+        besideTheWikiAfterTheRecovery: await publisherFilesBeside(wiki.output),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+        besideTheWiki: besideAfterTheFailure,
+      },
+      {
+        code: 1,
+        answer: `Error: The candidate could not be synced to the disk before the swap: ${join(wiki.next, 'assets/flow.png')} (EIO: i/o error, fsync). Nothing was moved and the Wiki is as it was, and the publication journal was kept. Run --recover, then prepare a candidate and publish again.`,
+        wikiPage: wiki.wikiPage,
+        besideTheWiki: [
+          'wiki.publish-journal.json',
+          'wiki.publish-journal.json.prepared-<id>-<digest>',
+        ],
+        recovery: 'published-or-restored',
+        besideTheWikiAfterTheRecovery: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who saves a file of the Wiki while the publish syncs the candidate, which a save after the publish's last check would send only into the hidden prior Wiki while the answer counts the file preserved; fails_when=the syncs run between the last check of the learner's files and the swap, so a save during them is not seen and the publish goes on; why_new=Cycle 0048 task 4 (S11-N1); seam=a publisher process whose sync of the candidate's folder appends to the learner's file (`--import`); no_claim=a save in the few instructions between the last check and the swap, which the answer names after the swap (next test)
+test('a publish refuses a learner’s file saved while it syncs the candidate, and the Wiki keeps the saved bytes', async () => {
+  // Arrange: a Wiki with a learner's file, and a save made when the publish syncs the candidate's folder.
+  const wiki = await publishedWikiWithACandidate()
+  const manual = join(wiki.output, 'manual.txt')
+  await writeFile(manual, 'The learner kept these notes')
+  try {
+    // Act
+    const { code, answer } = runPublisherWith(
+      syncChangedFor('/next$', { saveToFile: manual }),
+      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        code,
+        answer,
+        manualInTheWiki: await readFile(manual, 'utf8'),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        code: 1,
+        answer:
+          'Error: A manual Wiki file changed during publication: manual.txt',
+        manualInTheWiki:
+          'The learner kept these notes and saved during the syncs',
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who saves a file between the publish's last check and the swap, whose save goes only into the prior Wiki that the swap moved aside; fails_when=the answer counts such a file preserved and names nothing, so the agent says the learner's notes are in the new Wiki; why_new=Cycle 0048 task 4 (S11-N1); seam=a swap run just before the rename that moves the Wiki aside (`swapBeforeRenaming`); no_claim=that the saved bytes reach the new Wiki, which they do not: the answer names the file and the folder that keeps it
+test('a publish names a learner’s file saved after its last check, which went into the prior Wiki, instead of counting it preserved', async () => {
+  // Arrange: a Wiki with a learner's file, saved again just before the publish moves the Wiki aside.
+  const { publishWiki: publishWhileTheLearnerSaves } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const manual = join(wiki.output, 'manual.txt')
+  await writeFile(manual, 'The learner kept these notes')
+  swapBeforeRenaming(
+    (path) => path === wiki.output,
+    () => writeFile(manual, 'The learner saved these notes again'),
+  )
+  try {
+    // Act
+    const answer = await publishWhileTheLearnerSaves({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    })
+
+    // Assert
+    assert.deepEqual(
+      {
+        preservedManualFiles: answer.preservedManualFiles,
+        manualFilesSavedAfterCheck: answer.manualFilesSavedAfterCheck,
+        savedBytesAreInThePriorWiki: await readFile(
+          join(answer.previousOutput, 'manual.txt'),
+          'utf8',
+        ),
+        copyInTheNewWiki: await readFile(manual, 'utf8'),
+      },
+      {
+        preservedManualFiles: 1,
+        manualFilesSavedAfterCheck: ['manual.txt'],
+        savedBytesAreInThePriorWiki: 'The learner saved these notes again',
+        copyInTheNewWiki: 'The learner kept these notes',
+      },
+    )
+  } finally {
+    swapBeforeRenaming(
+      () => false,
+      async () => undefined,
+    )
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
