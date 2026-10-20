@@ -1694,6 +1694,49 @@ test('the dependency cache of the Test workflow changes with the extension manif
   ])
 })
 
+// Value: protects=every place that restores `extension/node_modules` from the cache (the Test shards, its split-files job and the reader-dom job, which says it restores the same cache): all must use the key that changes with the manifest and the runner architecture; fails_when=a restore keeps the old key (no `runner.arch`, no `extension/package.json`), so that job restores a folder the manifest or the processor does not match, or a restore uses a key the pin does not read; why_new=Cycle 0048 task 45 (Maintainability, CodeRabbit, OCR B: the pin of task 28 read the first key of test.yml only); seam=none; no_claim=that the lockfile and the manifest agree
+test('every workflow step that restores extension/node_modules uses the key that changes with the manifest and the runner architecture', async () => {
+  // Arrange
+  const definitions = await ciDefinitions()
+
+  // Act
+  const restores = definitions.flatMap(({ path, text }) => {
+    const folderRestores = text.match(/^ +path: extension\/node_modules$/gm)
+    if (folderRestores === null) return []
+    const keys = [
+      ...text.matchAll(/^ +key: (extension-node-modules-.*)$/gm),
+    ].map(([, key]) => ({
+      hasArch: key.includes('${{ runner.os }}-${{ runner.arch }}-'),
+      hashedFiles: /hashFiles\(([^)]*)\)/.exec(key)?.[1].split(', '),
+    }))
+    return [{ path, restoreSteps: folderRestores.length, keys }]
+  })
+
+  // Assert
+  const expectedKey = {
+    hasArch: true,
+    hashedFiles: [
+      "'.node-version'",
+      "'extension/package.json'",
+      "'extension/pnpm-lock.yaml'",
+      "'extension/pnpm-workspace.yaml'",
+      "'extension/patches/**'",
+    ],
+  }
+  assert.deepEqual(restores, [
+    {
+      path: '.github/workflows/reader-dom.yml',
+      restoreSteps: 1,
+      keys: [expectedKey],
+    },
+    {
+      path: '.github/workflows/test.yml',
+      restoreSteps: 2,
+      keys: [expectedKey, expectedKey],
+    },
+  ])
+})
+
 // Value: protects=the errors a split file raises after its last test, which the Test shards hide (their parts end with `--test-force-exit`); fails_when=the Test workflow no longer runs the split files whole after a push to main, or runs them before the shards have passed, or runs them with a name pattern or the forced exit; why_new=Cycle 0048 task 26 (test guide, 2026-10-02: no CI job ran the split files without --test-force-exit); seam=none; no_claim=that pull requests run it (it costs about four minutes of two processors)
 test('the Test workflow runs the split files whole, with Node’s default exit, after a push to main whose shards passed', async () => {
   // Arrange
