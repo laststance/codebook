@@ -3269,6 +3269,64 @@ test('an image of the Wiki whose browser stops reading is ended at the send limi
   )
 })
 
+// Value: protects=the editor's extension host and every later page against a client that stops reading an answer but keeps sending bytes on its connection: the send limit counts only the parts of the answer that its connection takes as progress, so bytes the client sends do not keep the answer in the host; fails_when=the send limit counts any activity of the connection as progress, as Node's idle timeout of a socket (response.setTimeout) does, so a client that sends a byte now and then keeps its answer past WIKI_RESPONSE_SEND_LIMIT_MS; why_new=Cycle 0047 row 275 (P3SIMP-2): the idle timeout proposed for the send limit kept such an answer open (a probe: still open 3 s after a limit of 500 ms), so the reader keeps its own limit; seam=the reader loaded with loadModule, a send limit of 500 ms, a node:http whose server notes each close of an answer, and a connection of the test's that does not read and sends one byte of a further request's header every 100 ms; no_claim=the shipped send limit of 30 s
+test('an image of the Wiki whose browser stops reading but keeps sending bytes is still ended at the send limit', async (context) => {
+  // Arrange: an image of 16 MiB that the manifest names, a send limit of 500 ms, and a connection that asks for the image, does not read it and sends one byte of a further request's header every 100 ms.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-sending-client-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory, manifestPath } = await writeMinimalWiki(projectRoot)
+  await writeFile(
+    join(outputDirectory, 'diagram.png'),
+    Buffer.alloc(16_777_216, 'diagram '),
+  )
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: ['diagram.png'],
+      includedSources: [],
+    }),
+  )
+  const server = httpNotingTheReadersRequests()
+  const { startDeepWikiReader: startReaderWithASendLimit } = await loadModule<
+    typeof deepWikiReaderModule
+  >(
+    join(__dirname, '..', 'deepWikiReader.js'),
+    {
+      './constants': { ...constants, WIKI_RESPONSE_SEND_LIMIT_MS: 500 },
+      'node:http': server.http,
+    },
+    { URL },
+  )
+  const reader = await startReaderWithASendLimit(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  const browser = askWithoutReading(new URL('diagram.png', reader.url).href, {
+    'Sec-Fetch-Dest': 'image',
+  })
+  context.after(() => browser.connection.destroy())
+  browser.connection.write(
+    `GET ${new URL(reader.url).pathname} HTTP/1.1\r\nHost: ${new URL(reader.url).host}\r\nX-Waiting: `,
+  )
+  const sending = setInterval(() => browser.connection.write('a'), 100)
+  context.after(() => clearInterval(sending))
+
+  // Act
+  // gstack-timing-ok: the client sends a byte every 100 ms, five times within the limit of 500 ms, and the test waits six times the limit for the answer's end.
+  const imageAnswer = await within(server.answersClosed(1), 3_000)
+  clearInterval(sending)
+
+  // Assert
+  assert.equal(imageAnswer, 'closed')
+})
+
 // Value: protects=a learner whose browser receives a large image of the Wiki over a slow link, such as a remote window's forwarded port: the send limit counted the whole send, so every image larger than the link carries within the limit was cut on every load; fails_when=the reader ends an answer whose browser keeps reading at the send limit, instead of only one that has taken nothing for that long; why_new=Cycle 0047 row 230 (P2CLA-8); seam=the reader loaded with loadModule and a send limit of 250 ms, and a client that stops reading for 4 ms after each part it receives, so receiving the image takes far longer than the limit; no_claim=the shipped send limit of 30 s and a real remote link
 test('an image of the Wiki that its browser reads slowly but steadily is received whole, though receiving it takes longer than the send limit', async (context) => {
   // Arrange: an image of 16 MiB that the manifest names, and a send limit of 250 ms.

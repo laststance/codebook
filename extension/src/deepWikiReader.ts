@@ -960,6 +960,7 @@ function sendJson(
 /**
  * Ends an answer of the Wiki reader that has made no progress for {@link WIKI_RESPONSE_SEND_LIMIT_MS}: its connection is closed. The limit counts from when the reader starts to send the answer, and again from each part of it the connection takes ({@link sendInParts}), so an answer whose browser keeps reading, however slowly, is not ended.
  * Why: a client that stops reading kept the answer in the extension host for as long as its connection lived: a prepared page's bytes and its place among the pages in hand ({@link takeWikiPagePlace}). A limit on the whole send instead cut every answer larger than a slow link carries within it, such as an image over a remote window's forwarded port.
+ * Not the socket's idle timeout (`response.setTimeout`): it counts every byte the client sends as progress, so a client that reads nothing but sends a byte now and then kept its answer past the limit.
  * Called for every answer when the reader starts to send it: by {@link endWithinSendLimit} for an answer of one part, and by {@link sendInParts} for one sent in parts.
  * @param response - The answer.
  * @returns The limit's timer, which {@link sendInParts} starts again at each part the connection takes.
@@ -1002,6 +1003,7 @@ function connectionTook(response: ServerResponse): Promise<void> {
 /**
  * Sends an answer's body part by part under the send limit, each part once its connection has taken the one before, and ends the answer after the last; an answer whose browser went, or that the send limit ended, gets no further part, and no further part is read for it.
  * Why: the send limit counts the time in which an answer makes no progress ({@link armSendLimit}), and an answer handed to its connection whole shows none until all of it is taken; each part taken is progress, so a browser that keeps reading, however slowly, receives the whole answer.
+ * Not a stream pipeline (`Readable.from` piped into the answer): it reads one part ahead, so an answer whose browser stopped reading holds two parts in the host instead of one, and a part whose read fails before the first byte destroys the answer, so the browser gets a broken connection instead of the reader's error answer.
  * Called by {@link endWithinSendLimit} for a body larger than one part ({@link WIKI_RESPONSE_PART_BYTES}), and by {@link sendWikiFileInParts} for every file of the Wiki that is no page.
  * @param response - The answer, whose status and headers are set.
  * @param partAt - Reads the part of the body that starts at a position; `undefined` once the body is sent whole.
