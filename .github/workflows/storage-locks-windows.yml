@@ -110,6 +110,7 @@ on:
       - extension/src/utils/listPlacedClaims.ts
       - extension/src/utils/modifiedAtMsOf.ts
       - extension/src/utils/namesMachineInClear.ts
+      - extension/src/utils/newStagedConfigPath.ts
       - extension/src/utils/openWithoutFollowing.ts
       - extension/src/utils/passIfMissing.ts
       - extension/src/utils/placeStorageLock.ts
