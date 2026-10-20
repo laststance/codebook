@@ -494,21 +494,26 @@ export async function startDeepWikiReader(
       })
       return
     }
-    let rawBody = ''
+    const bodyParts: Buffer[] = []
+    let bodyBytes = 0
     for await (const part of request) {
-      rawBody += part.toString('utf8')
-      if (Buffer.byteLength(rawBody) > WIKI_HTTP_BODY_LIMIT_BYTES) {
+      bodyParts.push(part)
+      bodyBytes += part.length
+      if (bodyBytes > WIKI_HTTP_BODY_LIMIT_BYTES) {
         sendJson(response, 413, { error: 'The Wiki question is too long.' })
         return
       }
     }
-    const question = questionOf(rawBody)
+    // The body is decoded whole: a character whose bytes two parts share is one character, not two replacement characters.
+    const question = questionOf(Buffer.concat(bodyParts).toString('utf8'))
     if (question === undefined) {
       sendJson(response, 400, { error: 'Enter a shorter Wiki question.' })
       return
     }
     // An agent may publish a new owned directory while this reader stays open: the question is answered from the sources the manifest names now.
     const { sources } = await readManifestShared()
+    // A client that went while the body or the manifest was read is closed already, and no model is asked for it; one that goes later stops its question when its answer closes. Both are looked at in one step, so no close falls between them.
+    if (response.destroyed) return
     const controller = new AbortController()
     response.on('close', () => {
       if (!response.writableFinished) controller.abort()

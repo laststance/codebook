@@ -590,6 +590,153 @@ test('closing the reader while a question is in flight stops the question and en
   }
 })
 
+// Value: protects=the learner's editor model, its quota and the model picker against questions nobody waits for: the reader began to watch a question's disconnect only after it had read the manifest, so a tab closed meanwhile still sent its question to the model (Codex reproduced one call of the answer function, with no abort); fails_when=the reader asks the model for a question whose request closed while its body or the manifest was read; why_new=Cycle 0047 row 271 (P3CR-2 = P3CXA-B1 = P3CLA-7); seam=the reader loaded with loadModule, a manifest reader that holds every read after the reader's start until the test lets it go, and a node:http whose server notes each close of an answer and each end of the reader's handler; no_claim=a real browser's close timing
+test('a question whose tab goes while the reader reads the manifest is not sent to the editor model', async (context) => {
+  // Arrange: the one-page Wiki, a manifest reader that holds every read after the reader's start, an answer function that notes each question it is asked, and a server that notes each close of an answer and each end of the reader's handler.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-gone-question-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let isReaderStarted = false
+  let noteManifestReadAsked: (asked: 'asked') => void = () => undefined
+  const manifestReadAsked = new Promise<'asked'>((resolveAsked) => {
+    noteManifestReadAsked = resolveAsked
+  })
+  let letReadsGoOn = (): void => {}
+  const readsMayGoOn = new Promise<void>((resolveGoOn) => {
+    letReadsGoOn = resolveGoOn
+  })
+  const holdingManifestReader: typeof readWikiFileToOpenModule = {
+    readWikiFileToOpen: async (...parameters) => {
+      // The reader's start reads the manifest as always; every later read is held.
+      if (parameters[1] === 'manifest' && isReaderStarted) {
+        noteManifestReadAsked('asked')
+        await readsMayGoOn
+      }
+      return readWikiFileToOpen(...parameters)
+    },
+  }
+  const server = httpNotingTheReadersRequests()
+  const { startDeepWikiReader: startReaderHoldingManifestReads } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        'node:http': server.http,
+        './utils/readWikiFileToOpen': holdingManifestReader,
+      },
+      { URL },
+    )
+  const questionsAsked: string[] = []
+  const reader = await startReaderHoldingManifestReads(
+    outputDirectory,
+    projectRoot,
+    async (question) => {
+      questionsAsked.push(question)
+      return {
+        answer: 'The source confirms it.',
+        citations: [],
+        sourceChanged: false,
+      }
+    },
+  )
+  context.after(() => reader.close())
+  // A held read is let go also when the test fails, so its request ends.
+  context.after(() => letReadsGoOn())
+  isReaderStarted = true
+  const browserTab = new AbortController()
+  const asking = fetch(new URL('api/ask', reader.url), {
+    method: 'POST',
+    headers: {
+      Origin: new URL(reader.url).origin,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ question: 'Where is it?' }),
+    signal: browserTab.signal,
+  }).then(
+    () => 'answered',
+    () => 'request gone',
+  )
+  const readAsked = await within(manifestReadAsked, 2_000)
+
+  // Act: the tab goes while the manifest is read; once the reader's answer has closed, the read goes on.
+  browserTab.abort()
+  const tab = await asking
+  const questionAnswer = await within(server.answersClosed(1), 2_000)
+  letReadsGoOn()
+  const questionHandler = await within(server.handlersEnded(1), 2_000)
+
+  // Assert
+  assert.deepEqual(
+    { readAsked, tab, questionAnswer, questionHandler, questionsAsked },
+    {
+      readAsked: 'asked',
+      tab: 'request gone',
+      questionAnswer: 'closed',
+      questionHandler: 'ended',
+      questionsAsked: [],
+    },
+  )
+})
+
+// Value: protects=a learner who asks the Wiki in words with letters of more than one byte, such as é or any Japanese character: the reader decoded each part of a question's body alone, so a character whose bytes two parts shared reached the model as two replacement characters (U+FFFD); fails_when=the reader decodes the body part by part instead of whole, so the model gets another question than the learner wrote; why_new=Cycle 0047 row 271 (P3CLA-12); seam=a request of the test's that writes the body in two writes split inside the é, with a pause between them, so the reader receives two parts; no_claim=how a browser splits a body (any split inside a character is alike)
+test('a question whose character of two bytes is split between two parts of its body reaches the editor model whole', async (context) => {
+  // Arrange: the one-page Wiki, an answer function that notes each question it is asked, and a body cut between the two bytes of its é.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-split-question-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const questionsAsked: string[] = []
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async (question) => {
+      questionsAsked.push(question)
+      return {
+        answer: 'The source confirms it.',
+        citations: [],
+        sourceChanged: false,
+      }
+    },
+  )
+  context.after(() => reader.close())
+  const body = Buffer.from('{"question":"Where is the café validated?"}')
+  const insideTheE = body.indexOf(Buffer.from('é')) + 1
+
+  // Act
+  const status = await new Promise<number | 'request failed'>(
+    (resolveStatus) => {
+      const request = http.request(
+        new URL('api/ask', reader.url),
+        {
+          method: 'POST',
+          agent: false,
+          headers: {
+            Origin: new URL(reader.url).origin,
+            'Content-Type': 'application/json',
+            'Content-Length': String(body.length),
+          },
+        },
+        (answer) => {
+          answer.resume()
+          answer.once('end', () => resolveStatus(answer.statusCode ?? 0))
+        },
+      )
+      request.on('error', () => resolveStatus('request failed'))
+      request.write(body.subarray(0, insideTheE))
+      // gstack-timing-ok: the reader reads the first part as soon as it comes, in the same process, so the pause only keeps the second part from coming with it; a part that did come with it would make the test pass without the fix, never fail with it.
+      setTimeout(() => request.end(body.subarray(insideTheE)), 100)
+    },
+  )
+
+  // Assert
+  assert.deepEqual(
+    { status, questionsAsked },
+    { status: 200, questionsAsked: ['Where is the café validated?'] },
+  )
+})
+
 // Value: protects=every request of the open Wiki reader and the freshness check of an update in a checkout whose repository carries the Wiki's manifest as a link to a pipe (row 186); fails_when=the reader reads its manifest by name, which follows the link and waits for a writer that never comes; why_new=Cycle 0046 row 186; seam=none (a real named pipe, whose waiting reader the test releases when it ends)
 test(
   'the reader’s manifest read does not wait on a link to a named pipe at the manifest’s path: it refuses at once and names the file',
