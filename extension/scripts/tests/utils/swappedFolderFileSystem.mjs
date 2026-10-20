@@ -2,7 +2,7 @@ import * as fileSystem from 'node:fs/promises'
 
 export * from 'node:fs/promises'
 
-/** The swaps a test asked for, by the call before which each runs, and which path each waits for; a swap is gone once it ran. */
+/** The swaps a test asked for, by the call before which each runs, and which path each waits for; a swap is gone once it ran. Each `isAwaited` is asked once for each call it covers (a `readFile` of a path, or an `open` of a path for reading, and not again for the handle that open answers), so a test may count with it (`++reads === 2`). */
 const pendingSwaps = {
   mkdir: undefined,
   writeFile: undefined,
@@ -43,7 +43,7 @@ export function swapBeforeMaking(isAwaited, swap) {
 }
 
 /**
- * Asks the next write of a file that `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`: a `writeFile` of it, or an `open` of it to write, through whose handle the publisher writes the files it records as its own. Called by the publisher's tests before they prepare, publish or recover a Wiki with the same copy.
+ * Asks the next write of a file that `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`: a `writeFile` of it, or an `open` of it to write, through whose handle the publisher writes the files it records as its own. Called by the publisher's tests before they prepare, publish or recover a Wiki with the same copy. `isAwaited` is asked once for each such call: the writes through the handle that `open` answers do not ask again.
  * @param {(path: string) => boolean} isAwaited - Whether a file `writeFile` is asked for is the one before which the swap runs.
  * @param {() => Promise<void>} swap - The swap.
  * @returns {void}
@@ -55,7 +55,7 @@ export function swapBeforeWriting(isAwaited, swap) {
 }
 
 /**
- * Asks the next write through a handle of a file that `isAwaited` names to run `swap` once half of its bytes are written, once, and then to write the rest: as a kill of the publisher while it writes a large file, which leaves the part written so far, since a write goes from the first byte on. Called by the probe that kills a publisher process (`killedPublisherProbe.mjs`).
+ * Asks the next write through a handle of a file that `isAwaited` names to run `swap` once half of its bytes are written, once, and then to write the rest: as a kill of the publisher while it writes a large file, which leaves the part written so far, since a write goes from the first byte on. Called by the probe that kills a publisher process (`killedPublisherProbe.mjs`). `isAwaited` is asked once for each `open` to write, and not again for the writes through its handle.
  * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked to write is the one whose write runs the swap halfway.
  * @param {() => Promise<void>} swap - The swap.
  * @returns {void}
@@ -110,6 +110,8 @@ export function swapBeforeReading(isAwaited, swap) {
 
 /**
  * Asks the next read of a file that `isAwaited` names to run `swap` once its bytes are read and before the read answers, once: as another process that touches, saves or replaces the file between the publisher's read of its bytes and its next look at it. Covers a `readFile` of the path and the `readFile` of a handle opened to read it. Called by the publisher's tests of the copy of a learner's file.
+ *
+ * `isAwaited` decides once for each read: at a `readFile` of the path, or, for a read through a handle, at the `open` of the path for reading (the handle then carries the answer, so its `readFile` does not ask again). A predicate that counts reads (`++reads === 2`) therefore counts a read through a handle as one read, counted when the handle is opened; a handle that is opened and never read is still one read for it.
  * @param {(path: string) => boolean} isAwaited - Whether a file read is asked for is the one after whose bytes the swap runs.
  * @param {() => Promise<void>} swap - The swap.
  * @returns {void}
@@ -161,20 +163,24 @@ async function swapIfAwaited(kind, path) {
 }
 
 /**
- * Wraps an open handle so that its `readFile` runs the swap of {@link swapAfterReading} once the bytes are read, when the file is the one it waits for; every other member is the handle's own.
+ * Wraps an open handle so that its `readFile` runs the swap of {@link swapAfterReading} once the bytes are read; every other member is the handle's own. `open` has already decided that this handle's file is the one the swap waits for, so the wrapper does not ask `isAwaited` again: it runs the swap if that swap is still the one waiting, and does nothing if another read already ran it or the test armed another.
  * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered for a read.
- * @param {string} path - The path the handle was opened with.
+ * @param {{ isAwaited: (path: string) => boolean, swap: () => Promise<void> }} awaited - The swap of {@link swapAfterReading} that `open` found waiting for this handle's file.
  * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
  * @example
- * await handleSwappedAfterReading(await fileSystem.open(path, 'r'), path).readFile() // => the bytes, after the swap ran
+ * await handleSwappedAfterReading(await fileSystem.open(path, 'r'), pendingSwaps.afterRead).readFile() // => the bytes, after the swap ran
  */
-function handleSwappedAfterReading(handle, path) {
+function handleSwappedAfterReading(handle, awaited) {
   return new Proxy(handle, {
     get(target, property) {
       if (property === 'readFile')
         return async (...options) => {
           const bytes = await target.readFile(...options)
-          await swapIfAwaited('afterRead', path)
+          // The swap runs once, and only while it is still the one waiting.
+          if (pendingSwaps.afterRead === awaited) {
+            pendingSwaps.afterRead = undefined
+            await awaited.swap()
+          }
           return bytes
         }
       const value = Reflect.get(target, property, target)
@@ -223,9 +229,10 @@ export async function open(path, flags, ...rest) {
   const isWrite = typeof flags === 'string' && /[wa+]/.test(flags)
   if (isWrite) await swapIfAwaited('writeFile', path)
   const handle = await fileSystem.open(path, flags, ...rest)
-  // A handle opened to read answers its bytes first and then runs the swap of swapAfterReading, when it waits for this file.
-  if (!isWrite && pendingSwaps.afterRead?.isAwaited(String(path)))
-    return handleSwappedAfterReading(handle, String(path))
+  // A handle opened to read answers its bytes first and then runs the swap of swapAfterReading, when it waits for this file; the predicate is asked here, once, and the handle carries the answer.
+  const afterRead = pendingSwaps.afterRead
+  if (!isWrite && afterRead?.isAwaited(String(path)))
+    return handleSwappedAfterReading(handle, afterRead)
   const halfway = pendingSwaps.halfwayWrite
   // Only the awaited file's handle runs its swap halfway through its write, once.
   if (!isWrite || !halfway?.isAwaited(String(path))) return handle

@@ -52,6 +52,7 @@ import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
   observeFileReads,
   open as openThroughSwappedFolderFileSystem,
+  readFile as readThroughSwappedFolderFileSystem,
   swapBeforeLinking,
   swapBeforeMaking,
   swapAfterReading,
@@ -21783,6 +21784,51 @@ test('a publish whose learner’s file is touched right after its bytes are read
       async () => undefined,
     )
     await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the tests of the publisher that count reads with swapAfterReading's predicate (`++reads === 2`): a read through a handle is one read for the predicate, as a readFile of the path is, so the swap runs after the read the test counted; fails_when=the predicate is asked again when the bytes of a handle are read (once at the open and once at the readFile of the handle), so a counting predicate counts a handle's read twice and the swap runs after no read or after the wrong one; why_new=Cycle 0048 task 121 (OCR B); seam=the stand-in file system of the swapped-folder mark, called by the test itself over a real file; no_claim=the publisher's own reads, and a handle that is opened and never read (its open is the one call of the predicate)
+test('a swap armed for the second read of a file by a counting predicate runs after the second read when that read goes through a handle, and the predicate is asked once for each read', async () => {
+  // Arrange: a file read once by readFile and once through a handle; the predicate counts every read of the file and the swap notes which read it ran after.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-swap-after-reading-')),
+  )
+  const file = join(directory, 'notes.txt')
+  const events = []
+  let reads = 0
+  try {
+    await writeFile(file, 'The learner kept these notes')
+    swapAfterReading(
+      (path) => path === file && ++reads === 2,
+      async () => {
+        events.push('swap ran')
+      },
+    )
+
+    // Act
+    await readThroughSwappedFolderFileSystem(file)
+    events.push('first read done')
+    const handle = await openThroughSwappedFolderFileSystem(file, 'r')
+    const bytes = await handle.readFile('utf8')
+    await handle.close()
+    events.push('second read done')
+
+    // Assert
+    assert.deepEqual(
+      { events, bytes, reads },
+      {
+        events: ['first read done', 'swap ran', 'second read done'],
+        bytes: 'The learner kept these notes',
+        reads: 2,
+      },
+    )
+  } finally {
+    // The armed swap is cleared, so a failure before the read cannot leak it into a later test.
+    swapAfterReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(directory, { recursive: true, force: true })
   }
 })
 
