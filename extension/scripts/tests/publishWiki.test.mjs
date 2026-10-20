@@ -20698,3 +20698,54 @@ for (const { names, liveStartText, outcome, recovery, journal } of [
     }
   })
 }
+
+// Value: protects=the editor agent whose --recover ended a stopped publish's journal and then could not read the publish lock of that run (a permission or a disk error), which it must be told stands, so it runs --recover again instead of finding the next publish refused for a lock it never heard of; fails_when=the recovery takes a lock it cannot read for no lock, so its answer names neither `publishLockRemoved` nor `publishLockKept`; why_new=Cycle 0048 task 7 (S11-XA3); seam=a look at the lock (`lstat`) that fails with EACCES once the journal is removed (scripts/tests/utils/failingFileSystem.mjs); no_claim=a lock that is no regular file or holds no record of the publisher, whose answer names nothing
+test('a recovery that cannot read the publish lock of the run whose journal it ended answers publishLockKept with the system’s code', async () => {
+  // Arrange: a publish killed after its journal, whose process is gone; the look at the lock fails once the journal is removed.
+  const { recoverWikiPublication: recoverWhoseLockLookFails } =
+    await loadMarkedCopy('publish-wiki.mjs', '?failing')
+  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+    record.pid = 99999999
+  })
+  const journal = `${wiki.output}.publish-journal.json`,
+    lock = `${wiki.output}.publish-lock.json`
+  failLookOf((path) => path === lock && !existsSync(journal), 'EACCES')
+  try {
+    // Act
+    const answer = await recoverWhoseLockLookFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({
+        status,
+        publishLockRemoved,
+        publishLockKept,
+        publishLockKeptCode,
+      }) => ({
+        status,
+        publishLockRemoved,
+        publishLockKept: publishLockKept && basename(publishLockKept),
+        publishLockKeptCode,
+      }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, answer, lockStands: existsSync(lock) },
+      {
+        killed: '',
+        answer: {
+          status: 'published-or-restored',
+          publishLockRemoved: undefined,
+          publishLockKept: 'wiki.publish-lock.json',
+          publishLockKeptCode: 'EACCES',
+        },
+        lockStands: true,
+      },
+    )
+  } finally {
+    failLookOf(() => false, 'EACCES')
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})

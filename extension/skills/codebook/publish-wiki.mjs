@@ -1792,9 +1792,14 @@ async function endStoppedLock(bytes, paths, requirePathHeld, ownerJudgement) {
   return hasJournal ? undefined : { status: 'publish-lock-removed', output };
 }
 
-/** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails after every try ({@link unlinkRetried}) stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @returns What the recovery's answer says of the lock: `{ publishLockRemoved: true }` once it was removed, `{ publishLockKept }` with its path where its removal failed, which one more --recover ends, and nothing where no lock of that run stands. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') // => { publishLockRemoved: true } */
+/** The code the answer of {@link endLockOfRun} gives a publish lock that stands and cannot be read, when the failure carries no system code: an entry at the lock's name that is no regular file. Read by {@link endLockOfRun}. */
+const UNREADABLE_LOCK_CODE = 'NOT_A_REGULAR_FILE';
+
+/** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails after every try ({@link unlinkRetried}) stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @returns What the recovery's answer says of the lock: `{ publishLockRemoved: true }` once it was removed, `{ publishLockKept }` with its path where its removal failed, which one more --recover ends, `{ publishLockKept, publishLockKeptCode }` with the system's code of a failed look or read of a lock that stands ({@link UNREADABLE_LOCK_CODE} for an entry that is no regular file), and nothing where no lock of that run stands. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') // => { publishLockRemoved: true } */
 async function endLockOfRun(id, lock) {
-  const bytes = await regularBytes(lock, true).catch(() => undefined);
+  let bytes;
+  // A lock that is missing is no lock of this run to end; one that stands and cannot be read stays, and the answer names it with the system's code, for one more --recover.
+  try { bytes = await regularBytes(lock, true); } catch (error) { return { publishLockKept: lock, publishLockKeptCode: typeof error.code === 'string' ? error.code : UNREADABLE_LOCK_CODE }; }
   let held;
   try { held = bytes === undefined ? undefined : JSON.parse(bytes); } catch { held = undefined; }
   // Only the lock of this run is this recovery's to end.
