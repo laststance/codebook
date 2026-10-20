@@ -1078,6 +1078,47 @@ test('the shard script fails a call that counts no test even when its runner exi
   assert.match(result.stderr, /✖ silent\.test\.js ran no test/)
 })
 
+// Value: protects=the shard job's count of a call and its rule that a call which ran no test fails: a test that prints `ℹ tests 99` at column 0 must not become the call's count (the first such line won), and a runner that died before its summary after such a line must not pass as a run of 99 tests; fails_when=the count takes the first `ℹ tests N` line of the output, or any line of that form, and not the last complete summary block of the runner; why_new=Cycle 0048 task 135 (native adversarial); seam=test-shard.mjs started as a process on a fixture build, once with a real `node --test` call whose test prints the line, once with a stand-in runner that prints the line and exits 0; no_claim=a test that prints a whole fake summary block and then kills its runner
+test('the shard script counts the tests of the runner’s last summary, not a line a test printed, and fails a runner that died after such a line', async (context) => {
+  // Arrange
+  const printing = await createFixtureExtension(context, {
+    tests: {
+      'printing.test.js': loggingTestSource(
+        ['opens'],
+        "test('prints a summary line', () => { console.log('ℹ tests 99') })",
+      ),
+    },
+    timings: { files: { 'printing.test.js': { totalMs: 10 } } },
+  })
+  const died = await createFixtureExtension(context, {
+    tests: { 'died.test.js': loggingTestSource(['opens']) },
+    timings: { files: { 'died.test.js': { totalMs: 10 } } },
+  })
+  await useStandInRunner(died, "console.log('ℹ tests 99')")
+
+  // Act
+  const counted = await runShardScript(printing, [
+    '--shard',
+    '1/1',
+    '--lanes',
+    '1',
+  ])
+  const failed = await runShardScript(died, ['--shard', '1/1', '--lanes', '1'])
+
+  // Assert
+  assert.equal(counted.code, 0)
+  assert.match(
+    counted.stdout,
+    /Shard 1\/1: 2 tests in 1 calls on 1 lanes, \d+ s, 0 failed calls\./,
+  )
+  assert.equal(failed.code, 1)
+  assert.match(
+    failed.stdout,
+    /Shard 1\/1: 0 tests in 1 calls .* 1 failed calls\./,
+  )
+  assert.match(failed.stderr, /✖ died\.test\.js ran no test/)
+})
+
 // Value: protects=the shard job from a silence limit that ends every call at once: `Infinity` and a limit above what a timer can wait (2,147,483 s) fire at once with a TimeoutOverflowWarning, so every call is ended as hung; fails_when=the option accepts a limit whose milliseconds pass 2,147,483,647 or that is not finite; why_new=Cycle 0048 task 54 (OCR B); seam=test-shard.mjs started as a process on a fixture build; no_claim=the pre-gate runner's option, which pregateTests.test.mjs covers
 test('the shard script refuses a silence limit of Infinity or above what a timer can wait, and runs no test', async (context) => {
   // Arrange

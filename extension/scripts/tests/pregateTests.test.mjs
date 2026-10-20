@@ -94,6 +94,29 @@ test('the pre-gate reads one summary that adds up both runs, as each run’s own
   ])
 })
 
+// Value: protects=the pre-gate's count of a lane: a test that prints `ℹ tests 99` at column 0 adds nothing to the combined summary, and a run that died before its summary adds nothing either; fails_when=the combined summary adds every line of the summary form, so one test's text changes the count the pre-gate reads; why_new=Cycle 0048 task 135 (native adversarial: combinedSummary summed every such line); seam=none; no_claim=a test that prints a whole fake summary block
+test('the pre-gate adds only the last summary block of each run to the combined summary, not a line a test printed', () => {
+  // Arrange
+  const outputs = [
+    'ℹ tests 99\n✔ a (1ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 12.5',
+    '✔ b (2ms)\nℹ pass 7',
+    'ℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 30',
+  ]
+
+  // Act
+  const summary = combinedSummary(outputs)
+
+  // Assert
+  assert.deepEqual(summary, [
+    'ℹ tests 5',
+    'ℹ pass 5',
+    'ℹ fail 0',
+    'ℹ cancelled 0',
+    'ℹ skipped 0',
+    'ℹ todo 0',
+  ])
+})
+
 // Value: protects=the pre-gate's local lane, which runs the extension's TypeScript tests as the JavaScript the build writes; fails_when=a selected TypeScript test is passed to node as its .ts source (every test of it fails to load, as when the pre-gate ran `bun test` on them) or lands outside dist/tests, also for a test in a subfolder; no_claim=the build itself, which the runner script starts before it maps
 test('the pre-gate runs a selected TypeScript test of the extension as the JavaScript the build wrote for it, also in a subfolder', () => {
   // Arrange

@@ -1,6 +1,4 @@
-/** The test runner's summary lines that the gstack pre-gate reads for its count (`ℹ tests 12`, `ℹ pass 12`, …). */
-const SUMMARY_LINE =
-  /^ℹ (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms) (\d+(?:\.\d+)?)$/
+import { readRunSummary, SUMMARY_LINE } from './readRunSummary.mjs'
 
 /**
  * Splits the files the gstack pre-gate selected into the runs that `node --test` makes of them, in order: the compiled product tests first, then the other tests (the script tests and the compaction hook's test), four at a time.
@@ -50,7 +48,7 @@ export function runSummaryLine(line) {
 }
 
 /**
- * Adds up the summary lines of every run into one summary in the runner's own form.
+ * Adds up the summary of every run into one summary in the runner's own form: the last summary block of each run ({@link readRunSummary}), never a line a test printed in that form.
  *
  * Called by `run-pregate-tests.mjs` after the last run, with the output of each run.
  *
@@ -66,11 +64,11 @@ export function runSummaryLine(line) {
 export function combinedSummary(outputs) {
   const names = ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo']
   const totals = Object.fromEntries(names.map((name) => [name, 0]))
-  for (const output of outputs)
-    for (const line of output.split('\n')) {
-      const match = SUMMARY_LINE.exec(line)
-      // Only the counts are added; the duration of a run is no count.
-      if (match && match[1] in totals) totals[match[1]] += Number(match[2])
-    }
+  for (const output of outputs) {
+    // Only the run's own summary (its last block) is added; a line a test printed in that form is the test's text.
+    const summary = readRunSummary(output) ?? {}
+    // Only the counts are added; the duration of a run is no count.
+    for (const name of names) totals[name] += summary[name] ?? 0
+  }
   return names.map((name) => `ℹ ${name} ${totals[name]}`)
 }

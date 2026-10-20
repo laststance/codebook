@@ -19,6 +19,7 @@ import { collectTestRun } from './utils/collectTestRun.mjs'
 import { parseSilenceSeconds } from './utils/parseSilenceSeconds.mjs'
 import { planTestShards } from './utils/planTestShards.mjs'
 import { planWholeSplitFiles } from './utils/planWholeSplitFiles.mjs'
+import { readRunSummary } from './utils/readRunSummary.mjs'
 import { readTestTimings } from './utils/readTestTimings.mjs'
 import { runTestInvocation } from './utils/runTestInvocation.mjs'
 import {
@@ -102,10 +103,9 @@ async function recordTimings(files, silenceSeconds) {
   console.log(`Recorded ${results.length} tests in ${TEST_TIMINGS_FILE}.`)
 }
 
-/** Reads the number of tests a `node --test` call reports in its summary. @example countTests('ℹ tests 12\nℹ pass 12') // => 12 */
+/** Reads the number of tests a `node --test` call reports in its last summary block; a line a test printed in that form, or a summary the runner died before, counts none ({@link readRunSummary}). @example countTests('ℹ tests 12\nℹ pass 12\nℹ fail 0') // => 12 */
 function countTests(output) {
-  const summary = /^ℹ tests (\d+)$/m.exec(output)
-  return summary ? Number(summary[1]) : 0
+  return readRunSummary(output)?.tests ?? 0
 }
 
 /** Names a planned call in one line of the log. @example callLabel({ files: ['a.test.js', 'b.test.js'] }) // => '2 files' */
