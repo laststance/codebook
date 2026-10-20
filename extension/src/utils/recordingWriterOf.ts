@@ -30,7 +30,7 @@ export type RecordingWriterOfDirectory =
  * @returns
  * - `finished` for a directory without a header, and for a sealed recording that its run has released ({@link isSealedRecordingReleased}): one without the record of its writer, or this window's own; each only by a look that read the header and the record, or proved them absent
  * - `unreadable` for a directory whose header stands and gave the look nothing, and for a sealed recording whose writer record stands and gave the look nothing and whose header leaves it unheld (this window's own)
- * - for a sealed recording whose writer's record is kept, the state of that writer, whose run may still save the study (`may-run`, `on-another-host`, `unconfirmed-here`, `gone`), with the recording's creation time; for one whose record the look saw and cannot read, the state its header gives
+ * - for a sealed recording whose writer's record is kept, the state of that writer, whose run may still save the study (`may-run`, `on-another-host`, `unconfirmed-here`, `gone`), with the recording's creation time; for one whose record the look saw and cannot read, the state its header gives (`may-run`, `on-another-host`, `unconfirmed-here`), and `unreadable` where the header would call the writer gone (Cycle 0048 task 1)
  * - otherwise the writer's state with the recording's creation time: `may-run` (a writer of this machine), `on-another-host` (one this machine cannot probe, with the host the recording names), `unconfirmed-here` (a live process of this host that this computer cannot confirm as the writer: of another user, or one that began after the recording, by the clock), `gone`, or `left-to-caller` (this process, with `ignored`)
  * @example
  * await recordingWriterOf('/…/recordings.v2/<study id>') // => { kind: 'finished' } once the run's recording is sealed and its study saved
@@ -55,6 +55,8 @@ export async function recordingWriterOf(
     const holder = isSealedRecordingReleased(seen)
       ? undefined
       : await sealedRecordingWriterState(directory, header, starts)
+    // A record that stands and cannot be read, with a header that proves no writer gone, is nobody's reservation and nobody's rest.
+    if (holder?.kind === 'unreadable') return { kind: 'unreadable' }
     if (holder) return { ...holder, createdAt: header.createdAt }
     // A look that may have failed to read releases nothing by itself.
     return seen.mayHaveFailedRead

@@ -551,6 +551,31 @@ test('a sealed recording has no writer any more, whatever its header names, and 
   })
 })
 
+// Value: protects=the finished recording of a run on another computer (same host name, same storage folder) whose writer record stands and cannot be read now, so that Delete asks the learner instead of moving the study; fails_when=a sealed recording whose record stands and gives nothing is judged by its header alone, whose process id no process of this computer has, so the writer is called gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 1); why_new=Cycle 0048 task 1 (S11-XC1): the header's gone answered for a record that stands unread; seam=the sealed recording's header, which names this host and a process id of no process, and its writer record, which stands as a file that is no JSON
+test('a sealed recording whose writer record stands and cannot be read is unreadable, although its header names a process id that no process of this computer has', async (context) => {
+  // Arrange: the other computer's header names this host and a process id of no process here; its writer record stands but gives nothing.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await recording.writer.finish(1)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+  })
+  await writeFile(
+    recordingOwnerRecordPath(storage.directory, recording.studyId),
+    'no JSON',
+  )
+
+  // Act
+  const writer = await writerOf(recording.folder, 'ignored')
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'unreadable' })
+})
+
 // Value: protects=this window's own live run whose recording has only its header (its writer's record could not be written) while this computer's host name changed during the run (macOS takes it from the network); fails_when=the host name is compared before the process id, so this window's own reservation counts as a recording of another computer: Saved studies lists it as what is left of a removed study, and a removal offers to move it; why_new=Cycle 0046 security review SX1; seam=the recording's header, which names this test process under another host name, without a record of its writer
 test('a recording whose header names this window’s own process under another host name is this window’s: it may run, it is left to this window when asked, and it is not listed', async (context) => {
   // Arrange: this window's run, recording under the host name it had when it began.
