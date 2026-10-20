@@ -37,6 +37,7 @@ import {
 } from './dropSecondNameOfOneFile'
 import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
+import { newStagedConfigPath } from './newStagedConfigPath'
 import { openWithoutFollowing } from './openWithoutFollowing'
 import { passIfMissing } from './passIfMissing'
 import { readFileSystemNowMs } from './readFileSystemNowMs'
@@ -998,7 +999,7 @@ async function stageConfig(
   targetPath: string,
   pendingCreationPath: string,
 ): Promise<{ stagedPath: string; owner: CatalogReceipt }> {
-  const stagedPath = join(cursorDirectory, `.codebook-${randomUUID()}.mcp.json`)
+  const stagedPath = newStagedConfigPath(cursorDirectory)
   const stagedHandle = await open(
     stagedPath,
     fileFlags.O_CREAT |
@@ -1089,7 +1090,9 @@ async function removeLeftStagedConfigs(cursorDirectory: string): Promise<void> {
   )
   if (!stagedNames.length) return
   // The age of a file is judged by the clock that stamped it, read once for the sweep; where that clock cannot be read, nothing is removed and the files stay for a later sweep.
-  const fileSystemNowMs = await readFileSystemNowMs(cursorDirectory)
+  const fileSystemNowMs = await readFileSystemNowMs(
+    newStagedConfigPath(cursorDirectory),
+  )
   if (fileSystemNowMs === undefined) return
   for (const name of stagedNames)
     if (await isLeftStagedConfig(cursorDirectory, name, fileSystemNowMs))

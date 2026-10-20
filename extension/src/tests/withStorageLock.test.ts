@@ -16,7 +16,7 @@ import fsPromises, {
   writeFile,
 } from 'node:fs/promises'
 import os, { hostname, tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 
@@ -423,9 +423,81 @@ test('an empty lock file the file system dates a minute ago is taken over while 
   assert.deepEqual(await readdir(directory), [])
 })
 
-// Value: protects=a lock that may belong to a live window stays when the file system's clock cannot be read; fails_when=an empty lock old by this window's clock is taken over although no file can be created in the folder to read the file system's clock; why_new=Cycle 0048 task 40 (S11-N17e); seam=open of node:fs/promises, which refuses the clock probe's file; no_claim=a full disk or a read-only network home
+// Value: protects=the claim folders of live windows while another window's sweep reads the file system's clock for their empty owner files: a probe inside `<lock>.takeover` is listed as a claim and can make a release's removal of that folder fail, and a probe inside a prepared claim folder moves with it when its window renames it into place; fails_when=the clock probe is created in the folder of the entry it judges, so it stands inside a claim folder; why_new=Cycle 0048 task 40 (S11-N17e), review of the probe's place; seam=open of node:fs/promises, whose exclusive creations the test records, this window's clock (Date) ten minutes ahead, and the real files; no_claim=a real network home
+test('the clock probe for an empty owner file of a placed claim and of a prepared claim stands beside the lock under the name of a prepared lock, never inside a claim folder, and leaves nothing', async (context) => {
+  // Arrange: an empty owner file in the placed claim folder and one in a prepared claim folder, both created this instant; this window's clock is set ten minutes ahead, so both look old by it.
+  const directory = await storageDirectory(context)
+  const placedClaimFolder = join(directory, 'writer.lock.takeover')
+  const preparedClaimFolder = join(directory, 'writer.lock.takeover-prepared')
+  await mkdir(placedClaimFolder)
+  await writeFile(join(placedClaimFolder, 'placed'), '')
+  await mkdir(preparedClaimFolder)
+  await writeFile(join(preparedClaimFolder, 'prepared'), '')
+  const open = fsPromises.open.bind(fsPromises)
+  const probeFolders: string[] = []
+  const probeNames: string[] = []
+  context.mock.method(
+    fsPromises,
+    'open',
+    (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
+      if (rest[0] === 'wx') {
+        probeFolders.push(dirname(String(path)))
+        probeNames.push(
+          basename(String(path)).slice(0, 'writer.lock.pending-'.length),
+        )
+      }
+      return Reflect.apply(open, fsPromises, [path, ...rest])
+    },
+  )
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+
+  // Assert: one probe for each judged owner file, beside the lock; both owner files stay, and no probe is left.
+  assert.deepEqual(
+    {
+      outcome,
+      probeFolders,
+      probeNames,
+      entries: (await readdir(directory)).sort(),
+      placedClaimFolder: await readdir(placedClaimFolder),
+      preparedClaimFolder: await readdir(preparedClaimFolder),
+    },
+    {
+      outcome: 'written',
+      probeFolders: [directory, directory],
+      probeNames: ['writer.lock.pending-', 'writer.lock.pending-'],
+      entries: ['writer.lock.takeover', 'writer.lock.takeover-prepared'],
+      placedClaimFolder: ['placed'],
+      preparedClaimFolder: ['prepared'],
+    },
+  )
+})
+
+// Value: protects=the storage folder from a pile of clock probes: the empty probe file that a window killed in the instant of its clock read left is removed by the next sweep like any prepared lock, and one of this instant stays; fails_when=the probe is named so that no sweep finds it, so every kill in that instant leaves a file for good; why_new=Cycle 0048 task 40 (S11-N17e), review of the probe's place; seam=this window's clock (Date) ten minutes ahead and the files' modification time; no_claim=a real kill
+test('an empty clock probe a killed window left beside the lock is removed by the next write, and one of this instant stays, while this window’s clock runs ten minutes ahead of the file system’s', async (context) => {
+  // Arrange: two empty files named like prepared locks, one untouched for a minute and one created this instant; then this window's clock is set ten minutes ahead.
+  const directory = await storageDirectory(context)
+  const oldProbe = join(directory, 'writer.lock.pending-killed-probe')
+  await writeFile(oldProbe, '')
+  await leaveUntouchedFor(oldProbe, 60_000)
+  await writeFile(join(directory, 'writer.lock.pending-live-probe'), '')
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+
+  // Assert
+  assert.deepEqual(
+    { outcome, entries: await readdir(directory) },
+    { outcome: 'written', entries: ['writer.lock.pending-live-probe'] },
+  )
+})
+
+// Value: protects=a lock that may belong to a live window stays when the file system's clock cannot be read; fails_when=an empty lock old by this window's clock is taken over although no file can be created in the folder to read the file system's clock; why_new=Cycle 0048 task 40 (S11-N17e); seam=open of node:fs/promises, which refuses the clock probe's file (a prepared-lock name beside the lock); no_claim=a full disk or a read-only network home
 test('an empty lock file that is old by this window’s clock stays in place while no file can be created to read the file system’s clock', async (context) => {
-  // Arrange: a lock file of zero bytes untouched for a minute, and a folder that refuses the clock probe's file.
+  // Arrange: a lock file of zero bytes untouched for a minute, and a folder that refuses the clock probe's file (named like a prepared lock beside the lock).
   const directory = await storageDirectory(context)
   const lockPath = join(directory, 'writer.lock')
   await writeFile(lockPath, '')
@@ -435,7 +507,7 @@ test('an empty lock file that is old by this window’s clock stays in place whi
     fsPromises,
     'open',
     (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
-      if (String(path).endsWith('.clock-probe'))
+      if (String(path).startsWith(`${lockPath}.pending-`))
         return Promise.reject(
           Object.assign(new Error('EACCES'), { code: 'EACCES' }),
         )
