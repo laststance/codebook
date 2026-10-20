@@ -891,6 +891,36 @@ test('an unsealed recording whose writer record stands as a regular file and can
   assert.deepEqual(writer, { kind: 'unreadable' })
 })
 
+// Value: protects=the recording of another computer (same host name, same storage folder) that is still being written, whose writer record stands as a regular file that is valid JSON but no owner record (a damaged or half-written record): Delete asks the learner; fails_when=only a record that is no JSON is called unreadable, so a record that parses but names no process leaves the header's gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 75); why_new=Cycle 0048 task 75 (native adversarial review: the unreadable answer stopped at JSON.parse); seam=the header, which names this host and a process id of no process, and the writer record, which holds a JSON value that fails the owner schema; no_claim=a record that is an owner record naming no recording or another one, which the header judges (the AF10 test above)
+for (const [shape, text] of [
+  ['an object without a process id', '{"machineId":"machine-b"}'],
+  ['an object whose process id is a string', '{"pid":"4242"}'],
+  ['an array', '[4242]'],
+  ['null', 'null'],
+] as const)
+  test(`an unsealed recording whose writer record is valid JSON but ${shape} is unreadable, although its header names a process id that no process of this computer has`, async (context) => {
+    // Arrange: the other computer's header names this host and a process id of no process here; its writer record stands and parses, but names no writer.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    await writeFile(
+      recordingOwnerRecordPath(storage.directory, recording.studyId),
+      text,
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, { kind: 'unreadable' })
+  })
+
 // Value: protects=the recording of another computer (same host name, same storage folder) whose folder of writer records this computer cannot look at now (permission denied, a disk error, a folder a scanner holds): Delete asks the learner, and a folder that is missing or no folder leaves the header's verdict; fails_when=a look at the folder of records that fails for another reason than ENOENT or ENOTDIR is read as no folder, so the header's gone (no process of this computer has its id) stands and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 60); why_new=Cycle 0048 task 60 (no test made the look at the folder of records fail); seam=the lstat of node:fs/promises, refused for the path of the `recording-owners` folder only, and a header that names this host and a process id of no process; no_claim=a record that stands and cannot be read (the test above), a link at the folder (the test below)
 for (const [code, expected] of [
   ['EACCES', { kind: 'unreadable' }],
