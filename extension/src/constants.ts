@@ -157,6 +157,7 @@ export const READER_ERROR_KINDS = [
   { kind: 'citations', retryable: true, choiceRetired: false },
   { kind: 'control', retryable: false, choiceRetired: true },
   { kind: 'history-learning', retryable: true, choiceRetired: false },
+  { kind: 'history-not-saved', retryable: true, choiceRetired: false },
   { kind: 'history-position', retryable: true, choiceRetired: false },
   { kind: 'layout', retryable: false, choiceRetired: false },
   { kind: 'node-history-control', retryable: false, choiceRetired: true },
