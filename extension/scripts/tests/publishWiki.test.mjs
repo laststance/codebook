@@ -20749,3 +20749,61 @@ test('a recovery that cannot read the publish lock of the run whose journal it e
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the learner whose Wiki folder has two names on one file system (the short and the long name on NTFS, names of another case on macOS and Windows) and whose publish stopped, leaving its lock and its journal beside the Wiki folder; fails_when=the lock and the journal are named after the name the command line gave the folder, so a publish through the other name finds neither, takes a lock of its own and swaps the Wiki under the stopped publish; why_new=Cycle 0048 task 13 (S11-N9); seam=the Wiki folder answers to a second name beside it (scripts/tests/utils/aliasedFolderFileSystem.mjs, `?aliased-folder`), as NTFS does for a short name; no_claim=a real NTFS volume, whose realpath this stands in for
+test('a publish through the other name of the Wiki folder is refused beside the lock of a publish that stopped, because the lock is named after the folder’s real name', async () => {
+  // Arrange: a publish killed after its journal; the Wiki folder then answers to a second name.
+  const { publishWiki: publishThroughTheOtherName } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?aliased-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+      ],
+    })
+    const otherName = join(wiki.root, '.codebook/WIKI~1')
+    nameFolderAlso(otherName, wiki.output)
+
+    // Act
+    const refusal = await publishThroughTheOtherName({
+      projectRoot: wiki.root,
+      outputDirectory: otherName,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert: the refusal names the lock of the real name, and the Wiki still holds the page it held.
+    assert.deepEqual(
+      {
+        killed,
+        refusalNamesTheLock: refusal.includes(
+          `${wiki.output}.publish-lock.json`,
+        ),
+        besideTheWikiNamedByTheOtherName: (await readdir(dirname(wiki.output)))
+          .filter((name) => name.startsWith('WIKI'))
+          .sort(),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        killed: '',
+        refusalNamesTheLock: true,
+        besideTheWikiNamedByTheOtherName: [],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    nameFolderAlso(undefined)
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})

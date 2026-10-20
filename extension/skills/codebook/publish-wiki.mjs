@@ -274,17 +274,26 @@ async function createParentOf(requested, root) {
   catch (error) { await removeMadeFolders(madeFolders); throw error; }
 }
 
+/** The name of a folder as its real path gives it, so one folder has one name, and so one lock and one journal beside it, whatever name the command line used: on NTFS the short name (`CODEBO~1`) and the long one name one folder, and on macOS and Windows names of another case do. A name that stands as a folder and no link, whose real path lies in the same parent, is read from its real path; a name that is missing, a link, a file or a junction to a folder elsewhere keeps the name it was given, since the folder checks that follow refuse it by that name. Called by {@link locations} for the output and the stage. @param path - The absolute path the command line gave. @returns The last segment of the folder's real path, or of `path` where no folder stands there. @example await realNameOf('C:\\repo\\.codebook\\WIKI~1') // => 'wiki' on NTFS */
+async function realNameOf(path) {
+  const status = await lookAt(path);
+  if (status === undefined || !status.isDirectory() || status.isSymbolicLink()) return basename(path);
+  const [real, parent] = await Promise.all([realpath(path), realpath(dirname(path))]);
+  // A junction that lstat calls a folder leads to a folder elsewhere: it keeps its name, and the folder checks refuse it by that name.
+  return dirname(real) === parent ? basename(real) : basename(path);
+}
+
 /** Resolves paths for {@link prepareWikiStage}, {@link publishWiki} and recovery without following directory aliases: the output, the stage, and beside the output the journal and the publish lock ({@link takePublishLock}). @example await locations('/repo', '/repo/.codebook/wiki') */
 async function locations(projectRoot, outputDirectory, stageDirectory, createParent = false) {
   const root = await realpath(projectRoot), requested = resolve(outputDirectory);
   // Checked before the parent is created: a missing folder behind a link would otherwise be made outside the project.
   const isInProjectBefore = await requireOwnFoldersToOutput(requested, root);
   const { isOutputInProject, madeFolders } = createParent ? await createParentOf(requested, root) : { isOutputInProject: isInProjectBefore, madeFolders: [] };
-  const output = join(await realpath(dirname(requested)), basename(requested));
+  const output = join(await realpath(dirname(requested)), await realNameOf(requested));
   const within = relative(output, root);
   // An output inside the project (the default .codebook/wiki) is accepted; only the project root itself, or a folder that contains it, is refused.
   if (!isAbsolute(within) && within !== '..' && !within.startsWith('..' + sep)) throw new Error('The Wiki output cannot be the project root or a folder that contains it. A folder inside the project, such as .codebook/wiki, is accepted.');
-  const stage = stageDirectory === undefined ? undefined : join(await realpath(dirname(resolve(stageDirectory))), basename(resolve(stageDirectory)));
+  const stage = stageDirectory === undefined ? undefined : join(await realpath(dirname(resolve(stageDirectory))), await realNameOf(resolve(stageDirectory)));
   if (stage !== undefined && (dirname(stage) !== dirname(output) || stage === output)) throw new Error('The Wiki stage must be a distinct sibling of its output.');
   // The output and the stage themselves are held to the rule of the folders above them: the prior Wiki is read and the new one written there.
   await requireRegularFolder(output, root, isOutputInProject, outputRefusalOf);
