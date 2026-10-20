@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import {
   cp,
@@ -202,8 +202,8 @@ function notingTest(name, passes) {
   ].join('\n')
 }
 
-/** Starts the fixture's runner with the given selection and answers its exit code, both streams and the order log as a list of lines. @example await runPregateRunner(root, ['extension/scripts/tests/s.test.mjs']) // => { code: 0, stdout: '…', stderr: '', order: ['build', 'script'] } */
-async function runPregateRunner(root, selection) {
+/** Starts the fixture's runner with the given selection and answers its exit code, both streams and the order log as a list of lines; `extraEnvironment` adds variables to the runner's own (for example `NODE_OPTIONS`, which every node process it starts reads too). @example await runPregateRunner(root, ['extension/scripts/tests/s.test.mjs']) // => { code: 0, stdout: '…', stderr: '', order: ['build', 'script'] } */
+async function runPregateRunner(root, selection, extraEnvironment = {}) {
   const orderLog = join(root, 'order.log')
   const result = spawnSync(
     process.execPath,
@@ -219,6 +219,7 @@ async function runPregateRunner(root, selection) {
           ),
         ),
         ORDER_LOG: orderLog,
+        ...extraEnvironment,
       },
     },
   )
@@ -401,4 +402,198 @@ test('the pre-gate runner refuses a silence limit of Infinity, above a timer’s
       },
     ],
   )
+})
+
+/** The source of a fixture product test that notes its name in the order log, then runs `body` (the statements of an async function). @example scriptedTest('product', "console.error('x')") */
+function scriptedTest(name, body) {
+  return [
+    "import { appendFileSync } from 'node:fs'",
+    "import { test } from 'node:test'",
+    `test('${name}', async () => {`,
+    `  appendFileSync(process.env.ORDER_LOG, '${name}\\n')`,
+    `  ${body}`,
+    '})',
+    '',
+  ].join('\n')
+}
+
+// Value: protects=the pre-gate's silence watch from a run that talks only on stderr (Node's runner prints a test's own stderr on its stdout, so what reaches the runner's stderr is its own: a warning, a crash report): that text is passed through to the pre-gate runner's own stderr and counts as activity, so the run is not ended as hung; fails_when=stderr is not piped on, or a chunk of it does not restart the silence time (the run is ended after the limit although it printed all the time); why_new=Cycle 0048 task 87 (Step 7: stderr became piped in fixing cycle 2); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a product test that prints nothing for 5 s under a 3 s limit, and NODE_OPTIONS=--require of a file that makes the runner (a node process with no NODE_TEST_CONTEXT) write a line to its stderr every second; no_claim=output on stdout, which the hanging test above covers by its absence
+test('the pre-gate runner keeps a run alive that writes only to stderr for longer than the limit, and passes the text to its own stderr', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {
+    'product.test.js': scriptedTest(
+      'product',
+      'await new Promise((resolve) => setTimeout(resolve, 5_000))',
+    ),
+  })
+  const preloadPath = join(root, 'write-to-stderr.cjs')
+  await writeFile(
+    preloadPath,
+    "if (!process.env.NODE_TEST_CONTEXT) setInterval(() => console.error('runner still working'), 1_000).unref()\n",
+  )
+
+  // Act
+  const result = await runPregateRunner(
+    root,
+    ['--silence-seconds', '3', 'extension/src/tests/product.test.ts'],
+    { NODE_OPTIONS: `--require=${preloadPath}` },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      passesTheTextOn: result.stderr.includes('runner still working'),
+      endedAsHung: result.stderr.includes('printed nothing'),
+    },
+    { code: 0, passesTheTextOn: true, endedAsHung: false },
+  )
+})
+
+// Value: protects=the pre-gate's verdict on a run that was ended for its silence but winds down with exit code 0 (the real runner exits non-zero after a SIGTERM, so this is the only case that tells `timedOut ||` from the exit code): the lane fails and the run is named; fails_when=the verdict reads only the exit code, so a hung test that the runner reports as exit 0 after the SIGTERM turns into a pass; why_new=Cycle 0048 task 88 (Step 7: nothing told `timedOut ||` apart); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, and NODE_OPTIONS=--require of a file that makes the runner (a node process with no NODE_TEST_CONTEXT) exit 0 on SIGTERM; the script has no seam for a stand-in runner and needs none; no_claim=what the real runner exits with after a SIGTERM
+test('the pre-gate runner fails the lane for a run ended for its silence even when the runner exits 0 after the SIGTERM', async (context) => {
+  // Arrange
+  // The hung test ends by itself after 6 s: the stand-in runner exits at the SIGTERM and leaves its file process behind.
+  const root = await createFixtureRepository(context, {
+    'product.test.js': scriptedTest(
+      'product',
+      'await new Promise((resolve) => setTimeout(resolve, 6_000))',
+    ),
+  })
+  const preloadPath = join(root, 'exit-on-sigterm.cjs')
+  await writeFile(
+    preloadPath,
+    "if (!process.env.NODE_TEST_CONTEXT) process.on('SIGTERM', () => process.exit(0))\n",
+  )
+
+  // Act
+  const result = await runPregateRunner(
+    root,
+    ['--silence-seconds', '3', 'extension/src/tests/product.test.ts'],
+    { NODE_OPTIONS: `--require=${preloadPath}` },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      namesTheRun: result.stderr.includes(
+        '✖ extension/dist/tests/product.test.js printed nothing for 3 s and was ended',
+      ),
+    },
+    { code: 1, namesTheRun: true },
+  )
+})
+
+// Value: protects=the pre-gate lane from a runner that cannot start: the lane fails with one line that names the run and the error, not with exit 1 and nothing to read; fails_when=the error of the spawn is dropped; why_new=Cycle 0048 task 71 (OCR B); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build removes the extension folder (the runner's working folder), so the spawn fails with ENOENT; no_claim=other causes of a failed start
+test('the pre-gate runner names the run and the error when a runner cannot start, and fails the lane', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {})
+  await writeFile(
+    join(root, 'extension/scripts/build-fast.mjs'),
+    [
+      "import { appendFileSync, rmSync } from 'node:fs'",
+      "appendFileSync(process.env.ORDER_LOG, 'build\\n')",
+      '// The build ran in the extension folder, which the runner uses as its working folder.',
+      'rmSync(process.cwd(), { recursive: true, force: true })',
+      '',
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runPregateRunner(root, [
+    'extension/src/tests/product.test.ts',
+  ])
+
+  // Assert
+  assert.equal(result.code, 1)
+  assert.match(
+    result.stderr,
+    /^run-pregate-tests: extension\/dist\/tests\/product\.test\.js could not start: spawn .* ENOENT$/m,
+  )
+})
+
+// Value: protects=the pre-gate from a build that never ends: it is ended after its limit and the lane fails with one line that names the limit, before any test runs; fails_when=the build runs with no time bound, so a hung build holds the pre-gate with nothing shown; why_new=Cycle 0048 task 73 (native adversarial); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build hangs, with `--build-seconds 2`; no_claim=the default limit (300 s)
+test('the pre-gate runner ends a build that never ends after its limit, names the limit and runs no test', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {})
+  await writeFile(
+    join(root, 'extension/scripts/build-fast.mjs'),
+    [
+      "import { appendFileSync } from 'node:fs'",
+      "appendFileSync(process.env.ORDER_LOG, 'build\\n')",
+      'setInterval(() => {}, 1_000)',
+      '',
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runPregateRunner(root, [
+    '--build-seconds',
+    '2',
+    'extension/src/tests/product.test.ts',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    { code: result.code, stderr: result.stderr, order: result.order },
+    {
+      code: 1,
+      stderr:
+        'run-pregate-tests: the build did not end within 2 s and was ended.\n',
+      order: ['build'],
+    },
+  )
+})
+
+// Value: protects=the count the pre-gate reads from the end of the runner's output: when the reader is slower than the runner (a pipe that has filled), the combined summary is still written in full; fails_when=the runner ends with process.exit() right after writing the summary, which drops the output still queued for the pipe (the probe: 5 MB written to a pipe read after a second lose the tail); why_new=Cycle 0048 task 72 (Codex); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build and a product test that prints 2.4 MB, whose output is read only after 2 s; no_claim=a reader on another system (Windows pipes are written the same way, but this test runs where the others run)
+test('the pre-gate runner writes its whole output, the combined summary last, to a pipe that is read late', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {
+    'product.test.js': scriptedTest(
+      'product',
+      "for (let line = 0; line < 40_000; line++) console.log('x'.repeat(60))",
+    ),
+  })
+
+  // Act
+  const output = await new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        join(root, 'extension/scripts/run-pregate-tests.mjs'),
+        'extension/src/tests/product.test.ts',
+      ],
+      {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'inherit'],
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([name]) => name !== 'NODE_TEST_CONTEXT',
+            ),
+          ),
+          ORDER_LOG: join(root, 'order.log'),
+        },
+      },
+    )
+    let text = ''
+    child.on('error', reject)
+    child.on('close', () => resolve(text))
+    // The pipe is not read for 2 s, so the runner's output queues up behind a full pipe.
+    setTimeout(() => {
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk) => (text += chunk))
+    }, 2_000)
+  })
+
+  // Assert
+  assert.deepEqual(output.trimEnd().split('\n').slice(-6), [
+    'ℹ tests 1',
+    'ℹ pass 1',
+    'ℹ fail 0',
+    'ℹ cancelled 0',
+    'ℹ skipped 0',
+    'ℹ todo 0',
+  ])
 })
