@@ -288,6 +288,31 @@ function isSameRecordingLook(
   )
 }
 
+/**
+ * Says whether two looks at one recording differ only because a read that failed in the look before the lock does not fail in the look under it; for {@link LearningLibrary.verdictUnderLock}, which then words the refusal as a read that changed and not as another window's start.
+ * What a failed read hid from the first look is left out of the comparison: the header and the record's presence when the header's read failed (the look has neither), the record's presence when the record's read failed. The seal and what the first look did see (the header's writer and creation time) are still compared, so a header that changed, or a file that appeared where none stood, is another window's.
+ * @param before - The look before the storage lock.
+ * @param now - The look under it.
+ * @returns `true` when `before` may have failed a read, `now` may not, and nothing the first look saw differs; `false` otherwise, also when no read failed before the lock or one fails only under it.
+ * @example isSameApartFromFailedRead({ isSealed: false, hasWriterRecord: false, mayHaveFailedRead: true }, { isSealed: false, header, hasWriterRecord: true, mayHaveFailedRead: false }) // => true: the header's read failed before the lock and passes under it
+ */
+function isSameApartFromFailedRead(
+  before: RecordingLook,
+  now: RecordingLook,
+): boolean {
+  if (!before.mayHaveFailedRead || now.mayHaveFailedRead) return false
+  // A seal that came between the looks keeps them the same, as in {@link isSameRecordingLook}.
+  const isSealSame = before.isSealed === now.isSealed || now.isSealed
+  // The header's read failed: the first look has no header and no record to compare.
+  if (before.header === undefined) return isSealSame
+  // The record's read failed: only the header the first look read is compared.
+  return (
+    isSealSame &&
+    before.header.owner.pid === now.header?.owner.pid &&
+    before.header.createdAt === now.header?.createdAt
+  )
+}
+
 /** The {@link RemovalWriterVerdict} of each recording directory of a study. */
 type RemovalWriterVerdicts = Map<string, RemovalWriterVerdict>
 
@@ -614,7 +639,7 @@ export class LearningLibrary {
    * @returns `sealed` for a sealed recording its run has released; the verdict found before the lock while the look is the same, or only a seal came since.
    * @throws
    * - "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then
-   * - "Codebook could not read a recording of this study just now. …" ({@link STUDY_RECORDING_READ_CHANGED_MESSAGE}) when the two looks differ only because a read that may have failed in the look before the lock does not under it
+   * - "Codebook could not read a recording of this study just now. …" ({@link STUDY_RECORDING_READ_CHANGED_MESSAGE}) when the two looks differ only because a read that may have failed in the look before the lock does not under it, also where that read hid the header or the writer record from the first look ({@link isSameApartFromFailedRead})
    * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed and its study saved
    */
   private async verdictUnderLock(
@@ -628,14 +653,9 @@ export class LearningLibrary {
     // A recording that appeared since the judgement may have just been begun by another window.
     if (!before) throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
     if (isSameRecordingLook(before.look, now)) return before
-    // Looks that differ only because a read that failed before no longer fails name no other window's run: the read is what changed. A file that appeared since (a read failing now that did not before) may be another window's start.
+    // Looks that differ only because a read that failed before no longer fails name no other window's run: the read is what changed, also where it hid the header or the record from the first look. A file that appeared since (a read failing now that did not before), and a header that changed, may be another window's start.
     throw new Error(
-      before.look.mayHaveFailedRead &&
-        !now.mayHaveFailedRead &&
-        isSameRecordingLook(before.look, {
-          ...now,
-          mayHaveFailedRead: before.look.mayHaveFailedRead,
-        })
+      isSameApartFromFailedRead(before.look, now)
         ? STUDY_RECORDING_READ_CHANGED_MESSAGE
         : STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE,
     )

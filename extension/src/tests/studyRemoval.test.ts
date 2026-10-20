@@ -1966,13 +1966,18 @@ test('a read of the header or of the writer record that fails once under the rem
  * @param context - The test, at whose end both calls are restored.
  * @param path - The file whose reads fail.
  * @param failure - The code both calls throw, and whether the look at the file fails as well.
- * @example failEveryReadOf(context, headerPath, { code: 'EBUSY', isLookFailing: false })
+ * @returns A handle whose `release` ends the failures, as a scanner that lets the file go does.
+ * @example
+ * failEveryReadOf(context, headerPath, { code: 'EBUSY', isLookFailing: false })
+ * const scanner = failEveryReadOf(context, headerPath, { code: 'EBUSY', isLookFailing: false })
+ * scanner.release() // the next read of the file succeeds
  */
 function failEveryReadOf(
   context: TestContext,
   path: string,
   failure: { code: 'EBUSY' | 'EACCES'; isLookFailing: boolean },
-): void {
+): { release: () => void } {
+  let isHeld = true
   const failed = (call: string): Error =>
     Object.assign(new Error(`${failure.code}: ${call} '${path}'`), {
       code: failure.code,
@@ -1982,21 +1987,27 @@ function failEveryReadOf(
     fsPromises,
     'open',
     async (...input: Parameters<typeof openBefore>) => {
-      if (input[0] === path) throw failed('open')
+      if (isHeld && input[0] === path) throw failed('open')
       return openBefore(...input)
     },
   )
+  const handle = {
+    release: (): void => {
+      isHeld = false
+    },
+  }
   // The look at the file fails only where the test asks for it.
-  if (!failure.isLookFailing) return
+  if (!failure.isLookFailing) return handle
   const lstatBefore = fsPromises.lstat
   context.mock.method(
     fsPromises,
     'lstat',
     async (...input: Parameters<typeof lstatBefore>) => {
-      if (input[0] === path) throw failed('lstat')
+      if (isHeld && input[0] === path) throw failed('lstat')
       return lstatBefore(...input)
     },
   )
+  return handle
 }
 
 // Value: protects=the finished recording of another window's run that has not saved its study, while every read of its header fails through a whole Delete (a scanner on Windows holds the file); fails_when=a look without a header counts the recording as finished before it asks whether the header stands and gave nothing, so Delete moves the recording to the Trash, both looks without a header being the same, before that window saved its study (data loss), or the list hides a recording whose writer nobody can name; why_new=Cycle 0047 row 251 (P3CXA-C1, P3S7-G2): row 239 held only for a read that fails under the lock; seam=the open of the header, which fails at every read, and the injected mover; no_claim=a real scanner on Windows, the editor's dialog (studyWorkspaceRemoval tests)
@@ -2963,6 +2974,149 @@ test('a read that failed before the removal’s lock and no longer fails under i
         outcome: 'nothing-moved',
         cause:
           'Codebook could not read a recording of this study just now. Delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=the learner who deletes a study while the read of a recording's header failed at the look before the lock and does not under it (a scanner on Windows held the header for a moment); fails_when=the look under the lock now has a header, and the comparison of the two looks takes that header for a start of another window, so the learner is sent to save a recording in a window that may not exist; why_new=Cycle 0048 task 38 (Red Team): task 20's sentence did not come where the failed read hid the header from the first look; seam=the open of the header, which fails until right before the storage lock of the loaded library, and the injected mover; no_claim=a real scanner on Windows
+test('a header whose read failed before the removal’s lock and passes under it keeps the study with a sentence about the read, not about another window', async (context) => {
+  // Arrange: a saved study whose recording has a header of this host and a process id of no process; a scanner holds the header until right before the lock.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  const scanner = failEveryReadOf(
+    context,
+    join(storage.directory, 'recordings.v2', study.id, 'header.json'),
+    { code: 'EBUSY', isLookFailing: false },
+  )
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    scanner.release()
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Codebook could not read a recording of this study just now. Delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=the learner who deletes a study while the read of a recording's writer record failed at the look before the lock and does not under it, so the record stands under the lock (a scanner on Windows held the record for a moment); fails_when=the look under the lock now has a record, and the comparison of the two looks takes that record for a start of another window, so the learner is sent to save a recording in a window that may not exist; why_new=Cycle 0048 task 38 (Red Team): task 20's sentence did not come where the record's read failed and passes under the lock with the record in place; seam=the open of the writer record, which fails until right before the storage lock of the loaded library, and the injected mover; no_claim=a real scanner on Windows
+test('a writer record whose read failed before the removal’s lock and passes under it keeps the study with a sentence about the read, not about another window', async (context) => {
+  // Arrange: a saved study whose recording has a header and a writer record of this host; a scanner holds the record until right before the lock.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  const recordPath = recordingOwnerRecordPath(storage.directory, study.id)
+  await mkdir(dirname(recordPath), { recursive: true })
+  await writeFile(
+    recordPath,
+    JSON.stringify({
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      machineId: 'machine-b',
+      recording: {
+        folder: 'recordings.v2',
+        createdAt: '2026-10-01T08:00:00.000Z',
+      },
+    }),
+  )
+  const scanner = failEveryReadOf(context, recordPath, {
+    code: 'EBUSY',
+    isLookFailing: false,
+  })
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    scanner.release()
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Codebook could not read a recording of this study just now. Delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=a study whose recording another window restarted (a header of another creation time and a writer record) at the moment a read that failed before the lock ends; fails_when=the comparison without what the failed read hid also leaves out the header the first look did read, so a recording that was begun again is worded as a read that changed and the learner is told to delete again instead of to save the recording in the other window; why_new=Cycle 0048 task 38 (Red Team): the fix for the hidden header or record must keep the header that changed; seam=the open of the writer record, which fails until right before the storage lock of the loaded library, at which step the test writes a header of another creation time and its record, and the injected mover; no_claim=a real second editor window
+test('a failed read of the writer record that ends together with a changed header keeps the study with the sentence about another window', async (context) => {
+  // Arrange: as above, with a record held by a scanner; right before the lock another window begins the recording again, with another creation time, and the scanner lets the record go.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const folder = join(storage.directory, 'recordings.v2', study.id)
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  const recordPath = recordingOwnerRecordPath(storage.directory, study.id)
+  const recordOf = (createdAt: string): string =>
+    JSON.stringify({
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      machineId: 'machine-b',
+      recording: { folder: 'recordings.v2', createdAt },
+    })
+  await mkdir(dirname(recordPath), { recursive: true })
+  await writeFile(recordPath, recordOf('2026-10-01T08:00:00.000Z'))
+  const scanner = failEveryReadOf(context, recordPath, {
+    code: 'EBUSY',
+    isLookFailing: false,
+  })
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    await writeFile(
+      join(folder, 'header.json'),
+      JSON.stringify({
+        owner: {
+          pid: ID_OF_NO_PROCESS,
+          hostname: hostname(),
+          sessionId: randomUUID(),
+        },
+        createdAt: '2026-10-17T08:00:00.000Z',
+      }),
+    )
+    await writeFile(recordPath, recordOf('2026-10-17T08:00:00.000Z'))
+    scanner.release()
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
     },
