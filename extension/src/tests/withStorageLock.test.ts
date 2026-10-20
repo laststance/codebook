@@ -1659,14 +1659,19 @@ test('a lock refused again after a write released cleanly gets its twelve take-b
 
   // Act
   for (let wait = 1; wait <= 13; wait++) {
+    // A missing reset ends the tries early: no timer is planned for this wait, which fails here at once and not after a long wait.
+    assert.equal(
+      window.timersPending,
+      1,
+      `expected a planned take-back before wait ${wait} of 13`,
+    )
     const refusedBefore = window.refusedRemovals
     context.mock.timers.tick(5_000)
     // The timer that waited and twelve planned ones make thirteen waits; the last plans nothing, which is counted below.
+    // The take-back ends with its 20th refused removal; the plan of the next one is asserted before the next tick.
     await untilReached(
-      () =>
-        window.refusedRemovals >= refusedBefore + 20 &&
-        (wait === 13 || window.timersPending === 1),
-      `the end of take-back ${wait} of 13 (20 refused removals, then the next take-back planned)`,
+      () => window.refusedRemovals >= refusedBefore + 20,
+      `the end of take-back ${wait} of 13 (20 refused removals)`,
     )
   }
   const timersPlannedAfterTheWaits = window.timersPending
@@ -1733,13 +1738,18 @@ test('a lock refused again after a take-back that succeeded gets its twelve take
 
   // Act
   for (let wait = 1; wait <= 12; wait++) {
+    // A missing reset ends the tries early: no timer is planned for this wait, which fails here at once and not after a long wait.
+    assert.equal(
+      window.timersPending,
+      1,
+      `expected a planned take-back before wait ${wait} of 12`,
+    )
     const refusedBefore = window.refusedRemovals
     context.mock.timers.tick(5_000)
+    // The take-back ends with its 20th refused removal; the plan of the next one is asserted before the next tick.
     await untilReached(
-      () =>
-        window.refusedRemovals >= refusedBefore + 20 &&
-        (wait === 12 || window.timersPending === 1),
-      `the end of take-back ${wait} of 12 (20 refused removals, then the next take-back planned)`,
+      () => window.refusedRemovals >= refusedBefore + 20,
+      `the end of take-back ${wait} of 12 (20 refused removals)`,
     )
   }
   const timersPlannedAfterTheWaits = window.timersPending
