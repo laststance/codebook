@@ -35,7 +35,7 @@ async function renameRetried(from, to) {
   return retriedWhilePassing(() => rename(from, to));
 }
 
-/** Removes a file as `unlink` does, tried again while the removal fails with an error that passes ({@link retriedWhilePassing}). Called by {@link takePublishLock} for the release of the publish lock. @throws What the last try of `unlink` rejects with. @example await unlinkRetried('/repo/.codebook/wiki.publish-lock.json') // resolves after a passing EBUSY */
+/** Removes a file as `unlink` does, tried again while the removal fails with an error that passes ({@link retriedWhilePassing}). Called by {@link takePublishLock} for the release of the publish lock, by {@link publishJournalWriterOf} for the publish's removal of its journal, by {@link runRecovery}, {@link endStoppedLock} and {@link endLockOfRun} for the recovery's removals of the journal and the lock, and by {@link releaseClaims} for the claims. @throws What the last try of `unlink` rejects with. @example await unlinkRetried('/repo/.codebook/wiki.publish-lock.json') // resolves after a passing EBUSY */
 async function unlinkRetried(path) {
   return retriedWhilePassing(() => unlink(path));
 }
@@ -585,12 +585,15 @@ function parseRecordOf(bytes, refusal, refusalOfSyntax = () => refusal) {
   return record;
 }
 
-/** Removes only the journal, claim, publish lock or side file bytes owned by the completing operation: the file at the path must hold those bytes, or it is kept and the step refused. @param remove - The removal, `unlink` unless named: the release of the publish lock tries it again while it fails with an error that passes ({@link unlinkRetried}). @example await removeOwnedRecord(path, bytes) */
+/** Removes only the journal, claim, publish lock or side file bytes owned by the completing operation: the file at the path must hold those bytes, or it is kept and the step refused ({@link ownershipRefusalOf}). @param remove - The removal, `unlink` unless named: the release of the publish lock, the publish's removal of its journal and the recovery's removals of the journal and the lock try it again while it fails with an error that passes ({@link unlinkRetried}). @example await removeOwnedRecord(path, bytes) */
 async function removeOwnedRecord(path, bytes, remove = unlink) {
   const current = await regularBytes(path, true);
-  if (!current || !current.equals(Buffer.from(bytes))) throw new Error('Publication ownership changed; the recovery record was preserved: ' + path);
+  if (!current || !current.equals(Buffer.from(bytes))) throw new Error(ownershipRefusalOf(path));
   await remove(path);
 }
+
+/** The refusal of a removal of a journal, a claim, a publish lock or a side file that no longer holds the bytes of the step that removes it; the record is kept. Called by {@link removeOwnedRecord} and {@link releaseClaims}. @example ownershipRefusalOf('/repo/.codebook/wiki.publish-journal.json') // => 'Publication ownership changed; the recovery record was preserved: /repo/.codebook/wiki.publish-journal.json' */
+const ownershipRefusalOf = path => 'Publication ownership changed; the recovery record was preserved: ' + path;
 
 /** Reads a candidate's manifest and refuses a candidate that holds a file its manifest does not list, named so the step that removes it is clear, or an asset that is no raster image, before anything is rendered or written. Called by {@link publishWiki}. @returns The manifest's bytes, the manifest and the paths it owns. @throws The refusal of the stray file or of the asset. @example await readCandidateManifest('/repo/.codebook/next', '/repo') // => { bytes, manifest, owned } */
 async function readCandidateManifest(stage, root) {
@@ -645,7 +648,7 @@ async function publishJournalOf({ root, output, stage }, prior, receipt, manifes
   return { record, backup, finalizedReceiptText, preparedText };
 }
 
-/** The journal of a publish and the files beside it, as the publish writes them: `write` puts the side file that keeps the candidate's prepared manifest and record in place first ({@link preparedPathOf}), new and whole, at a name no other step writes, then the journal that names its digest ({@link writeWholeRecord}), small enough for one write; a refused journal removes the side file again. Each copy of a learner's file into the candidate is named before the copy begins ({@link copyLearnerFiles}): the path is appended as one line to the list of copies beside the journal ({@link copiesListPathOf}), which the first copy creates, exclusive and without following a link, once the output's path holds ({@link openCopiesList}), and every later line goes through the handle of that create, so no line follows a link put at the list's name since; the journal is written once. A stop at any point leaves a list whose whole lines name every copy that began, so the recovery removes only what such a copy left ({@link learnerCopiesIn}). Called by {@link publishWiki} for the journal it writes. @param preparedText - The side file's text ({@link publishJournalOf}). @returns The journal's bytes, by which the publish removes the journal, `write`, `requireHeld`, which refuses once the journal's name no longer holds the bytes `write` wrote ({@link isOwnRecordAt}, {@link lostJournalRefusalOf}), and with the system's code where its look fails ({@link unreadOwnRecordRefusalOf}): on a file system without hard links the journal is created at its name and written after ({@link writeWholeRecord}), and a recovery may end it, empty, past the grace ({@link endUnwrittenJournal}), `recordCopyBegun`, which names one more copy, `closeCopiesList`, which closes the list once the copies are made, and `remove`, which removes the list and the side file, each while it is the file created ({@link removeOwnFile}), and then the journal ({@link removeOwnedRecord}), unless `requireHeld` found it no longer this publish's; a list or a side file whose removal fails stays for a later step, which removes it once no journal names it: the sweep for the list ({@link removeOrphansBeside}), the next publish for the side file ({@link removeStrayPreparedFiles}). @throws What the side file's write, the journal's, the list's create or an append rejects with; the list is removed with the journal then. @example const journalNow = publishJournalWriterOf(record, preparedText, '/repo/.codebook/wiki.publish-journal.json', requirePathHeld); await journalNow.write(); await journalNow.recordCopyBegun('manual.txt'); await journalNow.closeCopiesList(); await journalNow.remove() */
+/** The journal of a publish and the files beside it, as the publish writes them: `write` puts the side file that keeps the candidate's prepared manifest and record in place first ({@link preparedPathOf}), new and whole, at a name no other step writes, then the journal that names its digest ({@link writeWholeRecord}), small enough for one write; a refused journal removes the side file again. Each copy of a learner's file into the candidate is named before the copy begins ({@link copyLearnerFiles}): the path is appended as one line to the list of copies beside the journal ({@link copiesListPathOf}), which the first copy creates, exclusive and without following a link, once the output's path holds ({@link openCopiesList}), and every later line goes through the handle of that create, so no line follows a link put at the list's name since; the journal is written once. A stop at any point leaves a list whose whole lines name every copy that began, so the recovery removes only what such a copy left ({@link learnerCopiesIn}). Called by {@link publishWiki} for the journal it writes. @param preparedText - The side file's text ({@link publishJournalOf}). @returns The journal's bytes, by which the publish removes the journal, `write`, `requireHeld`, which refuses once the journal's name no longer holds the bytes `write` wrote ({@link isOwnRecordAt}, {@link lostJournalRefusalOf}), and with the system's code where its look fails ({@link unreadOwnRecordRefusalOf}): on a file system without hard links the journal is created at its name and written after ({@link writeWholeRecord}), and a recovery may end it, empty, past the grace ({@link endUnwrittenJournal}), `recordCopyBegun`, which names one more copy, `closeCopiesList`, which closes the list once the copies are made, and `remove`, which removes the list and the side file, each while it is the file created ({@link removeOwnFile}), and then the journal ({@link removeOwnedRecord}), tried again while a scanner or an indexer on Windows holds it ({@link unlinkRetried}), unless `requireHeld` found it no longer this publish's; a list or a side file whose removal fails stays for a later step, which removes it once no journal names it: the sweep for the list ({@link removeOrphansBeside}), the next publish for the side file ({@link removeStrayPreparedFiles}). @throws What the side file's write, the journal's, the list's create or an append rejects with; the list is removed with the journal then. @example const journalNow = publishJournalWriterOf(record, preparedText, '/repo/.codebook/wiki.publish-journal.json', requirePathHeld); await journalNow.write(); await journalNow.recordCopyBegun('manual.txt'); await journalNow.closeCopiesList(); await journalNow.remove() */
 function publishJournalWriterOf(record, preparedText, journal, requirePathHeld) {
   const copiesList = copiesListPathOf(journal, record.id);
   // The list as it was created, with the handle its lines go through; none before the first copy. The side file and the journal as they were written, and whether a check found the journal no longer this publish's.
@@ -682,7 +685,7 @@ function publishJournalWriterOf(record, preparedText, journal, requirePathHeld) 
     if (list !== undefined) await removeOwnFile(list.file);
     if (preparedFile !== undefined) await removeOwnFile(preparedFile);
     // A journal another step ended or replaced is not this publish's to remove.
-    if (!isJournalLost) await removeOwnedRecord(journal, journalNow.bytes);
+    if (!isJournalLost) await removeOwnedRecord(journal, journalNow.bytes, unlinkRetried);
   };
   return journalNow;
 }
@@ -759,7 +762,7 @@ async function restoreFinalizedFiles(finalized, stage) {
   return failure === undefined ? undefined : new Error('Publication failed; the candidate’s prepared manifest and record could not be put back in ' + stage + ': ' + failure.message + '. Run --recover.', { cause: failure });
 }
 
-/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview. Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
+/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview. Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
 export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false, system = SYSTEM_HERE }) {
   // The read of the owner the lock and the journal name (PowerShell and reg.exe on Windows, sysctl, ps and ioreg on macOS) starts now and runs beside the rendering.
   ownerHere(system);
@@ -811,8 +814,9 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       if (backup) { await renameRetried(output, backup); movedOld = true; }
       await renameRetried(stage, output);
       swapped = true;
-      await journalNow.remove();
-      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length };
+      // The Wiki is updated: a journal this publish cannot remove now, after every try, is named in its answer for --recover to end, and fails nothing.
+      const journalKept = await journalNow.remove().then(() => ({}), () => ({ publishJournalKept: journal }));
+      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length, ...journalKept };
     } catch (error) {
       if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
       const undoFailure = await undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas, refusal: error });
@@ -1544,7 +1548,7 @@ async function runRecovery({ record, bytes, claims, isResumed }, paths, requireP
     result = record.operation === 'restore-manifest' ? await recoverManifestJournal(record, paths, requirePathHeld, isResumed) : await recoverPublishJournal(record, paths, requirePathHeld);
     // What the run left beside its journal goes with it, first, by the journal's id, so none of it is left without its journal.
     if (isRecordId(record.id)) await removeLeftoversOfRun(paths, record.id);
-    await removeOwnedRecord(paths.journal, bytes);
+    await removeOwnedRecord(paths.journal, bytes, unlinkRetried);
     completed = true;
   } finally { await releaseClaims(claims, completed); }
   // The publish lock of the run whose journal ended goes after it, and the answer says so; a lock of another run stays for its own recovery.
@@ -1630,9 +1634,15 @@ async function endUnwrittenRecord(path, refusal, requirePathHeld, goneOwners, re
   await removeOwnedRecord(path, Buffer.alloc(0));
 }
 
-/** Removes the claims a recovery took ({@link claimRecovery}) once it ends: all of them, newest first, once it completed; otherwise only its own, the last, and the stopped ancestors stay, since removing them could let a new contender skip an active descendant. A claim left once its record is gone, by a stop before this release or a removal here that failed, goes with a later sweep once its writer is judged gone ({@link removeOrphansBeside}). Called by {@link runRecovery} and {@link endStoppedLock}. @param completed - Whether the recovery completed. @example await releaseClaims(claims, true) */
+/** Removes the claims a recovery took ({@link claimRecovery}) once it ends: all of them, newest first, once it completed; otherwise only its own, the last, and the stopped ancestors stay, since removing them could let a new contender skip an active descendant. Each removal is tried again while a scanner or an indexer on Windows holds the claim ({@link unlinkRetried}). A claim already gone counts as released: once the record a stopped ancestor claim leads to is gone, another recovery's sweep may remove that claim meanwhile ({@link removeOrphansBeside}); only a claim whose bytes changed is refused and kept ({@link ownershipRefusalOf}). A claim left once its record is gone, by a stop before this release or a removal here that failed, goes with a later sweep once its writer is judged gone ({@link removeOrphansBeside}). Called by {@link runRecovery} and {@link endStoppedLock}. @param completed - Whether the recovery completed. @throws The refusal of a claim whose bytes changed, and what the last try of a removal rejects with, other than a missing claim. @example await releaseClaims(claims, true) */
 async function releaseClaims(claims, completed) {
-  for (const claim of completed ? [...claims].reverse() : claims.slice(-1)) await removeOwnedRecord(claim.path, claim.bytes);
+  for (const { path, bytes } of completed ? [...claims].reverse() : claims.slice(-1)) {
+    const current = await regularBytes(path, true);
+    // A claim another step removed meanwhile is released already, also when it goes between this look and the removal.
+    if (current === undefined) continue;
+    if (!current.equals(Buffer.from(bytes))) throw new Error(ownershipRefusalOf(path));
+    await unlinkRetried(path).catch(error => { if (!isMissing(error)) throw error; });
+  }
 }
 
 /** The publish lock as the refusals of `--gone-host` and `--gone-space` name it ({@link goneOwnerRefusalOf}). Read by {@link endStoppedLock}. */
@@ -1668,14 +1678,14 @@ async function endStoppedLock(bytes, paths, requirePathHeld, ownerJudgement) {
     if (!hasJournal) {
       // What the stopped publish left beside its lock and its journal goes first, by its id; the lock keeps every other step out until the end.
       await removeLeftoversOfRun(paths, record.id);
-      await removeOwnedRecord(lock, bytes);
+      await removeOwnedRecord(lock, bytes, unlinkRetried);
       completed = true;
     }
   } finally { await releaseClaims(claims, completed); }
   return hasJournal ? undefined : { status: 'publish-lock-removed', output };
 }
 
-/** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @returns What the recovery's answer says of the lock: `{ publishLockRemoved: true }` once it was removed, `{ publishLockKept }` with its path where its removal failed, which one more --recover ends, and nothing where no lock of that run stands. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') // => { publishLockRemoved: true } */
+/** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails after every try ({@link unlinkRetried}) stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @returns What the recovery's answer says of the lock: `{ publishLockRemoved: true }` once it was removed, `{ publishLockKept }` with its path where its removal failed, which one more --recover ends, and nothing where no lock of that run stands. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') // => { publishLockRemoved: true } */
 async function endLockOfRun(id, lock) {
   const bytes = await regularBytes(lock, true).catch(() => undefined);
   let held;
@@ -1683,7 +1693,7 @@ async function endLockOfRun(id, lock) {
   // Only the lock of this run is this recovery's to end.
   if (held?.id !== id) return {};
   // A lock this recovery cannot remove now stays for the next one, which ends it by its owner's gate; the Wiki is recovered either way, and the answer names the lock.
-  return removeOwnedRecord(lock, bytes).then(() => ({ publishLockRemoved: true }), () => ({ publishLockKept: lock }));
+  return removeOwnedRecord(lock, bytes, unlinkRetried).then(() => ({ publishLockRemoved: true }), () => ({ publishLockKept: lock }));
 }
 
 /** Removes what a stopped run left beside the Wiki folder, by the id of the journal or the publish lock a recovery ends after its owner's gate ({@link requireExited}): the list of copies ({@link copiesListPathOf}), every side file that keeps the candidate's prepared bytes, whole or cut short ({@link preparedPathOf}), and the files beside the journal and the lock through which they were to get their names ({@link pendingPathOf}); the id is random for each run, so no file of another run has it, and the gate proves that the run stopped, so none of them is still written. Each must be a regular file; a link or a folder at its name stays ({@link removeFileOfRun}). Called by {@link runRecovery} and {@link endStoppedLock} before they remove the journal or the lock. @throws What a look or a removal rejects with, other than a missing file; the journal or the lock is kept then, for the next recovery. @example await removeLeftoversOfRun(paths, '6f1c…') */

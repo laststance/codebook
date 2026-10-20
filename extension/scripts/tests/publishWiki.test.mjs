@@ -16139,6 +16139,275 @@ test('the bundled skill tells the agent what the recovery of a publish stopped a
   )
 })
 
+/** The name pattern of {@link removalsFailing} for the Wiki's publish journal alone. */
+const PUBLISH_JOURNAL_NAME = '^wiki\\.publish-journal\\.json$'
+
+// Value: protects=a publish on Windows whose journal a scanner or an indexer holds for a moment when the publish removes it after the swap; fails_when=the journal's removal is tried once, so a publish that updated the Wiki answers failure without its result and leaves a journal that refuses every later publish until --recover; why_new=Cycle 0047 row 261 (P3OCR3-2, P3CLA-6, P3SM-13); seam=a publisher process whose first removal of the journal fails with EBUSY (a module loaded first, `--import`); no_claim=a real Windows scanner
+test('a publish whose first removal of its journal after the swap fails with EBUSY tries again, answers its result and leaves nothing beside the Wiki folder', async () => {
+  // Arrange
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    // Act
+    const { code, answer } = runPublisherWith(
+      removalsFailing(PUBLISH_JOURNAL_NAME, 1),
+      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        publish: {
+          code,
+          answer:
+            typeof answer === 'string'
+              ? answer
+              : {
+                  publishedFiles: answer.publishedFiles,
+                  publishJournalKept: answer.publishJournalKept ?? 'none',
+                },
+        },
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        publish: {
+          code: 0,
+          answer: { publishedFiles: 1, publishJournalKept: 'none' },
+        },
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a publish on Windows whose journal stays held by another program past every try of its removal after the swap, and the learner's next publish; fails_when=a journal that could not be removed fails a publish that updated the Wiki, so the agent gets no result and no prior version's path, or the note it gets names no journal, or --recover cannot end that journal once the publish exited; why_new=Cycle 0047 row 261 (P3OCR3-2: after the swap, a journal that cannot be removed is a note); seam=a publisher process whose every removal of the journal fails with EBUSY (a module loaded first, `--import`), then the shipped recovery; no_claim=a real Windows scanner
+test('a publish whose journal cannot be removed for good after the swap answers its result with the journal it kept, and --recover then ends that journal', async () => {
+  // Arrange
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    // Act: the publish, then the recovery the note asks for.
+    const { code, answer } = runPublisherWith(
+      removalsFailing(PUBLISH_JOURNAL_NAME, Infinity),
+      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+    )
+    const keptByThePublish = await publisherFilesBeside(wiki.output)
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        publish: {
+          code,
+          answer:
+            typeof answer === 'string'
+              ? answer
+              : {
+                  publishedFiles: answer.publishedFiles,
+                  publishJournalKept: answer.publishJournalKept ?? 'none',
+                },
+        },
+        keptByThePublish,
+        recovery,
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        publish: {
+          code: 0,
+          answer: {
+            publishedFiles: 1,
+            publishJournalKept: `${wiki.output}.publish-journal.json`,
+          },
+        },
+        keptByThePublish: ['wiki.publish-journal.json'],
+        recovery: 'published-or-restored',
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the editor agent whose publish answers that its journal could not be removed after the swap; fails_when=the skill does not tell the agent that the publish succeeded and that one --recover ends the kept journal, so it reports a failure, deletes the journal by hand, or leaves it to refuse the next preparation and publish; why_new=Cycle 0047 row 261 (P3OCR3-2; the owner's D9 and D12: a changed SKILL.md sentence is pinned); seam=none; no_claim=what an agent does with the sentence
+test('the bundled skill tells the agent that a publish answering publishJournalKept succeeded and that one --recover ends that journal', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      'If a publish answers `publishJournalKept`, it succeeded and the Wiki is updated, but its journal could not be removed (on Windows a scanner or an indexer may hold the file), and that journal refuses the next preparation and publish: run `--recover --project <root> --output <output>` once, which ends it and answers `published-or-restored`.',
+    ),
+    true,
+  )
+})
+
+/** The name pattern of {@link removalsFailing} for the Wiki's publish journal, its publish lock and their recovery claims. */
+const PUBLISH_RECORD_NAMES =
+  '^wiki\\.publish-(journal|lock)\\.json(\\.recovery-[0-9a-f-]+)?$'
+
+for (const { stopped, killed, answer } of [
+  {
+    stopped: 'after it wrote its journal',
+    killed: killPublishAfterItsJournal,
+    answer: { status: 'published-or-restored', publishLockRemoved: true },
+  },
+  {
+    stopped: 'before it wrote its journal',
+    killed: (wiki) =>
+      runKilledPublisher({
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          { call: 'writing', folder: wiki.next, name: '^index\\.html$' },
+        ],
+      }),
+    answer: { status: 'publish-lock-removed', publishLockRemoved: 'none' },
+  },
+]) {
+  // Value: protects=the --recover that the skill prescribes on Windows, where a scanner or an indexer holds the journal, the publish lock or a recovery claim for a moment when the recovery removes it; fails_when=the recovery removes them with one try each, so it fails with a raw EBUSY after it took its claim, keeps the journal or the lock, and the Wiki stays refused; why_new=Cycle 0047 row 261 (P3RT-2); seam=a publisher process killed where the row says (scripts/tests/utils/killedPublisherProbe.mjs), then a recovery process whose first removal of each record fails with EBUSY (a module loaded first, `--import`); no_claim=a real Windows scanner
+  test(`a --recover of a publish stopped ${stopped} whose first removal of each record fails with EBUSY tries again, completes and leaves nothing beside the Wiki folder`, async () => {
+    // Arrange
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      const killedByTheRow = killed(wiki)
+
+      // Act
+      const recovery = runPublisherWith(
+        removalsFailing(PUBLISH_RECORD_NAMES, 1),
+        [
+          '--recover',
+          '--project',
+          wiki.root,
+          '--output',
+          wiki.output,
+          '--stage',
+          wiki.next,
+        ],
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killedByTheRow,
+          recovery: {
+            code: recovery.code,
+            answer:
+              typeof recovery.answer === 'string'
+                ? recovery.answer
+                : {
+                    status: recovery.answer.status,
+                    publishLockRemoved:
+                      recovery.answer.publishLockRemoved ?? 'none',
+                  },
+          },
+          besideTheWiki: await publisherFilesBeside(wiki.output),
+        },
+        {
+          killedByTheRow: '',
+          recovery: { code: 0, answer },
+          besideTheWiki: [],
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=a --recover whose stopped ancestor claim another recovery's sweep removes while it runs (another --recover's end, or a publish that took the freed lock); fails_when=the release of the claims refuses a claim already gone, so a recovery that ended the journal answers failure with an untrue sentence and skips the end of the publish lock, which then refuses the next publish; why_new=Cycle 0047 row 261 (P3OCR3-3, P3CLA-11); seam=a publisher process killed after its journal and a recovery process killed once it claimed that journal (scripts/tests/utils/killedPublisherProbe.mjs), then a copy of the shipped publisher whose `node:fs/promises` tells the test each removal first (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, observeRemovals), where the test removes the stopped claim when the recovery removes the journal; no_claim=the sweep of a real second recovery
+test('a --recover whose stopped ancestor claim is removed meanwhile completes, ends the publish lock and leaves nothing beside the Wiki folder', async () => {
+  // Arrange: the publish is killed after its journal, a recovery of it is killed once it claimed the journal, and when the next recovery removes the journal, the stopped recovery's claim is removed, as another recovery's sweep removes it.
+  const { recoverWikiPublication: recoverWhileTheClaimGoes } =
+    await loadMarkedCopy('publish-wiki.mjs', '?failing')
+  const { rmSync } = await import('node:fs')
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  let stoppedClaim
+  const stopObserving = observeRemovals((path) => {
+    if (path === journal && stoppedClaim !== undefined) rmSync(stoppedClaim)
+  })
+  try {
+    const killed =
+      killPublishAfterItsJournal(wiki) +
+      runKilledPublisher({
+        operation: 'recoverWikiPublication',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          {
+            call: 'linking',
+            folder: dirname(wiki.output),
+            name: '^wiki\\.publish-journal\\.json\\.recovery-[0-9a-f]{64}$',
+          },
+          {
+            call: 'reading',
+            folder: dirname(wiki.output),
+            name: '^wiki\\.publish-journal\\.json$',
+          },
+        ],
+      })
+    const leftByTheKills = await publisherFilesBeside(wiki.output)
+    stoppedClaim = join(
+      dirname(wiki.output),
+      leftByTheKills.find((name) => /\.recovery-[0-9a-f]{64}$/.test(name)),
+    )
+
+    // Act
+    const recovery = await recoverWhileTheClaimGoes({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status, publishLockRemoved }) => ({ status, publishLockRemoved }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        leftByTheKills: leftByTheKills.map(withIdsHidden),
+        recovery,
+        stoppedClaimIsGone: !existsSync(stoppedClaim),
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        killed: '',
+        leftByTheKills: [
+          'wiki.publish-journal.json',
+          'wiki.publish-journal.json.prepared-<id>-<digest>',
+          'wiki.publish-journal.json.recovery-<digest>',
+          'wiki.publish-lock.json',
+        ],
+        recovery: { status: 'published-or-restored', publishLockRemoved: true },
+        stoppedClaimIsGone: true,
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    stopObserving()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // Cycle 0047, second ship, fixing cycle 2: the tests of fixer PB (rows 222 to 227).
 
 // Value: protects=the tests that arm a kill or a failure halfway through a write of the publisher's list of copies, whose lines all go through one handle; fails_when=the stand-in runs its swap or its failure at every write through the wrapped handle, not once, so a second line reruns a swap that is no kill or rearms the next kill of a chain, and a later write loses its options; why_new=Cycle 0047 row 227 (P2OCR1a-1); seam=the `open` of the stand-ins themselves (scripts/tests/utils/swappedFolderFileSystem.mjs, scripts/tests/utils/failingFileSystem.mjs); no_claim=a write of the publisher's own, which the tests of the kills and of the failed writes cover
