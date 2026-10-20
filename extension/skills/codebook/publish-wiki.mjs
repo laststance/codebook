@@ -899,7 +899,8 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       const journalKept = await syncFolder(dirname(output)).then(() => journalNow.remove()).then(() => ({}), () => ({ publishJournalKept: journal }));
       // A learner's file saved after the last check went into the prior Wiki, now at `backup`: the answer names it instead of counting it preserved.
       const savedLate = await lateSavesOf(manualHashes, backup);
-      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length, ...savedLate, ...journalKept };
+      const keptWithCheckedBytes = manual.length - (savedLate.manualFilesSavedAfterCheck?.length ?? 0);
+      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: keptWithCheckedBytes, ...savedLate, ...journalKept };
     } catch (error) {
       if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
       const undoFailure = await undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas, refusal: error });

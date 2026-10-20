@@ -20623,7 +20623,7 @@ test('a publish names a learner’s file saved after its last check, which went 
         copyInTheNewWiki: await readFile(manual, 'utf8'),
       },
       {
-        preservedManualFiles: 1,
+        preservedManualFiles: 0,
         manualFilesSavedAfterCheck: ['manual.txt'],
         savedBytesAreInThePriorWiki: 'The learner saved these notes again',
         copyInTheNewWiki: 'The learner kept these notes',
