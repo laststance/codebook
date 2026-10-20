@@ -1166,6 +1166,100 @@ test('the timings recording ends a test that never ends, names it and writes no 
   )
 })
 
+// Value: protects=the shard plan's input: a passing recording writes `test-timings.json` with every file, its `totalMs`, and the named tests of a file slow enough to split, and says how many tests it recorded; fails_when=the recording writes nothing, leaves a file out, keeps per-test durations of a quick file or none for a slow one, or counts wrongly; why_new=Cycle 0048 task 86 (Step 7: only the hang of the recording was tested); seam=test-shard.mjs --record started as a process on a fixture build, with the fixture's copy of SPLIT_TEST_FILE_MS lowered to 200 ms so that a file of two 300 ms tests is a slow file; no_claim=the 8 s limit of the product, which buildTestTimings' own test covers
+test('the timings recording writes every file with its total and the named tests of a slow file, and counts the tests it recorded', async (context) => {
+  // Arrange
+  const sleepTest = (name) =>
+    `test(${JSON.stringify(name)}, () => new Promise((resolve) => setTimeout(resolve, 300)))`
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'quick.test.js': loggingTestSource(['opens']),
+      'slow.test.js': [
+        "const { test } = require('node:test')",
+        sleepTest('waits for the first deadline'),
+        sleepTest('waits for the second deadline'),
+      ].join('\n'),
+    },
+  })
+  const constantsPath = join(root, 'scripts/utils/testShardConstants.mjs')
+  const constants = await readFile(constantsPath, 'utf8')
+  const lowered = constants.replace(
+    'SPLIT_TEST_FILE_MS = 8_000',
+    'SPLIT_TEST_FILE_MS = 200',
+  )
+  assert.notEqual(lowered, constants)
+  await writeFile(constantsPath, lowered)
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  const timings = JSON.parse(
+    await readFile(join(root, 'test-timings.json'), 'utf8'),
+  )
+  const slow = timings.files['slow.test.js']
+  assert.deepEqual(
+    {
+      code: result.code,
+      stdout: result.stdout,
+      files: Object.keys(timings.files),
+      quickKeys: Object.keys(timings.files['quick.test.js']),
+      slowKeys: Object.keys(slow),
+      slowTests: Object.keys(slow.tests),
+    },
+    {
+      code: 0,
+      stdout: 'Recorded 3 tests in test-timings.json.\n',
+      files: ['quick.test.js', 'slow.test.js'],
+      quickKeys: ['totalMs'],
+      slowKeys: ['totalMs', 'tests'],
+      slowTests: [
+        'waits for the first deadline',
+        'waits for the second deadline',
+      ],
+    },
+  )
+  // gstack-timing-ok: a timer never fires early (the 50 ms below its 300 ms is for the timer's rounding), so each test lasted at least 250 ms whatever the load, and the file total is the sum of its two tests, 500 ms or more; the bounds assert no upper time
+  assert.deepEqual(
+    [
+      slow.tests['waits for the first deadline'] >= 250,
+      slow.tests['waits for the second deadline'] >= 250,
+      slow.totalMs >= 500,
+    ],
+    [true, true, true],
+  )
+})
+
+// Value: protects=the shard plan from timings of a failing run: the recording is refused with the number of failed tests and writes no timings file; fails_when=a failing test is recorded as if it had passed (its time is that of a failure), or the file is written before the refusal; why_new=Cycle 0048 task 86 (Step 7: only the hang of the recording was tested); seam=test-shard.mjs --record started as a process on a fixture build with one failing test; no_claim=a hung test, which the recording's hang test above covers
+test('the timings recording is refused with the number of failed tests and writes no timings file', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'failing.test.js': [
+        "const { test } = require('node:test')",
+        "test('passes', () => {})",
+        "test('breaks', () => { throw new Error('broken') })",
+      ].join('\n'),
+    },
+  })
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  assert.equal(result.code, 1)
+  assert.match(
+    result.stderr,
+    /Error: 1 tests failed; timings were not recorded\./,
+  )
+  assert.equal(
+    await readFile(join(root, 'test-timings.json'), 'utf8').catch(
+      () => 'no file',
+    ),
+    'no file',
+  )
+})
+
 /** Writes `contents` as a timings file in a fresh folder and answers the refusal of {@link readTestTimings} (or `undefined` when the file is accepted). @example await refusalOf(context, '{"files":{"a.test.js":{"totalMs":"x"}}}') // => '/tmp/…/test-timings.json has an entry …' */
 async function refusalOf(context, contents) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-timings-'))
