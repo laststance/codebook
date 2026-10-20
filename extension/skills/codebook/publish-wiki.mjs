@@ -539,10 +539,10 @@ const noneUnlessFailed = failure => {
   return undefined;
 };
 
-/** Whether the record a run wrote ({@link writeWholeRecord}), its publish lock or its journal, still stands at its name as that run's: a regular file there, looked at without following a link, holds the run's bytes, by their SHA-256 digest, and those bytes carry the run's random id, which no record of another step holds. The name's device and file id are not compared: a mount that gives each name of a file a file id of its own (sshfs without `use_ino`, CIFS with `noserverino`) answers another id for the record's name than for the file written beside it that the link gave that name ({@link pendingPathOf}). A look or a read that fails with a system error says nothing of the record, so it is not taken for a lost one: it refuses the step with its code ({@link unreadOwnRecordRefusalOf}), and the step removes its own records by their bytes, as for every refusal before its swap. Called by {@link takePublishLock} for the lock and by {@link publishJournalWriterOf} for the journal. @param file - The record of the file the name was given ({@link writeWholeRecord}): its path and the digest of its bytes. @param recordName - The record, as the refusal names it. @returns Whether the run's record stands; false for a missing entry, one that is no regular file and one with other bytes. @throws The refusal of a look or a read that failed, with that failure as its cause. @example await isOwnRecordAt({ path: '/repo/.codebook/wiki.publish-lock.json', hash: '…' }, 'Wiki publish lock') // => false once a recovery ended the lock */
+/** Whether the record a run wrote ({@link writeWholeRecord}), its publish lock or its journal, still stands at its name as that run's: a regular file there, looked at without following a link, holds the run's bytes, by their SHA-256 digest, and those bytes carry the run's random id, which no record of another step holds. The name's device and file id are not compared: a mount that gives each name of a file a file id of its own (sshfs without `use_ino`, CIFS with `noserverino`) answers another id for the record's name than for the file written beside it that the link gave that name ({@link pendingPathOf}). A look or a read that fails with a system error says nothing of the record, so it is not taken for a lost one: it refuses the step with its code ({@link unreadOwnRecordRefusalOf}; the refusal carries the record's path as `unreadRecordPath`, so a step that cannot remove the record afterwards can say so, {@link refusalWithKeptRecordOf}), and the step removes its own records by their bytes, as for every refusal before its swap. Called by {@link takePublishLock} for the lock and by {@link publishJournalWriterOf} for the journal. @param file - The record of the file the name was given ({@link writeWholeRecord}): its path and the digest of its bytes. @param recordName - The record, as the refusal names it. @returns Whether the run's record stands; false for a missing entry, one that is no regular file and one with other bytes. @throws The refusal of a look or a read that failed, with that failure as its cause. @example await isOwnRecordAt({ path: '/repo/.codebook/wiki.publish-lock.json', hash: '…' }, 'Wiki publish lock') // => false once a recovery ended the lock */
 async function isOwnRecordAt(file, recordName) {
   const current = await regularBytes(file.path, true).catch(noneUnlessFailed).catch(failure => {
-    throw new Error(unreadOwnRecordRefusalOf(recordName, file.path, failure), { cause: failure });
+    throw Object.assign(new Error(unreadOwnRecordRefusalOf(recordName, file.path, failure), { cause: failure }), { unreadRecordPath: file.path });
   });
   return current !== undefined && digest(current) === file.hash;
 }
@@ -709,6 +709,9 @@ async function publishJournalOf({ root, output, stage }, prior, receipt, manifes
     finalizedReceiptSha256: digest(finalizedReceiptText), prepared: { sha256: digest(preparedText) }, learnerCopies: [] };
   return { record, backup, finalizedReceiptText, preparedText };
 }
+
+/** The refusal of a step as it stands once a record of its own could not be removed after it: the step's refusal first, whose words stay, then a sentence that names the record by its path alone and the failure of its removal by its code ({@link errorCodeOf}), says that the record stays and refuses the next publish, and sends the agent to --recover; the removal's failure is the cause. Without it a refusal that says to publish again is wrong while the record stays, and the raw error of the removal would replace the refusal. Called by {@link publishWiki} for the journal, by {@link takePublishLock} and {@link underPublishLock} for the lock. @param refusal - The step's own refusal. @param recordName - The record, as the refusal names it. @param removalFailure - What the removal rejected with. @returns The refusal to throw. @example refusalWithKeptRecordOf(refusal, 'Wiki publish lock', '/repo/.codebook/wiki.publish-lock.json', ebusyError).message // => 'The publisher could not look at its Wiki publish lock … Publish again once the file can be read: … The publisher could not remove its Wiki publish lock /repo/.codebook/wiki.publish-lock.json (EBUSY), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again.' */
+const refusalWithKeptRecordOf = (refusal, recordName, path, removalFailure) => new Error(refusal.message + ' The publisher could not remove its ' + recordName + ' ' + path + ' (' + errorCodeOf(removalFailure) + '), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again.', { cause: removalFailure });
 
 /** The journal of a publish and the files beside it, as the publish writes them: `write` puts the side file that keeps the candidate's prepared manifest and record in place first ({@link preparedPathOf}), new and whole, at a name no other step writes, then the journal that names its digest ({@link writeWholeRecord}), small enough for one write; a refused journal removes the side file again. Each copy of a learner's file into the candidate is named before the copy begins ({@link copyLearnerFiles}): the path is appended as one line to the list of copies beside the journal ({@link copiesListPathOf}), which the first copy creates, exclusive and without following a link, once the output's path holds ({@link openCopiesList}), and every later line goes through the handle of that create, so no line follows a link put at the list's name since; the list's name and each line are synced to the disk before the copy it names begins ({@link syncFolder}, {@link syncWhereAble}); the journal is written once. A stop at any point leaves a list whose whole lines name every copy that began, so the recovery removes only what such a copy left ({@link learnerCopiesIn}). Called by {@link publishWiki} for the journal it writes. @param preparedText - The side file's text ({@link publishJournalOf}). @returns The journal's bytes, by which the publish removes the journal, `write`, `requireHeld`, which refuses once the journal's name no longer holds the bytes `write` wrote ({@link isOwnRecordAt}, {@link lostJournalRefusalOf}), and with the system's code where its look fails ({@link unreadOwnRecordRefusalOf}): on a file system without hard links the journal is created at its name and written after ({@link writeWholeRecord}), and a recovery may end it, empty, past the grace ({@link endUnwrittenJournal}), `recordCopyBegun`, which names one more copy, `closeCopiesList`, which closes the list once the copies are made, and `remove`, which removes the list and the side file, each while it is the file created ({@link removeOwnFile}), and then the journal ({@link removeOwnedRecord}), tried again while a scanner or an indexer on Windows holds it ({@link unlinkRetried}), unless `requireHeld` found it no longer this publish's; a list or a side file whose removal fails stays for a later step, which removes it once no journal names it: the sweep for the list ({@link removeOrphansBeside}), the next publish for the side file ({@link removeStrayPreparedFiles}). @throws What the side file's write, the journal's, the list's create or an append rejects with; the list is removed with the journal then. @example const journalNow = publishJournalWriterOf(record, preparedText, '/repo/.codebook/wiki.publish-journal.json', requirePathHeld); await journalNow.write(); await journalNow.recordCopyBegun('manual.txt'); await journalNow.closeCopiesList(); await journalNow.remove() */
 function publishJournalWriterOf(record, preparedText, journal, requirePathHeld) {
@@ -895,8 +898,9 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       if (undoFailure !== undefined) throw undoFailure;
       // A candidate that could not be synced leaves the journal, so the next step is a recovery that looks at the candidate again, not a publish that trusts it.
       if (error.isUnsyncedCandidate) throw error;
-      await journalNow.remove();
-      throw error;
+      // A journal that cannot be removed stays for --recover; the refusal is still the one the agent needs, and it says so.
+      const removalFailure = await journalNow.remove().then(() => undefined, failure => failure);
+      throw removalFailure === undefined ? error : refusalWithKeptRecordOf(error, 'Wiki publication journal', journal, removalFailure);
     }
   });
 }
@@ -956,7 +960,11 @@ async function takePublishLock({ lock }, requirePathHeld, system) {
   const requireHeld = async () => { if (!(await isOwnRecordAt(file, PUBLISH_LOCK_NAME))) throw new Error(lostPublishLockRefusalOf(lock)); };
   const release = () => removeOwnedRecord(lock, bytes, unlinkRetried);
   // A lock a recovery ended between its create and its write is no longer this run's: the run stops before it writes anything. A lock of this run's bytes that still stands, as after a look that failed, goes with the refusal.
-  await requireHeld().catch(async error => { await release().catch(() => undefined); throw error; });
+  await requireHeld().catch(async error => {
+    const removalFailure = await release().then(() => undefined, failure => failure);
+    // A lock whose look failed and that cannot be removed stays for --recover, which the refusal then names.
+    throw removalFailure !== undefined && error.unreadRecordPath === lock ? refusalWithKeptRecordOf(error, PUBLISH_LOCK_NAME, lock, removalFailure) : error;
+  });
   return { id, requireHeld, release };
 }
 
@@ -971,9 +979,9 @@ async function underPublishLock(paths, requirePathHeld, system, step) {
     await removeOrphansBeside(paths, requirePathHeld, { system, goneOwners: [] });
     outcome = await step(lock);
   } catch (error) {
-    // A lock this run cannot remove now is ended by --recover; the run's refusal is the one the agent needs.
-    await lock.release().catch(() => undefined);
-    throw error;
+    // A lock this run cannot remove now is ended by --recover; the run's refusal is the one the agent needs, and it names --recover where a failed look at the lock caused it.
+    const removalFailure = await lock.release().then(() => undefined, failure => failure);
+    throw removalFailure !== undefined && error.unreadRecordPath === paths.lock ? refusalWithKeptRecordOf(error, PUBLISH_LOCK_NAME, paths.lock, removalFailure) : error;
   }
   // The step succeeded: a lock this run cannot remove now is named in its answer, for --recover to end.
   const isReleased = await lock.release().then(() => true, () => false);

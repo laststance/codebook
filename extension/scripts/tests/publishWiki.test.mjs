@@ -21295,3 +21295,109 @@ test('a --recover whose empty journal was ended by another recovery between its 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// Cycle 0048 task 9 (S11-N5): a publish whose look at its own record failed, whose record then stays, names --recover and keeps its refusal.
+for (const {
+  check,
+  recordName,
+  recordOf,
+  lookCode,
+  removalCode,
+  isLookedOf,
+  isRemovedOf,
+} of [
+  {
+    check: 'its publish lock once it took it',
+    recordName: 'Wiki publish lock',
+    recordOf: (output) => `${output}.publish-lock.json`,
+    lookCode: 'EBUSY',
+    removalCode: 'EBUSY',
+    // The first look at the lock while no journal stands is the check of the lock just taken.
+    isLookedOf: (lock, journal) => (path) =>
+      path === lock && !existsSync(journal),
+    isRemovedOf: (lock) => (path) => path === lock,
+  },
+  {
+    check: 'its publish lock before its swap',
+    recordName: 'Wiki publish lock',
+    recordOf: (output) => `${output}.publish-lock.json`,
+    lookCode: 'EIO',
+    removalCode: 'EACCES',
+    // The first look at the lock once the journal stands is the check before the swap.
+    isLookedOf: (lock, journal) => (path) =>
+      path === lock && existsSync(journal),
+    isRemovedOf: (lock) => (path) => path === lock,
+  },
+  {
+    check: 'its journal before its swap',
+    recordName: 'Wiki publication journal',
+    recordOf: (output) => `${output}.publish-journal.json`,
+    lookCode: 'EIO',
+    removalCode: 'EACCES',
+    // The check of the journal before the swap is the first look at it after the lock's check there.
+    isLookedOf: (lock, journal) => {
+      let isLockRechecked = false
+      return (path) => {
+        if (path === lock && existsSync(journal)) isLockRechecked = true
+        return path === journal && isLockRechecked
+      }
+    },
+    isRemovedOf: (lock, journal) => (path) => path === journal,
+  },
+]) {
+  // Value: protects=the editor agent and the learner whose publish was refused because a look at its own record failed (a scanner holds the file on Windows) and whose record then could not be removed either: the refusal tells them that the record stays and that --recover ends it, and it is not replaced by the raw error of the removal; fails_when=the refusal says only to publish again, which the record that stays refuses, or the removal's raw EBUSY or EACCES replaces the refusal, or the removal's failure is not kept as the cause; why_new=Cycle 0048 task 9 (S11-N5); seam=a copy of the publisher over a file system that fails a look at the record once and the removal of the record (scripts/tests/utils/failingFileSystem.mjs, failLookOf, observeRemovals); no_claim=a real scanner, and the retry of the removal before it gives up (unlinkRetried)
+  test(`a publish whose look at ${check} fails with ${lookCode} and whose record then cannot be removed is refused with the look’s sentence, and the record kept with --recover named`, async () => {
+    // Arrange: the look at the record fails once; the removal of the record fails with the row's code.
+    const { publishWiki: publishWhoseRecordStays } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    const lock = `${wiki.output}.publish-lock.json`,
+      journal = `${wiki.output}.publish-journal.json`
+    failLookOf(isLookedOf(lock, journal), lookCode)
+    const isRemoved = isRemovedOf(lock, journal)
+    let removalCause
+    const stopObserving = observeRemovals((path) => {
+      if (!isRemoved(path)) return
+      removalCause = Object.assign(new Error(`${removalCode}: unlink`), {
+        code: removalCode,
+      })
+      throw removalCause
+    })
+    try {
+      // Act
+      const refusal = await publishWhoseRecordStays({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => ({ message: 'published', causeIsTheRemoval: false }),
+        (error) => ({
+          message: error.message,
+          causeIsTheRemoval: error.cause === removalCause,
+        }),
+      )
+      stopObserving()
+      const besideTheWiki = await publisherFilesBeside(wiki.output)
+
+      // Assert
+      const record = recordOf(wiki.output)
+      assert.deepEqual(
+        { refusal, besideTheWiki },
+        {
+          refusal: {
+            message: `${unreadOwnRecordRefusalOf(recordName, record, lookCode)} The publisher could not remove its ${recordName} ${record} (${removalCode}), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again.`,
+            causeIsTheRemoval: true,
+          },
+          // The record whose removal failed stands beside the Wiki folder, alone.
+          besideTheWiki: [record.slice(record.lastIndexOf('/') + 1)],
+        },
+      )
+    } finally {
+      stopObserving()
+      failLookOf(() => false, lookCode)
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
