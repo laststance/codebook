@@ -596,9 +596,9 @@ test('a call that ignores the silence SIGTERM is killed once the grace has passe
       code: result.code,
       signal: result.signal,
       sigterms: await sigtermCount(),
-      // A kill that came with the SIGTERM would end the call at about 2.5 s; 4 s leaves 0.5 s below the 4.5 s of limit and grace. The upper bound is far below the stand-in's endless life and the 120 s default.
+      // gstack-timing-ok: the outcome (one SIGTERM, then SIGKILL) is asserted above; the time only tells a kill after the 2 s grace from one that came with the SIGTERM. A timer never fires early, so the 4.5 s of limit and grace only grows under load; a kill with the SIGTERM would end the call at about 2.5 s, so 3.5 s leaves 1 s on each side, and the upper bound is far below the stand-in's endless life and the 120 s default.
       killedAfterTheGrace:
-        result.elapsedMs >= 4_000 && result.elapsedMs < 20_000,
+        result.elapsedMs >= 3_500 && result.elapsedMs < 20_000,
     },
     {
       timedOut: true,
