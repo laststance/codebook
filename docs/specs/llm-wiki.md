@@ -1,6 +1,6 @@
 # Independent DeepWiki reproduction
 
-Authority: PRODUCT_GOAL version 10, G02 and D030/D033. “LLM Wiki” is the Codebook feature name. **Its final product target is to reproduce DeepWiki itself: the repository documentation, reader/navigation, diagrams, source citations and repository question-answering experience.** The owner's explicit request makes DeepWiki the reference product, not a loose style label. Source citations open the user's matching local VS Code/Cursor checkout. [DESIGN.md](../../DESIGN.md) owns visual approval; The current state of the active cycle record owns implementation/proof status.
+Authority: PRODUCT_GOAL version 10, G02 and D030/D033. “LLM Wiki” is the Codebook feature name. **Its final product target is to reproduce DeepWiki itself: the repository documentation, reader/navigation, diagrams, source citations and repository question-answering experience.** The owner's explicit request makes DeepWiki the reference product, not a loose style label. Source citations open the user's matching local VS Code/Cursor checkout. [DESIGN.md](../../DESIGN.md) owns visual approval; the current state of the active cycle record owns implementation/proof status.
 
 ## DeepWiki is the acceptance target
 

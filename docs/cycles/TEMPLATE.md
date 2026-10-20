@@ -82,7 +82,7 @@ No observations yet. For each attempt: date, source revision/dirty state, versio
 
 - Exact next action:
 - Changed files / branch / active processes:
-- Current state updated (this record's `## Current state`, moved here from the preceding record when this cycle started):
+- Current state updated (this record's `## Current state`: when this cycle starts, the section moves here from the preceding record, so the template holds no copy):
 - Owner rules stated in the required reads:
 - Defects this cycle leaves unfixed (all go to the next cycle's Issue):
 - At most one next candidate and why (after evidence):

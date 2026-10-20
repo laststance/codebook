@@ -1,6 +1,6 @@
 # Learning replay and time-travel debugging
 
-Authority: PRODUCT_GOAL version 10, G03/G04/G05/G07 and D030/D032. This specifies required behavior. [DESIGN.md](../../DESIGN.md) owns visual approval; The current state of the active cycle record owns implementation/proof status.
+Authority: PRODUCT_GOAL version 10, G03/G04/G05/G07 and D030/D032. This specifies required behavior. [DESIGN.md](../../DESIGN.md) owns visual approval; the current state of the active cycle record owns implementation/proof status.
 
 ## Purpose and screen hierarchy
 
