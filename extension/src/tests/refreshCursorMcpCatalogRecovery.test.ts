@@ -1150,6 +1150,38 @@ test('a staged Cursor MCP config that a killed window left in ~/.cursor without 
   )
 })
 
+// Value: protects=a Cursor window that is staging its first config in a settings folder on a file server or a network home whose clock runs behind this window's clock: the sweep of another window must not remove the file at the instant it is staged; fails_when=the sweep takes a staged file's age from this window's clock less the file system's stamp, so a window whose clock runs ten minutes ahead of the file system's finds a file staged this instant a killed window's and removes it; why_new=Cycle 0048 task 24 (S11-N17d); seam=this window's clock, which the test sets ten minutes ahead of the file system's, and the real files; no_claim=a real network home
+test('a staged Cursor MCP config of this instant stays in ~/.cursor while this window’s clock runs ten minutes ahead of the file system’s, and one the file system dates two minutes ago is removed', async (context) => {
+  // Arrange: one staged file two minutes old by the file system's clock and one of this instant; then this window's clock is set ten minutes ahead.
+  const folders = await catalogFolders(context)
+  const oldName = await leaveStagedConfig(
+    folders.cursorDirectory,
+    '66666666-6666-4666-8666-666666666666',
+    EMPTY_CONFIG,
+    120_000,
+  )
+  const youngName = await leaveStagedConfig(
+    folders.cursorDirectory,
+    '77777777-7777-4777-8777-777777777777',
+    EMPTY_CONFIG,
+    0,
+  )
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+
+  // Act
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+
+  // Assert
+  const entries = await readdir(folders.cursorDirectory)
+  assert.deepEqual(
+    {
+      oldRemains: entries.includes(oldName),
+      youngRemains: entries.includes(youngName),
+    },
+    { oldRemains: false, youngRemains: true },
+  )
+})
+
 // Value: protects=the setup of a Cursor window that sleeps longer than a minute between staging Codebook's first config and putting it in place (a closed laptop lid, a debugger pause), while a window of another Cursor profile, with a storage folder and a lock of its own, sweeps ~/.cursor: the sleeping window stages its config again and its setup completes; fails_when=the other window's sweep removes the staged file as one a killed window left, and the sleeping window's link fails with ENOENT, so its setup ends with "Cursor MCP config could not be created: … (ENOENT)" although nothing is wrong with the folder (Cycle 0047 row 198); why_new=Cycle 0047 row 198 (S2CLA-6): the sweep's tests had only files of killed windows; seam=node:fs/promises link of the loaded catalog, at whose first call the staged file is dated back two minutes and the other profile's removal of the managed catalog runs, with its sweep; no_claim=a real sleep of the machine
 test('a window that sleeps between staging its first Cursor MCP config and putting it in place, while another profile’s window sweeps ~/.cursor, stages the config again and its setup completes', async (context) => {
   // Arrange: no config yet; this window stages its config, and before it links the file another Cursor profile's window removes its managed catalog, which sweeps the staged files older than a minute.

@@ -39,6 +39,7 @@ import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
 import { openWithoutFollowing } from './openWithoutFollowing'
 import { passIfMissing } from './passIfMissing'
+import { readFileSystemNowMs } from './readFileSystemNowMs'
 import { recordedFileId, type RecordedFileId } from './recordedFileId'
 import { SET_UP_AI_CHAT_COMMAND, startOverBy } from './startOverBy'
 import {
@@ -1057,12 +1058,14 @@ const STAGED_CONFIG_NAME =
  * The entry is looked at without following a link and is not opened: what Codebook stages is known by its name and its size, and a running window stages its file for an instant.
  * @param cursorDirectory - Cursor's settings folder.
  * @param name - The entry's name.
- * @returns `true` for a regular file of Codebook's staged name ({@link STAGED_CONFIG_NAME}) that holds no more bytes than Codebook's empty config and was last changed longer ago than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS}; `false` for every other entry, for a younger file (a running window may be staging it), for a larger one (it holds more than Codebook stages) and for a path that cannot be looked at.
- * @example await isLeftStagedConfig('/home/user/.cursor', '.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json') // => true for an empty file a killed window created two minutes ago
+ * @param fileSystemNowMs - The present by the clock of the file system that holds the folder ({@link readFileSystemNowMs}), which stamped the entry: the folder may be on a network home whose clock differs from this window's by minutes, so the age is never taken from this window's clock.
+ * @returns `true` for a regular file of Codebook's staged name ({@link STAGED_CONFIG_NAME}) that holds no more bytes than Codebook's empty config and was last changed longer ago than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS} by the file system's clock; `false` for every other entry, for a younger file (a running window may be staging it), for a larger one (it holds more than Codebook stages) and for a path that cannot be looked at.
+ * @example await isLeftStagedConfig('/home/user/.cursor', '.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json', Date.now()) // => true for an empty file a killed window created two minutes ago
  */
 async function isLeftStagedConfig(
   cursorDirectory: string,
   name: string,
+  fileSystemNowMs: number,
 ): Promise<boolean> {
   if (!STAGED_CONFIG_NAME.test(name)) return false
   const entry = await lstat(join(cursorDirectory, name)).catch(() => undefined)
@@ -1070,19 +1073,26 @@ async function isLeftStagedConfig(
     entry !== undefined &&
     entry.isFile() &&
     entry.size <= Buffer.byteLength(EMPTY_MCP_CONFIG) &&
-    Date.now() - entry.mtimeMs > CURSOR_MCP_STAGED_CONFIG_GRACE_MS
+    fileSystemNowMs - entry.mtimeMs > CURSOR_MCP_STAGED_CONFIG_GRACE_MS
   )
 }
 
 /**
  * Removes the staged configs that windows left in Cursor's settings folder when they were killed after they created the file and before they recorded it, so that no such file stays there for good; called by {@link refreshCursorMcpCatalog} and {@link removeOwnedCursorMcpCatalog} under the catalog's storage lock, after {@link recoverCreation} has settled the staged file that a record names.
- * Only a file that {@link isLeftStagedConfig} judges left goes: a window whose catalog has a storage folder and a lock of its own may be staging a file at this moment, and a file with more bytes than Codebook stages is not Codebook's. Such a window that slept longer than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS} between staging its file and linking it finds the file gone and stages it again, once ({@link isStagedConfigSwept}); one that slept after the link finds the staged name, the config's second name then, gone, which counts as removed ({@link removeStagedName}). A name that cannot be removed stays for the next sweep; the sweep never fails the command.
+ * Only a file that {@link isLeftStagedConfig} judges left goes: a window whose catalog has a storage folder and a lock of its own may be staging a file at this moment, and a file with more bytes than Codebook stages is not Codebook's. Such a window that slept longer than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS} between staging its file and linking it finds the file gone and stages it again, once ({@link isStagedConfigSwept}); one that slept after the link finds the staged name, the config's second name then, gone, which counts as removed ({@link removeStagedName}). A name that cannot be removed stays for the next sweep, and so does every file when the file system's own clock cannot be read ({@link readFileSystemNowMs}); the sweep never fails the command.
  * @param cursorDirectory - Cursor's settings folder, `~/.cursor`.
  * @example await removeLeftStagedConfigs('/home/user/.cursor')
  */
 async function removeLeftStagedConfigs(cursorDirectory: string): Promise<void> {
-  for (const name of await readdir(cursorDirectory).catch(() => []))
-    if (await isLeftStagedConfig(cursorDirectory, name))
+  const stagedNames = (await readdir(cursorDirectory).catch(() => [])).filter(
+    (name) => STAGED_CONFIG_NAME.test(name),
+  )
+  if (!stagedNames.length) return
+  // The age of a file is judged by the clock that stamped it, read once for the sweep; where that clock cannot be read, nothing is removed and the files stay for a later sweep.
+  const fileSystemNowMs = await readFileSystemNowMs(cursorDirectory)
+  if (fileSystemNowMs === undefined) return
+  for (const name of stagedNames)
+    if (await isLeftStagedConfig(cursorDirectory, name, fileSystemNowMs))
       await unlink(join(cursorDirectory, name)).catch(() => undefined)
 }
 
