@@ -14774,6 +14774,318 @@ for (const meanwhile of [
   })
 }
 
+for (const step of [
+  {
+    names: 'a publish',
+    renderOnly: false,
+    resultOf: ({ publishedFiles }) => ({ publishedFiles }),
+    result: { publishedFiles: 1 },
+  },
+  {
+    names: 'a --render-only preview',
+    renderOnly: true,
+    resultOf: ({ renderedPages }) => ({ renderedPages }),
+    result: { renderedPages: 1 },
+  },
+]) {
+  // Value: protects=the folder beside the learner's Wiki after a recovery was stopped between the removal of its record and the release of its claim, and a recovery that runs now, when a publish or a preview ends under its lock what stopped runs left; fails_when=the step keeps a claim no journal or lock leads to whose recovery is gone, so it stays beside the Wiki for good unless a --recover runs, or it removes the claim of a recovery that still runs because no record leads to it; why_new=Cycle 0047 row 270 (P3SM-01, P3SM-02: only the recovery's sweep had these two claims under test); seam=the claims, written by the test with the owner of this test's process (its publish lock's record): one with a process id no process has, one with this process's own; no_claim=a claim of a recovery on another computer, which the owner gate keeps as it keeps its journal
+  test(`${step.names} under its lock removes a stopped recovery claim no record leads to once its owner is judged gone, and keeps such a claim whose recovery may still run`, async () => {
+    // Arrange: the record of this test's process, then a candidate prepared again; beside the journal's name, which no journal holds, a claim of a recovery on this computer whose process is gone and one of this test's process.
+    const wiki = await publishedWikiWithACandidate()
+    const besideTheWiki = dirname(wiki.output)
+    try {
+      const lockOfThisProcess = await lockRecordOfThisProcess(wiki)
+      await writeStage(
+        wiki.next,
+        wiki.root,
+        '<h1>Next</h1>',
+        undefined,
+        wiki.output,
+      )
+      const stoppedClaim = `wiki.publish-journal.json.recovery-${'a'.repeat(64)}`,
+        runningClaim = `wiki.publish-journal.json.recovery-${'b'.repeat(64)}`
+      const claims = {
+        [stoppedClaim]: JSON.stringify({
+          ...lockOfThisProcess,
+          pid: 99999999,
+          id: '00000000-0000-4000-8000-0000000002f1',
+        }),
+        [runningClaim]: JSON.stringify({
+          ...lockOfThisProcess,
+          id: '00000000-0000-4000-8000-0000000002f2',
+        }),
+      }
+      for (const [name, text] of Object.entries(claims))
+        await writeFile(join(besideTheWiki, name), text)
+
+      // Act
+      const result = await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+        renderOnly: step.renderOnly,
+      }).then(step.resultOf, (error) => error.message)
+      const claimsAfter = Object.fromEntries(
+        await Promise.all(
+          Object.keys(claims).map(async (name) => [
+            name,
+            await readFile(join(besideTheWiki, name), 'utf8').catch(
+              () => 'removed',
+            ),
+          ]),
+        ),
+      )
+
+      // Assert
+      assert.deepEqual(
+        { result, claimsAfter },
+        {
+          result: step.result,
+          claimsAfter: {
+            [stoppedClaim]: 'removed',
+            [runningClaim]: claims[runningClaim],
+          },
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=a candidate the agent prepared again at the same path while a --render-only preview of the earlier one waited to take the publish lock, after a publish moved the earlier one into the Wiki; fails_when=the preview takes its look at the candidate only under the lock, so it takes the new candidate for the one it read and renders the earlier pages into it, over the new candidate's own page; why_new=Cycle 0047 row 270 (P3SM-04: the cell had a test for a publish only); seam=a copy of the shipped publisher whose `node:fs/promises` runs the shipped publish of the same candidate and a new preparation at its path just before the preview writes the file through which its lock gets its name (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a real second agent
+test('a --render-only preview whose candidate another publish published and the agent prepared again at the same path while it waited to take the publish lock is refused as published or removed meanwhile and leaves the new candidate as it was prepared', async () => {
+  // Arrange: just before the preview writes the file that gives its lock its name, a publish of the same candidate runs to its end and the agent prepares a new candidate at the same path.
+  const { publishWiki: previewAfterThePublish } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await candidateBesideAWikiAt({
+    isOutsideTheProject: false,
+    hasAnAsset: false,
+  })
+  swapBeforeWriting(
+    (path) => path.startsWith(`${wiki.output}.publish-lock.json.pending-`),
+    async () => {
+      await publishWiki({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      })
+      await writeStage(
+        wiki.next,
+        wiki.root,
+        '<h1>Again</h1>',
+        undefined,
+        wiki.output,
+      )
+    },
+  )
+  try {
+    // Act
+    const preview = await previewAfterThePublish({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+      renderOnly: true,
+    }).then(
+      (result) => JSON.stringify(result),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        preview,
+        newCandidatePage: await readFile(
+          join(wiki.next, 'index.html'),
+          'utf8',
+        ).catch(() => 'removed'),
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        preview: `The candidate ${wiki.next} was published or removed while this publish waited for the Wiki’s publish lock, so nothing was written. Prepare a new candidate if the Wiki still needs an update.`,
+        newCandidatePage: '<h1>Again</h1>',
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    swapBeforeWriting(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+/** A module loaded before the publisher (`--import`) that moves a candidate folder aside to `<candidate>.moved` right after the publisher gives its publish lock its name, as another publish of the same candidate moves it into the Wiki while this run takes the lock, so the run is refused under its lock. */
+const candidateMovedOnceLocked = (stage) =>
+  `data:text/javascript,${encodeURIComponent(
+    `import fileSystem from 'node:fs/promises'; import { syncBuiltinESMExports } from 'node:module'; const { link, rename } = fileSystem; fileSystem.link = async (existingPath, newPath, ...rest) => { await link(existingPath, newPath, ...rest); if (String(newPath).endsWith('.publish-lock.json')) await rename(${JSON.stringify(stage)}, ${JSON.stringify(`${stage}.moved`)}) }; syncBuiltinESMExports();`,
+  )}`
+
+/**
+ * Publishes or previews a prepared candidate with the publisher's command line, in a process that first loads the given modules (`--import`), such as {@link lockRemovalFailing}, and answers how it ended.
+ * @param {Awaited<ReturnType<typeof publishedWikiWithACandidate>>} wiki - The Wiki and its candidate.
+ * @param {{ renderOnly: boolean, modules: string[] }} run - Whether the run is a preview (`--render-only`), and the modules loaded before the publisher.
+ * @returns {{ code: number | null, answer: string | { publishedFiles?: number, renderedPages?: number, publishLockKept: string } }} The exit code, and the published files or the rendered pages with the lock the answer names as kept (`none` for none), or the error the command printed.
+ * @example
+ * runWhereTheLockIsHeld(wiki, { renderOnly: true, modules: [lockRemovalFailing(1)] }) // => { code: 0, answer: { renderedPages: 1, publishLockKept: 'none' } }
+ */
+function runWhereTheLockIsHeld(wiki, { renderOnly, modules }) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      ...modules.flatMap((module) => ['--import', module]),
+      PUBLISHER_COMMAND,
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      wiki.next,
+      ...(renderOnly ? ['--render-only'] : []),
+    ],
+    { encoding: 'utf8', timeout: 10_000 },
+  )
+  // A refused run prints its error and nothing else.
+  if (result.stdout === '')
+    return { code: result.status, answer: result.stderr.trim() }
+  const {
+    publishedFiles,
+    renderedPages,
+    publishLockKept = 'none',
+  } = JSON.parse(result.stdout)
+  return {
+    code: result.status,
+    answer: renderOnly
+      ? { renderedPages, publishLockKept }
+      : { publishedFiles, publishLockKept },
+  }
+}
+
+// Value: protects=a --render-only preview on Windows whose publish lock a scanner or an indexer holds for a moment when the preview removes it; fails_when=the preview tries the removal once, so it answers the lock as kept, sends the agent to --recover for nothing, or leaves the lock to refuse the next publish; why_new=Cycle 0047 row 270 (P3SM-05: the cell had a test for a publish only); seam=a publisher process whose first removal of the lock fails with EBUSY (a module loaded first, `--import`); no_claim=a real Windows scanner
+test('a --render-only preview whose first removal of its publish lock fails with EBUSY tries again, answers its result and leaves nothing beside the Wiki folder', async () => {
+  // Arrange
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    // Act
+    const preview = runWhereTheLockIsHeld(wiki, {
+      renderOnly: true,
+      modules: [lockRemovalFailing(1)],
+    })
+
+    // Assert
+    assert.deepEqual(
+      { preview, besideTheWiki: await publisherFilesBeside(wiki.output) },
+      {
+        preview: {
+          code: 0,
+          answer: { renderedPages: 1, publishLockKept: 'none' },
+        },
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a --render-only preview on Windows whose publish lock stays held by another program past every try of its removal, and the learner's next publish; fails_when=a lock that could not be removed fails a preview that wrote its pages, or the answer names no lock, or --recover cannot end the lock once the preview exited; why_new=Cycle 0047 row 270 (P3SM-06: the cell had a test for a publish only); seam=a publisher process whose every removal of the lock fails with EBUSY (a module loaded first, `--import`); no_claim=a real Windows scanner
+test('a --render-only preview whose publish lock cannot be removed for good answers its result with the lock it kept, and --recover then ends that lock', async () => {
+  // Arrange
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    // Act: the preview, then the recovery the note asks for.
+    const preview = runWhereTheLockIsHeld(wiki, {
+      renderOnly: true,
+      modules: [lockRemovalFailing(Infinity)],
+    })
+    const keptByThePreview = await publisherFilesBeside(wiki.output)
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        preview,
+        keptByThePreview,
+        recovery,
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        preview: {
+          code: 0,
+          answer: {
+            renderedPages: 1,
+            publishLockKept: `${wiki.output}.publish-lock.json`,
+          },
+        },
+        keptByThePreview: ['wiki.publish-lock.json'],
+        recovery: 'publish-lock-removed',
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const step of [
+  { names: 'a publish', renderOnly: false },
+  { names: 'a --render-only preview', renderOnly: true },
+]) {
+  // Value: protects=the agent whose publish or preview is refused under its publish lock while a scanner on Windows holds the lock past every try of its removal, and the learner's next publish; fails_when=the failed removal of the lock replaces the step's own refusal, so the agent gets the system's EBUSY instead of the reason, or the step removes the lock in some other way, or --recover cannot end the lock once the step exited; why_new=Cycle 0047 row 270 (P3SM-07, P3SM-08: no refused step met a lock it could not remove); seam=a publisher process whose every removal of the lock fails with EBUSY and that moves the candidate aside right after it gives its lock its name, so the step is refused under the lock (modules loaded first, `--import`); no_claim=a real Windows scanner
+  test(`${step.names} refused under its publish lock, whose lock then cannot be removed, answers its own refusal and leaves the lock, which --recover then ends`, async () => {
+    // Arrange
+    const wiki = await publishedWikiWithACandidate()
+    try {
+      // Act: the refused step, then the recovery.
+      const refused = runWhereTheLockIsHeld(wiki, {
+        renderOnly: step.renderOnly,
+        modules: [
+          lockRemovalFailing(Infinity),
+          candidateMovedOnceLocked(wiki.next),
+        ],
+      })
+      const keptByTheStep = await publisherFilesBeside(wiki.output)
+      const recovery = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          refused,
+          keptByTheStep,
+          recovery,
+          besideTheWiki: await publisherFilesBeside(wiki.output),
+        },
+        {
+          refused: {
+            code: 1,
+            answer: `Error: The candidate ${wiki.next} was published or removed while this publish waited for the Wiki’s publish lock, so nothing was written. Prepare a new candidate if the Wiki still needs an update.`,
+          },
+          keptByTheStep: ['wiki.publish-lock.json'],
+          recovery: 'publish-lock-removed',
+          besideTheWiki: [],
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
 // Cycle 0047, second /ship, fixing cycle 1, fixer P1's follow-up: rows 206 to 210, found while rows 172 to 178 were fixed.
 
 for (const lock of [
@@ -17036,6 +17348,11 @@ for (const { read, code, isRead } of [
       path === join(wiki.next, 'codebook-publication.json'),
   },
   {
+    read: 'the candidate’s finalized manifest',
+    code: 'EBUSY',
+    isRead: (wiki) => (path) => path === join(wiki.next, 'codebook-wiki.json'),
+  },
+  {
     read: 'the copy of the learner’s file in the candidate',
     code: 'EBUSY',
     isRead: (wiki) => (path) => path === join(wiki.next, 'manual.txt'),
@@ -17053,7 +17370,7 @@ for (const { read, code, isRead } of [
       path.startsWith(`${wiki.output}.publish-journal.json.prepared-`),
   },
 ]) {
-  // Value: protects=a candidate whose publish was killed past finalize, after it copied a learner's file, and the --recover whose read of the candidate's finalized record, of the copy, of the list of copies or of the side file fails at that moment (a file this user may not read, a scanner or an indexer that holds it on Windows); fails_when=the recovery takes the failed read for a changed record or for no copies, so it puts back only the manifest, neither file or leaves the copy, removes the journal, the list of copies and the side file and answers success, and the candidate never publishes again (a changed finalized candidate, or a copy outside its manifest), with nothing left for a recovery to repair it; why_new=Cycle 0047 row 216 (P2CXS-1, P2RT-2); seam=a publisher process killed past finalize (scripts/tests/utils/killedPublisherProbe.mjs), and a copy of the shipped publisher whose `node:fs/promises` fails the first look at the file the row names with the row's system error (scripts/tests/utils/markedCopyHooks.mjs, `?failing`), once; no_claim=a read that fails for good, which keeps the Wiki locked until the file can be read
+  // Value: protects=a candidate whose publish was killed past finalize, after it copied a learner's file, and the --recover whose read of the candidate's finalized record or manifest, of the copy, of the list of copies or of the side file fails at that moment (a file this user may not read, a scanner or an indexer that holds it on Windows); fails_when=the recovery takes the failed read for a changed record or for no copies, so it puts back only one of the manifest and the record, neither file or leaves the copy, removes the journal, the list of copies and the side file and answers success, and the candidate never publishes again (a changed finalized candidate, or a copy outside its manifest), with nothing left for a recovery to repair it; why_new=Cycle 0047 row 216 (P2CXS-1, P2RT-2), and row 270 for the finalized manifest's row (P3SM-03); seam=a publisher process killed past finalize (scripts/tests/utils/killedPublisherProbe.mjs), and a copy of the shipped publisher whose `node:fs/promises` fails the first look at the file the row names with the row's system error (scripts/tests/utils/markedCopyHooks.mjs, `?failing`), once; no_claim=a read that fails for good, which keeps the Wiki locked until the file can be read
   test(`a --recover whose read of ${read} fails with ${code} is refused by that code alone and keeps the journal and the files beside it, and the next --recover recovers the candidate, which then publishes with the learner’s file kept`, async () => {
     // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; the first look of the recovery at the row's file fails with the row's code.
     const { recoverWikiPublication: recoverWhoseReadFails } =
