@@ -7,6 +7,7 @@ const pendingSwaps = {
   mkdir: undefined,
   writeFile: undefined,
   readFile: undefined,
+  afterRead: undefined,
   rename: undefined,
   link: undefined,
   halfwayWrite: undefined,
@@ -108,6 +109,18 @@ export function swapBeforeReading(isAwaited, swap) {
 }
 
 /**
+ * Asks the next read of a file that `isAwaited` names to run `swap` once its bytes are read and before the read answers, once: as another process that touches, saves or replaces the file between the publisher's read of its bytes and its next look at it. Covers a `readFile` of the path and the `readFile` of a handle opened to read it. Called by the publisher's tests of the copy of a learner's file.
+ * @param {(path: string) => boolean} isAwaited - Whether a file read is asked for is the one after whose bytes the swap runs.
+ * @param {() => Promise<void>} swap - The swap.
+ * @returns {void}
+ * @example
+ * swapAfterReading((path) => path.endsWith('/wiki/manual.sh'), () => utimes(path, later, later))
+ */
+export function swapAfterReading(isAwaited, swap) {
+  pendingSwaps.afterRead = { isAwaited, swap }
+}
+
+/**
  * Asks the next `rename` whose source `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`: as a stop of the publisher between the write of a file and its move into place. Called by the publisher's tests through the probe that kills a publisher process (`killedPublisherProbe.mjs`).
  * @param {(path: string) => boolean} isAwaited - Whether the source of a rename is the one before which the swap runs.
  * @param {() => Promise<void>} swap - The swap.
@@ -133,7 +146,7 @@ export function swapBeforeLinking(isAwaited, swap) {
 
 /**
  * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile}, {@link open}, {@link readFile}, {@link rename} and {@link link}.
- * @param {'mkdir' | 'writeFile' | 'readFile' | 'rename' | 'link'} kind - The call about to run.
+ * @param {'mkdir' | 'writeFile' | 'readFile' | 'afterRead' | 'rename' | 'link'} kind - The call about to run.
  * @param {string | URL} path - The call's path.
  * @returns {Promise<void>} Once the swap ran, or at once when none waits for this path.
  * @example
@@ -145,6 +158,29 @@ async function swapIfAwaited(kind, path) {
   if (!awaited?.isAwaited(String(path))) return
   pendingSwaps[kind] = undefined
   await awaited.swap()
+}
+
+/**
+ * Wraps an open handle so that its `readFile` runs the swap of {@link swapAfterReading} once the bytes are read, when the file is the one it waits for; every other member is the handle's own.
+ * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered for a read.
+ * @param {string} path - The path the handle was opened with.
+ * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
+ * @example
+ * await handleSwappedAfterReading(await fileSystem.open(path, 'r'), path).readFile() // => the bytes, after the swap ran
+ */
+function handleSwappedAfterReading(handle, path) {
+  return new Proxy(handle, {
+    get(target, property) {
+      if (property === 'readFile')
+        return async (...options) => {
+          const bytes = await target.readFile(...options)
+          await swapIfAwaited('afterRead', path)
+          return bytes
+        }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
 }
 
 /**
@@ -187,6 +223,9 @@ export async function open(path, flags, ...rest) {
   const isWrite = typeof flags === 'string' && /[wa+]/.test(flags)
   if (isWrite) await swapIfAwaited('writeFile', path)
   const handle = await fileSystem.open(path, flags, ...rest)
+  // A handle opened to read answers its bytes first and then runs the swap of swapAfterReading, when it waits for this file.
+  if (!isWrite && pendingSwaps.afterRead?.isAwaited(String(path)))
+    return handleSwappedAfterReading(handle, String(path))
   const halfway = pendingSwaps.halfwayWrite
   // Only the awaited file's handle runs its swap halfway through its write, once.
   if (!isWrite || !halfway?.isAwaited(String(path))) return handle
@@ -205,6 +244,7 @@ export async function open(path, flags, ...rest) {
 export async function readFile(path, ...options) {
   await swapIfAwaited('readFile', path)
   const bytes = await fileSystem.readFile(path, ...options)
+  await swapIfAwaited('afterRead', path)
   readObserver?.(String(path), bytes)
   return bytes
 }

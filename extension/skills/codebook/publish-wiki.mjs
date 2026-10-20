@@ -795,6 +795,21 @@ function finalizerOf(stage, id, finalized) {
 /** The learner's files of a Wiki: its files that its manifest does not list, other than its manifest and its record; none without a Wiki. Called by {@link publishWiki}, {@link requireLearnerFilesUnchanged} and {@link learnerCopiesIn}. @example learnerFilesOf(wiki) // => ['manual.txt'] */
 const learnerFilesOf = wiki => wiki ? wiki.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !wiki.owned.has(path)) : [];
 
+/** Reads a regular file of the prior Wiki through one handle and answers its bytes with the status of that same file, taken from the handle before the bytes are read: the look at the path refuses a link and a special file as {@link regularBytes} does, and the handle's status must be that look's file (the same device and file id), so a link or another file put at the path between the look and the open is refused and not read; the mode and the times come from the file whose bytes were read, never from a second look at the path, which a swap or a save in between would change. Called by {@link copyLearnerFiles}. @param path - The file's path in the Wiki folder. @returns The bytes and the handle's status (its mode and its access and modification times). @throws The refusal of an entry that is no regular file, or that is not the file the look found, and what the look or the read rejects with. @example await readLearnerFile('/repo/.codebook/wiki/manual.sh') // => { bytes: <Buffer …>, status: Stats { mode: 33256, … } } */
+async function readLearnerFile(path) {
+  const looked = await lstat(path, { bigint: true });
+  if (!looked.isFile()) throw new Error('Wiki publication requires a regular file: ' + path);
+  const handle = await open(path, 'r');
+  try {
+    const status = await handle.stat({ bigint: true });
+    // A file that is not the one the look found was put at the path since: its bytes are not read.
+    if (!status.isFile() || !isSameFile(status, looked)) throw new Error('A manual Wiki file changed during publication: ' + path);
+    return { bytes: await handle.readFile(), status };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
 /** Copies the learner's files of the prior Wiki into the candidate, each held and new ({@link heldWriterOf}, {@link writeOwnFile}), after refusing one that stands where the update has an owned file or folder; each copy keeps the permission bits and the times of its original ({@link writeOwnFile}); the journal names each copy before it begins (`recordCopyBegun`, {@link publishJournalWriterOf}), and the list of copies is closed once they are made, or once a copy is refused. Called by {@link publishWiki}. @returns The SHA-256 digest of each copy's bytes, by path, for {@link requireLearnerFilesUnchanged}. @throws The refusal of a conflicting file. @example await copyLearnerFiles(['manual.txt'], owned, '/repo/.codebook/wiki', '/repo/.codebook/next', writeHeld, journalNow) // => { 'manual.txt': '…' } */
 async function copyLearnerFiles(manual, owned, output, stage, writeHeld, journalNow) {
   const manualHashes = Object.create(null);
@@ -802,12 +817,13 @@ async function copyLearnerFiles(manual, owned, output, stage, writeHeld, journal
     for (const path of manual) {
       if ([...owned].some(ownedPath => ownedPath === path || ownedPath.startsWith(path + '/') || path.startsWith(ownedPath + '/')))
         throw new Error('A manual Wiki file conflicts with the update: ' + path);
-      const content = await regularBytes(join(output, path)), original = await lstat(join(output, path));
+      // The bytes and the status are of one file, read through one handle ({@link readLearnerFile}).
+      const { bytes: content, status: original } = await readLearnerFile(join(output, path));
       manualHashes[path] = digest(content);
       // The journal names the copy before its file exists, so the recovery tells a part it left from a file the learner put there.
       await journalNow.recordCopyBegun(path);
       // The copy keeps the original's permission bits (not a setuid, setgid or sticky bit) and times, so a script of the learner's still runs and a note keeps its date.
-      await writeHeld(join(stage, path), content, (copyPath, bytes) => writeOwnFile(copyPath, bytes, { mode: original.mode & COPIED_MODE_BITS, atime: original.atime, mtime: original.mtime }));
+      await writeHeld(join(stage, path), content, (copyPath, bytes) => writeOwnFile(copyPath, bytes, { mode: Number(original.mode) & COPIED_MODE_BITS, atime: original.atime, mtime: original.mtime }));
     }
   } catch (error) {
     // The refusal of a copy is the one reported; the list is removed with the journal.

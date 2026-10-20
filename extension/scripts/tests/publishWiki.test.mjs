@@ -54,6 +54,7 @@ import {
   open as openThroughSwappedFolderFileSystem,
   swapBeforeLinking,
   swapBeforeMaking,
+  swapAfterReading,
   swapBeforeReading,
   swapBeforeRenaming,
   swapBeforeWriting,
@@ -21571,5 +21572,92 @@ test('a publish of a candidate that holds a page the published Wiki owns but its
     )
   } finally {
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0048 task 66 (Security, OCR A, native adversarial): the copy of a learner's file takes its mode and times from the file whose bytes were read.
+
+// Value: protects=the learner whose script lies in the Wiki folder and whose file is swapped for a link (by a tool, a sync client or a hostile clone's hook) in the moment between the publisher's read of its bytes and its look at its mode: the copy keeps the mode of the file that was read, not 0777 of the link; fails_when=copyLearnerFiles reads the bytes by one look and the mode and times by a second look at the path, so a link there gives the copy the mode of the link; why_new=Cycle 0048 task 66 (Security, OCR A, native adversarial); seam=the publisher copy over a file system that runs a swap right after the learner's file is read (swapAfterReading), and the real publish; no_claim=a link that stays in the Wiki folder (the publish refuses it at its recheck); Windows, whose links keep no mode
+test(
+  'a publish whose learner’s file is swapped for a link right after its bytes are read keeps the mode of the file that was read in the copy, not the link’s 777',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: a published Wiki with a learner's file of mode 640; right after the publisher reads it, a link replaces it, and the original is back before the copy is made, as a sync client restores it.
+    const { publishWiki: publishWhoseReadIsFollowedBySwap } =
+      await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+    const wiki = await publishedWikiWithACandidate()
+    const learnerFile = join(wiki.output, 'manual.sh'),
+      elsewhere = join(wiki.directory, 'elsewhere.txt'),
+      learnerText = '#!/bin/sh\necho notes\n'
+    try {
+      await writeFile(elsewhere, 'other text')
+      await writeFile(learnerFile, learnerText)
+      await chmod(learnerFile, 0o640)
+      swapAfterReading(
+        (path) => path === learnerFile,
+        async () => {
+          await rm(learnerFile)
+          await symlink(elsewhere, learnerFile)
+        },
+      )
+      swapBeforeWriting(
+        (path) => path === join(wiki.next, 'manual.sh'),
+        async () => {
+          await rm(learnerFile)
+          await writeFile(learnerFile, learnerText)
+          await chmod(learnerFile, 0o640)
+        },
+      )
+
+      // Act
+      await publishWhoseReadIsFollowedBySwap({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      })
+
+      // Assert
+      const copy = await lstat(learnerFile)
+      assert.deepEqual(
+        { mode: (copy.mode & 0o777).toString(8), isFile: copy.isFile() },
+        { mode: '640', isFile: true },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=the learner whose note is touched or saved again in the moment between the publisher's read of its bytes and its look at its times: the copy keeps the time the file had when the publisher opened it, so the bytes read and the time of the copy are of one file state; fails_when=copyLearnerFiles takes the times by a second look after the read, so the copy of the old bytes gets the later time; why_new=Cycle 0048 task 66 (Security, OCR A, native adversarial); seam=the publisher copy over a file system that runs a swap right after the learner's file is read (swapAfterReading), and the real publish; no_claim=a save that changes the bytes (the publish refuses it at its recheck of the learner's files)
+test('a publish whose learner’s file is touched right after its bytes are read gives the copy the time the file had when it was read, not the later time', async () => {
+  // Arrange: a published Wiki with a learner's file last changed on 2021-03-04; right after the publisher reads it, its times move to 2022-05-06.
+  const { publishWiki: publishWhoseReadIsFollowedByTouch } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const learnerFile = join(wiki.output, 'manual.txt'),
+    changedAt = new Date('2021-03-04T05:06:07Z'),
+    touchedAt = new Date('2022-05-06T07:08:09Z')
+  try {
+    await writeFile(learnerFile, 'The learner kept these notes')
+    await utimes(learnerFile, changedAt, changedAt)
+    swapAfterReading(
+      (path) => path === learnerFile,
+      () => utimes(learnerFile, touchedAt, touchedAt),
+    )
+
+    // Act
+    await publishWhoseReadIsFollowedByTouch({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    })
+
+    // Assert
+    assert.equal(
+      (await lstat(learnerFile)).mtime.toISOString(),
+      '2021-03-04T05:06:07.000Z',
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
   }
 })
