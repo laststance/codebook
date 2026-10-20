@@ -8589,9 +8589,13 @@ export class StudyWorkspace {
         // The archives are written before the selection: the library refuses a selection that names a study without its archive, and the study of a run whose archive could not be saved has none until this step writes it.
         // A failed write of an archive keeps the line of its own place, also when a forced checkpoint awaited it; the other steps' failures go to the `archive` line.
         this.lastReportedArchiveWriteFailure = undefined
+        let isArchiveWriteFailed = false
         try {
           for (const id of this.pendingArchives.keys())
-            await this.persistArchive(id)
+            await this.persistArchive(id).catch((error: unknown) => {
+              isArchiveWriteFailed = true
+              throw error
+            })
           // Historical interpretations remain writable after a later run becomes current.
           if (this.service)
             for (const record of this.service.records.values())
@@ -8619,8 +8623,10 @@ export class StudyWorkspace {
               this.selectedArchive = archive
           }
         } catch (error) {
-          // A failed archive write has reported its own line ({@link persistArchive}); only another step's failure is the `archive` line's.
-          if (!this.isReportedArchiveWriteFailure(error))
+          // A write of a waiting archive keeps the line of its own place.
+          if (isArchiveWriteFailed) this.report('history-not-saved', error)
+          // A write a forced checkpoint awaited has reported that line already ({@link persistArchive}); only another step's failure is the `archive` line's.
+          else if (!this.isReportedArchiveWriteFailure(error))
             this.report('archive', error)
         }
         try {
