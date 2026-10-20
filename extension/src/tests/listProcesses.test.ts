@@ -224,6 +224,43 @@ test('the Windows listing of an editor whose own owner cannot be read lists a pr
   })
 })
 
+// Value: protects=the sweep of abandoned profile folders on Windows, which matches every folder against this listing, and a run's attach and close: a listing without its editor line cannot judge any process as this user's, so it is refused, never read as a machine where no process runs; fails_when=a listing that printed no line of the editor's own logon session answers [] (as before row 196), so the sweep takes every folder for unused and removes the profile a live browser of this user still uses; why_new=Cycle 0047 row 257 (P3TEST-6): since row 196 every Windows listing test feeds an editor line; seam=the injected platform, environment and runner, which answers with process lines as the query prints them and no editor line; no_claim=what makes a real PowerShell print no editor line
+test('a Windows listing that printed no line of the editor’s own logon session is refused, for a run and for the sweep, instead of answering that no process runs', async () => {
+  // Arrange: a browser of the editor's session as the query prints it, without the `editor <session> <user>` line that comes first.
+  const listing = answeringListing({
+    stdout:
+      '4242 1 ? %22c%3A%5Cchrome.exe%22%20--user-data-dir%3DC%3A%5CUsers%5Clearner%5CAppData%5CLocal%5Ccodebook-browser-a\r\n',
+  })
+
+  // Act
+  const outcomes = await Promise.allSettled([
+    listProcesses({
+      platform: 'win32',
+      run: listing.run,
+      environment: { SystemRoot: 'C:\\Windows' },
+    }),
+    listProcesses({
+      platform: 'win32',
+      run: listing.run,
+      environment: { SystemRoot: 'C:\\Windows' },
+      keepsUnconfirmedOwners: true,
+    }),
+  ])
+
+  // Assert
+  assert.deepEqual(
+    outcomes.map((outcome) =>
+      outcome.status === 'rejected'
+        ? String(outcome.reason)
+        : `listed ${outcome.value.length}`,
+    ),
+    [
+      'Error: The process listing (PowerShell) printed no line of its own logon session, so no process could be judged as this user’s.',
+      'Error: The process listing (PowerShell) printed no line of its own logon session, so no process could be judged as this user’s.',
+    ],
+  )
+})
+
 // Value: protects=the time of a Windows listing on a machine shared by several logon sessions (an RDS or Citrix host, fast user switching): the query reads the owner (GetOwnerSid, one call each) only of a process of another session whose command line names a Codebook profile folder (`codebook-browser-`, the start of every managed profile folder's name), so other users' Electron and WebView2 children, which pass `--user-data-dir` too, cost no call and the listing stays within its 10 s bound at every 500 ms look of a run's attach and close; fails_when=the other sessions are matched by the profile switch `user-data-dir`, which most Chromium-based apps pass, so a few hundred owner calls in a row pass the bound: the attach fails, the close records the exit unverified and the sweep removes nothing; why_new=Cycle 0047 row 235 (P2PERF-1 = P2CLA-9): row 196's query matched the switch; seam=the injected platform, environment and runner, which records the query; no_claim=the time of a real listing on a host with a second logon session, which this machine does not have (the query ran in full and in Constrained Language mode on this machine's Windows PowerShell 5.1)
 test('the Windows listing reads the owner of a process of another logon session only when its command line names a Codebook profile folder', async () => {
   // Arrange

@@ -3,6 +3,7 @@ import * as fileSystem from 'node:fs/promises'
 import {
   link,
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
@@ -1207,6 +1208,89 @@ test('a window that sleeps between staging its first Cursor MCP config and putti
         'storage-of-another-profile',
       ],
       records: ['receipt.json'],
+    },
+  )
+})
+
+// Value: protects=the sentence a learner reads when Cursor's settings folder is removed (a reset of Cursor, a sync tool, the learner) in the instant between Codebook staging its first config there and linking it into place; fails_when=the link's ENOENT is taken for a staged file another profile's sweep removed although the folder itself is gone, so the config is staged again in a folder that is not there and the setup ends with the file system's own ENOENT, which names no path and no next step; why_new=Cycle 0047 row 257 (P3TEST-7): row 198's guard of the folder had no test, every link failure test used EPERM; seam=node:fs/promises link of the loaded catalog, before whose first call Cursor's settings folder is removed with the staged file in it; Codebook's storage lies outside that folder, as the editor's own storage does; no_claim=a real removal of the folder by another program
+test('a Cursor settings folder removed between staging the first Cursor MCP config and linking it ends the setup with the link’s sentence, and the config is not staged again', async (context) => {
+  // Arrange: no config yet, Codebook's storage beside Cursor's settings folder, and that folder removed right before the first link.
+  const base = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-folder-gone-'))
+  context.after(() => rm(base, { recursive: true, force: true }))
+  const cursorDirectory = join(base, '.cursor')
+  const storageRoot = join(base, 'storage')
+  await mkdir(cursorDirectory)
+  let links = 0
+  const catalog = await loadCatalogWith({
+    ...fileSystem,
+    link: async (existingPath: string, newPath: string) => {
+      links += 1
+      if (links === 1) await rm(cursorDirectory, { recursive: true })
+      return fileSystem.link(existingPath, newPath)
+    },
+  })
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(storageRoot, cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refresh,
+      links,
+      cursorFolder: await outcomeOf(lstat(cursorDirectory)),
+    },
+    {
+      refresh: `refused: Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${join(cursorDirectory, 'mcp.json')} (ENOENT). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+      links: 1,
+      cursorFolder: 'refused with ENOENT',
+    },
+  )
+})
+
+// Value: protects=Cursor's settings folder when the link of Codebook's first config fails with ENOENT while its staged file still stands (a network or synced file system that answers ENOENT for a reason of its own): the setup ends with the link's sentence and leaves one staged file, which its creation record names; fails_when=every ENOENT of the link is taken for a staged file another profile's sweep removed, so the config is staged again beside the file that stands, which then no record names, and the refusal of the first link is never told; why_new=Cycle 0047 row 257 (P3TEST-7): row 198's guard of the staged file had no test, every link failure test used EPERM; seam=node:fs/promises link of the loaded catalog, whose first call fails with ENOENT and leaves the staged file; no_claim=a real file system that answers so
+test('a link of the first Cursor MCP config that fails with ENOENT while its staged file stands ends the setup with the link’s sentence, and the config is not staged again', async (context) => {
+  // Arrange: no config yet, and a first link that fails with ENOENT although the staged file and the folder stand.
+  const folders = await catalogFolders(context)
+  let links = 0
+  const catalog = await loadCatalogWith({
+    ...fileSystem,
+    link: async (existingPath: string, newPath: string) => {
+      links += 1
+      if (links === 1)
+        throw Object.assign(
+          new Error(
+            `ENOENT: no such file or directory, link '${existingPath}' -> '${newPath}'`,
+          ),
+          { code: 'ENOENT' },
+        )
+      return fileSystem.link(existingPath, newPath)
+    },
+  })
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refresh,
+      links,
+      stagedFiles: (await readdir(folders.cursorDirectory)).filter((name) =>
+        name.startsWith('.codebook-'),
+      ).length,
+    },
+    {
+      refresh: `refused: Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${folders.configPath} (ENOENT). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+      links: 1,
+      stagedFiles: 1,
     },
   )
 })

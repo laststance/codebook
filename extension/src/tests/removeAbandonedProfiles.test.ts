@@ -182,6 +182,48 @@ test('the sweep leaves a profile folder that this user’s browser uses in anoth
   )
 })
 
+// Value: protects=a profile folder that a live browser of this user names, on a Windows machine whose listing printed no line of the editor's own logon session: the sweep of abandoned profile folders removes nothing; fails_when=such a listing answers [] instead of being refused (as before row 196), so the sweep finds no process that names the folder and removes the files of a profile a live browser uses; why_new=Cycle 0047 row 257 (P3TEST-6): the refusal alone stops the sweep there, and no test had a listing without its editor line; seam=the Windows listing with a runner stand-in that prints a browser naming the folder and no editor line, given to the sweep as its lister; the profile match reads the command line by this system's rules, so it is written as this system writes it; no_claim=what makes a real PowerShell print no editor line
+test('the sweep removes no profile folder while the Windows listing printed no line of the editor’s own logon session, and the folder a live browser names stays', async (context) => {
+  // Arrange: a folder of a killed editor of this user, and a browser of the editor's session that names it, printed without the editor's line that the query prints first.
+  const root = await profileRoot(context)
+  const folder = join(root, 'codebook-browser-in-use')
+  await profileFolder(folder, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'workstation',
+    user: 'learner',
+  })
+  const browserNaming = encodeURIComponent(
+    process.platform === 'win32'
+      ? `"c:\\chrome.exe" "--user-data-dir=${folder}"`
+      : `chrome --user-data-dir=${folder}`,
+  )
+  const printed = `${ID_OF_NO_PROCESS} 1 ? ${browserNaming}\r\n`
+  const listWindowsProcesses = (
+    inputs: ProcessListingInputs,
+  ): Promise<ListedProcess[]> =>
+    listProcesses({
+      ...inputs,
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: async () => ({ stdout: printed }),
+    })
+
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    listWindowsProcesses,
+    readProcessStart,
+    'learner',
+  )
+
+  // Assert
+  assert.deepEqual(
+    { removed, left: await readdir(root) },
+    { removed: [], left: ['codebook-browser-in-use'] },
+  )
+})
+
 test('a profile folder whose marker names another machine is left, although no process with its id runs here', async (context) => {
   // Arrange
   const root = await profileRoot(context)
