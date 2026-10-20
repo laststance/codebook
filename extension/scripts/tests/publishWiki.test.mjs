@@ -15454,7 +15454,7 @@ for (const nextStep of [
     outcome: { publishedFiles: 1 },
   },
 ]) {
-  // Value: protects=the folder beside the learner's Wiki after a publish whose removal of its list of copies failed once (a Windows indexer or scanner that holds the file just closed), and which then removed its journal and its lock; fails_when=the list, which no journal or lock names any more, stays beside the Wiki for good, one more for each such publish; why_new=Cycle 0047 row 222 (P2SM-30, P2SM-31); seam=a copy of the shipped publisher whose `unlink` of the list fails once (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, `observeRemovals`); no_claim=a list whose removal fails at every try, which each later step tries again
+  // Value: protects=the folder beside the learner's Wiki after a publish whose removal of its list of copies failed once (a Windows indexer or scanner that holds the file just closed), and which then removed its journal and its lock; fails_when=the list, which no journal or lock names any more, stays beside the Wiki for good, one more for each such publish; why_new=Cycle 0047 row 222 (P2SM-30, P2SM-31); seam=a copy of the shipped publisher whose `unlink` of the list fails once (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, {@link observeRemovals}); no_claim=a list whose removal fails at every try, which each later step tries again
   test(`a list of copies that a publish could not remove once, left without its journal and its lock, is removed by ${nextStep.names} once it has stood for the grace`, async () => {
     // Arrange: a learner's file in the Wiki, so the publish of the candidate writes its list of copies, whose removal then fails once.
     const { publishWiki: publishWhoseListRemovalFails } = await loadMarkedCopy(
