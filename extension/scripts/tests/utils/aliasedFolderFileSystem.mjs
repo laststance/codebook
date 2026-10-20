@@ -91,3 +91,15 @@ export const rmdir = throughOtherName(fileSystem.rmdir)
 export function rename(from, to) {
   return fileSystem.rename(pathOf(from), pathOf(to))
 }
+
+/**
+ * Gives a file a second name as `link` does, each of its two paths through {@link pathOf}, as {@link rename} moves: the publisher gives a journal, a claim or a lock its name with a hard link.
+ * @param {string} existingPath - The file.
+ * @param {string} newPath - Its new name.
+ * @returns {Promise<void>} What `link` answers.
+ * @example
+ * await link('/repo/.codebook/WIKI/a.txt', '/repo/.codebook/WIKI/b.txt') // gives /repo/.codebook/wiki/a.txt the name /repo/.codebook/wiki/b.txt
+ */
+export function link(existingPath, newPath) {
+  return fileSystem.link(pathOf(existingPath), pathOf(newPath))
+}

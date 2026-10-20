@@ -31,7 +31,10 @@ import {
 } from '../../skills/codebook/publish-wiki.mjs'
 import { renderWikiPages } from '../../skills/codebook/render-wiki.mjs'
 
-import { nameFolderAlso } from './utils/aliasedFolderFileSystem.mjs'
+import {
+  link as linkThroughTheOtherName,
+  nameFolderAlso,
+} from './utils/aliasedFolderFileSystem.mjs'
 import {
   failCloseOf,
   failLinkOf,
@@ -14577,6 +14580,47 @@ test('the bundled skill tells the agent to wait for the publish that holds the W
     ),
     true,
   )
+})
+
+// Cycle 0047, second /ship, fixing cycle 3, fixer PT: the publisher's test gaps (rows 269 and 270).
+
+// Value: protects=the tests of a Wiki folder that answers to another name (a file system that ignores the case of names, a short name on Windows), whose stand-in says every call for the other name goes to the folder; fails_when=the stand-in's hard link goes to the path as given, so a link the publisher makes under the other name fails with ENOENT or lands in a folder no such volume has, and those tests judge a file system that does not exist; why_new=Cycle 0047 row 269 (P3OCR1a-4: `link` was not routed through the other name, as `rename` is); seam=the stand-in itself (scripts/tests/utils/aliasedFolderFileSystem.mjs); no_claim=a real volume that ignores the case of names
+test('the aliased-folder stand-in gives a file under the other name of a folder a second name in that folder, as one folder that answers to both names does', async () => {
+  // Arrange: a folder with one file, which the stand-in also names by another name beside it.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-aliased-link-')),
+  )
+  const folder = join(directory, 'wiki'),
+    otherName = join(directory, 'WIKI')
+  try {
+    await mkdir(folder)
+    await writeFile(join(folder, 'record.json'), 'The record')
+    nameFolderAlso(otherName, folder)
+
+    // Act
+    const linked = await linkThroughTheOtherName(
+      join(otherName, 'record.json'),
+      join(otherName, 'record.json.linked'),
+    ).then(
+      () => 'linked',
+      (error) => error.code,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        linked,
+        inTheFolder: await readFile(
+          join(folder, 'record.json.linked'),
+          'utf8',
+        ).catch(() => 'missing'),
+      },
+      { linked: 'linked', inTheFolder: 'The record' },
+    )
+  } finally {
+    nameFolderAlso(undefined)
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 // Cycle 0047, second /ship, fixing cycle 1, fixer P1's follow-up: rows 206 to 210, found while rows 172 to 178 were fixed.
