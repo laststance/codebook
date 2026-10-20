@@ -11908,7 +11908,7 @@ test('a recovery whose write of its claim stops partway, as at a full disk, is r
   }
 })
 
-// Value: protects=the learner who publishes a Wiki on a file system that cannot give a file a second name (FAT and exFAT volumes, some network shares); fails_when=the journal is written only through a hard link, so every publish there is refused with the system's error; why_new=Cycle 0047 row 136 (P3OCR1-2: the journal is written whole through a file beside it and a hard link, which such a volume refuses); seam=a copy of the shipped publisher whose `node:fs/promises` refuses the link of the journal with EPERM (scripts/tests/utils/markedCopyHooks.mjs, `?failing`); no_claim=a real FAT or exFAT volume, and a stop between the create and the write there, which leaves a journal without a byte for the recovery to end
+// Value: protects=the learner who publishes a Wiki on a file system that cannot give a file a second name (FAT and exFAT volumes, some network shares); fails_when=the journal is written only through a hard link, so every publish there is refused with the system's error; why_new=Cycle 0047 row 136 (P3OCR1-2: the journal is written whole through a file beside it and a hard link, which such a volume refuses); seam=a copy of the shipped publisher whose `node:fs/promises` refuses the link of the journal with EPERM and tells the test each write through a handle, so the test sees the journal written at its own name (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, {@link observeWrites}); no_claim=a real FAT or exFAT volume, and a stop between the create and the write there, which leaves a journal without a byte for the recovery to end
 test('a publish on a file system that cannot link writes its journal in place, publishes the candidate, and leaves no journal beside the Wiki', async () => {
   // Arrange: a published Wiki with a candidate; the hard link that gives the journal its name is refused as a FAT volume refuses it.
   const { publishWiki: publishWhereNoLinkIsMade } = await loadMarkedCopy(
@@ -11916,11 +11916,14 @@ test('a publish on a file system that cannot link writes its journal in place, p
     '?failing',
   )
   const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  // A journal written in place is the one write at the journal's own name: with a link, the bytes go only into the file beside it.
+  let writesAtTheJournalsName = 0
+  const stopObserving = observeWrites((path) => {
+    if (path === journal) writesAtTheJournalsName++
+  })
   try {
-    failLinkOf(
-      (path) => path === `${wiki.output}.publish-journal.json`,
-      'EPERM',
-    )
+    failLinkOf((path) => path === journal, 'EPERM')
 
     // Act
     const published = await publishWhereNoLinkIsMade({
@@ -11936,6 +11939,7 @@ test('a publish on a file system that cannot link writes its journal in place, p
     assert.deepEqual(
       {
         published,
+        writesAtTheJournalsName,
         besideTheWiki: (await readdir(dirname(wiki.output))).filter((name) =>
           name.startsWith('wiki.publish-journal'),
         ),
@@ -11945,11 +11949,13 @@ test('a publish on a file system that cannot link writes its journal in place, p
       },
       {
         published: { publishedFiles: 1 },
+        writesAtTheJournalsName: 1,
         besideTheWiki: [],
         publishesTheCandidate: true,
       },
     )
   } finally {
+    stopObserving()
     failLinkOf(() => false, 'EPERM')
     await rm(wiki.directory, { recursive: true, force: true })
   }
