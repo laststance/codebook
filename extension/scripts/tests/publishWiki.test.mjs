@@ -17179,6 +17179,172 @@ for (const step of [
   })
 }
 
+// The tests of Cycle 0047's second /ship, fixing cycle 3, fixer PB (rows 262, 264 and 265): the sweep beside the Wiki folder one file at a time and its guard of a record it cannot read, a recovery before the first Wiki, the publish lock after an empty journal, and an empty journal beside a missing Wiki folder.
+
+/** How many files the test of row 262 puts beside the publish lock's name, each the record of a stopped publish: enough that a sweep that reads them all before it judges any is told from one that takes them one at a time. */
+const STOPPED_LOCK_FILE_COUNT = 32
+
+// Value: protects=the publisher's memory beside a cloned repository that carries many files at the names a stopped run leaves beside the publish lock (`.pending-<id>`), each up to 64 KiB; fails_when=the sweep reads every such file before it judges any and holds the bytes of all of them at once, so enough of them exhaust the memory of every --recover and publish; why_new=Cycle 0047 row 262 (P3CXA-A1); seam=a copy of the shipped publisher whose `node:fs/promises` tells the test each file it read (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`, `observeFileReads`), which counts at each read the files read so far that still stand; no_claim=the heap itself, which that count of files read and not yet removed stands for
+test('a --recover beside many files that stopped publishes left beside the publish lock reads, judges and removes them one at a time, so it holds the bytes of one of them at most', async () => {
+  // Arrange: beside the lock's name, 32 files that each hold the whole record of a publish whose process is gone, of more than 60 000 bytes each.
+  const { recoverWikiPublication: recoverWhoseReadsAreCounted } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const { observeFileReads } =
+    await import('./utils/swappedFolderFileSystem.mjs')
+  const wiki = await publishedWikiWithACandidate()
+  const stoppedLockFiles = [],
+    filesRead = new Set()
+  let mostFilesHeldAtOnce = 0
+  const stopObserving = observeFileReads((path) => {
+    if (!stoppedLockFiles.includes(path)) return
+    filesRead.add(path)
+    mostFilesHeldAtOnce = Math.max(
+      mostFilesHeldAtOnce,
+      [...filesRead].filter((file) => existsSync(file)).length,
+    )
+  })
+  try {
+    for (let index = 0; index < STOPPED_LOCK_FILE_COUNT; index++) {
+      const id = `00000000-0000-4000-8000-000000262${String(index).padStart(3, '0')}`
+      const path = join(
+        dirname(wiki.output),
+        `wiki.publish-lock.json.pending-${id}`,
+      )
+      await writeFile(
+        path,
+        JSON.stringify({ pid: 99999999, id, padding: 'x'.repeat(60_000) }),
+      )
+      stoppedLockFiles.push(path)
+    }
+
+    // Act
+    const recovery = await recoverWhoseReadsAreCounted({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        recovery,
+        filesRead: filesRead.size,
+        mostFilesHeldAtOnce,
+        besideTheWiki: await publisherFilesBeside(wiki.output),
+      },
+      {
+        recovery: 'published-current',
+        filesRead: 32,
+        mostFilesHeldAtOnce: 1,
+        besideTheWiki: [],
+      },
+    )
+  } finally {
+    stopObserving()
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a run that holds the Wiki's publish lock, the recovery of that lock and the lists of copies that run may append to, while a --recover ends what stopped runs left beside the Wiki folder but cannot read that lock (a disk error, or a scanner that holds it on Windows); fails_when=the sweep takes the failed read for no record standing, so it removes the stopped claim at the head of that lock's chain, which lets a recovery of the lock skip the claim after it, and every list of copies past the grace; why_new=Cycle 0047 row 262 (P3S7-G1: a mutant that reads the failure as no record standing survived 103 tests); seam=a publisher process killed after its journal (scripts/tests/utils/killedPublisherProbe.mjs), then a copy of the shipped publisher whose every `readFile` of the lock fails with EIO (scripts/tests/utils/markedCopyHooks.mjs, `?swapped-folder`); no_claim=a lock whose look fails before its read, which reaches the same guard
+test('a --recover that cannot read the publish lock that stands keeps, as it ends what stopped runs left beside the Wiki folder, the stopped claim of that lock and every list of copies', async () => {
+  // Arrange: a publish killed after its journal, whose lock is then another run's, with a stopped claim of that lock and two lists of copies changed a minute ago, one named by that lock's id; every read of the lock fails.
+  const { recoverWikiPublication: recoverWhoseLockReadFails } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const besideTheWiki = dirname(wiki.output),
+    lock = `${wiki.output}.publish-lock.json`
+  const lockOfAnotherRun = JSON.stringify({
+    pid: 99999999,
+    id: '00000000-0000-4000-8000-0000002620b1',
+  })
+  const filesKept = {
+    [`wiki.publish-lock.json.recovery-${createHash('sha256').update(lockOfAnotherRun).digest('hex')}`]:
+      JSON.stringify({
+        pid: 99999999,
+        id: '00000000-0000-4000-8000-0000002620b2',
+      }),
+    'wiki.publish-journal.json.copies-00000000-0000-4000-8000-0000002620b1':
+      '"manual.txt"\n',
+    'wiki.publish-journal.json.copies-00000000-0000-4000-8000-0000002620b3':
+      '"manual.txt"\n',
+  }
+  const failEveryReadOfTheLock = async () => {
+    // Each failure asks for the next one, so every read of the lock fails, the sweep's among them.
+    swapBeforeReading((path) => path === lock, failEveryReadOfTheLock)
+    throw Object.assign(new Error(`EIO: i/o error, read '${lock}'`), {
+      code: 'EIO',
+    })
+  }
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+      ],
+    })
+    await writeFile(lock, lockOfAnotherRun)
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    for (const [name, text] of Object.entries(filesKept)) {
+      await writeFile(join(besideTheWiki, name), text)
+      await utimes(join(besideTheWiki, name), aMinuteAgo, aMinuteAgo)
+    }
+    swapBeforeReading((path) => path === lock, failEveryReadOfTheLock)
+
+    // Act
+    const recovery = await recoverWhoseLockReadFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    const filesAfter = Object.fromEntries(
+      await Promise.all(
+        Object.keys(filesKept).map(async (name) => [
+          name,
+          await readFile(join(besideTheWiki, name), 'utf8').catch(
+            () => 'removed',
+          ),
+        ]),
+      ),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        lock: await readFile(lock, 'utf8').catch(() => 'removed'),
+        filesAfter,
+      },
+      {
+        killed: '',
+        recovery: 'published-or-restored',
+        lock: lockOfAnotherRun,
+        filesAfter: filesKept,
+      },
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
 // The tests of Cycle 0047's second /ship, fixing cycle 2, fixer PA (rows 215 to 221 and 244 to 246): the owner judgement and the computer's id, the recovery's reads, the copy's recheck, the publish lock, the journal and the candidate's look.
 
 /** What the stand-in systems of row 215 print for their computer's id: macOS's ioreg the Mac's hardware UUID, Windows's reg.exe the machine GUID; each answers its exact query alone. */
