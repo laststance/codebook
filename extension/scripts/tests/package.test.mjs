@@ -23,6 +23,7 @@ import { COMPILED_DIRECTORIES } from '../utils/packageConstants.mjs'
 import { readVsixEntries } from '../utils/readVsixEntries.mjs'
 import { runPackageCommand } from '../utils/runPackageCommand.mjs'
 import { verifyPackageContent } from '../utils/verifyPackageContent.mjs'
+import { writeProgressWhileRunning } from '../utils/writeProgressWhileRunning.mjs'
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
 let directory, artifact, original, receipt
@@ -41,7 +42,10 @@ before(async () => {
       'export declare const obsolete: string;',
     )
   }
-  receipt = await buildPackage(repository, artifact)
+  // The build runs several commands in turn and prints nothing; the lines keep the pre-gate's silence watch from ending the run.
+  receipt = await writeProgressWhileRunning(() =>
+    buildPackage(repository, artifact),
+  )
   original = await readVsixEntries(artifact)
 })
 after(async () => {

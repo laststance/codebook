@@ -22,3 +22,5 @@ export const MAX_TIMER_DELAY_MS = 2_147_483_647
 export const MIN_TIMER_DELAY_MS = 1
 /** The build that `run-pregate-tests.mjs` runs before its tests may take this long; the fast build takes seconds, and a hung one would hold the pre-gate with nothing shown. */
 export const PREGATE_BUILD_TIMEOUT_MS = 300_000
+/** How often a long silent step of a test (the package build in the `before` hook of `package.test.mjs`) writes a line, so the silence watch sees the test alive; it stays well under {@link CALL_SILENCE_TIMEOUT_MS}. */
+export const PROGRESS_LINE_INTERVAL_MS = 30_000

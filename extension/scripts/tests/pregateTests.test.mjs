@@ -22,6 +22,7 @@ import {
   runSummaryLine,
 } from '../utils/planPregateRuns.mjs'
 import { silenceLimitOfRun } from '../utils/silenceLimitOfRun.mjs'
+import { writeProgressWhileRunning } from '../utils/writeProgressWhileRunning.mjs'
 
 // Value: protects=the pre-gate's local lane when it selects product tests together with the package tests, which rebuild extension/dist while they run; fails_when=both are passed to one node --test call, so product tests fail to load their modules from dist (906 of 5,725 failed on Cycle 0048's branch), or the script tests run with more than four at a time; why_new=Cycle 0048 task 32 (found while the pre-gate ran on PR #106); seam=none; no_claim=the run itself, which run-pregate-tests.mjs makes from this plan
 test('the pre-gate runs the selected product tests first, then the script tests four at a time, in two calls', () => {
@@ -544,6 +545,124 @@ test('the pre-gate runner lets package.test.mjs stay silent longer than the defa
       other: { code: 1, endedAsHung: true },
     },
   )
+})
+
+// Value: protects=the lane from a package build whose commands, each within its own 180 s limit, together stay silent for longer than the run's silence limit: the step writes a line at an interval while it runs, and stops when it ends or fails; fails_when=the step writes nothing while it runs, or its timer outlives the step (a line after the step ended, a timer that keeps the process alive); why_new=Cycle 0048 task 111 (found while fixing task 110); seam=writeProgressWhileRunning with a stand-in step of 350 ms and an interval of 100 ms; no_claim=that the real hook uses it (the next test) and the real build
+test('a long step writes a progress line at each interval while it runs, none after it ended or failed, and gives back its result or its error', async () => {
+  // Arrange
+  const lines = []
+  const write = (line) => lines.push(line)
+  const slowStep = () =>
+    new Promise((resolve) => setTimeout(() => resolve('receipt'), 350))
+  const failingStep = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    throw new Error('build failed')
+  }
+
+  // Act
+  const result = await writeProgressWhileRunning(slowStep, {
+    intervalMs: 100,
+    write,
+  })
+  const linesOfSlowStep = lines.length
+  const failure = await writeProgressWhileRunning(failingStep, {
+    intervalMs: 100,
+    write,
+  }).catch((error) => error.message)
+  const linesAfterFailure = lines.length
+  await new Promise((resolve) => setTimeout(resolve, 300))
+
+  // Assert
+  assert.deepEqual(
+    {
+      result,
+      linesOfSlowStep,
+      failure,
+      linesOfFailingStep: linesAfterFailure - linesOfSlowStep,
+      linesAfterTheEnd: lines.length - linesAfterFailure,
+      firstLineStart: lines[0].startsWith('still running, '),
+    },
+    {
+      result: 'receipt',
+      linesOfSlowStep: 3,
+      failure: 'build failed',
+      linesOfFailingStep: 1,
+      linesAfterTheEnd: 0,
+      firstLineStart: true,
+    },
+  )
+})
+
+// Value: protects=the package test's hook from being ended as hung while its build runs several commands in turn: the hook's lines reach the pre-gate runner as they are written and restart its silence time; fails_when=the hook writes nothing during its build (the run is ended after the silence limit although the build is within its own limits), or Node's runner holds the hook's output until the file ends; why_new=Cycle 0048 task 111 (found while fixing task 110); seam=run-pregate-tests.mjs started as a process in a fixture repository whose package.test.mjs runs a silent 5 s step through writeProgressWhileRunning (interval 500 ms) under `--silence-seconds 3`, and a twin that runs the same step without it; no_claim=the real build
+test('the pre-gate runner does not end a package test whose hook stays silent for longer than the limit but writes progress lines, and ends one that writes none', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {})
+  const hook = (step) =>
+    [
+      "import { before, test } from 'node:test'",
+      "import { writeProgressWhileRunning } from '../utils/writeProgressWhileRunning.mjs'",
+      'before(async () => {',
+      `  await ${step}`,
+      '})',
+      "test('built', () => {})",
+      '',
+    ].join('\n')
+  const silentStep = 'new Promise((resolve) => setTimeout(resolve, 5_000))'
+  await writeFile(
+    join(root, 'extension/scripts/tests/package.test.mjs'),
+    hook(`writeProgressWhileRunning(() => ${silentStep}, { intervalMs: 500 })`),
+  )
+  await writeFile(
+    join(root, 'extension/scripts/tests/other.test.mjs'),
+    hook(silentStep),
+  )
+
+  // Act
+  const withProgress = await runPregateRunner(root, [
+    '--silence-seconds',
+    '3',
+    'extension/scripts/tests/package.test.mjs',
+  ])
+  const withoutProgress = await runPregateRunner(root, [
+    '--silence-seconds',
+    '3',
+    'extension/scripts/tests/other.test.mjs',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    {
+      withProgress: {
+        code: withProgress.code,
+        endedAsHung: withProgress.stderr.includes('printed nothing'),
+        passesTheLines: withProgress.stdout.includes('still running, '),
+      },
+      withoutProgress: {
+        code: withoutProgress.code,
+        endedAsHung: withoutProgress.stderr.includes('printed nothing'),
+      },
+    },
+    {
+      withProgress: { code: 0, endedAsHung: false, passesTheLines: true },
+      withoutProgress: { code: 1, endedAsHung: true },
+    },
+  )
+})
+
+// Value: protects=the hook of package.test.mjs keeps its progress lines: the build runs inside writeProgressWhileRunning; fails_when=the hook calls buildPackage bare again, so a build whose commands stay silent for longer than the silence limit ends the lane; why_new=Cycle 0048 task 111; seam=the source text of package.test.mjs (the file builds the package and cannot run in a test); no_claim=that the lines are written, which the two tests above show
+test('the package test’s before hook runs the package build inside writeProgressWhileRunning', () => {
+  // Arrange
+  const source = readFileSync(
+    fileURLToPath(new URL('./package.test.mjs', import.meta.url)),
+    'utf8',
+  )
+
+  // Act
+  const hookCall =
+    /receipt = await writeProgressWhileRunning\(\(\) =>\s*buildPackage\(repository, artifact\),?\s*\)/
+
+  // Assert
+  assert.match(source, hookCall)
 })
 
 // Value: protects=the pre-gate's silence watch from a run that talks only on stderr (Node's runner prints a test's own stderr on its stdout, so what reaches the runner's stderr is its own: a warning, a crash report): that text is passed through to the pre-gate runner's own stderr and counts as activity, so the run is not ended as hung; fails_when=stderr is not piped on, or a chunk of it does not restart the silence time (the run is ended after the limit although it printed all the time); why_new=Cycle 0048 task 87 (Step 7: stderr became piped in fixing cycle 2); seam=run-pregate-tests.mjs started as a process in a fixture repository with a stand-in build, a product test that prints nothing for 5 s under a 3 s limit, and NODE_OPTIONS=--require of a file that makes the `node --test` process (the one with `--test` in its execArgv, not the pre-gate runner that has none) write a line to its stderr every second; the test is red on a runner that drops the run's stderr (Cycle 0048 task 102); no_claim=output on stdout, which the hanging test above covers by its absence

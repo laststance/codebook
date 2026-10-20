@@ -4,7 +4,7 @@ import { CALL_SILENCE_TIMEOUT_MS } from './testShardConstants.mjs'
 /**
  * Chooses how long a run of the pre-gate may print nothing before it is ended as hung.
  *
- * Why: the `before` hook of `package.test.mjs` builds the package and prints nothing until the build ends, which may take {@link PACKAGE_COMMAND_TIMEOUT_MS} for one command; the ordinary limit ({@link CALL_SILENCE_TIMEOUT_MS}) would fail a valid build of 121 to 180 s. A run that holds that test may be silent for the build's limit plus the ordinary limit, so a build that hits its own limit is reported by the test and not as a hang.
+ * Why: the `before` hook of `package.test.mjs` builds the package and prints nothing until the build ends, which may take {@link PACKAGE_COMMAND_TIMEOUT_MS} for one command; the ordinary limit ({@link CALL_SILENCE_TIMEOUT_MS}) would fail a valid build of 121 to 180 s. The hook writes a progress line at an interval while the build runs ({@link writeProgressWhileRunning}), so only a blocking Git call of the build, at most one command limit, leaves the run silent. A run that holds the test may therefore be silent for the build's limit plus the ordinary limit, so a build that hits its own limit is reported by the test and not as a hang.
  * Called by `run-pregate-tests.mjs` for each run of {@link planPregateRuns}.
  *
  * @param files - The absolute paths of the run's test files.
