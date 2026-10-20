@@ -599,6 +599,59 @@ test('a missing, unreadable-as-JSON or wrongly shaped timings file is refused wi
   }
 })
 
+// Value: protects=the shard job from a silence limit that is no number above 0 and from a whole-split-files run that names a shard; fails_when=the checks are dropped, so `--silence-seconds soon` or `0` ends every call at once as hung (a timer of NaN or 0 ms fires first) and the job fails with no reason, or `--whole-split-files --shard 2/3` runs the split files on a runner that was meant to run a share of the suite; why_new=the tests of this file cover the timings refusal and the silent call, not the refusals of these two options; seam=test-shard.mjs started as a process on a fixture build; no_claim=the options in a workflow, which workflowPins.test.mjs reads
+test('the shard script refuses a silence limit that is no number above 0 and a whole-split-files run that names a shard, and runs no test', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'a.test.js': loggingTestSource(['opens']) },
+    timings: { files: { 'a.test.js': { totalMs: 10 } } },
+  })
+
+  // Act
+  const zeroSeconds = await runShardScript(root, [
+    '--shard',
+    '1/1',
+    '--lanes',
+    '1',
+    '--silence-seconds',
+    '0',
+  ])
+  const wordForSeconds = await runShardScript(root, [
+    '--shard',
+    '1/1',
+    '--lanes',
+    '1',
+    '--silence-seconds',
+    'soon',
+  ])
+  const wholeFilesWithAShard = await runShardScript(root, [
+    '--shard',
+    '2/3',
+    '--lanes',
+    '1',
+    '--whole-split-files',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    [zeroSeconds, wordForSeconds, wholeFilesWithAShard].map(
+      ({ code, stderr }) => ({
+        code,
+        refusal: /Error: (--[a-z-]+ [^\n]*)/.exec(stderr)?.[1],
+      }),
+    ),
+    [
+      { code: 1, refusal: '--silence-seconds must be a number above 0.' },
+      { code: 1, refusal: '--silence-seconds must be a number above 0.' },
+      {
+        code: 1,
+        refusal: '--whole-split-files runs on one runner; leave out --shard.',
+      },
+    ],
+  )
+  assert.deepEqual(await readExecuted(root), [])
+})
+
 // Value: protects=the shard job's result: a failed call must fail the job; fails_when=test-shard.mjs ends with exit code 0 although a call failed, or prints no failure line; why_new=Cycle 0048 task 27 (test guide, 2026-10-02: the script's own exit code had no test); seam=test-shard.mjs started as a process on a fixture build
 test('the shard script exits 1 and reports the failed call when a test fails, and 0 when every test passes', async (context) => {
   // Arrange

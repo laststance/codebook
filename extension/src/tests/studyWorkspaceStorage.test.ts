@@ -1265,6 +1265,52 @@ test('a Retry whose forced checkpoint cannot write the history shows the History
   }
 })
 
+// Value: protects=the learner whose Retry storage / refresh fails in a step that is no write of the history (the repair of the saved studies' sidecars): the failure is still shown, on the archive line, and no History not saved line appears for a study that was saved; fails_when=the Retry's catch drops every failure that a forced checkpoint could have reported already, or sends every failure to the History not saved line, so a failed repair shows nothing or the wrong sentence; why_new=the test above covers a failed history write; this covers the other branch of the same catch; seam=the library's reconcile, which succeeds until the Retry; no_claim=the wording of the line in the pane
+test('a Retry whose repair of the saved studies fails shows that failure on the archive line and no History not saved line', async (context) => {
+  // Arrange: a run stopped and saved; the next repair of the library's sidecars is refused.
+  const harness = await workspaceHarness(),
+    reconcile = LearningLibrary.prototype.reconcile
+  let refuseReconcile = false
+  context.mock.method(
+    LearningLibrary.prototype,
+    'reconcile',
+    async function (this: LearningLibrary) {
+      if (refuseReconcile) throw new Error('Retry reconcile denied')
+      return reconcile.call(this)
+    },
+  )
+  try {
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = [...harness.service.records.values()][0]!
+    await record.preparation
+    await harness.reader.open()
+    await harness.reader.action('stop')
+    refuseReconcile = true
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(readerSeams(harness).errorLines(), [
+      'Error: Retry reconcile denied',
+    ])
+    assert.equal(readerSeams(harness).hasErrorOfKind('archive'), true)
+    assert.equal(
+      readerSeams(harness).hasErrorOfKind('history-not-saved'),
+      false,
+    )
+  } finally {
+    refuseReconcile = false
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 test('an older successful save cannot erase the failed final archive from explicit Retry', async (context) => {
   // Arrange
   const harness = await workspaceHarness(),

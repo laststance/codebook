@@ -20589,7 +20589,7 @@ test('a publish refuses a learner’s file saved while it syncs the candidate, a
   }
 })
 
-// Value: protects=the learner who saves a file between the publish's last check and the swap, whose save goes only into the prior Wiki that the swap moved aside; fails_when=the answer counts such a file preserved and names nothing, so the agent says the learner's notes are in the new Wiki; why_new=Cycle 0048 task 4 (S11-N1); seam=a swap run just before the rename that moves the Wiki aside (`swapBeforeRenaming`); no_claim=that the saved bytes reach the new Wiki, which they do not: the answer names the file and the folder that keeps it
+// Value: protects=the learner who saves a file between the publish's last check and the swap, whose save goes only into the prior Wiki that the swap moved aside, while a second file that did not change is still counted preserved; fails_when=the answer counts such a file preserved and names nothing, so the agent says the learner's notes are in the new Wiki, or the count drops every file once one was saved late; why_new=Cycle 0048 task 4 (S11-N1); seam=a swap run just before the rename that moves the Wiki aside (`swapBeforeRenaming`); no_claim=that the saved bytes reach the new Wiki, which they do not: the answer names the file and the folder that keeps it
 test('a publish names a learner’s file saved after its last check, which went into the prior Wiki, instead of counting it preserved', async () => {
   // Arrange: a Wiki with a learner's file, saved again just before the publish moves the Wiki aside.
   const { publishWiki: publishWhileTheLearnerSaves } = await loadMarkedCopy(
@@ -20599,6 +20599,11 @@ test('a publish names a learner’s file saved after its last check, which went 
   const wiki = await publishedWikiWithACandidate()
   const manual = join(wiki.output, 'manual.txt')
   await writeFile(manual, 'The learner kept these notes')
+  // A second file of the learner that no save touches: only the late save is named, and this file stays counted.
+  await writeFile(
+    join(wiki.output, 'untouched.txt'),
+    'The learner never edits this file',
+  )
   swapBeforeRenaming(
     (path) => path === wiki.output,
     () => writeFile(manual, 'The learner saved these notes again'),
@@ -20623,7 +20628,7 @@ test('a publish names a learner’s file saved after its last check, which went 
         copyInTheNewWiki: await readFile(manual, 'utf8'),
       },
       {
-        preservedManualFiles: 0,
+        preservedManualFiles: 1,
         manualFilesSavedAfterCheck: ['manual.txt'],
         savedBytesAreInThePriorWiki: 'The learner saved these notes again',
         copyInTheNewWiki: 'The learner kept these notes',
