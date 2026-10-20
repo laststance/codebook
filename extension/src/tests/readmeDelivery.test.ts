@@ -423,8 +423,8 @@ test('the packaged README names, in API 1.7’s changes and under Delete a saved
   assert.deepEqual(named, [true, true, true])
 })
 
-// Value: protects=a learner who presses Update LLM Wiki in VS Code reading why the update ended after half a minute and what a refused start keeps; fails_when=the update table says again that the watch starts with the request, or that every failed update kept a site, or quotes the end of a request Codebook took back or could not take back, which it no longer tries; why_new=Cycle 0046 row 56: rows 3 and 22 changed both and the table still described 0.2.29.0; Cycle 0047 row 6 (S11-X2): the request is left in the chat at the 30 seconds; Cycle 0047 row 82 (MAINT-4): the sentence says that Codebook left its request in the chat; seam=none
-test('the packaged README says that a VS Code update waits 30 seconds for the chat’s first answer before it watches, and that a folder without a Wiki names no kept site', async () => {
+// Value: protects=a learner who presses Update LLM Wiki in VS Code reading why the update ended after half a minute and what a refused start keeps; fails_when=the update table says again that the watch starts with the request, or that every failed update kept a site, or quotes the end of a request Codebook took back or could not take back, which it no longer tries; why_new=Cycle 0046 row 56: rows 3 and 22 changed both and the table still described 0.2.29.0; Cycle 0047 row 6 (S11-X2): the request is left in the chat at the 30 seconds; Cycle 0047 row 82 (MAINT-4): the sentence says that Codebook left its request in the chat; Cycle 0047 row 258 (P3CR-1): the row called the site kept also after the request Codebook left in the chat, whose sentence says that nothing had been replaced by then; seam=none
+test('the packaged README says that a VS Code update waits 30 seconds for the chat’s first answer before it watches, which failed ends call the site kept, and that a folder without a Wiki names no kept site', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
@@ -432,9 +432,12 @@ test('the packaged README says that a VS Code update waits 30 seconds for the ch
   const delivered = heldSentences(readme, [
     'VS Code: the request went to a new chat. Codebook waits up to 30 seconds for the first sign that the chat works on it (its reply or its wait for a confirmation, a file of the Wiki or of the Codebook skill that it opens, the publisher it runs in a terminal, or a folder the publisher prepares beside the Wiki) and then watches the output folder for up to 15 minutes.',
     "In VS Code an update without such a sign within 30 seconds ends with `Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.` A chat that answers the request with an error ends it at once with `The editor chat answered the update request with an error and stopped (…). Read its message in the Chat view, then press Update LLM Wiki again.`, the chat's message in the brackets; a chat that finishes its reply without publishing ends it with `The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.`",
-    'The last usable site is kept, and the sentence says so; in a folder that has no Wiki yet it says to generate one first and names no kept site.',
+    "The sentence then says what became of the site: `Nothing had been replaced by then.` where the chat can still publish after that end (the request Codebook left in the chat after the 30 seconds, a watch of Codebook's that broke off with an error), and `The last usable site is kept.` where it cannot, as after the chat's error or its finished reply.",
+    'Where no Wiki is there to keep, it names no kept site: in a folder that has no Wiki yet it says to generate one first, and where a publish that did not finish left no Wiki it names the recovery.',
   ])
   const retired = [
+    // Cycle 0047 row 258: the request left in the chat at the 30 seconds ends with "Nothing had been replaced by then."
+    'The last usable site is kept, and the sentence says so',
     'VS Code: the request is in the chat and Codebook watches the output folder for up to 15 minutes.',
     'The run ended without a new site. The last usable site is kept.',
     'took its request back, so no update is running.',
@@ -443,7 +446,7 @@ test('the packaged README says that a VS Code update waits 30 seconds for the ch
   ].filter((sentence) => readme.includes(sentence))
 
   // Assert: the README names the bound the editor enforces, and the end it quotes is the product's.
-  assert.deepEqual(delivered, [true, true, true])
+  assert.deepEqual(delivered, [true, true, true, true])
   assert.deepEqual(retired, [])
   assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS / MILLISECONDS_PER_SECOND, 30)
   assert.equal(
