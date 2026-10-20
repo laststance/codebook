@@ -9530,6 +9530,123 @@ test('a study whose save failed and that another window then deletes with its re
   }
 })
 
+/**
+ * Has an agent save one more explanation of the stopped run of a recorded reader and lets the reader take the checkpoint of it; used by the tests of the line "History not saved: …" after a removal.
+ * @param harness - A recorded reader whose own refresh timer is stopped.
+ * @param key - The key of the explanation.
+ * @example await explainStoppedRunAndCheckpoint(harness, 'after-the-failure')
+ */
+async function explainStoppedRunAndCheckpoint(
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+  key: string,
+): Promise<void> {
+  await harness.service.explain({
+    instanceId: harness.service.instanceId,
+    runId: harness.record.id,
+    key,
+    snapshotUri: harness.service.state(harness.record).participants.browser
+      .snapshotUri!,
+    sourceHash: sha256('const nextTheme = "dark";\n'),
+    valuePaths: ['value:nextTheme'],
+    interpretation: 'The theme was dark when the run stopped.',
+  })
+  await readerSeams(harness).refresh()
+  await waitUntil(
+    () =>
+      harness.service.state(harness.record).historyOutcome.status === 'failed',
+    'the failed checkpoint',
+    2_000,
+  )
+}
+
+// Value: protects=the pane of a study whose newest save failed and that the learner then moves to the Trash with Delete: the line "History not saved: …" and its Retry storage / refresh go with the study, because no archive waits for a write any more; fails_when=the removal drops the waiting archive and the run's failed receipt but keeps the line, so the learner reads that a history is not saved and is offered Retry for a study that is gone (Cycle 0048 task 123); why_new=Cycle 0048 task 123 (CodeRabbit: forgetRemovedStudy kept the line); seam=the library's study save, which refuses every write while the test says so, the editor's dialog and Trash, stubbed at the vscode boundary, and the reader's own refresh timer, stopped so that the test's refresh is the only checkpoint; no_claim=wording of the line, Move to Trash Anyway
+test('the line “History not saved: …” goes with a study whose save failed when the learner moves it to the Trash, and no write waits', async (context) => {
+  // Arrange: a recorded run of this window, saved once; the disk then refuses the next checkpoint, which leaves the line and a waiting archive.
+  const disk = refuseStudySaves(context)
+  disk.refusesEveryStudy = false
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    disk.refusesEveryStudy = true
+    await explainStoppedRunAndCheckpoint(harness, 'after-the-failure')
+    const afterTheFailedSave = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+    })
+
+    // Act: the learner deletes the study.
+    await requestRemoval(harness, harness.studyId)
+
+    // Assert
+    assert.deepEqual(
+      {
+        afterTheFailedSave,
+        afterTheRemoval: {
+          queued: readerSeams(harness).queuedStudyWrites(),
+          errors: structuredClone(harness.reader.inspect().view!.errors),
+          listed: (await (await harness.reader.learningStorage()).list()).map(
+            (entry) => entry.id,
+          ),
+        },
+      },
+      {
+        afterTheFailedSave: {
+          queued: 1,
+          errors: ['Error: History not saved: Error: disk is read-only'],
+        },
+        afterTheRemoval: { queued: 0, errors: [], listed: [] },
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the line "History not saved: …" and the Retry button beside it for another study whose archive still waits, when the learner moves a study with a failed save to the Trash; fails_when=the removal takes the line from the pane whatever other studies are unsaved, so the learner loses Retry although the second run's study is unsaved; why_new=Cycle 0048 task 123 (CodeRabbit: the clear of the line must keep task 64's rule); seam=the library's study save, which refuses every write while the test says so, a second run of the same server whose checkpoint is refused, the editor's dialog and Trash, stubbed at the vscode boundary, and the reader's own refresh timer, stopped so that the test's refresh is the only checkpoint; no_claim=wording of the line
+test('the line “History not saved: …” stays with Retry storage / refresh beside it when the learner moves a study to the Trash while another study still waits to be saved', async (context) => {
+  // Arrange: a recorded run saved once whose next checkpoint is refused, and a second run whose first save is refused too.
+  const disk = refuseStudySaves(context)
+  disk.refusesEveryStudy = false
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    disk.refusesEveryStudy = true
+    await explainStoppedRunAndCheckpoint(harness, 'after-the-failure')
+    const second = await startRun(harness)
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.service.state(second.record).historyOutcome.status === 'failed',
+      'the failed checkpoint of the second run',
+      2_000,
+    )
+
+    // Act: the learner deletes the first study.
+    await requestRemoval(harness, harness.studyId)
+
+    // Assert
+    assert.deepEqual(
+      {
+        queued: readerSeams(harness).queuedStudyWrites(),
+        errors: structuredClone(harness.reader.inspect().view!.errors),
+        unretryableErrorCount:
+          harness.reader.inspect().view!.unretryableErrorCount,
+      },
+      {
+        queued: 1,
+        errors: ['Error: History not saved: Error: disk is read-only'],
+        unretryableErrorCount: 0,
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the line "History not saved: …" and the Retry button beside it for a study whose capture failed before any write, when another study of this window is deleted by another window with its recording and its next save is refused; fails_when=the forget of the removed study takes the line of a failed save from the pane whatever other studies are unsaved, so the learner loses the line and its Retry although the first study is unsaved; why_new=Cycle 0048 task 64 (pass 1 of the second /ship): the test of the refused save after a deletion has one study only, and the capture failure test has no deletion; seam=the capture step ({@link captureStudy}), which fails for the second study until the test says otherwise, a second LearningLibrary over the same storage, which deletes the first study with its recording, and the reader's own refresh timer, stopped so that the test's refresh is the only checkpoint; no_claim=wording of the line, a second editor process
 test('the line “History not saved: …” of a study whose capture failed stays, with Retry storage / refresh beside it, when another study is deleted with its recording by another window, and is gone once Retry saved that study', async (context) => {
   // Arrange: a recorded run of this window, stopped and saved; a second run of the same server stops and its capture fails, so its study never waits in the write queue.

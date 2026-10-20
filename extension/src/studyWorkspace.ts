@@ -10665,9 +10665,7 @@ export class StudyWorkspace {
   private async forgetStudyRemovedWithItsRecording(
     studyId: string,
   ): Promise<void> {
-    // The line goes before the study is forgotten, so a failed read of the list there reports anew; it stays while another archive waits.
-    if (!this.hasUnsavedHistory(studyId))
-      this.errors.delete('history-not-saved')
+    // {@link forgetRemovedStudy} takes the line before it reads the list, so a failed read of the list reports anew; the line stays while another archive waits.
     await this.forgetRemovedStudy(studyId, 'archive-removed')
     this.leaveStudyThatLeftLibrary(studyId)
     this.publish()
@@ -22456,7 +22454,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Makes this window forget a study that was removed: it is never written again, its run is excluded from history, and the list is read again. Called by {@link moveSavedStudy} once something of the study went to the Trash, by {@link forgetStudiesRemovedByHand} for a study whose archive left the library without a removal of this window, and by {@link persistArchive}, through {@link forgetStudyRemovedWithItsRecording}, for a study whose save the library refused because it left with its recording (Cycle 0047 row 162).
+   * Makes this window forget a study that was removed: it is never written again, its run is excluded from history, the line of a failed save ("History not saved: …") goes when no other study's history is unsaved, and the list is read again. Called by {@link moveSavedStudy} once something of the study went to the Trash, by {@link forgetStudiesRemovedByHand} for a study whose archive left the library without a removal of this window, and by {@link persistArchive}, through {@link forgetStudyRemovedWithItsRecording}, for a study whose save the library refused because it left with its recording (Cycle 0047 row 162).
    * @param studyId - The removed study.
    * @param exclusion - How it was removed: `removed-by-learner` for this window's delete, `archive-removed` for a study that left the library otherwise, so an agent is not told of a Trash the study never went to.
    * @example await this.forgetRemovedStudy(studyId, 'archive-removed')
@@ -22475,6 +22473,8 @@ export class StudyWorkspace {
     this.historyReads.delete(studyId)
     this.pendingArchives.delete(studyId)
     this.learningSave = withoutStudy(this.learningSave, studyId)
+    // The study no longer waits for a save: its line of a failed save goes with it, unless another study's history is still unsaved (Cycle 0048 task 123; the rule of task 64). Done here, before the list is read again, so that every way a study is forgotten settles the line the same way.
+    if (!this.hasUnsavedHistory()) this.errors.delete('history-not-saved')
     try {
       this.catalog = await this.library!.list()
     } catch (error) {
