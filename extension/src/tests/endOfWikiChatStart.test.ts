@@ -33,7 +33,7 @@ test('a chat command that threw, a start without a sign and a reply with an erro
     false,
   )
   const withoutSign = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'own', withdrawal: 'withdrawn' },
+    { outcome: 'unanswered', session: 'own', request: 'not-sent' },
     30_000,
     false,
   )
@@ -51,7 +51,7 @@ test('a chat command that threw, a start without a sign and a reply with an erro
   })
   assert.deepEqual(withoutSign, {
     failure:
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
     isFailureCodebookSentence: true,
   })
   assert.deepEqual(errorReply, {
@@ -61,26 +61,26 @@ test('a chat command that threw, a start without a sign and a reply with an erro
   })
 })
 
-// Value: protects=the learner who reads the notice of a start whose request Codebook could not take back: the chat may still hold the request and publish under that notice; fails_when=that end is no longer marked as one the site may be replaced after, so the notice says "The last usable site is kept." and a later publish makes it untrue, or an end after which the chat holds no request (taken back, never held) is marked too; why_new=Cycle 0046 row 341; seam=none
-test('a start without a sign whose request could not be taken back ends the run as failed and marked as an end the site may be replaced after, in a session of its own and in a shared one; a request taken back or never held is not marked', () => {
+// Value: protects=the learner who reads the notice of a start whose request Codebook left in the chat: the chat may still hold the request and publish under that notice; fails_when=that end is no longer marked as one the site may be replaced after, so the notice says "The last usable site is kept." and a later publish makes it untrue, or an end after which the chat holds no request (never held) is marked too; why_new=Cycle 0046 row 341; Cycle 0047 row 6 (S11-X2): no start ends with a request taken back any more; seam=none
+test('a start without a sign whose request Codebook left in the chat ends the run as failed and marked as an end the site may be replaced after, in a session of its own and in a shared one; a request never held is not marked', () => {
   // Act
   const leftInOwnSession = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'own', withdrawal: 'left' },
+    { outcome: 'unanswered', session: 'own', request: 'left' },
     30_000,
     false,
   )
   const leftInSharedSession = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'shared', withdrawal: 'left' },
+    { outcome: 'unanswered', session: 'shared', request: 'left' },
     30_000,
     false,
   )
   const neverHeld = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'own', withdrawal: 'not-sent' },
+    { outcome: 'unanswered', session: 'own', request: 'not-sent' },
     30_000,
     false,
   )
-  const takenBackInSharedSession = endOfWikiChatStart(
-    { outcome: 'unanswered', session: 'shared', withdrawal: 'withdrawn' },
+  const neverHeldInSharedSession = endOfWikiChatStart(
+    { outcome: 'unanswered', session: 'shared', request: 'not-sent' },
     30_000,
     false,
   )
@@ -88,13 +88,13 @@ test('a start without a sign whose request could not be taken back ends the run 
   // Assert
   assert.deepEqual(leftInOwnSession, {
     failure:
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     isFailureCodebookSentence: true,
     mayBeReplacedLater: true,
   })
   assert.deepEqual(leftInSharedSession, {
     failure:
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
     isFailureCodebookSentence: true,
     mayBeReplacedLater: true,
   })
@@ -103,9 +103,9 @@ test('a start without a sign whose request could not be taken back ends the run 
       'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
     isFailureCodebookSentence: true,
   })
-  assert.deepEqual(takenBackInSharedSession, {
+  assert.deepEqual(neverHeldInSharedSession, {
     failure:
-      'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
     isFailureCodebookSentence: true,
   })
 })

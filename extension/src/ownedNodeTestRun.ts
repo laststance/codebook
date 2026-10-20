@@ -80,7 +80,10 @@ export class OwnedNodeTestRun {
   private outputTerminal?: NodeTestOutputTerminal
   private bound?: Awaited<ReturnType<typeof bindOwnedNodeTestDebugSession>>
   private preparation?: Promise<NodeTestSourceStop>
+  /** The release under way ({@link release}); a failed one is dropped, so the next call runs it again. */
   private cleanup?: Promise<void>
+  /** Set by the first {@link release}: from then on {@link advance} and {@link complete} refuse, also while a failed release waits to be run again. */
+  private releaseBegun = false
   private acceptedStop?: NodeTestSourceStop
   /** The native pause event behind {@link acceptedStop}; a client resume or a different later pause revokes its continuation authority, while a same-frame stack refresh inherits it. */
   private acceptedPause?: NativePause
@@ -406,7 +409,7 @@ export class OwnedNodeTestRun {
       !breakpoint ||
       !this.hasNextStop() ||
       this.advancing ||
-      this.cleanup
+      this.releaseBegun
     )
       throw new Error('Node test has no next declared source stop to capture.')
     this.advancing = true
@@ -699,7 +702,7 @@ export class OwnedNodeTestRun {
       !bound ||
       !owned ||
       !launch ||
-      this.cleanup ||
+      this.releaseBegun ||
       this.advancing ||
       this.hasNextStop()
     )
@@ -859,38 +862,60 @@ export class OwnedNodeTestRun {
     this.acceptedPause = latestPause
   }
 
-  private release(): Promise<void> {
-    this.cleanup ??= (async () => {
-      this.abort.abort()
-      this.bound?.cdp.close()
-      this.breakpoint?.remove()
-      this.outputTerminal?.dispose()
-      const results = await Promise.allSettled(
-        [...this.active.values()].map((session) =>
-          vscode.debug.stopDebugging(session),
-        ),
-      )
-      let processFailure: unknown
-      try {
-        await this.owned?.close()
-      } catch (error) {
-        processFailure = error
-      } finally {
-        this.tracker.dispose()
-        this.termination.dispose()
-      }
-      // The private Vitest report is evidence only until the result check; nothing else reads it.
-      if (this.launch)
-        await rm(this.launch.report.directory, {
-          recursive: true,
-          force: true,
-        }).catch((error: unknown) => {
-          processFailure ??= error
-        })
-      const failure = results.find((result) => result.status === 'rejected')
-      if (failure?.status === 'rejected') throw failure.reason
-      if (processFailure) throw processFailure
-    })()
-    return this.cleanup
+  /**
+   * Releases everything the run owns, one release at a time; called by {@link stop}, and by {@link prepare} and {@link advance} when they fail.
+   * A release under way is shared by every caller. One that failed is not kept: the next call runs it again, as the owned process's own close does, so that the service's next stop can release the run once the cause is gone; a kept rejection would leave the run unreleased for good, and every `codebook_start` would answer BUSY until a reload.
+   * @throws What {@link releaseOwned} throws; the next call tries again.
+   * @example await this.release()
+   */
+  private async release(): Promise<void> {
+    this.releaseBegun = true
+    const attempt = (this.cleanup ??= this.releaseOwned())
+    try {
+      await attempt
+    } catch (error) {
+      // Only this failed attempt is dropped; a newer one that a later call started stays shared.
+      if (this.cleanup === attempt) this.cleanup = undefined
+      throw error
+    }
+  }
+
+  /**
+   * Stops the run's debug sessions and releases its CDP connection, breakpoint, output terminal, test process group and private report folder; the body of {@link release}, run again after a failure, so each step is one that can be repeated.
+   * A run again stops no session that has ended: the run hears of ended sessions until a release has succeeded, and an ended one leaves `active`. VS Code (1.120 to 1.142) stops an ended session that its debug model still lists without a refusal, but refuses one it no longer lists with "debug session not found", and it drops an ended session, and only an ended one, when a newer session of its name starts: a retry that stopped such a session again would fail for good, and every `codebook_start` would answer BUSY until a reload.
+   * @throws The first debug session stop that failed, else the failure of the process release or of the report folder's removal.
+   * @example await this.releaseOwned()
+   */
+  private async releaseOwned(): Promise<void> {
+    this.abort.abort()
+    this.bound?.cdp.close()
+    this.breakpoint?.remove()
+    this.outputTerminal?.dispose()
+    const results = await Promise.allSettled(
+      [...this.active.values()].map((session) =>
+        vscode.debug.stopDebugging(session),
+      ),
+    )
+    let processFailure: unknown
+    try {
+      await this.owned?.close()
+    } catch (error) {
+      processFailure = error
+    } finally {
+      this.tracker.dispose()
+    }
+    // The private Vitest report is evidence only until the result check; nothing else reads it.
+    if (this.launch)
+      await rm(this.launch.report.directory, {
+        recursive: true,
+        force: true,
+      }).catch((error: unknown) => {
+        processFailure ??= error
+      })
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure?.status === 'rejected') throw failure.reason
+    if (processFailure) throw processFailure
+    // Only a release that succeeded stops hearing of ended sessions: until then a session that ends leaves `active`, and a retry does not stop it.
+    this.termination.dispose()
   }
 }

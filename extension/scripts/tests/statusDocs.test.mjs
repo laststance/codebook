@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import { test } from 'node:test'
+
+import { activeTableNameOf, readCurrentState } from './utils/currentState.mjs'
 
 /**
  * Reads a document of the repository by its path from the repository root, so every test of this file names its documents the way a reader does.
@@ -21,6 +24,49 @@ const readDocument = (path) =>
  */
 const retiredLogCitations = (text) =>
   text.match(/\bD0[0-4]\d\b|DECISIONS\.md/g) ?? []
+
+/**
+ * Lists the relative links of a Markdown text that lead to the removed state file `PROJECT_STATE.md`: inline links, with `./` or `../` steps, in angle brackets, with an anchor or a title; reference definitions; and HTML `href` and `src` attributes. A link with a scheme or a host (the state file's last published form on GitHub) is not relative and is kept on purpose, and a path in code text is no link.
+ * @param {string} text - The document's text.
+ * @returns {string[]} The link targets as written, angle brackets left out, in the order they stand; empty when none leads there.
+ * @example
+ * stateFileLinksOf('[state](./PROJECT_STATE.md "the state")\n[s]: ../PROJECT_STATE.md') // => ['./PROJECT_STATE.md', '../PROJECT_STATE.md']
+ */
+const stateFileLinksOf = (text) =>
+  [
+    ...text.matchAll(/\]\(\s*(<[^>\n]*>|[^\s)]+)/g),
+    ...text.matchAll(/^ {0,3}\[[^\]\n]+\]:[ \t]*(<[^>\n]*>|\S+)/gm),
+    ...text.matchAll(/\b(?:href|src)\s*=\s*["']?([^"'\s>]+)/gi),
+  ]
+    .toSorted((first, second) => first.index - second.index)
+    .map((match) => match[1].replace(/^<|>$/g, ''))
+    .filter((target) => /^(?:\.{1,2}\/)*PROJECT_STATE\.md(?:#|$)/.test(target))
+
+/**
+ * Lists the Markdown files of the repository, every one Git tracks or would track (ignored files left out), by their paths from the repository root, so a check of links reaches the packaged README, the skill and any folder added later, not only the root and `docs/`.
+ * @returns {string[]} The paths, as Git lists them.
+ * @throws When Git cannot list them, so the check never passes on an empty list.
+ * @example
+ * markdownFilesOfRepository() // => ['AGENTS.md', …, 'extension/README.md', 'extension/skills/codebook/SKILL.md', …]
+ */
+const markdownFilesOfRepository = () => {
+  const listing = spawnSync(
+    'git',
+    [
+      'ls-files',
+      '-z',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '--',
+      '*.md',
+    ],
+    { cwd: new URL('../../../', import.meta.url), encoding: 'utf8' },
+  )
+  if (listing.status !== 0)
+    throw new Error(`git ls-files failed: ${listing.stderr}`)
+  return listing.stdout.split('\0').filter((path) => path !== '')
+}
 
 /**
  * Returns README's whole "Implementation status" section, from its heading to the next heading of the same level, so a check of the status also sees a paragraph added below the first one.
@@ -67,28 +113,180 @@ test("README and the packaged README cite no number of the retired decision log,
   )
 })
 
-// Cycle 0045 (DOC-3, DX-21): red while PROJECT_STATE linked a pinned copy of the retired log and named its directions by number; each direction is stated there in words instead.
-test('PROJECT_STATE cites no number of the retired decision log and links no copy of it', async () => {
-  // Arrange
-  const projectState = await readDocument('PROJECT_STATE.md')
+// Value: protects=an agent that looks for the current state where AGENTS.md says it is, and a reader who follows a link to it; fails_when=a state file comes back beside the cycle records, or a live document (an entry read, a contract, the template, the review policy, the compaction reminder) still names it; why_new=owner direction of 2026-10-19 ("ProjectState.mdいらないから廃止して"): the state is a section of the active cycle record; seam=none
+test('no state file stands at the repository root, and no live document names one', async () => {
+  // Arrange: the documents an agent or a reviewer reads to find the state.
+  const liveDocuments = [
+    'AGENTS.md',
+    'CLAUDE.md',
+    'IMPLEMENTATION.md',
+    'DEVELOPMENT.md',
+    'PRODUCT_GOAL.md',
+    'DESIGN.md',
+    'README.md',
+    'extension/README.md',
+    '.coderabbit.yaml',
+    '.codex/restore-product-context.mjs',
+    'docs/cycles/TEMPLATE.md',
+    'docs/specs/learning-replay.md',
+    'docs/specs/llm-wiki.md',
+    'docs/specs/keyboard-shortcuts.md',
+    'docs/designs/codebook.md',
+    'docs/acceptance/FINAL_REVIEW.md',
+    'docs/plans/bundled-codebook-skill.md',
+  ]
+  const rootNames = await readdir(new URL('../../../', import.meta.url))
 
   // Act
-  const citations = retiredLogCitations(projectState)
+  const namingDocuments = []
+  for (const path of liveDocuments)
+    if ((await readDocument(path)).includes('PROJECT_STATE'))
+      namingDocuments.push(path)
 
   // Assert
+  assert.equal(rootNames.includes('PROJECT_STATE.md'), false)
+  assert.deepEqual(namingDocuments, [])
+})
+
+// Value: protects=a reader who follows a link to the current state from any document of the repository; fails_when=a Markdown file links PROJECT_STATE.md by a relative path, which no longer exists since the owner removed it on 2026-10-19; why_new=Cycle 0047 row 203 (S2RT-1): three documents and every closed cycle record still linked the removed file; row 277 (P3OCR1a-3): the scan read the root and docs/ only, and missed links with `./`, a title or a reference definition; seam=none; no_claim=links to the state file's last published form on GitHub, which are kept on purpose
+test('no Markdown document links the removed state file by a relative path, apart from the snapshots kept byte for byte', async () => {
+  // Arrange: every Markdown file of the repository; a snapshot whose bytes a record pins with its SHA-256 (docs/history, the evidence checkpoints of a cycle) keeps its links as they were.
+  const documents = markdownFilesOfRepository().filter(
+    (path) =>
+      !path.startsWith('docs/history/') &&
+      !/^docs\/cycles\/\d{4}-evidence-checkpoint-/.test(path),
+  )
+
+  // Act: a file Git still lists but that is gone from the checkout links nothing; any other failed read fails the check.
+  const linkingDocuments = []
+  for (const path of documents) {
+    const text = await readDocument(path).catch((error) => {
+      if (error.code === 'ENOENT') return ''
+      throw error
+    })
+    if (stateFileLinksOf(text).length > 0) linkingDocuments.push(path)
+  }
+
+  // Assert
+  assert.deepEqual(linkingDocuments, [])
+})
+
+// Value: protects=the scan above for links to the removed state file; fails_when=a link reaches PROJECT_STATE.md in a form the scan does not read (`./`, angle brackets, a title, a reference definition, an HTML attribute), so a reader again follows a link to a file that is gone; why_new=Cycle 0047 row 277 (P3OCR1a-3); seam=none; no_claim=a link a renderer builds from text the scan does not read, such as one inside an HTML comment
+test('the scan for links to the removed state file reads every form of a relative Markdown or HTML link, and leaves the file’s published form on GitHub and paths in code text alone', () => {
+  // Arrange
+  const text = [
+    '[state](PROJECT_STATE.md)',
+    '[state](./PROJECT_STATE.md#current)',
+    '[state](../../PROJECT_STATE.md "the state")',
+    '[state](<PROJECT_STATE.md>)',
+    '[s]: ./PROJECT_STATE.md',
+    '<a href="../PROJECT_STATE.md">state</a>',
+    '[published](https://github.com/laststance/codebook/blob/c18c0d6e/PROJECT_STATE.md)',
+    '`git show c18c0d6e:PROJECT_STATE.md`',
+    '[record](docs/cycles/0047-carried-defects-of-cycle-0046.md)',
+  ].join('\n')
+
+  // Act
+  const links = stateFileLinksOf(text)
+
+  // Assert
+  assert.deepEqual(links, [
+    'PROJECT_STATE.md',
+    './PROJECT_STATE.md#current',
+    '../../PROJECT_STATE.md',
+    'PROJECT_STATE.md',
+    './PROJECT_STATE.md',
+    '../PROJECT_STATE.md',
+  ])
+})
+
+// Value: protects=the count check and the replay-action check of the current state, which judge it against the active cycle's own carried-defects table; fails_when=the state links an earlier cycle's table before its own and the checks read that one, so a stale count or a "Fix N" of a closed row passes (row 202's defect back); why_new=Cycle 0047 row 277 (P3OCR1a-1); seam=none; no_claim=whether the state's prose names the right cycle
+test("the checks of the current state read the active cycle's own carried-defects table, never an earlier cycle's that the state links first", () => {
+  // Arrange: states of Cycle 0047 that link Cycle 0046's table first, link their own from the root with a title or by a reference, link only Cycle 0046's, or link none.
+  const states = {
+    earlierTableFirst:
+      'Cycle 0046 left [its tasks](0046-carried-defects.md). [All tasks](0047-carried-defects.md): 278 rows, 250 closed.',
+    fromTheRootWithATitle:
+      '[All tasks](docs/cycles/0047-carried-defects.md "the table")',
+    byAReference: '[All tasks][tasks]\n\n[tasks]: 0047-carried-defects.md',
+    onlyAnEarlierTable: 'Cycle 0046 left [its tasks](0046-carried-defects.md).',
+    noTable: 'A feature cycle carries no defect.',
+  }
+
+  // Act
+  const tableNames = Object.fromEntries(
+    Object.entries(states).map(([form, state]) => [
+      form,
+      activeTableNameOf('0047', state) ?? 'none',
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(tableNames, {
+    earlierTableFirst: '0047-carried-defects.md',
+    fromTheRootWithATitle: '0047-carried-defects.md',
+    byAReference: '0047-carried-defects.md',
+    onlyAnEarlierTable: 'none',
+    noTable: 'none',
+  })
+})
+
+// Value: protects=the hosted reviewer, which reads the active cycle record as a guideline for every file; fails_when=another cycle record takes the current state and .coderabbit.yaml still maps the earlier record, which only a comment kept in step; why_new=Cycle 0047 row 202 (S2OCR3-2); seam=none; no_claim=the hosted review itself, which this repository does not run
+test('the review policy maps, for every file, exactly the cycle record that holds the current state', async () => {
+  // Arrange
+  const policy = await readDocument('.coderabbit.yaml')
+  const { path } = await readCurrentState()
+
+  // Act: every cycle record the policy applies to every file.
+  const mappedRecords = [
+    ...policy.matchAll(
+      /- files: '(docs\/cycles\/\d{4}-[^']+\.md)'\n\s+applyTo: '\*\*\/\*'/g,
+    ),
+  ].map((match) => match[1])
+
+  // Assert
+  assert.deepEqual(mappedRecords, [path])
+})
+
+// Value: protects=an agent that reads the current state at every session entry and after every context compaction; fails_when=no record or two records hold a `## Current state` section, or the section stays in an older record while a newer cycle's record exists; why_new=owner direction of 2026-10-19: AGENTS.md names the active cycle record by its section, and a section left behind in a closed record would be read as current; seam=none
+test('exactly one cycle record holds the current state, and it is the record of the highest-numbered cycle', async () => {
+  // Arrange
+  const { holders, highestCycle, cycle } = await readCurrentState()
+
+  // Act: the holder's cycle against the highest number among the records.
+  const holderCount = holders.length
+
+  // Assert
+  assert.equal(
+    holderCount,
+    1,
+    `records with the section: ${holders.join(', ')}`,
+  )
+  assert.equal(cycle, highestCycle)
+})
+
+// Cycle 0045 (DOC-3, DX-21): red while the state file linked a pinned copy of the retired log and named its directions by number; each direction is stated there in words instead.
+test('the current state cites no number of the retired decision log and links no copy of it', async () => {
+  // Arrange
+  const { state } = await readCurrentState()
+
+  // Act
+  const citations = retiredLogCitations(state)
+
+  // Assert
+  assert.equal(state.startsWith('## Current state\n'), true)
   assert.deepEqual(citations, [])
 })
 
 // Cycle 0045 (CR-2): red while the paragraph "One next action" also held the earlier next actions and the state each had replaced (16,251 characters, with "The rest of this paragraph is the state before…" twice).
-test("PROJECT_STATE's one next action is one action, without the earlier next actions and the state each replaced", async () => {
+test("the current state's one next action is one action, without the earlier next actions and the state each replaced", async () => {
   // Arrange
-  const projectState = await readDocument('PROJECT_STATE.md')
+  const { state } = await readCurrentState()
 
   // Act
   const nextAction =
-    projectState
-      .split('\n')
-      .find((line) => line.startsWith('**One next action:**')) ?? ''
+    state.split('\n').find((line) => line.startsWith('**One next action:**')) ??
+    ''
   const historyMarkers = [
     'The sentence this replaces',
     'The sentences that follow describe the state',
@@ -105,50 +303,58 @@ test("PROJECT_STATE's one next action is one action, without the earlier next ac
   )
 })
 
-// Value: protects=an agent that must read PROJECT_STATE in full at every session entry and after every context compaction, and a reader who wants the current state without the chronology; fails_when=the file is appended to again instead of overwritten: it links the record of a cycle that is neither the active one nor one of the two before it, leaves one of those three out, or outgrows one read; why_new=owner direction of 2026-10-05, when the file had 661,091 bytes and linked the records of 15 cycles; Cycle 0046 row 126: the two upper bounds alone passed a file that linked three old records; seam=none
-test('PROJECT_STATE keeps the active cycle and the two before it and stays short enough to read whole at every session entry', async () => {
+// Value: protects=an agent that must read the current state in full at every session entry and after every context compaction, and a reader who wants the current state without the chronology; fails_when=the state is appended to again instead of overwritten: it links the record of a cycle that is neither the active one nor one of the two before it, leaves one of those three out, or outgrows one read; why_new=owner direction of 2026-10-05, when the state file had 661,091 bytes and linked the records of 15 cycles; Cycle 0046 row 126: the two upper bounds alone passed a file that linked three old records; since 2026-10-19 the state is a section of the active cycle record; seam=none
+test('the current state keeps the active cycle and the two before it and stays short enough to read whole at every session entry', async () => {
   // Arrange
-  const projectState = await readDocument('PROJECT_STATE.md')
+  const { cycle, state } = await readCurrentState()
 
-  // Act: the cycle the state table names as active, the two before it, and every cycle whose record the file links.
-  const activeCycle = Number(
-    /^\| Active cycle \| \[Cycle (\d{4})\]/m.exec(projectState)?.[1],
-  )
+  // Act: the active cycle, the two before it, and every cycle whose record the section links (by a path from the root or from docs/cycles).
+  const activeCycle = Number(cycle)
   const activeCycleAndTwoBefore = [
     activeCycle - 2,
     activeCycle - 1,
     activeCycle,
-  ].map((cycle) => String(cycle).padStart(4, '0'))
+  ].map((number) => String(number).padStart(4, '0'))
   const cyclesWithLinkedRecords = [
     ...new Set(
-      [...projectState.matchAll(/docs\/cycles\/(\d{4})-/g)].map(
-        (match) => match[1],
-      ),
+      [...state.matchAll(/[(/](\d{4})-[\w-]+\.md\b/g)].map((match) => match[1]),
     ),
   ].toSorted()
 
   // Assert: the records of exactly those three cycles, and no more text than the current state needs.
-  assert.equal(
-    Number.isInteger(activeCycle),
-    true,
-    'the row "Active cycle" of the state table links no cycle as [Cycle NNNN]',
-  )
+  assert.equal(Number.isInteger(activeCycle), true, 'no record holds the state')
   assert.deepEqual(cyclesWithLinkedRecords, activeCycleAndTwoBefore)
   assert.equal(
-    projectState.length <= 40_000,
+    state.length <= 40_000,
     true,
-    `the state has ${projectState.length} characters`,
+    `the state has ${state.length} characters`,
   )
 })
 
-// Value: protects=a reader of PROJECT_STATE who takes its count of closed defects as the cycle's; fails_when=the carried-defects table of the active bug-fix cycle gains or closes a row and the state file keeps the earlier counts, or the state file counts rows while it links no table; why_new=the local CodeRabbit review of Cycle 0046 found the state file at 62 closed rows while the table had 63; seam=none
-test("PROJECT_STATE counts the rows and the closed rows of the active cycle's carried-defects table as the table has them", async () => {
+// Value: protects=an agent that selects work from the gap table of the current state; fails_when=a row of the acceptance map has no row in the gap table, or the gap table names a row the map does not have; why_new=the state moved into the cycle record on 2026-10-19, and IMPLEMENTATION.md asks to keep all 13 rows in both documents; seam=none
+test('the gap table of the current state has one row for each row of the acceptance map', async () => {
   // Arrange
-  const projectState = await readDocument('PROJECT_STATE.md')
-  const tablePath = /docs\/cycles\/\d{4}-carried-defects\.md/.exec(
-    projectState,
-  )?.[0]
-  const table = tablePath ? await readDocument(tablePath) : ''
+  const { state } = await readCurrentState()
+  const implementation = await readDocument('IMPLEMENTATION.md')
+
+  // Act
+  const mapRows = [...implementation.matchAll(/^\| (AC-[A-Z-]+) — /gm)].map(
+    (match) => match[1],
+  )
+  const gapRows = [...state.matchAll(/^\| (AC-[A-Z-]+) \|/gm)].map(
+    (match) => match[1],
+  )
+
+  // Assert
+  assert.equal(mapRows.length, 13)
+  assert.deepEqual(gapRows, mapRows)
+})
+
+// Value: protects=a reader of the current state who takes its count of closed defects as the cycle's; fails_when=the carried-defects table of the active bug-fix cycle gains or closes a row and the state keeps the earlier counts, or the state counts rows while it links no table; why_new=the local CodeRabbit review of Cycle 0046 found the state file at 62 closed rows while the table had 63; Cycle 0047 row 277 (P3OCR1a-1): the check took the first table the state linked, which can be an earlier cycle's; seam=none
+test("the current state counts the rows and the closed rows of the active cycle's carried-defects table as the table has them", async () => {
+  // Arrange: the active cycle's own table, never an earlier cycle's that the state also links.
+  const { state, tableName } = await readCurrentState()
+  const table = tableName ? await readDocument(`docs/cycles/${tableName}`) : ''
 
   // Act: a row is a table line that begins with its number, and it is closed when its last cell begins with FIXED or EVIDENCE.
   const rows = table.split('\n').filter((line) => /^\| \d+ \|/.test(line))
@@ -160,17 +366,17 @@ test("PROJECT_STATE counts the rows and the closed rows of the active cycle's ca
         .at(-1) ?? '',
     ),
   )
-  const statedCounts = [
-    ...projectState.matchAll(/(\d+) rows, (\d+) closed/g),
-  ].map(([, total, closed]) => `${total} rows, ${closed} closed`)
+  const statedCounts = [...state.matchAll(/(\d+) rows, (\d+) closed/g)].map(
+    ([, total, closed]) => `${total} rows, ${closed} closed`,
+  )
   const tableCounts = `${rows.length} rows, ${closedRows.length} closed`
 
-  // Assert: every count the state file gives is the table's; a state file that links no table gives none.
+  // Assert: every count the state gives is the table's; a state that links no table gives none.
   assert.deepEqual(
     statedCounts,
     statedCounts.map(() => tableCounts),
   )
-  assert.equal(tablePath === undefined, statedCounts.length === 0)
+  assert.equal(tableName === undefined, statedCounts.length === 0)
 })
 
 // Cycle 0045 (CR-1): red while the status paragraph retold every cycle from 0028 to 0043 (sixteen linked records) instead of leaving that history to the records and the change history.
@@ -189,8 +395,8 @@ test("README's implementation status states the delivered and the open cycle and
   const pointsToHistory = [
     '[change history](CHANGELOG.md)',
     '[`docs/cycles`](docs/cycles)',
-    '[PROJECT_STATE.md](PROJECT_STATE.md)',
-  ].map((link) => status.includes(link))
+    "the active cycle's record holds the verified scope and the open gaps in its current state",
+  ].map((words) => status.includes(words))
 
   // Assert: at most the delivered cycle's record and the open cycle's, and nothing older.
   assert.equal(
@@ -336,7 +542,7 @@ test('the test execution guide says that a checkout changed while the package te
   // Assert
   assert.equal(
     paragraph,
-    'The checkout must also stay as it is while the package tests run. `extension/scripts/tests/package.test.mjs` builds one VSIX in a hook that every test of the file shares, and that build reads the checkout\'s identity before and after its compilation: the revision, whether Git reports any change (a tracked file that differs or an untracked file that is not ignored, anywhere in the repository) and the hashes of the package\'s sources. When the two readings differ, for example because a document was regenerated or a commit was made while the compiler ran, the build is refused with one sentence that names what changed, for example `The checkout changed during compilation: Git reported no change before and reports changes now ("PROJECT_STATE.md"). Retry from a stable checkout.` (`during packaging` when the change came after the compiler had ended; a new revision is named as `the revision went from <before> to <now>` and changed bytes of a source as `the package\'s sources changed ("<path>")`; at most five paths are named), and every test of the file fails with that one message. The list of failed titles does not show it: read the first failure. It is no defect of the package: leave the checkout untouched until the run has ended, then run it again. A command of the build that fails (`Package command failed: pnpm (<code>)`) or runs longer than three minutes (`Package command exceeded its time limit.`) fails every test of the file in the same way, with its own sentence.',
+    'The checkout must also stay as it is while the package tests run. `extension/scripts/tests/package.test.mjs` builds one VSIX in a hook that every test of the file shares, and that build reads the checkout\'s identity before and after its compilation: the revision, whether Git reports any change (a tracked file that differs or an untracked file that is not ignored, anywhere in the repository) and the hashes of the package\'s sources. When the two readings differ, for example because a document was regenerated or a commit was made while the compiler ran, the build is refused with one sentence that names what changed, for example `The checkout changed during compilation: Git reported no change before and reports changes now ("README.md"). Retry from a stable checkout.` (`during packaging` when the change came after the compiler had ended; a new revision is named as `the revision went from <before> to <now>` and changed bytes of a source as `the package\'s sources changed ("<path>")`; at most five paths are named), and every test of the file fails with that one message. The list of failed titles does not show it: read the first failure. It is no defect of the package: leave the checkout untouched until the run has ended, then run it again. A command of the build that fails (`Package command failed: pnpm (<code>)`) or runs longer than three minutes (`Package command exceeded its time limit.`) fails every test of the file in the same way, with its own sentence.',
   )
   // The guide's example is put together from the guard's own words, and the build asks the guard after both of its phases.
   assert.deepEqual(

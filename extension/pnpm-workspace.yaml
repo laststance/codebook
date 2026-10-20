@@ -2,16 +2,5 @@ allowBuilds:
   '@vscode/vsce-sign': false
   'esbuild@0.28.2': true
   unrs-resolver: true
-minimumReleaseAgeExclude:
-  - '@fallow-cli/darwin-arm64@3.34.1'
-  - '@fallow-cli/darwin-x64@3.34.1'
-  - '@fallow-cli/linux-arm64-gnu@3.34.1'
-  - '@fallow-cli/linux-arm64-musl@3.34.1'
-  - '@fallow-cli/linux-x64-gnu@3.34.1'
-  - '@fallow-cli/linux-x64-musl@3.34.1'
-  - '@fallow-cli/win32-arm64-msvc@3.34.1'
-  - '@fallow-cli/win32-x64-msvc@3.34.1'
-  - fallow-type-aware@3.34.1
-  - fallow@3.34.1
 patchedDependencies:
   '@modelcontextprotocol/sdk@1.30.0': patches/@modelcontextprotocol__sdk@1.30.0.patch

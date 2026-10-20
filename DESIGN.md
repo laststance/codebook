@@ -12,7 +12,7 @@ Identity and history: see the table below; this file owns current visual metadat
 
 **This is the product's visual target. Open the actual PNG and inspect it with an image-viewing tool.** Follow [IMPLEMENTATION.md](IMPLEMENTATION.md) and record the inspection in the active cycle. The image's generated header says Review candidate because it predates the owner's adoption; the approval above and D036 establish its current status. Its bytes have not changed since approval.
 
-Use this root file for stable GStack design discovery. [PROJECT_STATE.md](PROJECT_STATE.md) owns the active phase and next action. Read [the behavioral design](docs/designs/codebook.md) before runtime/capture/replay changes and [the full state/interaction review](docs/plans/cycle-0029-product-design.md) before UI implementation.
+Use this root file for stable GStack design discovery. The current state of the active cycle record ([AGENTS.md](AGENTS.md#mandatory-entry) says which record) owns the active phase and next action. Read [the behavioral design](docs/designs/codebook.md) before runtime/capture/replay changes and [the full state/interaction review](docs/plans/cycle-0029-product-design.md) before UI implementation.
 
 This is one design family with separate feature screens. Host-owned VS Code/Cursor chrome uses each actual editor's native UI. Sample values, filenames, line numbers and timestamps illustrate the experience; they are neither pixel-exact native requirements nor execution evidence. The whole sheet is a specification board, not a screen containing all features at once.
 

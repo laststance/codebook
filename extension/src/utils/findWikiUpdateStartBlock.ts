@@ -8,6 +8,7 @@ import {
   WIKI_PUBLICATION_RECEIPT_FILE,
   WIKI_PUBLISH_JOURNAL_FRESH_MS,
   WIKI_PUBLISH_JOURNAL_SUFFIX,
+  WIKI_PUBLISH_LOCK_SUFFIX,
   WIKI_UPDATE_WATCH_POLL_MS,
 } from '../constants'
 
@@ -175,19 +176,73 @@ async function findEntriesBlock(
 }
 
 /**
- * Finds what makes the publisher refuse an update before it stages anything: a link or a file on the Wiki folder's path inside the project, a Wiki folder that is itself a link or a file, an earlier publish that did not finish, a link or special file in the Wiki folder, a manifest that cannot be read or was changed after its publish, or a generated page that was edited by hand or is gone.
+ * Finds the record that a publish or a preview of the publisher keeps beside the Wiki folder while it runs, and that a stopped one leaves: its publish lock (`<output>.publish-lock.json`) and its journal (`<output>.publish-journal.json`); called by {@link findWikiUpdateStartBlock} once the Wiki folder's path holds.
+ * Why the lock too: since Cycle 0047 row 172 a stopped publish or preview leaves its lock, without a journal when it was stopped before it wrote one or while it previewed; `--prepare` takes no lock (row 209), so the update would start and the agent would write a whole candidate that only its preview or its publish refuses (row 237).
+ * Why the lock has a cause of its own, named before the journal: a publish holds its lock from before its first page until after its journal is removed, minutes for a large Wiki, so a lock, with or without a journal, is a publish that may still run as often as one that was stopped, and the recovery refuses while its process runs. Its cause words both ({@link describeWikiUpdate}), as the publisher's own refusal of the lock does; the start check does not judge the lock's owner (Cycle 0047 row 253). A journal without a lock is a run of an earlier version or a recovery's, which did not finish.
+ * A record written within the last {@link WIKI_PUBLISH_JOURNAL_FRESH_MS} belongs to a run that may be ending right now, so both are looked at once more after {@link WIKI_UPDATE_WATCH_POLL_MS}, one wait for both.
+ * @param outputDirectory - Resolved Wiki output folder.
+ * @param now - Clock in epoch milliseconds.
+ * @param wait - Waits before the second look.
+ * @returns At the last look: cause `held-publish-lock` with the lock's file name while the lock stands, with or without the journal; else cause `unfinished-publish` with the journal's file name while the journal stands; undefined when neither does.
+ * @example
+ * await findUnfinishedPublishBlock('/repo/.codebook/wiki', Date.now, wait) // => { cause: 'held-publish-lock', paths: ['wiki.publish-lock.json'] } beside the lock of a running or a stopped publish
+ */
+async function findUnfinishedPublishBlock(
+  outputDirectory: string,
+  now: () => number,
+  wait: (delayMs: number) => Promise<unknown>,
+): Promise<WikiUpdateStartBlock | undefined> {
+  // The lock comes first: while it stands, its publish may still run, and only the lock's sentence is true of a running and of a stopped publish.
+  const records: Array<{ path: string; cause: WikiUpdateStartBlock['cause'] }> =
+    [
+      {
+        path: outputDirectory + WIKI_PUBLISH_LOCK_SUFFIX,
+        cause: 'held-publish-lock',
+      },
+      {
+        path: outputDirectory + WIKI_PUBLISH_JOURNAL_SUFFIX,
+        cause: 'unfinished-publish',
+      },
+    ]
+  const standingRecords = async () =>
+    (
+      await Promise.all(
+        records.map(async (record) => {
+          const stat = await lstat(record.path).catch(() => undefined)
+          return stat ? [{ ...record, writtenAtMs: stat.mtimeMs }] : []
+        }),
+      )
+    ).flat()
+  let standing = await standingRecords()
+  // A record written a moment ago is a run that may be ending, not an earlier one that was stopped: give both one look more.
+  if (
+    standing.some(
+      ({ writtenAtMs }) => now() - writtenAtMs < WIKI_PUBLISH_JOURNAL_FRESH_MS,
+    )
+  ) {
+    await wait(WIKI_UPDATE_WATCH_POLL_MS)
+    standing = await standingRecords()
+  }
+  const [first] = standing
+  return first
+    ? { cause: first.cause, paths: [basename(first.path)] }
+    : undefined
+}
+
+/**
+ * Finds what makes the publisher refuse an update before it stages anything: a link or a file on the Wiki folder's path inside the project, a Wiki folder that is itself a link or a file, a publish or preview that holds the Wiki's publish lock (it may still run, or it was stopped), an earlier publish that did not finish, a link or special file in the Wiki folder, a manifest that cannot be read or was changed after its publish, or a generated page that was edited by hand or is gone.
  *
- * Why: in each case the publisher refuses at `--prepare`, so no candidate ever appears and the run would only time out. Found before the start, the learner reads the reason at once and no agent is asked. The check runs before the update's timeout and cancel exist, so it opens nothing but regular files and follows no link.
+ * Why: in each case the publisher refuses at `--prepare`, so no candidate ever appears and the run would only time out, except for a publish lock, which it refuses only at the candidate's preview or its publish, after the agent wrote the whole candidate. Found before the start, the learner reads the reason at once and no agent is asked. The check runs before the update's timeout and cancel exist, so it opens nothing but regular files and follows no link.
  * Trigger: the extension calls it first when an update starts, before it looks for the manifest and before the already-current check; it sits next to {@link detectWikiPublishConflicts}, which covers the learner's own files.
  *
  * @param outputDirectory - Resolved Wiki output folder.
  * @param projectRoot - The opened project; the Wiki folder's path inside it is looked at first.
  * @param options.now - Clock in epoch milliseconds; tests pass a fixed one.
- * @param options.wait - Waits before the one second look at a journal that was written a moment ago; tests pass their own.
+ * @param options.wait - Waits before the one second look at a journal or a publish lock that was written a moment ago; tests pass their own.
  * @returns
  * - A folder on the Wiki folder's path, after the path entered the project, is a link, a file or leads out of the project: cause `linked-parent` with that folder's project-relative path; nothing at or below the Wiki folder is looked at
- * - The Wiki folder's own path holds a link, a file or anything else that is no folder of its own, at the check's first look or when it lists the folder after the journal's look: cause `not-a-folder` with the folder's name; nothing below that path is listed
- * - `<output>.publish-journal.json` exists: cause `unfinished-publish` with the journal's file name. A journal written within the last {@link WIKI_PUBLISH_JOURNAL_FRESH_MS} belongs to a publish that may be finishing right now, so it is looked at once more after {@link WIKI_UPDATE_WATCH_POLL_MS}; when it is gone then, the check goes on
+ * - The Wiki folder's own path holds a link, a file or anything else that is no folder of its own, at the check's first look or when it lists the folder after the look at the journal and the lock: cause `not-a-folder` with the folder's name; nothing below that path is listed
+ * - `<output>.publish-lock.json` exists, with or without the journal: cause `held-publish-lock` with the lock's file name, a publish that may still run or was stopped; else `<output>.publish-journal.json` exists: cause `unfinished-publish` with the journal's file name ({@link findUnfinishedPublishBlock}). One written within the last {@link WIKI_PUBLISH_JOURNAL_FRESH_MS} belongs to a publish or a preview that may be finishing right now, so both are looked at once more after {@link WIKI_UPDATE_WATCH_POLL_MS}; when neither is there then, the check goes on
  * - A link, pipe, socket or device anywhere under the Wiki folder: cause `special-file` with the paths, sorted
  * - A manifest that is there and is not a JSON object Codebook can read: cause `unreadable-manifest` with the manifest's file name
  * - The manifest's bytes differ from the hash in the publication receipt: cause `edited-manifest` with the manifest's file name
@@ -214,20 +269,13 @@ export async function findWikiUpdateStartBlock(
   // The publisher refuses a link on the Wiki folder's path, or a Wiki folder that is no folder of its own, before it looks at anything else.
   const pathBlock = await findPathBlock(outputDirectory, projectRoot)
   if (pathBlock) return pathBlock
-  // The publisher checks its journal first, so an unfinished publish is reported before any edited page.
-  const journalPath = outputDirectory + WIKI_PUBLISH_JOURNAL_SUFFIX
-  const readJournalStat = () => lstat(journalPath).catch(() => undefined)
-  let journalStat = await readJournalStat()
-  // A journal written a moment ago is a publish in progress, not an earlier one that failed: give it one look more.
-  if (
-    journalStat &&
-    now() - journalStat.mtimeMs < WIKI_PUBLISH_JOURNAL_FRESH_MS
-  ) {
-    await wait(WIKI_UPDATE_WATCH_POLL_MS)
-    journalStat = await readJournalStat()
-  }
-  if (journalStat)
-    return { cause: 'unfinished-publish', paths: [basename(journalPath)] }
+  // A publish lock or an unfinished publish's journal is reported before any edited page: the publisher refuses the journal at `--prepare`, and the lock before a preview or a publish writes anything.
+  const unfinishedBlock = await findUnfinishedPublishBlock(
+    outputDirectory,
+    now,
+    wait,
+  )
+  if (unfinishedBlock) return unfinishedBlock
   const entriesBlock = await findEntriesBlock(outputDirectory)
   if (entriesBlock) return entriesBlock
   const manifestPath = join(outputDirectory, WIKI_MANIFEST_FILE)

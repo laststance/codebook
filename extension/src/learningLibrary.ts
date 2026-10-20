@@ -21,7 +21,11 @@ import {
   STUDY_STORAGE_FORMATS,
   STUDY_METADATA_LIMIT_BYTES,
 } from './constants'
-import { NewerStudyFormatError, StudyArchiveUnavailableError } from './errors'
+import {
+  NewerStudyFormatError,
+  StudyArchiveUnavailableError,
+  StudyRemovedWithItsRecordingError,
+} from './errors'
 import {
   learnerIntentSchema,
   repositorySelectionSchema,
@@ -51,6 +55,7 @@ import {
   type StudyRemovalAvailability,
 } from './utils/fullLibraryMessage'
 import type { ProcessStartsOfList } from './utils/isRecordingWriterLive'
+import { isSealedRecordingReleased } from './utils/isSealedRecordingReleased'
 import { lookAtRecording, type RecordingLook } from './utils/lookAtRecording'
 import { newerStudyArchive } from './utils/newerStudyArchive'
 import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
@@ -63,6 +68,7 @@ import {
 } from './utils/recordingWriterOf'
 import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { removeWriterRecord } from './utils/removeWriterRecord'
+import { removeWriterRecordsOfSealedRecordings } from './utils/removeWriterRecordsOfSealedRecordings'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
@@ -74,9 +80,12 @@ import { withStorageLock } from './utils/withStorageLock'
 /** Moves one file or directory of a saved study to the system Trash; injected into {@link LearningLibrary.removeStudy} so the library stays free of the editor API. @example const moveToTrash: StudyMover = (path) => workspace.fs.delete(Uri.file(path), { recursive: true, useTrash: true }) */
 export type StudyMover = (path: string) => Promise<void>
 
-/** Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write ({@link recordingWriterOf}): moving it would make that window's next append fail and its next save write the archive again. The removal's outcome line puts it after "Nothing was deleted." */
+/**
+ * Why {@link LearningLibrary.removeStudy} moved nothing of a study whose recording a run of another editor window may still write, or whose finished recording that run still holds because it has not saved the study yet ({@link recordingWriterOf}, {@link isSealedRecordingReleased}): moving it would make that window's next append fail, and would delete a study whose final state that run has not saved yet; its next save then finds the study gone and writes nothing ({@link StudyRemovedWithItsRecordingError}). The removal's outcome line puts it after "Nothing was deleted."
+ * One sentence holds for both, also for a run that seals its recording between the removal's judgement and its lock: Save learning replay in that window ends the run if it still records, and saves its study in both cases.
+ */
 const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
-  'Another editor window is still recording this study. Stop its run in that window, then delete the study again.'
+  'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.'
 
 /**
  * What a removal changed on disk.
@@ -90,7 +99,7 @@ export type StudyRemoval =
   | {
       outcome: 'nothing-moved' | 'partly-moved'
       cause: string
-      /** Only for `nothing-moved` refused because recordings' writers may still run and this computer cannot confirm them ({@link UnconfirmedWriter}): one on another computer, or a live process of this computer that it cannot confirm as the writer: a process of another user whose start it cannot read, one that began, by the clock, after the recording, or, for a recording without its writer's record or with a record without the writer's start, a process of another user (its header's rule). The first of them, one on another computer before one of this computer; the caller asks the learner whether to move the study anyway, naming every one. */
+      /** Only for `nothing-moved` refused because recordings' writers may still run and this computer cannot confirm them ({@link UnconfirmedWriter}): one on another computer, or a live process of this computer that it cannot confirm as the writer: a process of another user whose start it cannot read, one that began, by the clock, after the recording, or, for a recording without its writer's record or with a record without the writer's start, a process of another user (its header's rule); or a recording whose header or writer record it could not read now (`unreadable`). The first of them, one on another computer before one of this computer; the caller asks the learner whether to move the study anyway, naming every one. */
       unconfirmedWriter?: UnconfirmedWriter
       /** With `unconfirmedWriter`, the writers of the study's other recordings that this computer cannot confirm, when there are more than one; the dialog names each of them too. `unconfirmedWriter` leads: one on another computer before one of this computer. */
       otherUnconfirmedWriters?: UnconfirmedWriter[]
@@ -100,15 +109,17 @@ export type StudyRemoval =
       moveUnknown?: true
     }
 
-/** Says whether a run of this machine may still write one recording directory, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording whose writer this machine cannot confirm (one on another computer, or a live process of this computer that it cannot confirm as the writer: a process of another user whose start it cannot read, one that began, by the clock, after the recording, or, for a recording without its writer's record or with a record without the writer's start, a process of another user (its header's rule)) is no such reservation: the learner decides about it when they delete the study. */
+/** Says whether a run of this machine may still write one recording directory, or holds it sealed until it has saved its study from a checkpoint taken after the seal, which makes it that run's reservation and no rest of a removed study ({@link recordingWriterOf}: `may-run`), as the caller's list or removal judges it. A recording sealed and released by its run ({@link isSealedRecordingReleased}) is no reservation. A recording whose writer this machine cannot confirm (one on another computer, or a live process of this computer that it cannot confirm as the writer: a process of another user whose start it cannot read, one that began, by the clock, after the recording, or, for a recording without its writer's record or with a record without the writer's start, a process of another user (its header's rule)) is no such reservation, nor is one whose header or writer record it could not read now (`unreadable`): the learner decides about it when they delete the study. */
 type RecordingJudge = (recording: string) => Promise<boolean>
 
 /**
- * Judges whether a run of this machine, this window's own included, may still write one recording directory ({@link RecordingJudge}: {@link recordingWriterOf} with `counts` answers `may-run`); the predicate of the list ({@link LearningLibrary.entryWithoutArchive}); the removal derives the same answer from its one judgement ({@link LearningLibrary.writerVerdictsOf}).
+ * Judges whether a run of this machine, this window's own included, may still write one recording directory or holds it sealed ({@link RecordingJudge}: {@link recordingWriterOf} with `counts` answers `may-run`); the predicate of the list ({@link LearningLibrary.entryWithoutArchive}); the removal derives the same answer from its one judgement ({@link LearningLibrary.writerVerdictsOf}).
  * @param recording - The recording directory.
  * @param starts - The process starts of the caller's list or removal ({@link ProcessStartsOfList}).
- * @returns `true` while such a run may still write it; `false` for a sealed recording, a writer that is gone, and one this computer cannot confirm.
- * @example await isReservedByRunHere('/…/recordings.v2/<id>', new Map()) // => true while another window of this machine records that run
+ * @returns `true` while such a run may still write it, and for a sealed recording that a run of another window of this machine holds until it has saved its study from a checkpoint taken after the seal; `false` for a recording sealed and released by its run ({@link isSealedRecordingReleased}: this window's own sealed recording is so at once), a writer that is gone (also a sealed recording's), one this computer cannot confirm, and one it could not read now (`unreadable`).
+ * @example
+ * await isReservedByRunHere('/…/recordings.v2/<id>', new Map()) // => true while another window of this machine records that run
+ * await isReservedByRunHere('/…/recordings.v2/<id>', new Map()) // => true while that window holds the sealed recording, false once it saved the study after the seal
  */
 async function isReservedByRunHere(
   recording: string,
@@ -135,23 +146,20 @@ export type UnconfirmedWriterRule =
   'refuse' | { move: readonly UnconfirmedWriter[] }
 
 /**
- * A recording whose writer may still run and this computer cannot confirm, as {@link LearningLibrary.removeStudy} answers it with its refusal, so the caller can ask the learner.
- * - `directory`: the recording's directory, which the learner's agreement names ({@link UnconfirmedWriterRule})
+ * What the learner reads of a recording whose writer may still run and this computer cannot confirm ({@link UnconfirmedWriter} without its directory).
  * - `host` and `startedAt`: the host the recording names and the time it was started
- * - `place`: `another-computer` for a writer on another host, which this computer cannot probe; `this-computer` for a live process of this computer that has the writer's id and that this computer cannot confirm as the writer: one of another user whose start it cannot read, or one that began, by the clock, after the recording (another process that got the id, or the writer itself, run with other rights or seen after a step of the clock); for a recording without its writer's record, or with a record without the writer's start, also a process of another user, as its header's rule says
+ * - `place`: `another-computer` for a writer on another host, which this computer cannot probe; `this-computer` for a live process of this computer that has the writer's id and that this computer cannot confirm as the writer: one of another user whose start it cannot read, or one that began, by the clock, after the recording (another process that got the id, or the writer itself, run with other rights or seen after a step of the clock); for a recording without its writer's record, or with a record without the writer's start, also a process of another user, as its header's rule says; `unreadable`, without a host or a start, for a recording whose header or writer record stands and could not be read now (a scanner on Windows may hold it, or the file is damaged), which names no writer, so another window may still record it or still have to save its study ({@link recordingWriterOf}: `unreadable`, Cycle 0047 row 251)
  */
-export type UnconfirmedWriter = {
-  directory: string
-  host: string
-  startedAt: string
-  place: 'another-computer' | 'this-computer'
-}
+export type NamedUnconfirmedWriter =
+  | {
+      host: string
+      startedAt: string
+      place: 'another-computer' | 'this-computer'
+    }
+  | { place: 'unreadable' }
 
-/** What the learner reads of a writer this computer cannot confirm: the host, the recording's start and the place ({@link UnconfirmedWriter} without its directory). */
-export type NamedUnconfirmedWriter = Pick<
-  UnconfirmedWriter,
-  'host' | 'startedAt' | 'place'
->
+/** A recording whose writer may still run and this computer cannot confirm, as {@link LearningLibrary.removeStudy} answers it with its refusal, so the caller can ask the learner: what the learner reads of it ({@link NamedUnconfirmedWriter}) and its `directory`, which the learner's agreement names ({@link UnconfirmedWriterRule}). */
+export type UnconfirmedWriter = NamedUnconfirmedWriter & { directory: string }
 
 /** The writers the removal's cause and dialog name, at least one, in the order the learner reads them. */
 export type NamedUnconfirmedWriters = readonly [
@@ -169,14 +177,14 @@ export type UnconfirmedWriters = readonly [
  * Words why a removal moved nothing of a study whose recordings have writers this computer cannot confirm, for {@link StudyWriterUnconfirmedError}: the cause this API answers to its callers, after which an outcome line reads "Nothing was deleted." The editor shows it only when the writers changed after the learner's dialog; otherwise it asks the learner in a dialog whose detail begins with the same sentences ({@link unconfirmedWriterSentences}).
  * @param writers - The hosts the recordings name, their starts (ISO times) and the places of their writers.
  * @returns The sentences, with each start in this editor's local time.
- * @example unconfirmedWriterCause([{ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }]) // => 'Its recording was started on laptop.home-network at 10/5/2026, 9:00:00 AM. Codebook cannot tell from this computer whether it is still recording.'
+ * @example unconfirmedWriterCause([{ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }]) // => 'Its recording was started on laptop.home-network at 10/5/2026, 9:00:00 AM. Codebook cannot tell from this computer whether an editor window still records it or still has to save it.'
  */
 function unconfirmedWriterCause(writers: NamedUnconfirmedWriters): string {
   return unconfirmedWriterSentences(unconfirmedWritersInLocalTime(writers))
 }
 
 /**
- * The refusal of a removal whose study has recordings whose writers may still run and this computer cannot confirm: a header names another host (a recording of 0.2.29.0, another format's recording of the same id, or one whose record of its writer could not be written), or a record names another machine, or a live process of this computer has a writer's id and is of another user whose start cannot be read, or began, by the clock, after the recording (for a record without the writer's start, judged as its header is). This computer cannot tell whether that run still records (a host name may also be its own earlier one, a clock step moves a computed start, and a writer run with other rights is another user's), so the learner decides; thrown by {@link LearningLibrary.refuseUnlessRemovable} and answered by {@link LearningLibrary.removeStudy} with the host, the start and the place.
+ * The refusal of a removal whose study has recordings whose writers may still run and this computer cannot confirm: a header names another host (a recording of 0.2.29.0, another format's recording of the same id, or one whose record of its writer could not be written), or a record names another machine, or a live process of this computer has a writer's id and is of another user whose start cannot be read, or began, by the clock, after the recording (for a record without the writer's start, judged as its header is), or a header or a record stands and could not be read now (`unreadable`). This computer cannot tell whether that run still records, or still has to save the study of a recording it has sealed ({@link isSealedRecordingReleased}) (a host name may also be its own earlier one, a clock step moves a computed start, and a writer run with other rights is another user's), so the learner decides; thrown by {@link LearningLibrary.refuseUnlessRemovable} and answered by {@link LearningLibrary.removeStudy} with the host, the start and the place.
  * @example throw new StudyWriterUnconfirmedError([{ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }])
  */
 class StudyWriterUnconfirmedError extends Error {
@@ -195,28 +203,32 @@ type WriterOfRecording = { directory: string; writer: WriterOfAnotherWindow }
 /**
  * Names the writers of other windows that this computer cannot confirm, for {@link LearningLibrary.refuseUnlessRemovable} once the plain refusal of a writer of this machine is ruled out: every such recording, so the learner agrees to each one that moves.
  * @param writers - The writers of the study's recordings that another window may still write, with their directories.
- * @returns Each such recording's directory, host, start and place; writers on another computer come first in the list. None when no writer is unconfirmed.
- * @example unconfirmedWritersOf([{ directory, writer: { kind: 'on-another-host', host: 'laptop.home-network', createdAt } }]) // => [{ directory, host: 'laptop.home-network', startedAt: createdAt, place: 'another-computer' }]
+ * @returns Each such recording's directory, host, start and place, and for an `unreadable` recording its directory and that place alone; writers on another computer come first in the list. None when no writer is unconfirmed.
+ * @example
+ * unconfirmedWritersOf([{ directory, writer: { kind: 'on-another-host', host: 'laptop.home-network', createdAt } }]) // => [{ directory, host: 'laptop.home-network', startedAt: createdAt, place: 'another-computer' }]
+ * unconfirmedWritersOf([{ directory, writer: { kind: 'unreadable' } }]) // => [{ directory, place: 'unreadable' }]
  */
 function unconfirmedWritersOf(
   writers: WriterOfRecording[],
 ): UnconfirmedWriter[] {
   return writers
-    .flatMap(({ directory, writer }): UnconfirmedWriter[] =>
-      writer.kind === 'may-run'
-        ? []
-        : [
-            {
-              directory,
-              host: writer.host,
-              startedAt: writer.createdAt,
-              place:
-                writer.kind === 'on-another-host'
-                  ? 'another-computer'
-                  : 'this-computer',
-            },
-          ],
-    )
+    .flatMap(({ directory, writer }): UnconfirmedWriter[] => {
+      if (writer.kind === 'may-run') return []
+      // A recording that could not be read names no host and no start.
+      if (writer.kind === 'unreadable')
+        return [{ directory, place: 'unreadable' }]
+      return [
+        {
+          directory,
+          host: writer.host,
+          startedAt: writer.createdAt,
+          place:
+            writer.kind === 'on-another-host'
+              ? 'another-computer'
+              : 'this-computer',
+        },
+      ]
+    })
     .sort(
       (one, other) =>
         Number(one.place !== 'another-computer') -
@@ -228,7 +240,7 @@ function unconfirmedWritersOf(
  * Says whether the writers the learner agreed to are exactly the writers the removal finds under its lock; called by {@link LearningLibrary.refuseUnlessRemovable} for the learner's `move`.
  * @param found - The unconfirmed writers found under the lock.
  * @param agreed - The writers the learner's dialog named.
- * @returns `true` when both name the same recordings, each with the same host, start and place, in any order; `false` when a recording appeared, went, or changed since the dialog.
+ * @returns `true` when both name the same recordings, each with the same host, start and place (an `unreadable` one with that place alone), in any order; `false` when a recording appeared, went, or changed since the dialog.
  * @example isSameWriterSet(found, agreed) // => false when a writer changed after the learner agreed
  */
 function isSameWriterSet(
@@ -237,18 +249,24 @@ function isSameWriterSet(
 ): boolean {
   const keys = (writers: readonly UnconfirmedWriter[]): string[] =>
     writers
-      .map(({ directory, host, startedAt, place }) =>
-        JSON.stringify([directory, host, startedAt, place]),
+      .map((writer) =>
+        JSON.stringify(
+          writer.place === 'unreadable'
+            ? [writer.directory, writer.place]
+            : [writer.directory, writer.host, writer.startedAt, writer.place],
+        ),
       )
       .sort()
   return JSON.stringify(keys(found)) === JSON.stringify(keys(agreed))
 }
 
 /**
- * Says whether two looks at one recording ({@link lookAtRecording}) found the same: the seal, the header's writer (its process id) and creation time, and the writer record's presence; for {@link LearningLibrary.verdictUnderLock}, which refuses a removal when another window's start may have changed the recording between them.
+ * Says whether two looks at one recording ({@link lookAtRecording}) found the same: the seal, the header's writer (its process id) and creation time, the writer record's presence, and whether a read may have failed ({@link RecordingLook.mayHaveFailedRead}); for {@link LearningLibrary.verdictUnderLock}, which refuses a removal when another window's start may have changed the recording between them.
+ * A seal that came between the two looks keeps them the same: the writer that sealed it is the one judged before, and its run still holds the recording until it has saved its study from a checkpoint taken after the seal ({@link isSealedRecordingReleased}).
+ * A read that may have failed in one look and not in the other makes them differ (Cycle 0047 row 251): a header or a record that a look proved absent and the other could not read may be a start's that came between them, and one the learner was asked about as `unreadable` may name a writer now.
  * @param before - The look before the storage lock.
  * @param now - The look under it.
- * @returns `true` when all four agree.
+ * @returns `true` when all five agree, or when only a seal came since.
  * @example isSameRecordingLook({ isSealed: false, hasWriterRecord: false }, { isSealed: false, header, hasWriterRecord: true }) // => false: a start wrote the header and the record meanwhile
  */
 function isSameRecordingLook(
@@ -256,21 +274,34 @@ function isSameRecordingLook(
   now: RecordingLook,
 ): boolean {
   return (
-    before.isSealed === now.isSealed &&
+    (before.isSealed === now.isSealed || now.isSealed) &&
     before.hasWriterRecord === now.hasWriterRecord &&
     before.header?.owner.pid === now.header?.owner.pid &&
-    before.header?.createdAt === now.header?.createdAt
+    before.header?.createdAt === now.header?.createdAt &&
+    before.mayHaveFailedRead === now.mayHaveFailedRead
   )
 }
 
 /** The {@link RemovalWriterVerdict} of each recording directory of a study. */
 type RemovalWriterVerdicts = Map<string, RemovalWriterVerdict>
 
-/** A writer of another window that may still write a study's recording ({@link LearningLibrary.writersOfOtherWindows}): one of this machine (`may-run`), or one this computer cannot confirm (`on-another-host`, `unconfirmed-here`). */
+/** A writer of another window that may still write a study's recording ({@link LearningLibrary.writersOfOtherWindows}): one of this machine (`may-run`), or one this computer cannot confirm (`on-another-host`, `unconfirmed-here`, and `unreadable` for a recording whose header or record could not be read now). */
 type WriterOfAnotherWindow = Extract<
   RecordingWriterOfDirectory,
-  { kind: 'may-run' | 'on-another-host' | 'unconfirmed-here' }
+  { kind: 'may-run' | 'on-another-host' | 'unconfirmed-here' | 'unreadable' }
 >
+
+/**
+ * Says whether the writer the removal found for a recording under its lock is one of another window that may still write it ({@link WriterOfAnotherWindow}); called by {@link LearningLibrary.writersOfOtherWindows} for each recording of a study.
+ * @param writer - The writer of one recording ({@link recordingWriterOf}).
+ * @returns `true` for a writer of this machine that may still run (`may-run`), one this computer cannot confirm (`on-another-host`, `unconfirmed-here`) and a recording whose header or record could not be read now (`unreadable`), each of which keeps the study or makes Delete ask first; `false` for a recording that is finished, whose writer is gone, or that this window leaves to itself (`left-to-caller`).
+ * @example isWriterOfAnotherWindow({ kind: 'gone', createdAt: '2026-10-05T09:00:00.000Z' }) // => false
+ */
+const isWriterOfAnotherWindow = (writer: RecordingWriterOfDirectory) =>
+  writer.kind === 'may-run' ||
+  writer.kind === 'on-another-host' ||
+  writer.kind === 'unconfirmed-here' ||
+  writer.kind === 'unreadable'
 
 /** What {@link LearningLibrary.removeStudy} has changed so far, read when a step fails to tell `nothing-moved` from `partly-moved`. @example const changes: StudyRemovalChanges = { movedPathCount: 0 } */
 type StudyRemovalChanges = {
@@ -464,7 +495,7 @@ export class LearningLibrary {
     starts: ProcessStartsOfList,
   ): Promise<StudyCatalogEntry | undefined> {
     const paths = await this.studyPaths(id, undefined)
-    // A recording whose writer this computer cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer) is listed: the learner reaches the dialog about it with Delete.
+    // A recording whose writer this computer cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer), or that it could not read now, is listed: the learner reaches the dialog about it with Delete.
     const isLeft = await this.isLeftWithoutArchive(paths, (recording) =>
       isReservedByRunHere(recording, starts),
     )
@@ -485,12 +516,14 @@ export class LearningLibrary {
 
   /**
    * Says whether the paths of a study are what is left of a saved study without its archive, which is listed ({@link entriesWithoutArchive}) and may be removed ({@link removeStudy}).
-   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one unless a run of this machine may still write it ({@link RecordingJudge}): the recording of a run that has not saved its study yet is reserved before the first save and belongs to that run. A recording whose writer this machine cannot confirm (a run on another computer, which it cannot probe, or a live process of this computer it cannot confirm as the writer: one of another user whose start it cannot read, or one that began, by the clock, after the recording) is such a rest too, and Delete asks the learner about it ({@link removeStudy}).
+   * A catalog sidecar is written only after an archive, so one without an archive is always such a rest. A recording directory alone is one unless a run of this machine may still write it or holds it sealed ({@link RecordingJudge}): the recording of a run of another window belongs to that run until the run has saved its study from a checkpoint taken after the seal; only then is it sealed and released by its run ({@link isSealedRecordingReleased}), as this window's own sealed recording is at once (this window lists it by its own run state). A recording whose writer this machine cannot confirm (a run on another computer, which it cannot probe, or a live process of this computer it cannot confirm as the writer: one of another user whose start it cannot read, or one that began, by the clock, after the recording), or whose header or writer record it could not read now, is such a rest too, and Delete asks the learner about it ({@link removeStudy}).
    * The list and the removal ask the same question: the list with {@link recordingWriterOf} for every candidate, the removal with what it judged before its lock ({@link isReservedHereUnderLock}).
    * @param paths - The study's paths as {@link studyPaths} found them.
    * @param isReservedHere - Says whether a run of this machine may still write one recording directory ({@link RecordingJudge}).
-   * @returns `true` when no archive is left and a sidecar, or a recording no run of this machine may still write, is; `false` for a study with an archive, for one of which nothing is left, and for one that has only recordings a run of this machine may still write.
-   * @example await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }, judge) // => true once that recording is sealed
+   * @returns `true` when no archive is left and a sidecar, or a recording no run of this machine may still write or holds sealed, is; `false` for a study with an archive, for one of which nothing is left, and for one that has only recordings a run of this machine may still write or holds sealed.
+   * @example
+   * await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }, judge) // => true once that recording is sealed and released by its run
+   * await this.isLeftWithoutArchive({ recordings: ['/…/recordings.v2/<id>'], playback: [], sidecars: [], archives: [] }, judge) // => false while a run of another window of this machine holds it sealed, its study not saved after the seal
    */
   private async isLeftWithoutArchive(
     paths: StudyPaths,
@@ -503,7 +536,7 @@ export class LearningLibrary {
     )
   }
 
-  /** Says whether one of a study's recording directories is no reservation of a run of this machine: sealed, abandoned, or with a writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer); asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNoRunHereHolds(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed */
+  /** Says whether one of a study's recording directories is no reservation of a run of this machine: sealed and released by its run ({@link isSealedRecordingReleased}), abandoned (its writer gone, also a sealed recording's), with a writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer), or unread now (`unreadable`); a sealed recording that a run of this machine holds until it has saved its study from a checkpoint taken after the seal is a reservation. Asked by {@link isLeftWithoutArchive} for a study that has neither an archive nor a sidecar. @example await this.hasRecordingNoRunHereHolds(['/…/recordings.v2/<id>'], judge) // => true once that recording is sealed and released by its run; false while that run holds it sealed */
   private async hasRecordingNoRunHereHolds(
     recordings: string[],
     isReservedHere: RecordingJudge,
@@ -517,7 +550,7 @@ export class LearningLibrary {
    * Finds the writers of other editor windows that may still write a study's recording directories, as the removal judged them ({@link writerOfAnotherWindowUnderLock}); this process's own recordings are left to this window, which removes no study whose run has not stopped. Asked by {@link refuseUnlessRemovable} before the first move, which lets a writer of this machine that may still run (`may-run`) win over every writer this machine cannot probe.
    * @param recordings - The study's recording directories.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns The writer of each recording that another window may still write (`may-run`, `on-another-host`, `unconfirmed-here`), with the recording's directory, in the order of the recordings; none when no other window may write any of them.
+   * @returns The writer of each recording that another window may still write (`may-run`, `on-another-host`, `unconfirmed-here`, `unreadable`), with the recording's directory, in the order of the recordings; none when no other window may write any of them.
    * @example await this.writersOfOtherWindows(['/…/recordings.v2/<id>'], verdicts) // => [{ directory: '/…/recordings.v2/<id>', writer: { kind: 'may-run', createdAt } }] while another window of this machine records that run
    */
   private async writersOfOtherWindows(
@@ -531,11 +564,7 @@ export class LearningLibrary {
       })),
     )
     return writers.flatMap(({ directory, writer }): WriterOfRecording[] =>
-      writer.kind === 'may-run' ||
-      writer.kind === 'on-another-host' ||
-      writer.kind === 'unconfirmed-here'
-        ? [{ directory, writer }]
-        : [],
+      isWriterOfAnotherWindow(writer) ? [{ directory, writer }] : [],
     )
   }
 
@@ -573,19 +602,20 @@ export class LearningLibrary {
   }
 
   /**
-   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a recording sealed since the judgement has no writer; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
+   * Gives a recording's verdict under the storage lock, after one look again and no question to the system: a sealed recording that its run has released ({@link isSealedRecordingReleased}), by a look that proves its header or its writer record absent, has no writer; one whose header or record that look may have failed to read (Cycle 0047 row 239) is compared with the look before the lock like any other, which a look that may have failed differs from unless it may have failed too, and then its verdict was never `finished` (Cycle 0047 row 251); one sealed since the judgement that its run still holds for the save of a checkpoint of its study taken after the seal keeps the verdict of the writer that sealed it; one whose header (its writer and creation time) or writer record changed since, or that appeared since, may have just been started by another window, which the removal does not move; called by {@link isReservedHereUnderLock} and {@link writerOfAnotherWindowUnderLock}.
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns `sealed` for a recording sealed since; the verdict found before the lock while the look is the same.
-   * @throws "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then.
-   * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed
+   * @returns `sealed` for a sealed recording its run has released; the verdict found before the lock while the look is the same, or only a seal came since.
+   * @throws "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then.
+   * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed and its study saved
    */
   private async verdictUnderLock(
     recording: string,
     verdicts: RemovalWriterVerdicts,
   ): Promise<RemovalWriterVerdict | 'sealed'> {
     const now = await lookAtRecording(recording)
-    if (now.isSealed) return 'sealed'
+    // A sealed recording that a run of another window still holds for the save of a checkpoint of its study taken after the seal keeps that writer's verdict.
+    if (now.isSealed && isSealedRecordingReleased(now)) return 'sealed'
     const before = verdicts.get(recording)
     // A start under way between the two looks gives a recording another window may have just begun to write.
     if (!before || !isSameRecordingLook(before.look, now))
@@ -597,9 +627,11 @@ export class LearningLibrary {
    * Answers under the storage lock whether a run of this machine may still write one recording ({@link RecordingJudge}), from the verdict found before the lock ({@link verdictUnderLock}); called by {@link refuseUnlessRemovable} for a study without an archive, with the question the list asks ({@link isLeftWithoutArchive}).
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns `false` for a recording sealed since; the verdict for any other.
+   * @returns `false` for a recording sealed and released by its run ({@link isSealedRecordingReleased}); the verdict found before the lock for any other, also for a recording sealed since that its run still holds until it has saved its study from a checkpoint taken after the seal.
    * @throws What {@link verdictUnderLock} throws for a recording that changed or appeared since the judgement.
-   * @example await this.isReservedHereUnderLock('/…/recordings.v2/<id>', verdicts) // => false once that recording is sealed
+   * @example
+   * await this.isReservedHereUnderLock('/…/recordings.v2/<id>', verdicts) // => false once that recording is sealed and released by its run
+   * await this.isReservedHereUnderLock('/…/recordings.v2/<id>', verdicts) // => true, the verdict before the lock, while another window of this machine holds it sealed
    */
   private async isReservedHereUnderLock(
     recording: string,
@@ -613,9 +645,11 @@ export class LearningLibrary {
    * Answers under the storage lock which writer of another window may still write one recording, from the verdict found before the lock ({@link verdictUnderLock}); called by {@link writersOfOtherWindows}.
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
-   * @returns `finished` for a recording sealed since; the verdict for any other.
+   * @returns `finished` for a recording sealed and released by its run ({@link isSealedRecordingReleased}); the verdict found before the lock for any other, also for a recording sealed since that its run still holds until it has saved its study from a checkpoint taken after the seal.
    * @throws What {@link verdictUnderLock} throws for a recording that changed or appeared since the judgement.
-   * @example await this.writerOfAnotherWindowUnderLock('/…/recordings.v2/<id>', verdicts) // => { kind: 'finished' } once that recording is sealed
+   * @example
+   * await this.writerOfAnotherWindowUnderLock('/…/recordings.v2/<id>', verdicts) // => { kind: 'finished' } once that recording is sealed and released by its run
+   * await this.writerOfAnotherWindowUnderLock('/…/recordings.v2/<id>', verdicts) // => { kind: 'may-run', createdAt } while another window of this machine holds it sealed
    */
   private async writerOfAnotherWindowUnderLock(
     recording: string,
@@ -632,8 +666,8 @@ export class LearningLibrary {
    * @param unconfirmedWriterRule - Whether a recording whose writer this computer cannot confirm keeps the study (`refuse`) or moves with it (`{ move }`, the learner's choice after the refusal, which names the writers they agreed to).
    * @throws
    * - {@link StudyArchiveUnavailableError} for an id that names no study: no archive, and nothing left of one ({@link isLeftWithoutArchive}), as for an id of which nothing is left or only a recording that may still be written
-   * - "Another editor window is still recording this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window of this machine may still write one of its recordings ({@link writersOfOtherWindows}): that window would fail its next append and save the archive again
-   * - {@link StudyWriterUnconfirmedError} with `refuse` while one of its recordings has a writer this computer cannot confirm (`on-another-host`, `unconfirmed-here`), and with `{ move }` when those writers are not exactly the ones the learner agreed to
+   * - "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) while a run of another window of this machine may still write one of its recordings, or holds its finished one until it has saved the study ({@link writersOfOtherWindows}): that window would fail its next append, or save the study without its recording, and save the archive again
+   * - {@link StudyWriterUnconfirmedError} with `refuse` while one of its recordings has a writer this computer cannot confirm (`on-another-host`, `unconfirmed-here`, `unreadable`), and with `{ move }` when those writers are not exactly the ones the learner agreed to
    * @example await this.refuseUnlessRemovable(paths, verdicts, 'refuse') // returns for a saved study whose recordings nobody else writes
    */
   private async refuseUnlessRemovable(
@@ -1081,11 +1115,36 @@ export class LearningLibrary {
     )
   }
 
-  /** Replaces one committed projection atomically, retaining bounded partial observations on later failure. @example await library.saveStudy(study) */
-  saveStudy(input: RetainedStudy): Promise<void> {
+  /**
+   * Replaces one committed projection atomically, retaining bounded partial observations on later failure; once the archive is written, and only when its checkpoint was taken after the seal of the study's recording, the record of the writer of that sealed recording goes ({@link removeWriterRecordsOfSealedRecordings}): that recording waited for this save.
+   * A checkpoint was taken after the seal when its archive says its run had stopped, or when its caller says the run's stop had ended after the seal as it was taken, also a stop that failed after the seal (Cycle 0047 row 140); {@link StudyWorkspace} says so for every checkpoint it saves.
+   * The run's later saves (an explanation or a learning summary after the stop, Retry storage, the final checkpoint) come after that release, when another window may have removed the study with its recording. A study whose archive and recording have both left the library is therefore never written again: the archive would come back without its recording (Cycle 0047 row 162). The look is made under the storage lock that a removal takes for its moves, so a removal ends either before it or after the write.
+   * @param input - The archive to save.
+   * @param checkpoint - What the caller knows of the checkpoint the archive was captured at: `isTakenAfterSealedStop` once the run's stop had ended after it sealed the recording ({@link StudyService.hasStopEndedAfterSeal}), and `recordingDirectory`, the directory of the run's recording, for a run that records; left out, only an archive that says `stopped` releases the recording, and the archive is written whatever left the library.
+   * @throws A {@link StudyRemovedWithItsRecordingError} when the study's archive and the run's recording directory are both gone (the directory's look answers ENOENT), before anything is written; the error of that look when it fails otherwise, before anything is written, as an ordinary save failure; otherwise when the library is full, when the archive does not advance the study's kept checkpoint ({@link assertStudyCheckpoint}), or when the write fails. A writer record that cannot be removed fails nothing.
+   * @example
+   * await library.saveStudy(study)
+   * await library.saveStudy(archiveAfterAFailedStop, { isTakenAfterSealedStop: true }) // the sealed recording's writer record goes
+   * await library.saveStudy(archiveWithASummary, { recordingDirectory }) // throws StudyRemovedWithItsRecordingError after another window removed the study
+   */
+  saveStudy(
+    input: RetainedStudy,
+    checkpoint: {
+      isTakenAfterSealedStop?: boolean
+      recordingDirectory?: string
+    } = {},
+  ): Promise<void> {
     const study = decodeRetainedStudy(input, this.workspaceKey)
     return this.locked(async () => {
       const existing = await this.entries()
+      const kept = existing.find((value) => value.id === study.id)
+      // An archive that left the library with the run's recording was removed with it: written again, the study would come back without its recording. Only a recording that is absent left; a look that fails otherwise (a permission, a disk error, a folder being deleted) fails this save, which Retry storage repeats (Cycle 0047 row 170).
+      if (
+        !kept &&
+        checkpoint.recordingDirectory !== undefined &&
+        (await this.optionalStat(checkpoint.recordingDirectory)) === undefined
+      )
+        throw new StudyRemovedWithItsRecordingError()
       if (!this.admits(existing, study.id))
         throw new Error(
           fullLibraryMessage(
@@ -1094,7 +1153,6 @@ export class LearningLibrary {
             this.removalAvailability(),
           ),
         )
-      const kept = existing.find((value) => value.id === study.id)
       // The study's own listing tells its newer format; the library directory is not listed again.
       if (kept)
         assertStudyCheckpoint(
@@ -1111,6 +1169,12 @@ export class LearningLibrary {
         MAX_STUDY_ARCHIVE_BYTES,
       )
       await this.writeMetadata(study)
+      // The study's sealed recording no longer waits once an archive taken after the seal is saved; a record that cannot be removed only keeps the recording from other windows while its writer runs.
+      await removeWriterRecordsOfSealedRecordings(
+        this.directory,
+        study,
+        checkpoint.isTakenAfterSealedStop === true,
+      ).catch(() => undefined)
     })
   }
 
@@ -1144,7 +1208,7 @@ export class LearningLibrary {
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
    * A study that a newer Codebook saved is not taken apart: nothing of it moves, also when an older archive lies beside the newer one ({@link studyPaths}).
    * What is left of a study whose archive is gone, as {@link list} shows it, is moved in the same order ({@link isLeftWithoutArchive}); the recording of a run that has not saved its study yet is not.
-   * Nothing of a study moves while a run of another editor window may still write one of its recordings ({@link writersOfOtherWindows}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE} for a writer of this machine, and with `unconfirmedWriter` and `otherUnconfirmedWriters`, which name every writer this machine cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer), unless `unconfirmedWriterRule` is `{ move }` with exactly those writers.
+   * Nothing of a study moves while a run of another editor window may still write one of its recordings, or holds its finished one until it has saved the study ({@link writersOfOtherWindows}): the outcome is `nothing-moved` with {@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE} for a writer of this machine, and with `unconfirmedWriter` and `otherUnconfirmedWriters`, which name every writer this machine cannot confirm (on another computer, a process of this computer it cannot confirm as the writer, or a recording whose header or writer record it could not read now), unless `unconfirmedWriterRule` is `{ move }` with exactly those writers.
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
    * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.

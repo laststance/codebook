@@ -35,7 +35,7 @@ export function recordingOfDirectory(
 }
 
 /**
- * Reads the record of a recording's writer ({@link recordingOwnerRecordPath}) for that one recording: the record is kept by the study id, which recordings of several formats can share, so it counts only for the recording it names; called by the judgement of a recording's writer ({@link recordingWriterState}), by {@link lookAtRecording} and by {@link removeWriterRecord} at a recording's seal.
+ * Reads the record of a recording's writer ({@link recordingOwnerRecordPath}) for that one recording: the record is kept by the study id, which recordings of several formats can share, so it counts only for the recording it names; called by the judgement of a recording's writer ({@link recordingWriterState}, {@link sealedRecordingWriterState}), by {@link lookAtRecording} and by {@link removeWriterRecord}, which removes the record of a sealed recording only when it names that recording, at the save of a checkpoint its run took after the seal ({@link removeWriterRecordsOfSealedRecordings}); the seal itself removes no record.
  * The record is read only from a real folder of records ({@link hasOwnWriterRecordFolder}), as a regular file of bounded size without following a link ({@link readWikiRegularFile}).
  * A record that names no recording (one of an earlier build of this delivery) is not used: it may be another format's, and the header's rules judge a recording without a record, as they judge one of 0.2.29.0.
  * @param directory - The directory of one recording, `<learning directory>/recordings.vN/<study id>`.

@@ -26,6 +26,14 @@ import {
   WIKI_CHAT_WATCH_STATUS_TEXT,
   WIKI_CHAT_WATCH_TOOLTIP,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_PAGE_FILE_LIMIT_BYTES,
+  WIKI_PAGE_NAVIGATION_DESTINATIONS,
+  WIKI_PAGE_SERVE_DEADLINE_MS,
+  WIKI_PAGE_WAIT_LIMIT_MS,
+  WIKI_PAGE_WAITING_LIMIT,
+  WIKI_PAGE_WORKER_CONCURRENCY_LIMIT,
+  WIKI_PAGE_WORKER_HEAP_LIMIT_MB,
+  WIKI_RESPONSE_SEND_LIMIT_MS,
   WIKI_UPDATE_MARKER_CHANGE_RETRIES,
   WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
@@ -39,10 +47,12 @@ import {
 import { STUDY_UI_OPTIONS } from '../ui/constants'
 import { cursorCatalogCleanupNotice } from '../utils/cursorCatalogCleanupNotice'
 import { describeBrokenWikiWatch } from '../utils/describeBrokenWikiWatch'
+import { describeOtherWikiWindow } from '../utils/describeOtherWikiWindow'
 import { describeRefusedSkillLink } from '../utils/describeRefusedSkillLink'
 import { describeUnansweredWikiChat } from '../utils/describeUnansweredWikiChat'
 import { describeWikiChatErrorReply } from '../utils/describeWikiChatErrorReply'
 import { describeWikiChatHandOver } from '../utils/describeWikiChatHandOver'
+import { formatClockTime } from '../utils/formatClockTime'
 import { pagePauseUnderResumeText } from '../utils/pagePauseUnderResumeText'
 import { savedLaterNote } from '../utils/savedLaterNote'
 import { startOverBy } from '../utils/startOverBy'
@@ -53,6 +63,11 @@ import {
 } from '../utils/stepPastNoRealFolder'
 import { studyRemovalMessages } from '../utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from '../utils/tabWithoutEditorObstacle'
+import {
+  type WikiPageRefusalReason,
+  wikiPageRefusalHtml,
+} from '../utils/wikiPageRefusalHtml'
+import { withServedAddresses } from '../utils/withServedAddresses'
 
 /**
  * Reads the README packaged with the extension, so every test of this file compares the same document a learner gets in the VSIX; tests run from `dist/tests`.
@@ -183,14 +198,14 @@ test('the packaged README says in both lock passages what a storage lock records
   assert.equal(STORAGE_LOCK_UNWRITTEN_GRACE_MS / MILLISECONDS_PER_SECOND, 10)
 })
 
-// Value: protects=a learner who finds the file of a running Wiki update in the project folder, or whose update is refused because of another window, reading what the file holds, that it names no computer, host or user in clear, and how long a marker counts that no window here can judge; fails_when=the README loses the marker's paragraphs, leaves out one of the three refusals or one of the cases in which a marker is not judged by its process (a window that could not read its own process start, a Linux window that could not read its pid namespace), or names another longest time than the product computes for Cursor and VS Code; why_new=Cycle 0046 row 119 (amendment ER-14): no document described the marker; rows 103, 115 and 145 added the two cases and the third refusal after the paragraphs were written; seam=none
+// Value: protects=a learner who finds the file of a running Wiki update in the project folder, or whose update is refused because of another window, reading what the file holds, that it names no computer, host or user in clear, and how long a marker counts that no window here can judge; fails_when=the README loses the marker's paragraphs, leaves out one of the three refusals or one of the cases in which a marker is not judged by its process (a window that could not read its own process start, a Linux window that could not read its pid namespace), names another longest time than the product computes for Cursor and VS Code, leaves out a cause for which a window asks again for the change of its marker (a marker that cannot be read at that moment), or names only the 2 seconds of a marker being written for the refusal that a marker file which cannot be read gets for 21 minutes 30 seconds; why_new=Cycle 0046 row 119 (amendment ER-14): no document described the marker; rows 103, 115 and 145 added the two cases and the third refusal after the paragraphs were written; Cycle 0047 row 51 (D14.5-3) added the marker that cannot be read at that moment and the refused change to the causes of a retry, and row 32 (P3RT10) the marker file that cannot be read, which counts as one being written for 21 minutes 30 seconds; row 85 (ADV-8) gave such a file its own refusal once it is 2 seconds old; seam=none
 test('the packaged README says what a running Wiki update’s marker holds, preserves marker privacy, distinguishes a killed running owner from a stopped watch whose record could not be stored and states their time bounds', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act: the three paragraphs under "LLM Wiki: open and update", whole.
   const delivered = heldSentences(readme, [
-    "While an update runs, its window keeps a marker file beside the output folder, `<folder>.update-run.json` (`.codebook/wiki.update-run.json` unless the setting names another folder), so that a second editor window on the same project does not start a second update. That window's start is refused with `Another editor window is updating this Wiki (<editor>, started <time>). Wait for it to finish, then press Update LLM Wiki again.` Two shorter refusals name no run. `Another editor window is starting an update of this Wiki. Wait a moment and try again.` is shown while another window is writing its marker (a marker file without content that is younger than 2 seconds). `Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.` is shown while another window holds the claim under which a marker is removed or replaced, and a leftover marker is in the way. The marker usually lies in your project folder, so it holds nothing that names the computer, its host or its user in clear: it records the process id of the window's extension host and when that process began, a random id of the window, the editor, the time the run started, the id of the computer's boot on Linux and macOS, and two digests that stand for the machine. A digest is a pseudonym and no secret: a commit of the file publishes it, and the digest of a common host name can be found by trying names. When the run ends, its window removes the marker; after a stopped VS Code watch the file stays as that window's note that the chat may still publish, and the window removes it later or the next update does. Where the window cannot remove or replace its marker at that moment (another window holds the claim on it, or the system refuses the claim), it tries again every 10 seconds for two minutes, and once more when it closes; a marker still left after that counts until its run's longest time has passed.",
+    "While an update runs, its window keeps a marker file beside the output folder, `<folder>.update-run.json` (`.codebook/wiki.update-run.json` unless the setting names another folder), so that a second editor window on the same project does not start a second update. That window's start is refused with `Another editor window is updating this Wiki (<editor>, started <time>). Wait for it to finish, then press Update LLM Wiki again.` Two shorter refusals name no run. `Another editor window is starting an update of this Wiki. Wait a moment and try again.` is shown while another window is writing its marker: a marker file without content, or one that cannot be read and is not dated ahead of the clock, that is younger than 2 seconds. `Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.` is shown while another window holds the claim under which a marker is removed or replaced, and a leftover marker is in the way. A marker file that cannot be read (another program holds it open, as a scanner or an indexer can on Windows, or this user may not read it) may be a running update's marker, so it counts until 21 minutes 30 seconds after its last write, as long as any marker counts; once it is 2 seconds old, or when its time lies ahead of the clock, the start is refused with `Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (<path>), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at <time>.`, where `<time>` is the first whole minute after those 21 minutes 30 seconds. The marker usually lies in your project folder, so it holds nothing that names the computer, its host or its user in clear: it records the process id of the window's extension host and when that process began, a random id of the window, the editor, the time the run started, the id of the computer's boot on Linux and macOS, and two digests that stand for the machine. A digest is a pseudonym and no secret: a commit of the file publishes it, and the digest of a common host name can be found by trying names. When the run ends, its window removes the marker; after a stopped VS Code watch the file stays as that window's note that the chat may still publish, and the window removes it later or the next update does. Where the window cannot remove or replace its marker at that moment (another window holds the claim on it, the system refuses the claim or the change, or the marker cannot be read at that moment, as on Windows while a scanner or an indexer holds the file open), it tries again every 10 seconds for two minutes, and once more when it closes; a marker still left after that counts until its run's longest time has passed.",
     "A marker of a running update that a killed editor left on this machine does not refuse a start: a window of this build judges a marker by the start of its owner's process, so the marker counts as nobody's when that process is gone and also when another process has its process id since, and the next start removes it. A marker whose owner cannot be judged here counts until its run's longest time has passed at the latest: 21 minutes after the run began for Cursor and 21 minutes 30 seconds for VS Code (the 15 minutes of a run, in VS Code after the 30 seconds for the chat's first answer, then 1 minute, then the 5 minutes by which two clocks may differ). That is a marker written on another computer (a project folder shared between machines), in another system or another pid namespace of this computer (a Windows window beside a WSL window, another WSL distribution, a container), where its process id means another process, by a window that could not read its own process start, or by a Linux window that could not read its own pid namespace (such a window also judges no other window's marker by its process). A running update's marker of this computer that names another boot than the running one (on Linux and macOS, which name their boots) is nobody's all the same. A marker of 0.2.29.0 counts that long when a process still has its process id. [What a lock or an update marker cannot tell](#what-a-lock-or-an-update-marker-cannot-tell) lists the limits.",
     "A stopped VS Code watch's reservation describes a chat that can still publish. If the editor could not store that watch's record, Codebook keeps the reservation when the window closes or reloads. Another window, including the reloaded one, still waits until 15 minutes after the watch ended, also when the former extension host's process is gone. Stop that chat, then choose Update anyway if Codebook still waits for it; a publish the reader recognizes ends the wait sooner.",
   ])
@@ -220,6 +235,37 @@ test('the packaged README says what a running Wiki update’s marker holds, pres
     WIKI_UPDATE_MARKER_CHANGE_RETRIES *
       WIKI_UPDATE_MARKER_CHANGE_RETRY_DELAY_MS,
     120_000,
+  )
+})
+
+// Value: protects=a learner whose Update is refused beside a marker file that stays unreadable, reading in the README the refusal they see, which file it names and when it ends; fails_when=the README quotes another sentence than the product prints for such a file, or still says that it is refused with "Wait a moment and try again" for all its 21 minutes 30 seconds; why_new=Cycle 0047 row 85 (ADV-8); seam=none
+test('the packaged README quotes the refusal beside a marker file that cannot be read for longer than a write takes as the product words it', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const countsUntilMs = Date.UTC(2026, 9, 3, 12, 21, 30)
+  const refusal = describeOtherWikiWindow({
+    beingWrittenSinceMs: Date.UTC(2026, 9, 3, 12, 0),
+    unreadableMarkerPath: '<path>',
+    countsUntilMs,
+  })
+
+  // Act
+  const quotedInTheReadme = readme.includes(
+    'once it is 2 seconds old, or when its time lies ahead of the clock, the start is refused with `Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (<path>), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at <time>.`, where `<time>` is the first whole minute after those 21 minutes 30 seconds.',
+  )
+  const retired = readme.includes(
+    'and while a marker file cannot be read at that moment (another program holds it open, as a scanner or an indexer can on Windows, or this user may not read it): such a file may be a running update',
+  )
+
+  // Assert: the README holds the quotation, and the product prints it with the first whole minute after the file stops counting in place of <time>.
+  assert.equal(quotedInTheReadme, true)
+  assert.equal(retired, false)
+  assert.equal(
+    refusal.replace(
+      formatClockTime(Date.UTC(2026, 9, 3, 12, 22), {}),
+      '<time>',
+    ),
+    'Another editor window may be updating this Wiki: Codebook cannot read the Wiki’s marker file (<path>), which another program may hold open (as a scanner or an indexer can on Windows) or which this user may not read. Press Update LLM Wiki again once the file can be read; if the file stays as it is, this refusal ends at <time>.',
   )
 })
 
@@ -257,6 +303,62 @@ test('the packaged README states the limits of a storage lock and of the Wiki up
   assert.equal(WIKI_UPDATE_MARKER_WRITE_GRACE_MS / MILLISECONDS_PER_SECOND, 2)
   assert.equal(WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS / MS_PER_MINUTE, 5)
   assert.equal(STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS / MS_PER_MINUTE, 1)
+})
+
+// Value: protects=a Linux learner whose /proc hides other users' processes (hidepid), whose lock or update marker names a process id that another user's process took after the editor was killed, learning why it stays and how to get past it; fails_when=the README's limits leave out that on Ubuntu's default /proc another user's process is judged by its start and that under hidepid=2 such a lock stays until it is moved away and such a marker counts until its run's longest time; why_new=Cycle 0047 row 33 (P3RT11, its Linux half): closed by evidence and this README limit instead of a code change; seam=none; no_claim=that hidepid was observed in an editor
+test('the packaged README states, among the limits of a lock and an update marker, that under hidepid on Linux a lock whose process id went to another user’s process stays until it is moved away and such a marker counts until its run’s longest time', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const limit =
+    "- **Another user's process on Linux.** A window reads the start of a process in `/proc`. On Ubuntu's default `/proc` it reads the start of another user's process as well, so a process id that went to another user's process is judged by its start like any other. Where `/proc` is mounted with a `hidepid` option such as `hidepid=2` (a hardening that Ubuntu does not set by default), the start of another user's process cannot be read, and a lock or a marker whose process id another user's process has now is taken for one whose writer may still run: such a lock stays until you move it away (make sure that no Codebook window on any host or system still writes to this storage, then move the named file away and retry), and such a marker counts until its run's longest time has passed."
+
+  // Act: the limit, and where it stands: under the heading of the limits, before the next section.
+  const limitAt = readme.indexOf(limit)
+  const isUnderTheLimits =
+    limitAt >
+      readme.indexOf('### What a lock or an update marker cannot tell\n') &&
+    limitAt < readme.indexOf('## Validation\n')
+
+  // Assert
+  assert.notEqual(limitAt, -1)
+  assert.equal(isUnderTheLimits, true)
+})
+
+// Value: protects=a learner whose Wiki publish ran in a place that cannot come back (a rebuilt dev container, a computer that is gone), learning why --recover refuses its journal and the guarded way out; fails_when=the README's limits leave out that a --recover refuses a journal of another host name or space, that a Mac renamed under one boot is this computer, or that a journal of this host name under another boot is this computer's only by the digest of the computer's id, or that one with another computer's digest is refused whatever its boot, or that a clone that kept its id counts as this computer and Linux reads /etc/machine-id alone, or the options --gone-host and --gone-space with the check that no publisher runs there, or that a journal of a space without a pid namespace takes them too, or quotes them so that cmd.exe passes the quotes on; why_new=Cycle 0047 row 62 (ADV-3 = CORE-2 = RT-1), row 138 (P3CLA-3) for a space that names no pid namespace, row 141 (P3CLA-8) for double quotes, which cmd.exe takes as quotes too, row 171 (the owner's D5) for the digest of the computer's id, row 215 (P2CORE-1) for another computer's digest under any boot, row 245 (P2RT-3, the owner's D11) for clones and /etc/machine-id, row 247 for the places a pair may name where neither a lock nor a journal stands, and row 208 for the publish lock, which a stopped publish or preview leaves and the same pairs end; seam=none; no_claim=that the way out was used on a real container
+test('the packaged README states, among the limits of a lock and an update marker, that a Wiki publish in a place that cannot come back is recovered with --gone-host and --gone-space once no publisher runs there', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const limit =
+    "- **A Wiki publish in a place that cannot come back.** While the skill's publisher publishes a Wiki, it keeps a publish lock and a journal beside the Wiki folder that name its process id, its host name, its space of process ids (on Linux, its pid namespace), its boot and a digest of the computer's id (the machine id in `/etc/machine-id` on Linux, the hardware UUID on a Mac, the machine GUID on Windows), never the id itself. A `--render-only` preview keeps the lock alone, and a publish or a preview that stops leaves its lock, which `--recover` judges and ends as it does a journal. A `--recover` refuses the lock or the journal of another host name or another space, because it cannot look at that process, and tells you to run it there. A Mac that took another host name from the network under the same boot is still this computer, because the lock and the journal name its boot session. A lock or a journal of this host name and another boot counts as this computer's before a restart only when it names the digest of this computer's id: without it (its publisher could not read the id) or with another one, it may as well be the record of another computer with the same host name, and `--recover` refuses it too. A journal of 0.2.30.0 names no owner at all, and `--recover` judges it by its process id alone, as that version did. A lock or a journal of this host name that names the digest of another computer's id is that computer's, whatever its boot, and `--recover` refuses it as well, unless it names this boot's id: then it ran in another space of this computer (a second WSL distribution, or a container, that keeps a machine id of its own), and `--recover` tells you to run it there. On Windows, which names its boots by no id, and on a Mac whose boot session could not be read, no boot tells the two computers apart: there `--recover` probes the process id of a lock or a journal of this host name only when it and the recovery name the same digest, and refuses one where either names none (`reg.exe` or `ioreg` could not be read) as one it cannot prove was this computer's. The digest tells two computers apart only where their ids differ: a computer cloned with its id (a virtual machine copied without a new machine id, Windows copied without sysprep) counts as this one. On Linux the id is `/etc/machine-id` alone, so a system without it (a container without systemd) names none, and its lock or journal of another boot needs the pair once. A place that cannot come back keeps the Wiki locked: a rebuilt dev container, which gets a new pid namespace under the same boot, or a computer that is gone. So does a space that names no pid namespace: a Linux publisher that could not read its own records the space `linux@`, which no recovery can look at. Make sure that no publisher runs there, then run `--recover` with `--gone-host \"<host>\" --gone-space \"<space>\"`, set to the host name and the space that the refusal names, each between double quotes, which a POSIX shell, PowerShell and `cmd.exe` all take as quotes (`cmd.exe` keeps single quotes as part of the value): the recovery then takes that publisher for gone. If a stopped recovery ran in a second such place, the next refusal names it: add it as one more `--gone-host` and `--gone-space` pair. Where a lock or a journal stands, the publisher refuses a pair that names no place it or its stopped recoveries record; where neither stands, it refuses a pair that names no place of a stopped writer that a file beside the Wiki folder names (the file through which a lock, a journal or a recovery's claim was to get its name, or a recovery's claim that no lock or journal leads to any more), and the recovery then removes that file. It refuses a lock or a journal whose host name or space is not in the form it writes, and never uses the options without you."
+
+  // Act: the limit, and where it stands: under the heading of the limits, before the next section.
+  const limitAt = readme.indexOf(limit)
+  const isUnderTheLimits =
+    limitAt >
+      readme.indexOf('### What a lock or an update marker cannot tell\n') &&
+    limitAt < readme.indexOf('## Validation\n')
+
+  // Assert
+  assert.notEqual(limitAt, -1)
+  assert.equal(isUnderTheLimits, true)
+})
+
+// Value: protects=a learner who commits the Wiki folder and checks it out on Windows, learning to mark it -text and the way out of the publisher's refusal of CRLF line ends; fails_when=the README leaves out the -text line or the Git commands, or names another way, so the learner keeps a Wiki the publisher refuses; why_new=Cycle 0047 row 266 (P3CLA-5, the owner's D13); seam=none; no_claim=a real Windows checkout
+test('the packaged README tells a learner who commits the Wiki folder to mark it -text in .gitattributes, and names the Git commands that write a checkout with CRLF line ends again with LF', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const paragraph =
+    'A Wiki folder you commit to Git must keep the publisher\'s bytes: mark it `-text` in `.gitattributes` (the line `".codebook/wiki/**" -text`, with your folder\'s path), so that a checkout with `core.autocrlf`, the default of Git for Windows, keeps its LF line ends. The skill\'s publisher refuses a Wiki whose files a checkout gave CRLF line ends, with a sentence that names them and the way out: add that line to the `.gitattributes` file in the folder the sentence names (the project\'s, for a Wiki folder inside it) and commit that file; then, in that folder, run `git rm -r --cached --quiet -- ".codebook/wiki"` and `git checkout HEAD -- ".codebook/wiki"` (with your folder\'s path from there), which write the folder\'s committed files again with LF line ends (a change of them that is not committed is lost), and run the step again.'
+
+  // Act: the paragraph, and where it stands: in the section of the LLM Wiki, before the next section.
+  const paragraphAt = readme.indexOf(paragraph)
+  const isInTheWikiSection =
+    paragraphAt > readme.indexOf('## LLM Wiki: open and update\n') &&
+    paragraphAt < readme.indexOf('## Install the private VSIX\n')
+
+  // Assert
+  assert.notEqual(paragraphAt, -1)
+  assert.equal(isInTheWikiSection, true)
 })
 
 // Cycle 0045 (S1a-F2): red while the README said that a focused editor that is no text editor refuses a presentation selection; since cause 7 such a tab is admitted, stays where it is and gets its focus back.
@@ -339,34 +441,58 @@ test('the packaged README names, in API 1.7’s changes and under Delete a saved
   assert.deepEqual(named, [true, true, true])
 })
 
-// Value: protects=a learner who presses Update LLM Wiki in VS Code reading why the update ended after half a minute and what a refused start keeps; fails_when=the update table says again that the watch starts with the request, or that every failed update kept a site; why_new=Cycle 0046 row 56: rows 3 and 22 changed both and the table still described 0.2.29.0; seam=none
-test('the packaged README says that a VS Code update waits 30 seconds for the chat’s first answer before it watches, and that a folder without a Wiki names no kept site', async () => {
+// Value: protects=a learner who presses Update LLM Wiki in VS Code reading why the update ended after half a minute and what a refused start keeps; fails_when=the update table says again that the watch starts with the request, or that every failed update kept a site, or quotes the end of a request Codebook took back or could not take back, which it no longer tries; why_new=Cycle 0046 row 56: rows 3 and 22 changed both and the table still described 0.2.29.0; Cycle 0047 row 6 (S11-X2): the request is left in the chat at the 30 seconds; Cycle 0047 row 82 (MAINT-4): the sentence says that Codebook left its request in the chat; Cycle 0047 row 258 (P3CR-1): the row called the site kept also after the request Codebook left in the chat, whose sentence says that nothing had been replaced by then; seam=none
+test('the packaged README says that a VS Code update waits 30 seconds for the chat’s first answer before it watches, which failed ends call the site kept, and that a folder without a Wiki names no kept site', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
     'VS Code: the request went to a new chat. Codebook waits up to 30 seconds for the first sign that the chat works on it (its reply or its wait for a confirmation, a file of the Wiki or of the Codebook skill that it opens, the publisher it runs in a terminal, or a folder the publisher prepares beside the Wiki) and then watches the output folder for up to 15 minutes.',
-    "In VS Code an update without such a sign within 30 seconds ends with `Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.` A chat that answers the request with an error ends it at once with `The editor chat answered the update request with an error and stopped (…). Read its message in the Chat view, then press Update LLM Wiki again.`, the chat's message in the brackets; a chat that finishes its reply without publishing ends it with `The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.`",
-    'The last usable site is kept, and the sentence says so; in a folder that has no Wiki yet it says to generate one first and names no kept site.',
+    "In VS Code an update without such a sign within 30 seconds ends with `Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.` A chat that answers the request with an error ends it at once with `The editor chat answered the update request with an error and stopped (…). Read its message in the Chat view, then press Update LLM Wiki again.`, the chat's message in the brackets; a chat that finishes its reply without publishing ends it with `The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.`",
+    "The sentence then says what became of the site: `Nothing had been replaced by then.` where the chat can still publish after that end (the request Codebook left in the chat after the 30 seconds, a watch of Codebook's that broke off with an error), and `The last usable site is kept.` where it cannot, as after the chat's error or its finished reply.",
+    'Where no Wiki is there to keep, it names no kept site: in a folder that has no Wiki yet it says to generate one first, and where a publish that did not finish left no Wiki it names the recovery.',
   ])
   const retired = [
+    // Cycle 0047 row 258: the request left in the chat at the 30 seconds ends with "Nothing had been replaced by then."
+    'The last usable site is kept, and the sentence says so',
     'VS Code: the request is in the chat and Codebook watches the output folder for up to 15 minutes.',
     'The run ended without a new site. The last usable site is kept.',
+    'took its request back, so no update is running.',
+    // Cycle 0047 row 82: Codebook runs no chat command on its request, so it does not try to take it back.
+    'could not take its request back',
   ].filter((sentence) => readme.includes(sentence))
 
-  // Assert: the README names the bound the editor enforces.
-  assert.deepEqual(delivered, [true, true, true])
+  // Assert: the README names the bound the editor enforces, and the end it quotes is the product's.
+  assert.deepEqual(delivered, [true, true, true, true])
   assert.deepEqual(retired, [])
   assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS / MILLISECONDS_PER_SECOND, 30)
+  assert.equal(
+    describeUnansweredWikiChat('left', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+  )
   assert.equal(
     describeWikiChatErrorReply('…'),
     'The editor chat answered the update request with an error and stopped (…). Read its message in the Chat view, then press Update LLM Wiki again.',
   )
 })
 
-// Value: protects=a learner who presses Update LLM Wiki in VS Code reading where the request goes (a new chat, not the chat they use), where their own chat went, what Codebook does to the chat at the 30 seconds, and what an editor without New Chat does instead; fails_when=the README describes a request typed into the learner's chat, or a withdrawal that removes queued requests in every editor, or names another sentence than the product prints; why_new=Cycle 0046 rows 82 and 129; seam=none
-test('the packaged README says that a VS Code update sends its request into a new chat, where the learner’s chat went, what the Cancel at the 30 seconds acts on, and what an editor without New Chat does', async () => {
+// Value: protects=a learner reading in the README's Update table why an update did not start while a publish of this Wiki holds its publish lock; fails_when=the row names only an earlier publish that did not finish, so the README tells the learner of a publish that still runs to recover it, which the recovery refuses; why_new=Cycle 0047 row 253 (P3OCR2a1-2 = P3CLA-8): a held lock got a sentence and a cause of its own; seam=none
+test('the packaged README’s row Update not started names a publish that holds the Wiki’s publish lock, which may still be running or was stopped', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "A generated page or the Wiki's manifest was changed by hand, a publish of this Wiki holds its publish lock (it may still be running, or it was stopped), an earlier publish did not finish, or the Wiki folder, or a folder on its path inside the project, is a link or a file, which the publisher refuses. No agent ran.",
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true])
+})
+
+// Value: protects=a learner who presses Update LLM Wiki in VS Code reading where the request goes (a new chat, not the chat they use), where their own chat went, that Codebook leaves its request in the chat at the 30 seconds and why, and what an editor without New Chat does instead; fails_when=the README describes a request typed into the learner's chat, says that Codebook runs the chat's Cancel or removes queued requests at the 30 seconds, or names another sentence than the product prints; why_new=Cycle 0046 rows 82 and 129; Cycle 0047 row 6 (S11-X2): Codebook no longer runs the chat's Cancel or Remove All Queued, which act on the chat focused last; seam=none
+test('the packaged README says that a VS Code update sends its request into a new chat, where the learner’s chat went, that at the 30 seconds Codebook leaves its request in the chat and runs none of the chat’s commands, and what an editor without New Chat does', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
@@ -374,10 +500,9 @@ test('the packaged README says that a VS Code update sends its request into a ne
   const delivered = heldSentences(readme, [
     "In VS Code the update's request does not go into the chat you are using, with the one exception named below: Codebook reveals the chat, runs the editor's **New Chat** and sends the request into that new chat, so a request of yours that is in progress, waits for a confirmation or is queued is neither stopped nor held back, and the update does not wait behind it.",
     "Your chat is not closed: with a request in progress or waiting for a confirmation it goes on in the background, and you return to it from the Chat view's session list (its chat history). The update asks nothing about edits of that chat you have not decided on yet: they stay pending in their chat, with Keep and Undo, and the **Suggested Edits** editor that shows them stays open.",
-    "When Codebook sees no sign within those 30 seconds, it stops its request with the chat's own Cancel before it shows the sentence, so a chat that was only slow does not go on with no watch, and it removes nothing from a queue. Your own work elsewhere in the window (a file you open, a command you run) is not taken for a sign. What the update's own steps touch counts whoever does it, because Codebook cannot tell you from the chat there: a file opened in the Wiki's folder, in a folder prepared beside it or in the Codebook skill's folder, a terminal command that names `publish-wiki.mjs` or the Wiki's folder, and a change in the Wiki's folder or in a folder prepared beside it.",
-    'The Cancel acts on the chat you focused last and on the session it shows: if you showed another session there or focused another chat within those 30 seconds, it stops the request in progress there.',
-    'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.` instead.',
-    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command, and one in which the reveal of the chat or New Chat fails or does not return within 5 seconds, gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced. The confirmation says so before the press where the editor lacks the command; where the reveal or New Chat failed, nothing says so before, and the Chat view shows the request in the chat that was open. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel.",
+    "When Codebook sees no sign within those 30 seconds, it leaves its request in the chat and runs none of the chat's commands: the chat's Cancel and its Remove All Queued act on the chat you focused last and on the session it shows, and the editor tells Codebook neither which session that is nor which request is its own, so they could stop or remove a request of yours instead. Your own work elsewhere in the window (a file you open, a command you run) is not taken for a sign. What the update's own steps touch counts whoever does it, because Codebook cannot tell you from the chat there: a file opened in the Wiki's folder, in a folder prepared beside it or in the Codebook skill's folder, a terminal command that names `publish-wiki.mjs` or the Wiki's folder, and a change in the Wiki's folder or in a folder prepared beside it.",
+    "When the chat's command has not returned by then, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.`",
+    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command, and one in which the reveal of the chat or New Chat fails or does not return within 5 seconds, gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced. The confirmation says so before the press where the editor lacks the command; where the reveal or New Chat failed, nothing says so before, and the Chat view shows the request in the chat that was open. At the 30 seconds Codebook leaves its request in that chat as well, also where it waits in the queue, and removes none of yours.",
   ])
   const retired = [
     // Row 337: read in the editor's source, and not what the editor does (seen in VS Code 1.140.0).
@@ -386,61 +511,53 @@ test('the packaged README says that a VS Code update sends its request into a ne
     "Requests of your own that wait in that chat's queue are removed with it, and a request of yours that is in progress there is left alone.",
     'Your own work in the window (a file you open, a command you run) is not taken for a sign.',
     'An editor without that command gets the request in the chat that is open',
+    // Cycle 0047 row 6: Codebook runs none of the chat's commands at the 30 seconds.
+    "it stops its request with the chat's own Cancel",
+    'The Cancel acts on the chat you focused last',
+    'If Codebook did not see its request end',
+    'removes the requests queued in that chat',
   ].filter((sentence) => readme.includes(sentence))
 
-  // Assert: the README holds each sentence, and the product prints the sentences it quotes and keeps the bound and the place it names for a request that got no chat of its own.
-  assert.deepEqual(delivered, [true, true, true, true, true, true])
+  // Assert: the README holds each sentence, and the product prints the sentence it quotes and keeps the bound and the place it names for a request that got no chat of its own.
+  assert.deepEqual(delivered, [true, true, true, true, true])
   assert.deepEqual(retired, [])
   assert.equal(WIKI_CHAT_SESSION_START_TIMEOUT_MS / MILLISECONDS_PER_SECOND, 5)
   assert.equal(
-    describeUnansweredWikiChat('withdrawn', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
-  )
-  assert.equal(
     describeUnansweredWikiChat('left', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
-  )
-  assert.equal(
-    describeUnansweredWikiChat(
-      'withdrawn',
-      'shared',
-      WIKI_CHAT_OPEN_TIMEOUT_MS,
-    ),
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   )
 })
 
-// Value: protects=a learner whose Wiki request went into a shared chat and showed no sign: the next step differs when no request was held, when it was taken back and when it remains; fails_when=the README quotes one universal shared-chat ending or omits Update anyway for the request not taken back; why_new=Cycle 0046 row 367; seam=none
-test('the packaged README distinguishes all three shared-chat withdrawal outcomes and quotes the whole Update anyway sentence for a request that could not be taken back', async () => {
+// Value: protects=a learner whose Wiki request went into a shared chat and showed no sign: the next step differs when no request was held and when it remains; fails_when=the README quotes one universal shared-chat ending, omits Update anyway for the request that remains, or still quotes the end of a request Codebook took back, which it no longer does; why_new=Cycle 0046 row 367; Cycle 0047 row 6 (S11-X2): Codebook takes no request back; seam=none
+test('the packaged README distinguishes the two shared-chat outcomes, a request the chat never held and one it may still hold, and quotes the whole Update anyway sentence for the second', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
     'When the shared chat holds no request of the update, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`',
-    'When Codebook took the request back, it reads `Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`',
-    'When Codebook could not take the request back, it reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.`',
+    'When the chat may still hold it, it reads `Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.`',
   ])
   const sharedSentences = [
     describeUnansweredWikiChat('not-sent', 'shared', WIKI_CHAT_OPEN_TIMEOUT_MS),
-    describeUnansweredWikiChat(
-      'withdrawn',
-      'shared',
-      WIKI_CHAT_OPEN_TIMEOUT_MS,
-    ),
     describeUnansweredWikiChat('left', 'shared', WIKI_CHAT_OPEN_TIMEOUT_MS),
   ]
   const hasTheOldUniversalEnding = readme.includes(
     'before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`',
   )
 
-  // Assert: the document distinguishes each outcome and the full product sentences are independent hard-coded expectations.
-  assert.deepEqual(delivered, [true, true, true])
+  const quotesARequestTakenBack = [
+    'When Codebook took the request back',
+    'and whether Codebook took it back',
+  ].some((sentence) => readme.includes(sentence))
+
+  // Assert: the document distinguishes each outcome, quotes no request taken back, and the full product sentences are independent hard-coded expectations.
+  assert.deepEqual(delivered, [true, true])
   assert.equal(hasTheOldUniversalEnding, false)
+  assert.equal(quotesARequestTakenBack, false)
   assert.deepEqual(sharedSentences, [
     'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   ])
 })
 
@@ -466,21 +583,21 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
   assert.deepEqual(delivered, [true])
 })
 
-// Value: protects=a learner reading in the README what follows the 30 seconds with a request Codebook could not take back; fails_when=the README no longer says that Codebook then waits for that chat and answers a retry with Update anyway, so the refusal of the retry comes unannounced, or quotes another sentence than the product prints; why_new=Cycle 0046 row 358; seam=none
-test('the packaged README says that after a request Codebook could not take back a retry is answered with the wait for that chat and Update anyway, and quotes the sentence that names the step', async () => {
+// Value: protects=a learner reading in the README what follows the 30 seconds with a request Codebook left in the chat; fails_when=the README no longer says that Codebook then waits for that chat and answers a retry with Update anyway, so the refusal of the retry comes unannounced, or quotes another sentence than the product prints; why_new=Cycle 0046 row 358; seam=none
+test('the packaged README says that after a request Codebook left in the chat a retry is answered with the wait for that chat and Update anyway, and quotes the sentence that names the step', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
-    'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.` instead. Codebook then waits for that chat as it does after a stopped watch, for 15 minutes: a retry in that time is answered with the wait and **Update anyway**, not with a second request beside the first.',
+    "When the chat's command has not returned by then, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.` Codebook then waits for that chat as it does after a stopped watch, for 15 minutes: a retry in that time is answered with the wait and **Update anyway**, not with a second request beside the first.",
   ])
 
   // Assert: the README holds the sentences, the sentence it quotes is the product's, and the wait is the watch's bound.
   assert.deepEqual(delivered, [true])
   assert.equal(
     describeUnansweredWikiChat('left', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and left its request in the chat without running any chat command on it, so the request may still be there. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry, with Update anyway if Codebook still waits for that chat.',
   )
   assert.equal(WIKI_UPDATE_WATCH_TIMEOUT_MS / MS_PER_MINUTE, 15)
 })
@@ -507,7 +624,7 @@ test('the packaged README says which failed ends say that nothing had been repla
 
   // Act
   const delivered = heldSentences(readme, [
-    "A sentence about a run that ended without success also says whether the site on disk was kept or replaced. Where a chat or another editor window can still publish after that end (a request Codebook could not take back at the 30 seconds, a watch of Codebook's that broke off with an error, a start refused because an earlier chat or another window is still updating), it says `Nothing had been replaced by then.` in place of `The last usable site is kept.`, so that a later publish does not make the notice untrue.",
+    "A sentence about a run that ended without success also says whether the site on disk was kept or replaced. Where a chat or another editor window can still publish after that end (a request Codebook left in the chat at the 30 seconds, a watch of Codebook's that broke off with an error, a start refused because an earlier chat or another window is still updating), it says `Nothing had been replaced by then.` in place of `The last usable site is kept.`, so that a later publish does not make the notice untrue.",
     'A watch that broke off reads `Codebook stopped watching the update because of an error (…). The VS Code chat was not stopped and can still publish: let it finish (the Wiki page says when it has), or stop it in the chat.`, and the next update is then answered as after a stopped watch, with **Update anyway**.',
   ])
 
@@ -526,7 +643,7 @@ test('the packaged README says that the wait for a chat whose watch stopped ends
 
   // Act
   const delivered = heldSentences(readme, [
-    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped or after a request Codebook could not take back, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until. The wait for a chat whose watch stopped ends earlier when that chat publishes: once a site was published after the watch stopped, the next update starts without this sentence (in the window that watched only when the candidate folder its watch saw is gone too).',
+    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped or after a request Codebook left in the chat, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until. The wait for a chat whose watch stopped ends earlier when that chat publishes: once a site was published after the watch stopped, the next update starts without this sentence (in the window that watched only when the candidate folder its watch saw is gone too).',
   ])
 
   // Assert
@@ -658,7 +775,7 @@ test('the packaged README names the rail entry Open in VS Code or Open in Cursor
     "Under the outline in the right rail every page has the entry **Open in VS Code**, or **Open in Cursor** when Cursor serves the page. It opens the page's first cited source at its cited line in that editor and names that file and line under its label.",
     'A page opened from disk keeps the entry as it was published: **Open in VS Code**, which opens VS Code, and for a site published by 0.2.29.0 without the file and line.',
     '| Update failed, and the sentence names **Update anyway**',
-    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped or after a request Codebook could not take back, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until.',
+    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped or after a request Codebook left in the chat, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until.',
     "Wait until that time, or, if that chat was stopped, press **Update anyway** in the editor's notification. It starts the update past what that notification named; anything else in the way gets a new notification of its own. Another window's running update offers no **Update anyway**: wait for it to finish.",
     "While no explanation of a stopped run with a demonstrated result carries a learning summary, the run resource lists `save-learning-summary` in `nextActions` and gives the step as `saveLearningSummary`: call `codebook_explain` on a committed snapshot of the run with a new key and a complete `learningSummary` whose final step is observed and cites the run resource's `terminalReference`. Once the run's 32 explanation keys are spent the action is no longer listed, and `saveLearningSummary` says that the saved study will have no learning summary. Nor is it listed once a write of the stopped run's evidence has failed (a full disk, its evidence folder removed by hand): `saveLearningSummary` then names the failed write and says that the saved study will have no learning summary, and `codebook_explain` refuses a new key with `EVIDENCE_UNAVAILABLE` without spending it.",
   ])
@@ -962,7 +1079,105 @@ test('the packaged README quotes the refusals of a link or a file on the Wiki’
   )
 })
 
-// Value: protects=a learner who finds an entry "Archive missing; remaining files kept" in Saved studies, or whose Node test is refused beside another window, reading what the entry is, how its rest is removed and why the test did not start; fails_when=the README no longer names what is left of a study whose archive was removed, how it is removed with and without a Trash, that it is neither selected nor counted, and that a run whose archive only waits to be saved is not such a loss, or no longer says that the start of a Node test takes the storage lock; why_new=Cycle 0046 rows 86, 181, 248 and 190: the entry, its place in the list and the lock at a Node test's start stood in no document; seam=none
+// Value: protects=a learner who opens a cloned repository in an untrusted workspace, whose `.vscode/settings.json` names a Wiki folder, learning where the Wiki is read and written instead; fails_when=the README's sentence on the Wiki folder no longer says that an untrusted workspace's own value of codebook.wikiOutputDirectory is not used and that the user setting or the default applies (the manifest's restriction is held by deepWikiOutput.test.ts); why_new=Cycle 0047 row 52 (N1): the restriction stood in the change history only; seam=none
+test('the packaged README says, where it names the Wiki folder, that an untrusted workspace’s own value of codebook.wikiOutputDirectory is not used and the learner’s user setting or the default folder applies', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act: the folder's first sentence and the restriction after it, as one text.
+  const saysIt = readme.includes(
+    "The folder is `.codebook/wiki` in the project unless `codebook.wikiOutputDirectory` says otherwise; the status names it. In a workspace you have not trusted, the editor does not use the workspace's own value of `codebook.wikiOutputDirectory` (a cloned repository's `.vscode/settings.json` could name any folder): your user setting, or else `.codebook/wiki`, applies.",
+  )
+
+  // Assert
+  assert.equal(saysIt, true)
+})
+
+// Value: protects=a learner whose Wiki page shows a dead link, a short page "Page not shown" or a refusal, reading under "LLM Wiki: open and update" what the reader makes inert and what it refuses, with the sentences and the numbers the product keeps; fails_when=the README's section loses the address filter, the page workers' limits (two at a time, four waiting, 30 seconds of waiting, 10 seconds, 512 MB, 2 MiB), the send limit of 30 seconds, one of the five sentences of the refusal page, the refusal of a page asked for as a part of a page or of a file that is no regular file, or quotes a sentence or a number the product no longer prints or keeps; why_new=Cycle 0047 row 50 (D14.5-2): only the change history described them, with the limits of before Cycle 0047 rows 3, 4 and 19; Cycle 0047 row 104 the sentence of a page that needs more memory; Cycle 0047 row 107 (ADV2-1) the heap limit of 512 MB again; Cycle 0047 row 132 (RT2-2) the sentence of a page too large names an earlier Codebook beside a hand edit; Cycle 0047 row 189 (D7) a page that waited 30 seconds for a worker is answered busy too; Cycle 0047 row 188 (S2CXA-B1) a page holds its place until its answer is sent, and an answer not received within 30 seconds is ended; Cycle 0047 row 230 (P2CLA-8) the 30 seconds count the time in which the browser takes nothing, and a file of the Wiki is open only while a part of it is read; seam=none
+test('the packaged README says under LLM Wiki what the reader makes inert in a served page and which pages and files it refuses, with the refusal page’s sentences and the limits of its page workers', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const section = readme.slice(
+    readme.indexOf('## LLM Wiki: open and update\n'),
+    readme.indexOf('## Install the private VSIX\n'),
+  )
+  const tooLarge =
+      'This page is too large for Codebook to prepare for reading. An earlier Codebook may have published a page this large, or its file may have been changed by hand. If you changed it, restore the page or move your change aside, then press Update LLM Wiki; otherwise ask the editor chat to split it into smaller pages and update the Wiki.',
+    needsMoreMemory =
+      'This page needs more memory than Codebook gives one page to prepare it for reading. Ask the editor chat to split it into smaller pages and update the Wiki; Update LLM Wiki alone renders the same page again.',
+    pastTheDeadline =
+      'Codebook stopped preparing this page after 10 seconds. No page of a Wiki needs that long, so its file may have been changed by hand. Restore the page or move your change aside, then press Update LLM Wiki.',
+    failed =
+      'Codebook could not prepare this page for reading. Reload the page; if it is still not shown, press Update LLM Wiki.',
+    busy =
+      'Codebook is preparing as many pages as it can at once, so it did not prepare this one. Reload the page in a moment.'
+
+  // Act: the section's three paragraphs and five items, each whole, and what the product prints and keeps for them.
+  const delivered = heldSentences(section, [
+    "Before it serves a page, the reader reads the page's tags as a browser reads them and makes inert each address that is no relative path, `#fragment`, `http`, `https` or `mailto` address and not Codebook's own (an editor address that opens a file or calls another extension, `javascript:`, `data:`, `file:`): the attribute's name becomes `data-codebook-unlinked`, so the element and its text stay and a browser follows nothing. A refresh (`<meta http-equiv=\"refresh\">`), a frame's own page (`srcdoc`) and an svg animation of an address are made inert the same way. This holds for a page of any age, also one that a cloned repository carries or one written by hand into the Wiki folder. Codebook's own addresses get the scheme of the editor that serves the page.",
+    "The reader prepares each page in a worker thread, so the editor goes on working while a page is read: at most two pages at a time, each within 10 seconds and 512 MB of heap, and at most six pages are read, prepared, waiting for a worker or being sent at once (a worker that is still ending lets one more page wait). An answer of the reader whose browser takes none of it for 30 seconds is ended: a browser that stops reading holds a page in the editor for 30 seconds at most, and one that reads slowly, over a remote window's forwarded port for example, still gets the whole page or image. The reader keeps a file of the Wiki open only while it reads a part of it, not while the browser takes that part, so a slow or stalled browser does not keep an update from moving the Wiki folder. A page it does not prepare is answered with status 503 by a short page, `Page not shown`, with one sentence and a link to the Wiki's overview (the overview's own has no such link):",
+    `- \`${tooLarge}\` for a page file larger than 2 MiB, which is not read; the publisher of this build writes no such page, but one of 0.2.30.0 or earlier could.`,
+    `- \`${needsMoreMemory}\` for a page whose preparation needs more than the 512 MB of heap.`,
+    `- \`${pastTheDeadline}\` for a page whose preparation passes the 10 seconds.`,
+    `- \`${failed}\` for a page whose worker failed.`,
+    `- \`${busy}\` for a page asked for while six pages are read, prepared, waiting or being sent, whose file is not read, and for a page that waited 30 seconds for a worker.`,
+    'An HTML page asked for as a part of a page (an image, a style sheet, a script, a fetch), and not to be opened as a page or in an inline frame (the browser says which in `Sec-Fetch-Dest`), is refused with `A Wiki page is served only to be opened as a page.` (status 403); a request without that header, from a client that is no browser, is served. A file of the Wiki that is no regular file (a named pipe, a device, a folder) is never opened, a page or any other file: `The Wiki file is no regular file; a pipe, a device or a folder at its path is not served.` (status 403).',
+  ])
+  const reasons: WikiPageRefusalReason[] = [
+    'too-large',
+    'memory-limit',
+    'deadline',
+    'failed',
+    'busy',
+  ]
+  const printed = reasons.map((reason) =>
+    wikiPageRefusalHtml(
+      reason,
+      WIKI_PAGE_SERVE_DEADLINE_MS,
+      '/w/0f/',
+      'guide.html',
+    ),
+  )
+  const overviewRefusal = wikiPageRefusalHtml(
+    'busy',
+    WIKI_PAGE_SERVE_DEADLINE_MS,
+    '/w/0f/',
+    'index.html',
+  )
+  const inert = withServedAddresses(
+    '<a href="vscode://file/etc/hosts">hosts</a>',
+    'vscode',
+  )
+
+  // Assert: every paragraph and item; the refusal page prints each quoted sentence, its title and the overview's link, which the overview's own lacks; an address is made inert under the quoted name; and the numbers are the product's.
+  assert.deepEqual(delivered, [true, true, true, true, true, true, true, true])
+  assert.deepEqual(
+    printed.map((html) =>
+      [tooLarge, needsMoreMemory, pastTheDeadline, failed, busy].findIndex(
+        (sentence) =>
+          html.includes(
+            `<title>Page not shown</title></head><body><p>${sentence}</p><p><a href="/w/0f/index.html">Open the Wiki’s overview</a></p>`,
+          ),
+      ),
+    ),
+    [0, 1, 2, 3, 4],
+  )
+  assert.equal(overviewRefusal.includes('Open the Wiki’s overview'), false)
+  assert.equal(
+    inert,
+    '<a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a>',
+  )
+  assert.equal(WIKI_PAGE_WORKER_CONCURRENCY_LIMIT, 2)
+  assert.equal(WIKI_PAGE_WAITING_LIMIT, 4)
+  assert.equal(WIKI_PAGE_WAIT_LIMIT_MS, 30_000)
+  assert.equal(WIKI_PAGE_SERVE_DEADLINE_MS, 10_000)
+  assert.equal(WIKI_PAGE_WORKER_HEAP_LIMIT_MB, 512)
+  assert.equal(WIKI_RESPONSE_SEND_LIMIT_MS, 30_000)
+  assert.equal(WIKI_PAGE_FILE_LIMIT_BYTES, 2_097_152)
+  assert.deepEqual(WIKI_PAGE_NAVIGATION_DESTINATIONS, ['document', 'iframe'])
+})
+
+// Value: protects=a learner who finds an entry "Archive missing; remaining files kept" in Saved studies, or whose Node test is refused beside another window, reading what the entry is, how its rest is removed and why the test did not start; fails_when=the README no longer names what is left of a study whose archive was removed, how it is removed with and without a Trash, that it is neither selected nor counted, and that a run whose archive only waits to be saved is not such a loss, or no longer says that the start of a Node test takes the storage lock, or names again as such a rest any recording that no editor of this computer still writes, although the finished recording of another open window's run is not listed before that run has saved its study (Cycle 0047 row 36); why_new=Cycle 0046 rows 86, 181, 248 and 190: the entry, its place in the list and the lock at a Node test's start stood in no document; Cycle 0047 row 56: since row 36 a sealed recording stays its run's until the study is saved, and the parenthesis left that out; seam=none
 test('the packaged README says what is left of a study whose archive was removed, with its words in the list, how the rest is removed, that it is neither selected nor counted and that a waiting archive is written by Retry, and that the start of a Node test takes the storage lock', async () => {
   // Arrange
   const readme = await readPackagedReadme()
@@ -970,12 +1185,13 @@ test('the packaged README says what is left of a study whose archive was removed
   // Act
   const delivered = heldSentences(readme, [
     '- An entry that cannot be opened (an older format, a study whose catalog file is missing, or what is left of a study whose archive was removed) can still be chosen and deleted.',
-    '- What is left of a study whose archive was removed (its catalog file, or a recording that no editor of this computer still writes) stays in the list with `Archive missing; remaining files kept` in its label, so that the rest can be removed: **Delete saved study…** moves it to the Trash, and in a window without a Trash **Remove by hand** lists its files. A recording that names another computer is listed too, and so is one whose editor Codebook cannot tell from another program of this computer; for such a recording **Delete saved study…** asks first, as the next point says. Such an entry can be chosen and not opened, it has no **Repair saved study**, a reader that starts neither selects it nor shows it first, and it takes no place of the saved study limit. The finished recording of a run of this window whose archive could not be saved yet is listed with the same words; that study has not left the library, and **Retry storage / refresh** writes its archive.',
+    '- What is left of a study whose archive was removed (its catalog file, or a recording that no editor of this computer still writes and whose study no other editor window of this computer may still save) stays in the list with `Archive missing; remaining files kept` in its label, so that the rest can be removed: **Delete saved study…** moves it to the Trash, and in a window without a Trash **Remove by hand** lists its files. A recording that names another computer is listed too, and so is one whose editor Codebook cannot tell from another program of this computer; for such a recording **Delete saved study…** asks first, as the next point says. Such an entry can be chosen and not opened, it has no **Repair saved study**, a reader that starts neither selects it nor shows it first, and it takes no place of the saved study limit. The finished recording of a run of this window whose archive could not be saved yet is listed with the same words; that study has not left the library, and **Retry storage / refresh** writes its archive.',
     "The start of a Node test is different: it takes the storage lock (`writer.lock` in the learning storage) and reserves its history under it, so of two windows that start a test for the last free place one is refused with `Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.` A start that meets the lock while another window holds it, or a lock that stays, is refused with the storage lock's sentence, which [Delete a saved study](#delete-a-saved-study) quotes and explains; nothing was written then, and the test was not started.",
   ])
   const retired = [
     'An entry that cannot be opened (an older format, or a study whose catalog file is missing) can still be chosen and deleted.',
     'or a recording that no editor is still writing)',
+    'or a recording that no editor of this computer still writes) stays in the list',
   ].filter((sentence) => readme.includes(sentence))
 
   // Assert: the README holds each sentence, and the section the last one points to.
@@ -1103,8 +1319,8 @@ test('the packaged README distinguishes a source-changed start that ran nothing 
   assert.deepEqual(delivered, [true, true])
 })
 
-// Value: protects=a learner whose Delete meets a recording that may still be written, reading in the README the dialog they will see, what each answer does, and the refusal for a recording another window of this computer still writes; fails_when=the README quotes another title, detail or button than the dialog, says nothing of the case of this computer or of several recordings, drops the refusal, or loses the line of a move whose state is unknown (PD8, AD10); why_new=Cycle 0046 design review PD8: the section quoted neither the dialog nor the refusal; seam=the messages of the removal, from which the expected sentences are built
-test('the packaged README quotes, under Delete a saved study, the dialog about a recording that may still be written, both of its places, the refusal for a recording another window still writes, and the line of a move whose state is unknown', async () => {
+// Value: protects=a learner whose Delete meets a recording that may still be written, reading in the README the dialog they will see, what each answer does, and the refusal for a recording another window of this computer still writes; fails_when=the README quotes another title, detail or button than the dialog, says nothing of the case of this computer or of several recordings, drops the refusal, or loses the line of a move whose state is unknown (PD8, AD10), or quotes the refusal of 0.2.30.0 ("is still recording this study. Stop its run"), which misleads for a window that finished its recording and has not saved the study yet, or leaves that case out (Cycle 0047 row 55), or quotes the dialog of 0.2.30.0 ("may still be running", "still records it"), which misleads for a finished recording whose run on another computer, or in a window this computer cannot confirm, has not saved the study yet, or its lead leaves that case out (Cycle 0047 row 57), or leaves out the dialog about a recording whose files Codebook could not read, which names no host or start (Cycle 0047 row 251); why_new=Cycle 0046 design review PD8: the section quoted neither the dialog nor the refusal; Cycle 0047 rows 55 and 57: since row 36 the refusal and the dialog also meet a finished recording whose study is not saved, and their words changed to hold in both cases; seam=the messages of the removal, from which the expected sentences are built
+test('the packaged README quotes, under Delete a saved study, the dialog about a recording that may still be written, both of its places, the refusal for a recording another window still writes or has finished and not saved yet, and the line of a move whose state is unknown', async () => {
   // Arrange
   const readme = await readPackagedReadme()
   const section =
@@ -1114,11 +1330,13 @@ test('the packaged README quotes, under Delete a saved study, the dialog about a
 
   // Act
   const delivered = heldSentences(section, [
+    '- When a recording of the study may still be in use on another computer (an editor window there still records it, or has finished it and not saved the study yet), Codebook asks once more after **Move to Trash**:',
     `\`${messages.unconfirmedWriterTitle([{ host: '<host>', startedAt: '<start>', place: 'another-computer' }])}\``,
     `\`${messages.unconfirmedWriterDetail([{ host: '<host>', startedAt: '<start>', place: 'another-computer' }])}\``,
     `**${messages.unconfirmedWriterButton}**`,
     `\`${messages.unconfirmedWriterTitle([{ host: '<host>', startedAt: '<start>', place: 'this-computer' }])}\``,
     `\`${messages.unconfirmedWriterDetail([{ host: '<host>', startedAt: '<start>', place: 'this-computer' }])}\``,
+    `When Codebook could not read the files of the recording at that moment (a virus scanner may hold them, or a file is damaged), it lists the study in the same way and cannot name a host or a start: the dialog reads \`${messages.unconfirmedWriterTitle([{ place: 'unreadable' }])}\` and \`${messages.unconfirmedWriterDetail([{ place: 'unreadable' }])}\``,
     `\`${
       messages
         .unconfirmedWriterTitle([
@@ -1128,7 +1346,7 @@ test('the packaged README quotes, under Delete a saved study, the dialog about a
         .split(' on another computer')[0]
     }\``,
     'and names the places that apply (`on another computer`, `in another editor window`, or `on another computer or in another editor window`), and the detail names each host and start. Nothing moves while the dialog is open.',
-    '`The saved study could not be moved to the Trash. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`',
+    'When another editor window of this computer is still recording the study, or has finished its recording and not saved the study yet, nothing moves and the line reads `The saved study could not be moved to the Trash. Nothing was deleted. Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.`',
     `\`${messages.moveUnknown('').trimEnd()}\``,
   ])
 
@@ -1143,11 +1361,13 @@ test('the packaged README quotes, under Delete a saved study, the dialog about a
     true,
     true,
     true,
+    true,
+    true,
   ])
 })
 
-// Value: protects=a learner whose library holds the recording of a run that saved no study, reading that Saved studies lists it and Delete removes it; fails_when=the README still counts "a recording that has no study" among what deletion does not cover, although such a recording is listed and moved since AF2, or no longer says that a recording a run of this computer may still write is that run's and is not listed (AF11); why_new=Cycle 0046 review AF11: the claim was stale; seam=none
-test('the packaged README says that the recording of a run that saved no study is listed and deleted, unless a run of this computer may still write it, and no longer counts it as not covered', async () => {
+// Value: protects=a learner whose library holds the recording of a run that saved no study, reading that Saved studies lists it and Delete removes it; fails_when=the README still counts "a recording that has no study" among what deletion does not cover, although such a recording is listed and moved since AF2, or no longer says that a recording a run of this computer may still write is that run's and is not listed (AF11), or says again that such a recording is listed once no editor of this computer still writes it, although the finished recording of another open window's run is not listed before that run has saved its study (Cycle 0047 row 36); why_new=Cycle 0046 review AF11: the claim was stale; Cycle 0047 row 54: since row 36 a sealed recording stays its run's until the study is saved, and the sentence left that out; seam=none
+test('the packaged README says that the recording of a run that saved no study is listed and deleted, unless a run of this computer may still write it or another open window has finished it and not saved its study yet, and no longer counts it as not covered', async () => {
   // Arrange
   const readme = await readPackagedReadme()
   const section =
@@ -1156,12 +1376,13 @@ test('the packaged README says that the recording of a run that saved no study i
 
   // Act
   const delivered = heldSentences(section, [
-    '- The recording of a run that saved no study is listed in the same way, with `Archive missing; remaining files kept`, once no editor of this computer still writes it, and **Delete saved study…** moves it to the Trash. While a run of this computer may still write it, that run holds it and it is not listed.',
+    '- The recording of a run that saved no study is listed in the same way, with `Archive missing; remaining files kept`, once no editor of this computer still writes it and no other editor window of this computer may still save its study, and **Delete saved study…** moves it to the Trash. While a run of this computer may still write it, or a run of another editor window that is still open has finished it and has not saved its study yet, that run holds it and it is not listed.',
     '- Not covered yet: Node test histories, removing several studies at once, and a study whose run is still held by another window of the same workspace.',
   ])
-  const retired = ['a recording that has no study'].filter((sentence) =>
-    readme.includes(sentence),
-  )
+  const retired = [
+    'a recording that has no study',
+    'once no editor of this computer still writes it, and **Delete saved study…** moves it to the Trash',
+  ].filter((sentence) => readme.includes(sentence))
 
   // Assert
   assert.deepEqual(

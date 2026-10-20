@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
-import { lstat, mkdir, open, opendir, readdir, unlink } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  open,
+  opendir,
+  readdir,
+  rm,
+  unlink,
+} from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { CROSS_RUNTIME_RECORDING_VERSION } from './constants'
@@ -77,7 +85,6 @@ import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingOfDirectory } from './utils/readRecordingWriterRecord'
 import { recordingOwnerRecordPath } from './utils/recordingOwnerRecordPath'
 import { recordingPhases } from './utils/recordingPhases'
-import { removeWriterRecord } from './utils/removeWriterRecord'
 import { savedStudyLimit } from './utils/savedStudyLimit'
 import { validateRecordingContext } from './utils/validateRecordingContext'
 import { withStorageLock } from './utils/withStorageLock'
@@ -223,7 +230,11 @@ export class RecordingStore {
     ).savedStudyCount()
   }
 
-  /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted. @example await store.start(binding, runtime.evidence.elapsedMs()) */
+  /**
+   * Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted, and a start that fails after making its folder removes it again ({@link createRecordingFolder}).
+   * A start whose write under the storage lock succeeded stands also when the release of the lock fails at each of its attempts ({@link withStorageLock}): the recording, its writer record and this store's writer are made, and a failed start would leave them as this window's reservation, which no list shows and no removal deletes, until the editor closes (Cycle 0047 row 240). The lock left is this process's, which its next hold of the storage takes back (Cycle 0047 row 199); until then other windows are refused by it.
+   * @example await store.start(binding, runtime.evidence.elapsedMs())
+   */
   start(
     input: RecordingBinding,
     startedMs: number,
@@ -236,6 +247,7 @@ export class RecordingStore {
       return Promise.reject(
         new Error('Recording belongs to another workspace.'),
       )
+    let started: RecordingWriter | undefined
     const pending = this.writes.then(() =>
       withStorageLock(this.learningDirectory, async () => {
         await this.initialize(version)
@@ -249,7 +261,7 @@ export class RecordingStore {
         if (identities.includes(binding.studyId))
           throw new Error('Recording already exists for this study.')
         const directory = this.path(binding.studyId, version)
-        await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE })
+        // The header is made before the folder, so a header the schema refuses leaves nothing behind.
         const header = retainedRecordingHeaderSchema.parse({
           ...binding,
           version,
@@ -263,15 +275,7 @@ export class RecordingStore {
           },
           sampleIntervalMs: RECORDING_SAMPLE_INTERVAL_MS,
         })
-        await this.io.json(
-          join(directory, RECORDING_HEADER_FILE),
-          header,
-          MAX_RECORDING_HEADER_BYTES,
-        )
-        await this.io.binary(
-          join(directory, RECORDING_JOURNAL_FILE),
-          Buffer.alloc(0),
-        )
+        await this.createRecordingFolder(directory, header)
         await this.recordWriterIdentity(directory, header)
         const writer: RecordingWriter = new RecordingWriter(
           directory,
@@ -282,11 +286,49 @@ export class RecordingStore {
           () => this.release(header.studyId, writer),
         )
         this.active.set(header.studyId, writer)
+        started = writer
         return writer
+      }).catch((error: unknown) => {
+        // Only the lock's release can fail once the writer is made: the recording stands, and the lock is taken back by this process's next hold.
+        if (started) return started
+        throw error
       }),
     )
     this.writes = pending.catch(() => undefined)
     return pending
+  }
+
+  /**
+   * Makes the folder of a new recording with its first two files, the header and the empty journal, or leaves no folder: one whose files could not be written is removed again; called by {@link start} under the storage lock, once the recording is admitted.
+   * Why: a folder left by a failed start would take a place of the saved study limit until the editor ends, and no list would show it, nor any removal delete it: with this window's header it is the reservation of a live run of this machine ({@link recordingWriterOf}). A folder that an editor's crash leaves between these steps is an interrupted reservation: it is listed and counts, as before.
+   * @param directory - The recording's folder; it must not exist yet.
+   * @param header - The recording's validated header.
+   * @throws What making the folder throws, which leaves a folder that exists as it is; and what writing its files throws (a full disk, a header above its limit), after the folder was removed again.
+   * @example
+   * await this.createRecordingFolder('/…/recordings.v2/<study id>', header)
+   */
+  private async createRecordingFolder(
+    directory: string,
+    header: RecordingHeader,
+  ): Promise<void> {
+    await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE })
+    try {
+      await this.io.json(
+        join(directory, RECORDING_HEADER_FILE),
+        header,
+        MAX_RECORDING_HEADER_BYTES,
+      )
+      await this.io.binary(
+        join(directory, RECORDING_JOURNAL_FILE),
+        Buffer.alloc(0),
+      )
+    } catch (error) {
+      // The removal is tried once; its own failure does not replace the error of the start.
+      await rm(directory, { recursive: true, force: true }).catch(
+        () => undefined,
+      )
+      throw error
+    }
   }
 
   /**
@@ -1251,7 +1293,7 @@ export class RecordingWriter {
       })
   }
 
-  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. @example await writer.finish(runtime.evidence.elapsedMs()) */
+  /** Seals only after every accepted write; failed terminal I/O leaves an unknown end and no success receipt. The record of the writer stays at the seal, also when a checkpoint saved the study while the run went on: the save of a checkpoint its run took once its stop had ended after the seal, whether that stop stopped the run or failed after the seal, removes it ({@link LearningLibrary.saveStudy}). @example await writer.finish(runtime.evidence.elapsedMs()) */
   finish(endMs: number): Promise<RecordingSeal> {
     if (this.finishing) return this.finishing
     if (!this.frameCount)
@@ -1291,12 +1333,7 @@ export class RecordingWriter {
           seal,
           MAX_RECORDING_HEADER_BYTES,
         )
-        // A sealed recording has no writer any more; the record of its writer goes, and one that stays is swept at a later start.
-        await removeWriterRecord(
-          dirname(dirname(this.directory)),
-          this.header.studyId,
-          { directory: this.directory, createdAt: this.header.createdAt },
-        )
+        // A sealed recording keeps the record of its writer until its run saves a checkpoint of the study taken once its stop had ended, after the seal (also a stop that failed after it): until then the run holds it, and another window neither lists it as what is left of a removed study nor removes the study, also one that a checkpoint taken before the seal saved, whose final state is not saved yet (recordingWriterOf). That save removes the record (removeWriterRecordsOfSealedRecordings).
         this.finalized = true
         this.sealed()
         return seal
@@ -1307,6 +1344,15 @@ export class RecordingWriter {
         throw error
       })
     return this.finishing
+  }
+
+  /**
+   * Says whether this writer has sealed its recording: the seal is on disk, and the recording takes no further frame or entry ({@link finish}); asked by {@link StudyService.hasStopEndedAfterSeal} once a checkpoint of the run is taken (Cycle 0047 row 140).
+   * @returns `true` once {@link finish} has written the seal, also when a later step of the run's stop failed; `false` before, and for a seal that could not be written.
+   * @example writer.isSealed // => true after await writer.finish(1_000)
+   */
+  get isSealed(): boolean {
+    return this.finalized
   }
 
   /**

@@ -8,15 +8,19 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { openWithoutFollowing } from '../utils/openWithoutFollowing'
+import type * as lookModule from '../utils/readLiveWikiUpdateMarker'
 import {
   readLiveWikiUpdateMarker,
   type WikiUpdateMarkerLook,
 } from '../utils/readLiveWikiUpdateMarker'
+import type * as readerModule from '../utils/readWikiRegularFile'
 
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { loadModule } from './utils/loadModule'
 
 const MINUTE_MS = 60_000
 
@@ -247,6 +251,248 @@ test('a look tells a marker path that holds nothing from one that holds an entry
       heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
     },
     folderAfter2000Ms: { kind: 'unowned' },
+  })
+})
+
+// Value: protects=a running update whose marker file another program holds open at the moment a second window starts (on Windows a scanner or an indexer: EBUSY, EPERM; a file this user may not read: EACCES); fails_when=a regular marker file that cannot be read counts as nobody's 2 s after its write, so the second window's start removes it and two agents update one Wiki, while the run's own end treats the same file as possibly its marker; why_new=Cycle 0047 row 32 (P3RT10); seam=the open of the marker file under a loaded readWikiRegularFile, which fails with EBUSY, and the clock handed to the look; no_claim=Windows' real error codes
+test('a marker file that cannot be read at this moment counts as one being written for as long as any run’s marker counts after its write (21 min 30 s), and is nobody’s afterwards', async (context) => {
+  // Arrange: a marker file of another window's run, last written at the fixed present, whose every open fails as for a file another program holds open.
+  const outputDirectory = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS,
+    }),
+    NOW_MS,
+  )
+  const markerPath = `${outputDirectory}.update-run.json`
+  const readerWhoseMarkerOpenIsRefused = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...openInputs: Parameters<typeof openWithoutFollowing>
+        ) => {
+          if (openInputs[0] === markerPath)
+            throw Object.assign(
+              new Error('EBUSY: resource busy or locked, open'),
+              { code: 'EBUSY' },
+            )
+          return openWithoutFollowing(...openInputs)
+        },
+      },
+    },
+  )
+  const { readLiveWikiUpdateMarker: lookInThatWindow } = await loadModule<
+    typeof lookModule
+  >(resolve(__dirname, '../utils/readLiveWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerWhoseMarkerOpenIsRefused,
+  })
+  // The loaded module answers objects of its own context; a copy makes them comparable here.
+  const lookAtTheHeldMarker = async (
+    nowMs: number,
+  ): Promise<WikiUpdateMarkerLook> =>
+    structuredClone(
+      await lookInThatWindow(outputDirectory, 'own-window', {
+        identity: THIS_WINDOW,
+        nowMs,
+        readStart: async () => undefined,
+      }),
+    )
+
+  // Act
+  const looks = {
+    after3Seconds: await lookAtTheHeldMarker(NOW_MS + 3_000),
+    after21Minutes30Seconds: await lookAtTheHeldMarker(NOW_MS + 1_290_000),
+    after21Minutes30SecondsAnd1Ms: await lookAtTheHeldMarker(
+      NOW_MS + 1_290_001,
+    ),
+    written5MinutesAhead: await lookAtTheHeldMarker(NOW_MS - 300_000),
+    writtenFurtherAhead: await lookAtTheHeldMarker(NOW_MS - 300_001),
+  }
+
+  // Assert: past the 2 s a write takes, the look also names the file and the last moment it counts (Cycle 0047 row 85).
+  assert.deepEqual(looks, {
+    after3Seconds: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
+    after21Minutes30Seconds: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
+    after21Minutes30SecondsAnd1Ms: { kind: 'unowned' },
+    // A file dated ahead of the clock is named as well, so its refusal does not ask to wait a moment (Cycle 0047 row 129).
+    written5MinutesAhead: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
+    writtenFurtherAhead: { kind: 'unowned' },
+  })
+})
+
+// Value: protects=the learner refused beside a marker file that stays unreadable (another user's private marker, or one a Windows program holds open for long), whose refusal must name that file and when it stops counting, while a file a window is still writing keeps the short refusal; fails_when=the look names no file for one that stayed unreadable past the 2 s a write takes, so the refusal says "Wait a moment and try again" for 21 minutes 30 seconds, or names the file already within those 2 s, or stops refusing the start; why_new=Cycle 0047 row 85 (ADV-8); seam=the look loaded with loadModule, whose every open of the marker file fails with EACCES, and the clock handed to it; no_claim=the sentence (describeOtherWikiWindow.test.ts)
+test('a marker file that cannot be read still counts as one being written, and names its path and the last moment it counts once it has stayed unreadable for 2 s after its write', async (context) => {
+  // Arrange: a marker file of another window's run, last written at the fixed present, whose every open fails as for a file this user may not read.
+  const outputDirectory = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS,
+    }),
+    NOW_MS,
+  )
+  const markerPath = `${outputDirectory}.update-run.json`
+  const readerWhoseMarkerOpenIsRefused = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...openInputs: Parameters<typeof openWithoutFollowing>
+        ) => {
+          if (openInputs[0] === markerPath)
+            throw Object.assign(
+              new Error(`EACCES: permission denied, open '${markerPath}'`),
+              { code: 'EACCES' },
+            )
+          return openWithoutFollowing(...openInputs)
+        },
+      },
+    },
+  )
+  const { readLiveWikiUpdateMarker: lookInThatWindow } = await loadModule<
+    typeof lookModule
+  >(resolve(__dirname, '../utils/readLiveWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerWhoseMarkerOpenIsRefused,
+  })
+  // The loaded module answers objects of its own context; a copy makes them comparable here.
+  const lookAtTheUnreadableMarker = async (
+    nowMs: number,
+  ): Promise<WikiUpdateMarkerLook> =>
+    structuredClone(
+      await lookInThatWindow(outputDirectory, 'own-window', {
+        identity: THIS_WINDOW,
+        nowMs,
+        readStart: async () => undefined,
+      }),
+    )
+
+  // Act
+  const looks = {
+    after1999Ms: await lookAtTheUnreadableMarker(NOW_MS + 1_999),
+    after2000Ms: await lookAtTheUnreadableMarker(NOW_MS + 2_000),
+  }
+
+  // Assert: both refuse the start; only the look past the 2 s names the file and the last moment it counts, 21 min 30 s after its write.
+  assert.deepEqual(looks, {
+    after1999Ms: {
+      kind: 'being-written',
+      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+    },
+    after2000Ms: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
+  })
+})
+
+// Value: protects=the learner refused beside a marker file that cannot be read and whose modification time lies ahead of the clock (a network share's clock, a clock moved back), whose refusal must name that file and when it ends, while a file written at the moment of the look keeps the short refusal; fails_when=the look takes a file dated ahead for one written a moment ago, so the refusal says "Wait a moment and try again" for up to 5 minutes, or names the file already at the moment of its write, or stops refusing the start; why_new=Cycle 0047 row 129 (ADV2-6); seam=the look loaded with loadModule, whose every open of the marker file fails with EACCES, and the clock handed to it; no_claim=the sentence (describeOtherWikiWindow.test.ts)
+test('a marker file that cannot be read and is dated ahead of the clock names its path and the last moment it counts, so its refusal does not ask to wait a moment for up to 5 minutes', async (context) => {
+  // Arrange: a marker file of another window's run, last written at the fixed present, whose every open fails as for a file this user may not read.
+  const outputDirectory = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS,
+    }),
+    NOW_MS,
+  )
+  const markerPath = `${outputDirectory}.update-run.json`
+  const readerWhoseMarkerOpenIsRefused = await loadModule<typeof readerModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          ...openInputs: Parameters<typeof openWithoutFollowing>
+        ) => {
+          if (openInputs[0] === markerPath)
+            throw Object.assign(
+              new Error(`EACCES: permission denied, open '${markerPath}'`),
+              { code: 'EACCES' },
+            )
+          return openWithoutFollowing(...openInputs)
+        },
+      },
+    },
+  )
+  const { readLiveWikiUpdateMarker: lookInThatWindow } = await loadModule<
+    typeof lookModule
+  >(resolve(__dirname, '../utils/readLiveWikiUpdateMarker.js'), {
+    './readWikiRegularFile': readerWhoseMarkerOpenIsRefused,
+  })
+  // The loaded module answers objects of its own context; a copy makes them comparable here.
+  const lookAtTheUnreadableMarker = async (
+    nowMs: number,
+  ): Promise<WikiUpdateMarkerLook> =>
+    structuredClone(
+      await lookInThatWindow(outputDirectory, 'own-window', {
+        identity: THIS_WINDOW,
+        nowMs,
+        readStart: async () => undefined,
+      }),
+    )
+
+  // Act
+  const looks = {
+    atTheMomentOfItsWrite: await lookAtTheUnreadableMarker(NOW_MS),
+    dated1MsAhead: await lookAtTheUnreadableMarker(NOW_MS - 1),
+    dated5MinutesAhead: await lookAtTheUnreadableMarker(NOW_MS - 300_000),
+  }
+
+  // Assert: all three refuse the start; only the look at the moment of the write asks to wait a moment, and the file dated ahead is named with the last moment it counts, 21 min 30 s after its modification time.
+  assert.deepEqual(looks, {
+    atTheMomentOfItsWrite: {
+      kind: 'being-written',
+      heldBy: { beingWrittenSinceMs: 1_790_000_000_000 },
+    },
+    dated1MsAhead: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
+    dated5MinutesAhead: {
+      kind: 'being-written',
+      heldBy: {
+        beingWrittenSinceMs: 1_790_000_000_000,
+        unreadableMarkerPath: markerPath,
+        countsUntilMs: 1_790_001_290_000,
+      },
+    },
   })
 })
 

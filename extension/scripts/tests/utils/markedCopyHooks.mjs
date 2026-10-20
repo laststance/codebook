@@ -1,10 +1,12 @@
 /**
  * The stand-in for `node:fs/promises` of each mark a test imports a skill module with, so the test gets a copy of the module of its own:
  * - `?wrong-look`: `wrongLookFileSystem.mjs`, whose `lstat` calls a link a directory, as Node.js does on Windows for a junction to a volume;
- * - `?swapped-folder`: `swappedFolderFileSystem.mjs`, which runs a test's swap of a folder just before a `mkdir` (`swapBeforeMaking`), a `writeFile` or an `open` to write (`swapBeforeWriting`) or a `readFile` (`swapBeforeReading`) of a path the test names;
+ * - `?swapped-folder`: `swappedFolderFileSystem.mjs`, which runs a test's swap of a folder just before a `mkdir` ({@link swapBeforeMaking}), a `writeFile` or an `open` to write ({@link swapBeforeWriting}), a `readFile` ({@link swapBeforeReading}), a `rename` ({@link swapBeforeRenaming}) or a hard `link` ({@link swapBeforeLinking}) of a path the test names, or halfway through the write of a file through its handle ({@link swapHalfwayThroughWriting});
  * - `?unnamed-real-path`: `unnamedRealPathFileSystem.mjs`, whose `realpath` fails for the folder a test names;
  * - `?crlf-shell`: `crlfShellFileSystem.mjs`, which reads the reader shell with CRLF line endings;
- * - `?large-file-ids`: `largeFileIdsFileSystem.mjs`, which gives the folder a test names file ids above 2^53 that change in their low bits (`giveLargeFileIds`).
+ * - `?large-file-ids`: `largeFileIdsFileSystem.mjs`, which gives the folder a test names file ids above 2^53 that change in their low bits ({@link giveLargeFileIds});
+ * - `?failing`: `failingFileSystem.mjs`, whose write of the file a test names through a handle stops partway with a system error ({@link failWriteOf}), whose close or status read through such a handle fails with one ({@link failCloseOf}, {@link failStatOf}), whose rename of a path a test names fails with the system errors it names ({@link failRenameOf}), whose hard link to a name a test names fails with one ({@link failLinkOf}), whose look at a path a test names fails with one ({@link failLookOf}), whose writes through a handle tell a test's observer each path and byte count first ({@link observeWrites}), whose closes of a handle tell a test's observer each path once the file is closed ({@link observeCloses}), and whose `unlink` tells a test's observer each path first ({@link observeRemovals}).
+ * - `?aliased-folder`: `aliasedFolderFileSystem.mjs`, through which a folder a test names answers to another name beside it too ({@link nameFolderAlso}), as one folder does to names of another case on macOS and Windows, and whose `lstat` and `stat` answer a file id of 0 for every entry where the test asks, as some SMB and FAT volumes do.
  */
 const STAND_INS = {
   '?wrong-look': './wrongLookFileSystem.mjs',
@@ -12,6 +14,8 @@ const STAND_INS = {
   '?unnamed-real-path': './unnamedRealPathFileSystem.mjs',
   '?crlf-shell': './crlfShellFileSystem.mjs',
   '?large-file-ids': './largeFileIdsFileSystem.mjs',
+  '?failing': './failingFileSystem.mjs',
+  '?aliased-folder': './aliasedFolderFileSystem.mjs',
 }
 
 /**

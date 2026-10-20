@@ -31,40 +31,42 @@ function hasWriterOnAnotherComputer(writers: NamedUnconfirmedWriters): boolean {
 /**
  * Words what the answers of the dialog about recordings whose writers this computer cannot confirm do, after {@link unconfirmedWriterSentences}; called by {@link studyRemovalMessages} for the dialog's detail.
  * @param writers - The recordings' writers.
- * @returns What is lost if a window still records, that nothing is lost otherwise, and what Cancel keeps; for one recording or for several, naming another computer only when a writer may run there.
- * @example unconfirmedWriterWarning([{ host: 'workstation', startedAt, place: 'this-computer' }]) // => 'If a window still records it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.'
+ * A window that has sealed its recording and not saved its study yet still holds it ({@link isSealedRecordingReleased}), so the warning names that window as well as one that still records.
+ * @returns What is lost if a window still records or still has to save a recording, that nothing is lost otherwise, and what Cancel keeps; for one recording or for several, naming another computer only when a writer may run there.
+ * @example unconfirmedWriterWarning([{ host: 'workstation', startedAt, place: 'this-computer' }]) // => 'If a window still records it or still has to save it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.'
  */
 function unconfirmedWriterWarning(writers: NamedUnconfirmedWriters): string {
   const isElsewhere = hasWriterOnAnotherComputer(writers)
   // One recording is "it"; several are "one of them".
   if (writers.length === 1)
-    return `${isElsewhere ? 'If a window still records it, on that computer or on this one, the recording is lost.' : 'If a window still records it, the recording is lost.'} If none does, nothing is lost. Cancel keeps the study and its recording as they are.`
-  return `${isElsewhere ? 'If a window still records one of them, on another computer or on this one, that recording is lost.' : 'If a window still records one of them, that recording is lost.'} If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`
+    return `${isElsewhere ? 'If a window still records it or still has to save it, on that computer or on this one, the recording is lost.' : 'If a window still records it or still has to save it, the recording is lost.'} If none does, nothing is lost. Cancel keeps the study and its recording as they are.`
+  return `${isElsewhere ? 'If a window still records one of them or still has to save it, on another computer or on this one, that recording is lost.' : 'If a window still records one of them or still has to save it, that recording is lost.'} If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`
 }
 
 /**
  * Words the title of the dialog about recordings whose writers this computer cannot confirm: for one recording or for several, naming only the places that apply; called by {@link studyRemovalMessages}.
+ * "In use" holds for a recording that a window still records and for a sealed one whose run has not saved its study yet, which that run still holds ({@link isSealedRecordingReleased}). A recording whose files Codebook could not read (`unreadable`) is named as one in another editor window: no host tells another computer.
  * @param writers - The recordings' writers.
  * @param trashName - The host's word for the system Trash.
  * @returns The title, which ends with the question the button answers.
- * @example unconfirmedWriterTitleOf([{ host: 'laptop', startedAt, place: 'another-computer' }, { host: 'workstation', startedAt, place: 'this-computer' }], 'Trash') // => "Some of this study's recordings may still be running on another computer or in another editor window. Move the study to the Trash anyway?"
+ * @example unconfirmedWriterTitleOf([{ host: 'laptop', startedAt, place: 'another-computer' }, { host: 'workstation', startedAt, place: 'this-computer' }], 'Trash') // => "Some of this study's recordings may still be in use on another computer or in another editor window. Move the study to the Trash anyway?"
  */
 function unconfirmedWriterTitleOf(
   writers: NamedUnconfirmedWriters,
   trashName: SystemTrashName,
 ): string {
   const isElsewhere = hasWriterOnAnotherComputer(writers),
-    isHere = writers.some((writer) => writer.place === 'this-computer')
+    isHere = writers.some((writer) => writer.place !== 'another-computer')
   // Each title is written out whole, so the change history's quotations of it stand in this source word for word.
   if (writers.length === 1)
     return isElsewhere
-      ? `This study's recording may still be running on another computer. Move the study to the ${trashName} anyway?`
-      : `This study's recording may still be running in another editor window. Move the study to the ${trashName} anyway?`
+      ? `This study's recording may still be in use on another computer. Move the study to the ${trashName} anyway?`
+      : `This study's recording may still be in use in another editor window. Move the study to the ${trashName} anyway?`
   if (isElsewhere && isHere)
-    return `Some of this study's recordings may still be running on another computer or in another editor window. Move the study to the ${trashName} anyway?`
+    return `Some of this study's recordings may still be in use on another computer or in another editor window. Move the study to the ${trashName} anyway?`
   return isElsewhere
-    ? `Some of this study's recordings may still be running on another computer. Move the study to the ${trashName} anyway?`
-    : `Some of this study's recordings may still be running in another editor window. Move the study to the ${trashName} anyway?`
+    ? `Some of this study's recordings may still be in use on another computer. Move the study to the ${trashName} anyway?`
+    : `Some of this study's recordings may still be in use in another editor window. Move the study to the ${trashName} anyway?`
 }
 
 /**
@@ -98,11 +100,11 @@ export function studyRemovalMessages(
           ? " The run's raw evidence was left in place because its Codebook window may still be open."
           : ''
       }`,
-    /** The title of the dialog after a removal was refused only because recordings of the study have writers this computer cannot confirm ({@link UnconfirmedWriter}): on another computer, or an editor window of this computer it cannot tell from another process ({@link unconfirmedWriterTitleOf}). The learner decides, and Cancel keeps everything as it is. */
+    /** The title of the dialog after a removal was refused only because recordings of the study have writers this computer cannot confirm ({@link UnconfirmedWriter}): on another computer, an editor window of this computer it cannot tell from another process, or a recording whose files it could not read now ({@link unconfirmedWriterTitleOf}). The learner decides, and Cancel keeps everything as it is. */
     unconfirmedWriterTitle: (writers: NamedUnconfirmedWriters): string =>
       unconfirmedWriterTitleOf(writers, trashName),
     unconfirmedWriterButton: `Move to ${trashName} Anyway`,
-    /** The dialog's detail: the host each such recording names and when it started ({@link unconfirmedWriterSentences}, the sentences of the removal's cause), and what each answer does ({@link unconfirmedWriterWarning}). */
+    /** The dialog's detail: the host each such recording names and when it started, or that Codebook could not read its files now ({@link unconfirmedWriterSentences}, the sentences of the removal's cause), and what each answer does ({@link unconfirmedWriterWarning}). */
     unconfirmedWriterDetail: (writers: NamedUnconfirmedWriters): string =>
       `${unconfirmedWriterSentences(writers)} ${unconfirmedWriterWarning(writers)}`,
     nothingMoved: (cause: string): string =>

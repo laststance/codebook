@@ -4,13 +4,20 @@ import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { Worker } from 'node:worker_threads'
 
+import type * as Parse5 from 'parse5' with { 'resolution-mode': 'import' }
+
 import { addressAsBrowserReads } from '../utils/addressAsBrowserReads'
 import { browserAttributeText } from '../utils/browserAttributeText'
 import { readHtmlStartTags } from '../utils/readHtmlStartTags'
 import { withServedAddresses } from '../utils/withServedAddresses'
 
-/** How many times as long as {@link ORDINARY_PAGE} the reader may take for one crafted page of the timing tests. On the development host (16 CPUs, Node 24) no crafted page took more than 1.2 times as long as the ordinary page, with or without coverage, while a reading that rescans a deep stack took many times as long. A fixed bound in milliseconds measured only the speed of the host: the full HTML parser of row 1058 takes 128 ms for the ordinary page alone, and 446 ms under coverage. */
+// The pinned parser alone reads a select by the rules before 2025; Node 24 loads this ESM package synchronously.
+const parse5: typeof Parse5 = require('parse5')
+
+/** How many times as long as {@link ORDINARY_PAGE} the reader may take for one crafted page of the timing tests. Measured again on 2026-10-19, after Cycle 0047 row 2 made the filter read every page with a select twice (by the select rules of 2025 and by those before), on a WSL2 host (16 CPUs, Node 24.21), this test file run alone, three times plain and twice under c8: the slowest crafted page of each test took 1.37 to 1.54 times the ordinary page's time for the pages built to make every < slow (svgStyles; 0.93 to 0.95 under c8), 1.73 to 1.95 for deep nesting with unmatched ends (inputsAfterAClosedSelectAndDeepNesting, which holds a select; 1.47 to 1.58 under c8), 1.60 to 1.78 for select pairs after deep nesting (1.70 to 1.74 under c8) and 2.06 to 2.13 for the pages of the rebinding (numberedIds; 1.99 to 2.08 under c8), while a reading that rescans a deep stack took many times as long. A fixed bound in milliseconds measured only the speed of the host: the full HTML parser of row 1058 took 111 to 135 ms for the ordinary page alone there, and 439 to 482 ms under coverage. */
 const CRAFTED_PAGE_BOUND_RATIO = 4
+/** How many times as long as {@link ORDINARY_PAGE} the reader may take, both served with the reader's tag, for a page with a select and a noscript whose svg Chrome's reading closes before the tag's place: the filter then reads the page under the three other readings up to the place as well ({@link withServedAddresses}). By the filter's count, the ordinary page takes two readings by Chrome's rules (the tag goes at its end, and the page is read again with it), such a page with a body end seven (Chrome's, the three up to the place, the round of the three others) and one without a body end eight (Chrome's once more, with the tag in it), so four times the ordinary page's time at most; the bound gives that half as much again. On the development host (16 CPUs, Node 24.21), in five runs of the rows alone (three plain, two under c8) and three runs of this test file, the rows took 3.14 to 3.75 times the ordinary page with a body end and 3.46 to 4.25 without one, while time that grows faster than the page took many times as long in the earlier rows. */
+const CLOSED_SVG_PAGE_BOUND_RATIO = 6
 /** How many times as long as its first half the whole {@link ORDINARY_PAGE} may take in the growth test: time that grows with the page gives about two, time that grows with its square about four. On the development host (16 CPUs, Node 24) the ratio was 1.97 to 2.29 plain and 2.01 to 2.03 under c8. */
 const ORDINARY_PAGE_GROWTH_BOUND_RATIO = 3
 /** How many times as long as the HTML parser alone the reader may take for select pairs after deep nesting, where the parser's own time grows with the square of the nesting. The reader keeps the mode a select was pushed in, where the parser alone walks the stack at each select end: on the development host the reader took 0.16 to 0.18 times the parser's time (0.09 under c8); when each select start and end walked the stack to reset the mode, 2.2 times (2.9 under c8). */
@@ -24,21 +31,26 @@ const ORDINARY_PAGE =
   )
 /** A small page the worker serves first, so that compiling the reader is not counted in the time of the ordinary page. */
 const WARM_UP_PAGE = '<p><a href="x">warm</a></p>'.repeat(2_000)
+/** The reader's script tag as {@link servedWikiPageHtml} hands it to the filter for a page served without a publication. */
+const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 
 /**
- * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, and answers how long each took, or `unfinished` for the pages left when the deadline passed; the reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
- * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`, so that each crafted page is compared with an ordinary page in the same thread under the same load.
+ * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers how long each took, or `unfinished` for the pages left when the deadline passed; the reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
+ * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`, so that each crafted page is compared with an ordinary page in the same thread under the same load, served by the same call.
  * @param moduleName - The compiled module under `dist/utils`, without `.js`.
  * @param exportName - The function it exports.
  * @param pages - The crafted pages, by name.
+ * @param tagAtBodyEnd - The tag the function puts at the body's end of every page, the ordinary page's included, as the reader hands its script tag to the filter ({@link servedWikiPageHtml}); none when left out.
  * @returns The time of the ordinary page and of each crafted page in milliseconds, or `unfinished`.
  * @example
  * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<a href="x">x</a>' }) // => { ordinary: 128, small: 0.1 }
+ * await servingTimes('withServedAddresses', 'withServedAddresses', { small: '<body></body>' }, READER_SCRIPT_TAG) // => { ordinary: 210, small: 0.1 }
  */
 async function servingTimes(
   moduleName: string,
   exportName: string,
   pages: Record<string, string>,
+  tagAtBodyEnd?: string,
 ): Promise<Record<string, number | 'unfinished'>> {
   const times: Record<string, number | 'unfinished'> = Object.fromEntries(
     ['ordinary', ...Object.keys(pages)].map((name) => [name, 'unfinished']),
@@ -48,7 +60,8 @@ async function servingTimes(
 const serve = require(workerData.module)[workerData.exportName]
 const timeOf = (page) => {
   const started = performance.now()
-  serve(page, 'cursor')
+  if (workerData.tagAtBodyEnd === undefined) serve(page, 'cursor')
+  else serve(page, 'cursor', workerData.tagAtBodyEnd)
   return performance.now() - started
 }
 timeOf(workerData.warmUp)
@@ -64,6 +77,7 @@ for (const [name, page] of Object.entries(workerData.pages)) {
         warmUp: WARM_UP_PAGE,
         ordinary: ORDINARY_PAGE,
         pages,
+        tagAtBodyEnd,
       },
     },
   )
@@ -313,6 +327,36 @@ test('the reader filters a page of more than 1 MB of deep plain, table-held or f
   )
 })
 
+// Value: protects=the extension host against the filter's reading of a page by the select rules before 2025, which it takes for every page with a select; fails_when=that reading sets the mode at each select end by the pinned reset, which walks the stack as deep as the nesting, so select pairs after deep nesting take many times as long as an ordinary page (619 ms against 57 ms for 270 kB before the fix); why_new=Cycle 0047 row 2 (S11-F1) added that reading; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness (reader runs in an isolated test worker)
+test('the reader filters a page of more than 1 MB of select pairs after deep nesting, which it also reads by the select rules before 2025, within four times the time of an ordinary page', async () => {
+  // Arrange: 5,000 open elements, then 58,000 select pairs.
+  const pages = {
+    selectPairsAfterDeepNesting: (
+      '<x>'.repeat(5_000) + '<select></select>'.repeat(58_000)
+    ).padEnd(1_000_001, ' '),
+  }
+
+  // Act
+  const times = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+  )
+
+  // Assert: the page is over 1 MB and was filtered within the bound of the ordinary page's time.
+  assert.equal(pages.selectPairsAfterDeepNesting.length > 1_000_000, true)
+  const ordinary = times.ordinary
+  if (typeof ordinary !== 'number')
+    assert.fail('the ordinary page was not filtered before the deadline')
+  const crafted = times.selectPairsAfterDeepNesting
+  assert.ok(
+    typeof crafted === 'number' &&
+      // gstack-timing-ok: the bound is a ratio to the ordinary page timed in the same worker, not a time; this page measured 1.60 to 1.78 times it (1.70 to 1.74 under c8) and the slowest crafted page of the timing tests 2.13 times (Cycle 0047 row 73), against the bound 4
+      crafted <= CRAFTED_PAGE_BOUND_RATIO * ordinary,
+    `the page took ${crafted} ms and the ordinary page ${ordinary} ms`,
+  )
+})
+
 // Value: protects=the extension host against the reader's own cost on select pairs after deep nesting, which the HTML parser makes as long as the nesting is deep for each pair; fails_when=a select start or end sets the mode by the pinned reset, which walks the stack, so the reader takes twice as long as the parser alone or more (8.3 s against 3.2 s for 1 MB); why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief; seam=a worker thread that times the reader and the parser alone on the same page, the shorter of two runs each after a warm-up; no_claim=the parser's own time, which only the Wiki reader's deadline bounds
 test('the reader reads select pairs after deep nesting within one and a half times the time the HTML parser alone takes for them', async () => {
   // Arrange: 5,000 open elements, then 15,000 select pairs.
@@ -406,6 +450,98 @@ test('the reader filters an ordinary page of more than 1 MB within three times t
   assert.ok(
     wholeTime <= ORDINARY_PAGE_GROWTH_BOUND_RATIO * halfTime,
     `the whole page took ${wholeTime} ms and its half ${halfTime} ms`,
+  )
+})
+
+// Value: protects=the extension host's page workers against the filter's cost on the path the reader takes for every page: the reader hands its script tag to the filter (servedWikiPageHtml), which puts it at the body's end or the page's end, after a meta where svg content is open there, reads the page again with them in it, and reads a page with a select and a noscript under all four readings, again after each round that renamed an attribute; fails_when=the pass with the reader's tag, the meta or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts, so a page of 1 MB with a select, a noscript and an svg before its end takes more than four times as long as the ordinary page served the same way (these rows took 2.4 to 2.7 times it plain and 2.4 to 2.5 under c8 on the development host, 16 CPUs, Node 24.21); why_new=Cycle 0047 row 191 (S2PERF-2 = S2TEST-4): every timing test called the filter without the reader's tag, so this path was never timed; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=native editor responsiveness
+test('the reader filters a page of more than 1 MB with a select, a noscript and an svg open before its body end, or before its end without a body end, with its script tag put in as the reader serves it, within four times the time of an ordinary page served the same way', async () => {
+  // Arrange: a select, a noscript, the ordinary page's sections or refused links, and an svg left open, with a body end and without one.
+  const start =
+    '<body><select><option>a</option></select><noscript><p>n</p></noscript>'
+  const refusedLinks = '<a href="vscode://file/x">x</a>'.repeat(35_000)
+  const pages = {
+    sectionsBeforeAnOpenSvgAtTheBodyEnd: `${start}${ORDINARY_PAGE}<svg><g></body>`,
+    sectionsBeforeAnOpenSvgWithoutABodyEnd: `${start}${ORDINARY_PAGE}<svg><g>`,
+    refusedLinksBeforeAnOpenSvgAtTheBodyEnd: `${start}${refusedLinks}<svg><g></body>`,
+    refusedLinksBeforeAnOpenSvgWithoutABodyEnd: `${start}${refusedLinks}<svg><g>`,
+  }
+
+  // Act
+  const times = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+    READER_SCRIPT_TAG,
+  )
+
+  // Assert: every page is over 1 MB, and each was filtered within the bound of the ordinary page's time.
+  assert.deepEqual(
+    Object.values(pages).map((page) => page.length > 1_000_000),
+    [true, true, true, true],
+  )
+  const ordinary = times.ordinary
+  if (typeof ordinary !== 'number')
+    assert.fail('the ordinary page was not filtered before the deadline')
+  assert.deepEqual(
+    Object.entries(times).filter(
+      ([name, milliseconds]) =>
+        name !== 'ordinary' &&
+        (milliseconds === 'unfinished' ||
+          milliseconds > CRAFTED_PAGE_BOUND_RATIO * ordinary),
+    ),
+    [],
+    `the ordinary page took ${ordinary} ms`,
+  )
+})
+
+// Value: protects=the extension host's page workers against the filter's cost on a page with a select and a noscript whose svg Chrome's reading closes before the reader's tag: the filter reads such a page under the three other readings up to the tag's place, to tell whether one of them leaves the svg open there, besides Chrome's reading and the round of the three others, and once more by Chrome's rules with the tag in it when the tag goes at the page's end; fails_when=that check, the reading with the tag or the rounds take time that grows faster than the page, or read the page more often than the filter's docstring counts by more than half again, so such a page of more than 1 MB takes more than six times as long as the ordinary page served the same way (these rows took 3.14 to 3.75 times it with a body end and 3.46 to 4.25 without one on the development host, 16 CPUs, Node 24.21, plain and under c8); why_new=Cycle 0047 row 205 (found while fixing row 191): the timing test of row 191 left this shape out, as its count of readings (seven with a body end and eight without, against the ordinary page's two) puts it at that test's bound of four; seam=a worker thread, so the deadline can stop a filtering that does not end; no_claim=a page whose rounds rename attributes in a reading beside Chrome's, which every reading then reads again (the rounds' own tests), and native editor responsiveness
+test('the reader filters a page of more than 1 MB with a select, a noscript and an svg closed before its body end, or before its end without a body end, with its script tag put in as the reader serves it, within six times the time of an ordinary page served the same way', async (context) => {
+  // Arrange: a select, a noscript and a closed svg, then the ordinary page's sections or refused links, with a body end and without one.
+  const start =
+    '<body><select><option>a</option></select><noscript><p>n</p></noscript><svg><g></g></svg>'
+  const refusedLinks = '<a href="vscode://file/x">x</a>'.repeat(35_000)
+  const pages = {
+    sectionsAfterAClosedSvgAtTheBodyEnd: `${start}${ORDINARY_PAGE}</body>`,
+    sectionsAfterAClosedSvgWithoutABodyEnd: `${start}${ORDINARY_PAGE}`,
+    refusedLinksAfterAClosedSvgAtTheBodyEnd: `${start}${refusedLinks}</body>`,
+    refusedLinksAfterAClosedSvgWithoutABodyEnd: `${start}${refusedLinks}`,
+  }
+
+  // Act
+  const times = await servingTimes(
+    'withServedAddresses',
+    'withServedAddresses',
+    pages,
+    READER_SCRIPT_TAG,
+  )
+
+  // Assert: every page is over 1 MB, and each was filtered within the bound of the ordinary page's time.
+  assert.deepEqual(
+    Object.values(pages).map((page) => page.length > 1_000_000),
+    [true, true, true, true],
+  )
+  const ordinary = times.ordinary
+  if (typeof ordinary !== 'number')
+    assert.fail('the ordinary page was not filtered before the deadline')
+  // The run's ratios stand in the test's output, so a runner's log shows how near the bound they came.
+  context.diagnostic(
+    Object.entries(times)
+      .map(([name, milliseconds]) =>
+        typeof milliseconds === 'number'
+          ? `${name} ${(milliseconds / ordinary).toFixed(2)}`
+          : `${name} unfinished`,
+      )
+      .join(', '),
+  )
+  assert.deepEqual(
+    Object.entries(times).filter(
+      ([name, milliseconds]) =>
+        name !== 'ordinary' &&
+        (milliseconds === 'unfinished' ||
+          milliseconds > CLOSED_SVG_PAGE_BOUND_RATIO * ordinary),
+    ),
+    [],
+    `the ordinary page took ${ordinary} ms`,
   )
 })
 
@@ -870,10 +1006,10 @@ test('current select rules keep foreign elements, end tags, table resets and tem
       '<table><tr><td><select></select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
       '<table><tr><td><select></select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
     ],
-    // The outer select is outside the cell's scope, so the inner select closes alone.
+    // The outer select is outside the cell's scope, so the inner select closes alone and Chrome reads the style as text; the select rules before 2025 ignore the table in the outer select, so the inner one closes it, the style is svg markup and the link loses its link.
     [
       '<select><table><tr><td><select></select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
-      '<select><table><tr><td><select></select><svg><g></tbody><style><a href="vscode://file/example">marker</a></style>',
+      '<select><table><tr><td><select></select><svg><g></tbody><style><a data-codebook-unlinked="vscode://file/example">marker</a></style>',
     ],
     // After a select inside foreignObject closes, the outer select's children are read as in body, so a later svg is foreign.
     [
@@ -892,9 +1028,31 @@ test('current select rules keep foreign elements, end tags, table resets and tem
     ],
   ]
 
-  // Act / Assert
-  for (const [page, expected] of cases)
-    assert.equal(withServedAddresses(page, 'vscode'), expected, page)
+  // Act
+  const served = cases.map(([page]) => withServedAddresses(page, 'vscode'))
+
+  // Assert: the served pages, and the links Chrome itself reads as tags, which hold its select rules where the served page also takes a link another reading follows.
+  assert.deepEqual(
+    served,
+    cases.map(([, expected]) => expected),
+  )
+  assert.deepEqual(
+    cases.map(([page]) => chromeLinkAddresses(page)),
+    [
+      ['vscode://file/example'],
+      ['vscode://file/example'],
+      ['vscode://file/example'],
+      ['vscode://file/example'],
+      ['vscode://file/example'],
+      ['vscode://file/example'],
+      [],
+      [],
+      [],
+      ['vscode://file/example'],
+      ['vscode://file/etc/hosts'],
+      [],
+    ],
+  )
 })
 
 // Value: protects=the learner against an editor link after a select that Chromium closes at a table row, a new cell or an input; fails_when=the reader keeps the select open in body rules, so its end closes the svg and a live `vscode://file` link in svg's style is served as written; why_new=the /ship coverage audit found the three pages; the select table covers a select's own children, not the tokens that close it; seam=none; no_claim=native editor or visual acceptance (Chrome 151's DOMParser fixed the expected pages)
@@ -925,7 +1083,7 @@ test('an editor link after a select that a table row, a new cell or an input clo
   ])
 })
 
-// Value: protects=the learner against an editor link after a select that a hidden input closes only where Chromium's body rule takes the input; fails_when=every input closes an open select, so a hidden input in a table makes its style svg markup and renames text, or no input does, so a hidden input in a caption leaves a live `vscode://file` link served; why_new=row 1064, Chrome 151 DOMParser on the same pages; seam=none; no_claim=native editor (browser result from headless Chromium's DOMParser)
+// Value: protects=the learner against an editor link after a select that a hidden input closes only where Chromium's body rule takes the input; fails_when=Chrome's reading lets every input close an open select, so a hidden input in a table makes its style svg markup, or lets none do so, so a hidden input in a caption leaves a live `vscode://file` link served; why_new=row 1064; Cycle 0047 row 2 (S11-F1) also takes the table's link, which the select rules before 2025 follow (any input closes the select there), so Chrome's reading is held by its own start tags; Chrome 151 DOMParser on the same pages; seam=none; no_claim=native editor (browser result from headless Chromium's DOMParser)
 test('a hidden input closes an open select in a table caption but not in the table itself, as Chromium reads them', () => {
   // Arrange: in a table the table rule takes a hidden input and leaves the select open; in a caption the body rule closes the select.
   const inTable =
@@ -937,19 +1095,23 @@ test('a hidden input closes an open select in a table caption but not in the tab
   const servedInTable = withServedAddresses(inTable, 'vscode')
   const servedInCaption = withServedAddresses(inCaption, 'vscode')
 
-  // Assert: the table's select end closes the svg, so its anchor is style text; the caption's svg stays open with a live link.
+  // Assert: in Chrome's reading the table's select end closes the svg, so its anchor is style text, and the caption's svg stays open with a live link; a browser of the select rules before 2025 closes the table's select at the input, so both links lose their link.
   assert.equal(
     servedInTable,
-    '<table><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><select><input type=hidden><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
   )
   assert.equal(
     servedInCaption,
     '<table><caption><select><input type=hidden><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
   )
+  assert.deepEqual(
+    [chromeLinkAddresses(inTable), chromeLinkAddresses(inCaption)],
+    [[], ['vscode://file/etc/hosts']],
+  )
 })
 
-// Value: protects=a served page's text after a select inside svg markup whose elements bear table or frameset names (an svg colgroup or frameset), which a browser reads as svg elements; fails_when=the reader sets the mode after a select starts, ends or a table in it closes by the pinned reset, which reads an svg colgroup as a column group and an svg frameset as a frameset, so a later style is dropped and its text read as tags and renamed; why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief (the select reset also walked the stack); found by the differential of that change, where 58 of 59 differing pages agreed with Chrome only after it; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
-test('a select inside svg markup with a column group or frameset keeps the mode it came in, open, closed or after a table in it, so a later style holds text as a browser reads it', () => {
+// Value: protects=Chrome's reading of the text after a select inside svg markup whose elements bear table or frameset names (an svg colgroup or frameset), which a browser reads as svg elements; fails_when=the reader sets the mode after a select starts, ends or a table in it closes by the pinned reset, which reads an svg colgroup as a column group and an svg frameset as a frameset, so a later style is dropped and its text read as tags; why_new=Cycle 0046 second /ship PERF1 residual, point 7 of its brief (the select reset also walked the stack); Cycle 0047 row 2 (S11-F1) renames the link of an open select's style, as the select rules before 2025 read that link as a start tag (one the parser then ignores), so Chrome's reading is held by its own start tags; found by the differential of that change, where 58 of 59 differing pages agreed with Chrome only after it; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a select inside svg markup with a column group or frameset keeps the mode it came in, open, closed or after a table in it, so Chrome reads a later style as text, and the link in it loses its link where the older select rules read it as a tag', () => {
   // Arrange: in each page the select keeps the body rules, so the style is raw text.
   const pages = [
     '<svg><colgroup><foreignObject><select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
@@ -961,13 +1123,14 @@ test('a select inside svg markup with a column group or frameset keeps the mode 
   // Act
   const served = pages.map((page) => withServedAddresses(page, 'vscode'))
 
-  // Assert
+  // Assert: Chrome reads no link in any page; the older select rules read the link of an open select's style as a start tag, so it is renamed, and a closed select gives that style its text in both.
   assert.deepEqual(served, [
-    '<svg><colgroup><foreignObject><select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
-    '<svg><frameset><foreignObject><select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><colgroup><foreignObject><select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><frameset><foreignObject><select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
     '<svg><colgroup><foreignObject><select></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
-    '<svg><colgroup><foreignObject><select><table></table><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<svg><colgroup><foreignObject><select><table></table><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
   ])
+  assert.deepEqual(pages.map(chromeLinkAddresses), [[], [], [], []])
 })
 
 // Value: protects=the learner's page and its editor links where svg or MathML markup holds an element with a table cell's name (an svg td or a MathML th) and a template or a table inside its integration point closes; fails_when=the reader's insertion-mode reset reads such an element as an HTML cell, as the pinned parser's does, so the table end pops the whole stack and the parser throws (the reader then refuses the page, while Chrome shows it with a live link); why_new=Cycle 0046 second /ship fixer A's finding FX-A-2 (a grid of 209,304 pages made plain parse5 throw on 318 and the reader on 108); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
@@ -1062,8 +1225,8 @@ test('an end inside an svg or MathML integration point in an open select that na
   ])
 })
 
-// Value: protects=a served page's text after the ends Chrome does act on inside an open select: its own end, an end of an element opened inside it, a cell's end by the table rules, and a paragraph end that first leaves the svg; fails_when=the select's scope also hides these ends, so the svg stays open and a plaintext's text is read as tags and renamed; why_new=Cycle 0046 second /ship pass 2 testing review P2T2 (the table of ends Chrome acts on, pinned before the fix); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
-test('the select end, an end of an element opened inside the select, a cell end and a paragraph end still close the svg in an open select, so a plaintext after them holds text', () => {
+// Value: protects=Chrome's reading of the text after the ends Chrome does act on inside an open select: its own end, an end of an element opened inside it, a cell's end by the table rules, and a paragraph end that first leaves the svg; fails_when=the select's scope also hides these ends, so the svg stays open and a plaintext's text is read as tags; why_new=Cycle 0046 second /ship pass 2 testing review P2T2 (the table of ends Chrome acts on, pinned before the fix); Cycle 0047 row 2 (S11-F1) takes the link after an ignored svg, div and plaintext in a select, which the select rules before 2025 follow, so Chrome's reading is held by its own start tags; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('the select end, an end of an element opened inside the select, a cell end and a paragraph end still close the svg in an open select, so Chrome reads a plaintext after them as text, and the link after the select loses its link where the older select rules follow it', () => {
   // Arrange
   const pages = [
     '<article><select><svg></select><plaintext></plaintext></svg><a href="vscode://file/etc/hosts">Open the source</a></article>',
@@ -1075,13 +1238,14 @@ test('the select end, an end of an element opened inside the select, a cell end 
   // Act
   const served = pages.map((page) => withServedAddresses(page, 'vscode'))
 
-  // Assert
+  // Assert: Chrome reads every link as plaintext; the select rules before 2025 ignore the svg, the div and the plaintext in the select, so the link after the select's end is a tag there and loses its link, while a plaintext after a closed select holds it as text in both.
   assert.deepEqual(served, [
     '<article><select><svg></select><plaintext></plaintext></svg><a href="vscode://file/etc/hosts">Open the source</a></article>',
-    '<article><select><div><svg></div><plaintext></plaintext></svg></select><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><select><div><svg></div><plaintext></plaintext></svg></select><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
     '<table><tr><td><select><svg></td><plaintext></plaintext></svg></select><a href="vscode://file/etc/hosts">Open the source</a></table>',
-    '<article><p><select><svg></p><plaintext></plaintext></svg></select></p><a href="vscode://file/etc/hosts">Open the source</a></article>',
+    '<article><p><select><svg></p><plaintext></plaintext></svg></select></p><a data-codebook-unlinked="vscode://file/etc/hosts">Open the source</a></article>',
   ])
+  assert.deepEqual(pages.map(chromeLinkAddresses), [[], [], [], []])
 })
 
 // Value: protects=the learner against an editor link after a start tag inside an open select that would close a paragraph or a list item opened before the select; fails_when=the start tag closes the outer paragraph or list item with the select, so a later formatting end pops the svg that Chrome keeps open, and a plaintext or xmp there hides a live link from the filter; why_new=Cycle 0046 second /ship pass 2 testing review P2T2 (an open select ends every scope but the table scope, for start tags too); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
@@ -1134,9 +1298,9 @@ test('an end tag that names the MathML or svg integration point an HTML element 
   ])
 })
 
-// Value: protects=a served page's text after a select that a hidden input leaves open in a table body or a row, or whose type is written in capitals; fails_when=HTML_PARSER_HIDDEN_INPUT_TABLE_MODES misses the table-body or the row mode, or the type is compared without ASCII case folding, so the input closes the select, the select end leaves the svg open and the style text is renamed; why_new=Cycle 0046 second /ship testing review TEST3 (only the table mode and a lower-case type were pinned); seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
-test('a hidden input in a table body or a row, or written HIDDEN, leaves an open select open, so the style text after the select stays as written', () => {
-  // Arrange: the table rule takes each input, so </select> closes the select with the svg in it and the style holds text.
+// Value: protects=Chrome's reading of the text after a select that a hidden input leaves open in a table body or a row, or whose type is written in capitals; fails_when=HTML_PARSER_HIDDEN_INPUT_TABLE_MODES misses the table-body or the row mode, or the type is compared without ASCII case folding, so the input closes the select, the select end leaves the svg open and the style text is read as tags; why_new=Cycle 0046 second /ship testing review TEST3 (only the table mode and a lower-case type were pinned); Cycle 0047 row 2 (S11-F1) takes the style's link, which the select rules before 2025 follow (any input closes the select there), so Chrome's reading is held by its own start tags; seam=none; no_claim=native editor (Chrome 151's DOMParser fixed the expected pages)
+test('a hidden input in a table body or a row, or written HIDDEN, leaves an open select open, so Chrome reads the style after the select as text, and its link loses its link where the older select rules follow it', () => {
+  // Arrange: in Chrome's reading the table rule takes each input, so </select> closes the select with the svg in it and the style holds text.
   const pages = [
     '<table><tbody><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
     '<table><tr><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
@@ -1146,17 +1310,18 @@ test('a hidden input in a table body or a row, or written HIDDEN, leaves an open
   // Act
   const served = pages.map((page) => withServedAddresses(page, 'vscode'))
 
-  // Assert
+  // Assert: Chrome reads each link as style text; the select rules before 2025 close the select at the input, the svg stays open and the link is a tag there, so it loses its link.
   assert.deepEqual(served, [
-    '<table><tbody><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
-    '<table><tr><select><input type=hidden><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
-    '<table><select><input type=HIDDEN><svg><g></select><style><a href="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tbody><select><input type=hidden><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><tr><select><input type=hidden><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
+    '<table><select><input type=HIDDEN><svg><g></select><style><a data-codebook-unlinked="vscode://file/etc/hosts">hosts</a></style>',
   ])
+  assert.deepEqual(pages.map(chromeLinkAddresses), [[], [], []])
 })
 
-// Value: protects=a live editor link after a noscript that a browser with scripting reads as raw text; fails_when=the parser runs with scripting disabled, so the noscript's style swallows the link and it is served live, or the noscript's own text is renamed; why_new=no reader test wrote noscript (/ship coverage audit); seam=none; no_claim=native editor (Chrome 151 iframe srcdoc with scripting gave the result)
-test('a link after a noscript is judged as a browser with scripting reads it, and a link inside the noscript text is served as written', () => {
-  // Arrange: with scripting a noscript holds raw text up to its end tag.
+// Value: protects=a live editor link after a noscript that a browser with scripting reads as raw text, and one inside the noscript that a browser without scripting reads as a link; fails_when=the filter reads the page only with scripting disabled, so the noscript's style swallows the link after it, or only with scripting enabled, so the link inside the noscript is served live to a browser with JavaScript off; why_new=no reader test wrote noscript (/ship coverage audit); Cycle 0047 row 2 (S11-F1) added the reading without scripting, so the inner link now loses its link (Chrome 151's DOMParser, which reads with scripting off, follows it); seam=none; no_claim=native editor (Chrome 151 iframe srcdoc with scripting gave the result for the link after the noscript)
+test('a link after a noscript is judged as a browser with scripting reads it, and a link inside the noscript, which a browser without scripting follows, loses its link too', () => {
+  // Arrange: with scripting a noscript holds raw text up to its end tag; without scripting it holds markup.
   const afterNoscript =
     '<noscript><style></noscript><a href="vscode://file/etc/hosts">x</a>'
   const insideNoscript =
@@ -1173,7 +1338,11 @@ test('a link after a noscript is judged as a browser with scripting reads it, an
   )
   assert.equal(
     servedInside,
-    '<noscript><a href="vscode://file/example">x</a></noscript>',
+    '<noscript><a data-codebook-unlinked="vscode://file/example">x</a></noscript>',
+  )
+  assert.deepEqual(
+    [chromeLinkAddresses(afterNoscript), chromeLinkAddresses(insideNoscript)],
+    [['vscode://file/etc/hosts'], []],
   )
 })
 
@@ -1341,18 +1510,283 @@ test('all original duplicate URL attributes lose their effects', () => {
   )
 })
 
-test('a style inside a select keeps its text under current browser parsing rules', () => {
-  // Arrange: current Chromium treats style as HTML raw text inside select.
+/**
+ * The addresses of the links Chrome 151 with scripting reads as start tags in a page, as written, so that a test of a page with a select or a noscript holds Chrome's own reading beside the served page, which also takes the links other readings follow; called by those tests and by {@link followedEditorAddresses}.
+ * @param page - The page as published.
+ * @returns The written `href` values of the start tags Chrome reads, in page order.
+ * @example
+ * chromeLinkAddresses('<a href="x">x</a><style><a href="y"></style>') // => ['x']
+ */
+function chromeLinkAddresses(page: string): string[] {
+  return readHtmlStartTags(page)
+    .flatMap(({ attributes }) => attributes)
+    .filter((attribute) => attribute.name === 'href')
+    .map((attribute) => attribute.written ?? '')
+}
+
+/** The editor address the cross-reading tests put in a link: another extension's address, which the filter refuses. */
+const OTHER_EDITOR_ADDRESS = 'vscode://file/x'
+
+/**
+ * The addresses of the links the pinned parser alone puts in its tree of a page, a template's content included: those a browser of the select rules before 2025 follows, with scripting on or off; called by {@link followedEditorAddresses} and the differential of the older select rules.
+ * @param page - The page.
+ * @param scriptingEnabled - Whether the parser reads it with scripting, so that a noscript holds text.
+ * @returns The `href` values of the tree's elements, in tree order.
+ * @example
+ * pinnedParserLinkAddresses('<select><style></select><a href="y">', true) // => ['y']
+ */
+function pinnedParserLinkAddresses(
+  page: string,
+  scriptingEnabled: boolean,
+): string[] {
+  const found: string[] = []
+  const visit = (node: Parse5.DefaultTreeAdapterMap['node']): void => {
+    if ('attrs' in node)
+      for (const attribute of node.attrs)
+        if (attribute.name === 'href') found.push(attribute.value)
+    if ('childNodes' in node) for (const child of node.childNodes) visit(child)
+    if ('content' in node) visit(node.content)
+  }
+  visit(parse5.parse(page, { scriptingEnabled }))
+  return found
+}
+
+/**
+ * The editor addresses a browser would follow in a page, under each reading the cross-reading tests compare: Chrome 151's with scripting (the reader's own reading of start tags) and the pinned parser alone with scripting on and off, whose select rules are those before 2025; called by the cross-reading tests.
+ * @param page - The page as served.
+ * @returns For each reading, the `href` values of its links that name {@link OTHER_EDITOR_ADDRESS}.
+ * @example
+ * followedEditorAddresses('<p>text</p>') // => { chrome: [], beforeSelectRulesOf2025: [], withoutScripting: [] }
+ */
+function followedEditorAddresses(page: string): Record<string, string[]> {
+  const isOtherEditorAddress = (address: string): boolean =>
+    address === OTHER_EDITOR_ADDRESS
+  return {
+    chrome: chromeLinkAddresses(page).filter(isOtherEditorAddress),
+    beforeSelectRulesOf2025: pinnedParserLinkAddresses(page, true).filter(
+      isOtherEditorAddress,
+    ),
+    withoutScripting: pinnedParserLinkAddresses(page, false).filter(
+      isOtherEditorAddress,
+    ),
+  }
+}
+
+/**
+ * A page of the cross-reading tests: an opening that Chrome 151 with scripting reads as the start of text (a select with a raw-text element, a CDATA section, a noscript), a link to {@link OTHER_EDITOR_ADDRESS}, and a closing; built from its parts so that each shape keeps its name.
+ * @param opening - The markup before the link.
+ * @param closing - The markup after it.
+ * @param linkAttribute - The link's attribute name: `href` as published, or the filter's rename.
+ * @returns The page.
+ * @example
+ * shapePage('<p>', '</p>', 'href') // => '<p><a href="vscode://file/x">x</a></p>'
+ */
+function shapePage(
+  opening: string,
+  closing: string,
+  linkAttribute: 'href' | 'data-codebook-unlinked',
+): string {
+  return `${opening}<a ${linkAttribute}="${OTHER_EDITOR_ADDRESS}">x</a>${closing}`
+}
+
+/** The shapes of Cycle 0046's adversarial review S11-F1, by name: in each one Chrome 151 with scripting reads the link as text, and a browser of the select rules before 2025, or one without scripting for the noscript, reads it as a link. */
+const CROSS_READING_SHAPES: Readonly<Record<string, [string, string]>> = {
+  'select-style': ['<select><style></select>', '</style>'],
+  'table-td-select-style': ['<table><td><select><style></td>', ''],
+  'select-iframe': ['<select><iframe></select>', '</iframe>'],
+  'select-xmp': ['<select><xmp></select>', '</xmp>'],
+  'select-plaintext': ['<select><plaintext></select>', ''],
+  'select-title': ['<select><title></select>', '</title>'],
+  'select-cdata': ['<select><svg><![CDATA[x></select>', ']]>'],
+  'select-div-style': ['<select><div><style></div></select>', ''],
+  noscript: ['<noscript>', '</noscript>'],
+}
+
+// Value: protects=the learner whose default browser (the reader opens in it) reads a select by the HTML standard's rules before 2025 or runs without scripting, against another extension's editor link that Chrome 151 with scripting reads as text; fails_when=the filter judges a page only as Chrome 151 with scripting reads it, so a link it reads in a style, iframe, xmp, plaintext, title or CDATA section opened in a select, or in a noscript, is served live and such a browser follows it (the pinned parser alone, whose select rules are those before 2025, reads each link live before the fix); why_new=Cycle 0047 row 2 (S11-F1, Claude adversarial, High); seam=none (the pinned parser alone stands for a browser of the older select rules, and with scripting off for one without scripting); no_claim=which Firefox or Safari versions read a select by the older rules (neither browser ran here)
+test('an editor link that Chrome reads as text in a raw-text element opened in a select, in a CDATA section there or in a noscript loses its link, so no browser reading follows it', () => {
+  // Arrange: each named shape with a link to another extension's address.
+  const pages = Object.entries(CROSS_READING_SHAPES).map(
+    ([name, [opening, closing]]) => [name, shapePage(opening, closing, 'href')],
+  )
+
+  // Act
+  const served = pages.map(([name = '', page = '']) => [
+    name,
+    withServedAddresses(page, 'vscode'),
+  ])
+
+  // Assert: each link is renamed with its text kept, no reading follows the address, and a second filtering changes nothing.
+  assert.deepEqual(
+    served,
+    Object.entries(CROSS_READING_SHAPES).map(([name, [opening, closing]]) => [
+      name,
+      shapePage(opening, closing, 'data-codebook-unlinked'),
+    ]),
+  )
+  assert.deepEqual(
+    served.map(([name = '', page = '']) => [
+      name,
+      followedEditorAddresses(page),
+    ]),
+    Object.keys(CROSS_READING_SHAPES).map((name) => [
+      name,
+      { chrome: [], beforeSelectRulesOf2025: [], withoutScripting: [] },
+    ]),
+  )
+  assert.deepEqual(
+    served.map(([, page = '']) => withServedAddresses(page, 'vscode')),
+    served.map(([, page]) => page),
+  )
+})
+
+// Value: protects=Chrome's reading of a style inside a select as raw text, and the learner whose browser keeps the select rules before 2025, which ignore that style and follow the link after the select's end; fails_when=Chrome's reading drops the style in a select, or the filter serves that link live; why_new=Cycle 0047 row 2 (S11-F1) turned the served value (the link was served live before); seam=none; no_claim=native editor
+test('a style inside a select is text in Chrome’s reading, and the link in it loses its link, as the older select rules read it as a link', () => {
+  // Arrange: current Chromium treats style as HTML raw text inside select; the older rules ignore it.
   const page =
     '<select><style></select><a href="vscode://file/example">marker</a>'
 
   // Act
   const served = withServedAddresses(page, 'vscode')
 
-  // Assert: the apparent anchor is still style text, not a link.
+  // Assert: Chrome reads the apparent anchor as style text, and the served page takes its link.
   assert.equal(
     served,
-    '<select><style></select><a href="vscode://file/example">marker</a>',
+    '<select><style></select><a data-codebook-unlinked="vscode://file/example">marker</a>',
+  )
+  assert.deepEqual(chromeLinkAddresses(page), [])
+})
+
+// Value: protects=the learner whose Chrome reads a page the filter changed for another reading, against an editor link that only that change lets Chrome read; fails_when=withNoLinkAnyReadingRefuses stops after its first round, so the rename of a link the older select rules read turns Chrome's end of an element named href into the end of another name, the svg that end closed stays open, and the script after it is an svg script whose link Chrome follows; why_new=Cycle 0047 row 71 (S7-G1), the second round had no test; seam=none (the reader's reading of Chrome 151 stands for Chrome, the pinned parser for a browser of the older select rules); no_claim=native editor (no browser ran)
+test('when renaming a link the older select rules read leaves an svg open in Chrome’s reading, the filter reads the page again, and the link Chrome then reads in an svg script loses its link too', () => {
+  // Arrange: Chrome reads a style in a select as text, which the older rules ignore; those rules read a tag whose quoted value holds Chrome's end of the style, an element named href and an svg; what Chrome reads as the end of that element, which closes the svg, the older rules read as a link; and a script's text holds a link, which an svg script would hold as a tag.
+  const styleInSelect = '<select><style>'
+  const tagOfTheOlderRules = '<a title="</style><href><svg>" '
+  const hrefEndOrLink = `</href =${OTHER_EDITOR_ADDRESS}>`
+  const scriptWithLink = `<script><a href=${OTHER_EDITOR_ADDRESS}></script></select>`
+  const page =
+    styleInSelect + tagOfTheOlderRules + hrefEndOrLink + scriptWithLink
+  const afterTheFirstRound =
+    styleInSelect +
+    tagOfTheOlderRules +
+    `</data-codebook-unlinked =${OTHER_EDITOR_ADDRESS}>` +
+    scriptWithLink
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert: Chrome reads no link in the page as published, but reads the script's link once the first rename left the svg open; the served page takes both links, no reading follows the address, and a second filtering changes nothing.
+  assert.deepEqual(chromeLinkAddresses(page), [])
+  assert.deepEqual(chromeLinkAddresses(afterTheFirstRound), [
+    OTHER_EDITOR_ADDRESS,
+  ])
+  assert.equal(
+    served,
+    '<select><style><a title="</style><href><svg>" </data-codebook-unlinked =vscode://file/x><script><a data-codebook-unlinked=vscode://file/x></script></select>',
+  )
+  assert.deepEqual(followedEditorAddresses(served), {
+    chrome: [],
+    beforeSelectRulesOf2025: [],
+    withoutScripting: [],
+  })
+  assert.equal(withServedAddresses(served, 'vscode'), served)
+})
+
+/** Where the select corpus of the older select rules puts its select: in the body, in each part of a table, in a template and a template's cell, in svg's and MathML's integration points, and nested in each other, a template in a select among them. */
+const SELECT_PLACES: Readonly<Record<string, string>> = {
+  body: '',
+  table: '<table>',
+  'table body': '<table><tbody>',
+  row: '<table><tr>',
+  cell: '<table><tr><td>',
+  caption: '<table><caption>',
+  template: '<template>',
+  'template cell': '<template><td>',
+  'svg foreignObject': '<svg><foreignObject>',
+  'MathML mi': '<math><mi>',
+  'template in a cell': '<table><tr><td><template>',
+  'cell in a template': '<template><table><tr><td>',
+  'caption in a cell': '<table><tr><td><table><caption>',
+  'caption in svg foreignObject': '<svg><foreignObject><table><caption>',
+  'svg foreignObject in a cell': '<table><tr><td><svg><foreignObject>',
+  'template in a select': '<select><template>',
+  'template cell in a select': '<select><template><td>',
+}
+/** What the select corpus puts in its select: nothing, an option, an option group, svg markup with a style, which the older select rules ignore, and a template with a link. */
+const SELECT_CONTENTS: Readonly<Record<string, string>> = {
+  nothing: '',
+  option: '<option>o',
+  'option group': '<optgroup><option>o',
+  'svg style': '<svg><style>s',
+  'template with a link': '<template><a href="in-template">t</a></template>',
+}
+/** The tokens that close the corpus's select under the older select rules: its end, a select, an input, a keygen and a textarea anywhere, and the table's tokens where the select is in a table. */
+const SELECT_CLOSERS: Readonly<Record<string, string>> = {
+  'select end': '</select>',
+  select: '<select>',
+  input: '<input>',
+  keygen: '<keygen>',
+  textarea: '<textarea></textarea>',
+  table: '<table>',
+  cell: '<td>',
+  row: '<tr>',
+  caption: '<caption>',
+  'table body': '<tbody>',
+  'table end': '</table>',
+  'cell end': '</td>',
+  'caption end': '</caption>',
+}
+/** What follows the closed select in the corpus: markup whose reading turns on the mode the select leaves (a style in svg content holds markup, an HTML one text), each with links of its own. */
+const AFTER_SELECT: Readonly<Record<string, string>> = {
+  'svg style': '<svg><style><a href="svg-style">x</a></style></svg>',
+  'svg style after a template':
+    '<svg><template></template><style><a href="svg-style-after-template">x</a></style></svg>',
+  xmp: '<xmp><a href="in-xmp"></xmp><a href="after-xmp">x</a>',
+  'svg CDATA':
+    '<svg><![CDATA[x><a href="in-cdata">]]></svg><a href="after-cdata">x</a>',
+  'svg style in a new cell':
+    '<td><svg><style><a href="svg-style-in-cell">x</a></style></svg>',
+}
+
+// Value: protects=the learner whose browser reads a select by the HTML standard's rules before 2025, against a link that browser follows after a select closed and the filter's reading of those rules takes for text; fails_when=that reading gives the place of a closed select a mode other than the one it came in (restoreModeOfClosedSelect keeps the select's own mode), so svg content after it is ignored, a later style is read as raw text and its link as text, while such a browser keeps the link; why_new=Cycle 0047 row 70 (TEST-6), the restore of row 2 had only a timing test; seam=none (the pinned parser alone stands for a browser of the older select rules); no_claim=a wrong mode that makes the reading take more tags than such a browser (it then judges more, and no link stays live), and the restore's speed, which the timing test of select pairs holds
+test('after a select in a table part, a template, svg or MathML, nested or not, closes by its end, an input, a keygen, a textarea or a table token, the reading by the older select rules takes as a tag every link a browser of those rules keeps', () => {
+  // Arrange: every combination of the corpus's places, contents, closers and what follows.
+  const pages = Object.entries(SELECT_PLACES).flatMap(([place, opening]) =>
+    Object.entries(SELECT_CONTENTS).flatMap(([content, inside]) =>
+      Object.entries(SELECT_CLOSERS).flatMap(([closer, closing]) =>
+        Object.entries(AFTER_SELECT).map(([after, following]) => ({
+          name: `${place} | ${content} | ${closer} | ${after}`,
+          page: `${opening}<select>${inside}${closing}${following}`,
+        })),
+      ),
+    ),
+  )
+
+  // Act
+  const results = pages.map(({ name, page }) => {
+    const takenAsTags = readHtmlStartTags(page, {
+      selectRules: 'before-2025',
+      scriptingEnabled: true,
+    })
+      .flatMap(({ attributes }) => attributes)
+      .filter((attribute) => attribute.name === 'href')
+      .map((attribute) => attribute.written)
+    const kept = pinnedParserLinkAddresses(page, true)
+    return {
+      name,
+      keptCount: kept.length,
+      missed: kept.filter((address) => !takenAsTags.includes(address)),
+    }
+  })
+
+  // Assert: the corpus holds 5,525 pages whose trees keep 5,046 links, and the reading takes each of them as a tag.
+  assert.equal(results.length, 5_525)
+  assert.equal(
+    results.reduce((sum, { keptCount }) => sum + keptCount, 0),
+    5_046,
+  )
+  assert.deepEqual(
+    results.filter(({ missed }) => missed.length > 0),
+    [],
   )
 })
 

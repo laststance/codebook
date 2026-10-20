@@ -11,7 +11,7 @@ import { packageGitOptions } from './packageGitOptions.mjs'
  * @param ownedScratchDirectory - The asking publication's own scratch folder inside the repository; `undefined` when it has none.
  * @returns The entries of `git status --porcelain=v1 -z --untracked-files=all` in Git's order, each as Git prints it (two status letters, a space and the path from the root; the earlier path of a rename follows its entry as a path alone); empty for a clean checkout.
  * @example
- * await listCheckoutChanges('/work/codebook') // => [' M PROJECT_STATE.md', '?? notes.txt']
+ * await listCheckoutChanges('/work/codebook') // => [' M README.md', '?? notes.txt']
  */
 export async function listCheckoutChanges(repository, ownedScratchDirectory) {
   // Ignore only this publication's untracked scratch; tracked changes and other untracked files still count.

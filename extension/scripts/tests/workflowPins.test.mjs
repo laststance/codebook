@@ -39,6 +39,29 @@ function repositoryText(path, root = repositoryRoot) {
 }
 
 /**
+ * Reads what `pnpm-workspace.yaml` says of pnpm's wait before it installs a newly published version, with each key found in every form YAML gives a key at the top level: bare, in single or double quotes, and with spaces before its colon.
+ * @param workspace - The file's text.
+ * @returns `exempts`: whether a `minimumReleaseAgeExclude` key stands; `waitMinutes`: undefined without a `minimumReleaseAge` key, its value when that is a plain number of minutes (a comment allowed after it), and `NaN` for any other value, quotes or text included (Cycle 0047 row 243).
+ * @example
+ * pnpmReleaseWaitOf("'minimumReleaseAge' : 60 # an hour\n") // => { exempts: false, waitMinutes: 60 }
+ */
+function pnpmReleaseWaitOf(workspace) {
+  const exempts = /^(['"]?)minimumReleaseAgeExclude\1[ \t]*:/m.test(workspace)
+  const waitText = /^(['"]?)minimumReleaseAge\1[ \t]*:(.*)$/m.exec(
+    workspace,
+  )?.[2]
+  const plainMinutes =
+    waitText === undefined
+      ? undefined
+      : /^\s*(\d+)\s*(?:#.*)?$/.exec(waitText)?.[1]
+  return {
+    exempts,
+    waitMinutes:
+      waitText === undefined ? undefined : Number(plainMinutes ?? Number.NaN),
+  }
+}
+
+/**
  * Reads every workflow and every composite action of the repository, written as `.yml` or as `.yaml`, so a pin also holds for a job added later under either extension.
  * @param root - The folder that holds `.github`; the repository unless a test of these helpers hands a folder of its own.
  * @returns One entry per file: its path from the root and its text, the actions first, each group sorted by name.
@@ -1630,4 +1653,54 @@ test('a coverage upload that fails leaves a warning in the Test job', async () =
     warningStep?.includes('::warning title=Coverage upload failed::'),
     true,
   )
+})
+
+// Value: protects=pnpm's one-day wait before it installs a newly published version, for every package of the extension's workspace (pnpm 11 and later wait 1440 minutes unless told otherwise); fails_when=pnpm-workspace.yaml exempts a package or a version from the wait (the fallow 3.34.1 upgrade left ten such entries) or shortens the wait below a day, also by a value that is no plain number; why_new=Cycle 0047 row 1 (row 1066 of Cycle 0046), row 243 (P2CR-2), row 277 (P3OCR1a-2: a key in quotes or with a space before its colon passed); seam=none; no_claim=that the lockfile installs (CI's frozen install shows it)
+test('the extension workspace exempts no package from pnpm’s one-day wait for newly published versions and does not shorten that wait', async () => {
+  // Arrange
+  const workspace = await repositoryText('extension/pnpm-workspace.yaml')
+
+  // Act
+  const { exempts, waitMinutes } = pnpmReleaseWaitOf(workspace)
+
+  // Assert: no exemption, and a wait that is absent (pnpm's default of a day) or a plain number of at least a day.
+  assert.equal(exempts, false)
+  assert.equal(waitMinutes === undefined || waitMinutes >= 1440, true)
+})
+
+// Value: protects=the pin above; fails_when=pnpm-workspace.yaml exempts a package or shortens the wait with its key in quotes or with a space before its colon, forms YAML reads as the same key and the pin did not see; why_new=Cycle 0047 row 277 (P3OCR1a-2); seam=none; no_claim=keys in YAML's flow or complex-key forms, which no pnpm workspace file of this repository uses
+test('the pin of pnpm’s wait reads the wait and its exemptions in every form YAML gives a key at the top level', () => {
+  // Arrange
+  const workspaces = {
+    bareDay: 'minimumReleaseAge: 1440\n',
+    bareHour: 'minimumReleaseAge: 60 # an hour\n',
+    singleQuoted: "'minimumReleaseAge': 0\n",
+    doubleQuoted: '"minimumReleaseAge": 0\n',
+    spaceBeforeColon: 'minimumReleaseAge : 0\n',
+    quotedValue: 'minimumReleaseAge: "1440"\n',
+    quotedExemptions: '"minimumReleaseAgeExclude":\n  - fallow\n',
+    exemptionsWithASpace: 'minimumReleaseAgeExclude :\n  - fallow\n',
+    neither: 'allowBuilds:\n  unrs-resolver: true\n',
+  }
+
+  // Act
+  const waits = Object.fromEntries(
+    Object.entries(workspaces).map(([form, workspace]) => [
+      form,
+      pnpmReleaseWaitOf(workspace),
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(waits, {
+    bareDay: { exempts: false, waitMinutes: 1440 },
+    bareHour: { exempts: false, waitMinutes: 60 },
+    singleQuoted: { exempts: false, waitMinutes: 0 },
+    doubleQuoted: { exempts: false, waitMinutes: 0 },
+    spaceBeforeColon: { exempts: false, waitMinutes: 0 },
+    quotedValue: { exempts: false, waitMinutes: Number.NaN },
+    quotedExemptions: { exempts: true, waitMinutes: undefined },
+    exemptionsWithASpace: { exempts: true, waitMinutes: undefined },
+    neither: { exempts: false, waitMinutes: undefined },
+  })
 })

@@ -98,7 +98,7 @@ test('the request is sent through the chat’s input, with the three options it 
   ])
 })
 
-// Value: protects=the update in an editor that has no New Chat command; fails_when=the missing command fails the hand-over, so no request is sent, or the session is taken for Codebook's own, so the withdrawal runs the Cancel alone in a chat the learner uses; why_new=Cycle 0046 row 129 (the fallback); seam=none
+// Value: protects=the update in an editor that has no New Chat command; fails_when=the missing command fails the hand-over, so no request is sent, or the session is taken for Codebook's own, so the sentence of an update without a sign does not say that the chat may be working on a request of the learner; why_new=Cycle 0046 row 129 (the fallback); seam=none
 test('an editor without the New Chat command still gets the request, and the session is reported as shared with the learner', async () => {
   // Arrange
   const ranCommands: string[] = []

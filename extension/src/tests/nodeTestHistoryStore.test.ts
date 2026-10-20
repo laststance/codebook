@@ -921,6 +921,78 @@ test('a Node test asked for while another start is under way is admitted when th
   assert.deepEqual(await readdir(historyDirectory), [second.studyId])
 })
 
+// Value: protects=a Node test whose history start wrote its folder under the storage lock while the release of the lock fails at each of its attempts (a scanner or an indexer holds writer.lock on Windows): the test starts with its history, and the lock left is taken back by this window's next start (Cycle 0047 row 199); fails_when=the release's failure fails the start, so the test is refused while the history's folder and its active entry stay until the window closes, unsealed and taking a place of the saved study limit; why_new=Cycle 0047 row 254 (P3CLA-9): row 240 made only a recording's start stand; seam=node:fs/promises unlink, which refuses to remove writer.lock while the test blocks it; no_claim=a real scanner on Windows
+test('a Node test history start whose storage lock cannot be released after it made the history still starts, and the next start takes the lock back', async (context) => {
+  // Arrange: a limit of two histories; the removal of writer.lock is refused during the first start.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-node-history-unreleased-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const workspaceKey = createWorkspaceKey()
+  const store = new NodeTestHistoryStore(directory, workspaceKey, () => 2)
+  const first = nodeTestHistoryHeader(workspaceKey),
+    second = nodeTestHistoryHeader(workspaceKey)
+  const lockPath = join(directory, 'writer.lock')
+  const unlinkBefore = fsPromises.unlink
+  const blockedRelease = context.mock.method(
+    fsPromises,
+    'unlink',
+    async (...input: Parameters<typeof unlinkBefore>) => {
+      if (input[0] === lockPath)
+        throw Object.assign(
+          new Error(`EPERM: operation not permitted, unlink '${lockPath}'`),
+          { code: 'EPERM' },
+        )
+      return unlinkBefore(...input)
+    },
+  )
+  const sealedOrRefused = (
+    starting: ReturnType<NodeTestHistoryStore['start']>,
+  ): Promise<string> =>
+    starting.then(
+      async (writer) => {
+        await writer.finish('partial', 'The learner stopped this run.')
+        return 'started and sealed'
+      },
+      (error: unknown) => String(error),
+    )
+
+  // Act
+  const firstStart = await sealedOrRefused(store.start(first))
+  const lockLeftByTheFirstStart = await readFile(lockPath).then(
+    () => true,
+    () => false,
+  )
+  blockedRelease.mock.restore()
+  const secondStart = await sealedOrRefused(store.start(second))
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstStart,
+      lockLeftByTheFirstStart,
+      secondStart,
+      lockLeftAtTheEnd: await readFile(lockPath).then(
+        () => true,
+        () => false,
+      ),
+      listed: (await store.list())
+        .map((entry) => ({ studyId: entry.studyId, status: entry.status }))
+        .sort((left, right) => left.studyId.localeCompare(right.studyId)),
+    },
+    {
+      firstStart: 'started and sealed',
+      lockLeftByTheFirstStart: true,
+      secondStart: 'started and sealed',
+      lockLeftAtTheEnd: false,
+      listed: [
+        { studyId: first.studyId, status: 'partial' },
+        { studyId: second.studyId, status: 'partial' },
+      ].sort((left, right) => left.studyId.localeCompare(right.studyId)),
+    },
+  )
+})
+
 // Value: protects=a Node test is not started beside a writer of another window, and a learner or an agent whose start is refused learns which file holds the lock; fails_when=the start of a history ignores the storage lock (Cycle 0046 row 190), or a refused start leaves a folder behind; why_new=the history store never took the storage lock; seam=the lock file, which names a real running process of this machine with its real start, as a window that is writing does
 test('a Node test asked for while another window holds the storage lock is refused with the lock’s sentence, and nothing is written', async (context) => {
   // Arrange: the storage lock of another running window of this machine.

@@ -8,7 +8,7 @@ Goal version: copy the current PRODUCT_GOAL.md version\
 Tracking issue: link after cycle selection\
 Goal issue: https://github.com/laststance/codebook/issues/1\
 Goal links: Gxx\
-Source state: link to preceding cycle or initial PROJECT_STATE.md
+Source state: link to preceding cycle
 
 ## Question and authorized scope
 
@@ -39,7 +39,7 @@ Open the actual PNG; metadata or a prompt is not inspection. Use [the evidence t
 ## Source-gap audit and selected increment
 
 - Baseline source/goal/image identity; all-row or affected-row audit and why:
-- Every AC accounted for in PROJECT_STATE; inspected entry/symbol and implementation mismatch / UNKNOWN separately from proof:
+- Every AC accounted for in the current state; inspected entry/symbol and implementation mismatch / UNKNOWN separately from proof:
 - Primary gap and dependency/regression AC IDs; why selected now:
 - Source change or bounded experiment; starting action → expected outcome; falsifying observation:
 - Carry-forward rationale for unaffected rows:
@@ -82,7 +82,7 @@ No observations yet. For each attempt: date, source revision/dirty state, versio
 
 - Exact next action:
 - Changed files / branch / active processes:
-- State updated in PROJECT_STATE.md:
+- Current state updated (this record's `## Current state`: when this cycle starts, the section moves here from the preceding record, so the template holds no copy):
 - Owner rules stated in the required reads:
 - Defects this cycle leaves unfixed (all go to the next cycle's Issue):
 - At most one next candidate and why (after evidence):

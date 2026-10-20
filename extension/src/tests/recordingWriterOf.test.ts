@@ -114,6 +114,28 @@ async function startRecording(
 }
 
 /**
+ * Saves the study of a recording in the library that shares its storage, as the run's checkpoint saves it: a configured study with the recording's study id.
+ * @param storage - The test's storage.
+ * @param studyId - The recording's study id, `<instance id>_<run id>`.
+ * @example await saveStudyOfRecording(storage, recording.studyId)
+ */
+async function saveStudyOfRecording(
+  storage: Awaited<ReturnType<typeof recordingStorage>>,
+  studyId: string,
+): Promise<void> {
+  const study = createConfiguredStudy()
+  const [instanceId = '', runId = ''] = studyId.split('_')
+  for (const observation of study.observations)
+    observation.snapshotUri = observation.snapshotUri
+      .replace(study.instanceId, instanceId)
+      .replace(study.runId, runId)
+  study.instanceId = instanceId
+  study.runId = runId
+  study.id = studyId
+  await storage.library.saveStudy(study)
+}
+
+/**
  * Rewrites what a recording's header says of its writer, for a test that names another editor process or another creation time.
  * @param folder - The recording's folder.
  * @param change - The owner fields and the creation time to put in the header.
@@ -241,17 +263,24 @@ test('a recording whose writer’s process id a process of another user has, who
     byHeader: await writerOf(
       byHeader.folder,
       'counts',
-      new Map([[ID_OF_NO_PROCESS, Promise.resolve(undefined)]]),
+      new Map([[`${ID_OF_NO_PROCESS}`, Promise.resolve(undefined)]]),
     ),
     byRecord: await writerOf(
       byRecord.folder,
       'counts',
-      new Map([[ID_OF_NO_PROCESS, Promise.resolve(undefined)]]),
+      new Map([
+        [`${ID_OF_NO_PROCESS} ${recordedStart}`, Promise.resolve(undefined)],
+      ]),
     ),
     byRecordWithItsStart: await writerOf(
       byRecord.folder,
       'counts',
-      new Map([[ID_OF_NO_PROCESS, Promise.resolve(recordedStart)]]),
+      new Map([
+        [
+          `${ID_OF_NO_PROCESS} ${recordedStart}`,
+          Promise.resolve(recordedStart),
+        ],
+      ]),
     ),
   }
 
@@ -350,8 +379,8 @@ test('a writer record that names no recording, as an earlier build of this deliv
   assert.deepEqual(writer, { kind: 'gone' })
 })
 
-// Value: protects=the writer record of another recording of the same study id when one recording is sealed; fails_when=the seal removes the record kept by the study id whatever recording it names, so the other recording loses the record that judges it (AF10); why_new=Cycle 0046 review AF10; seam=the record, which the test makes name the recordings.v3 recording of the id, and the seal of the recordings.v2 recording by this window's writer
-test('the seal of a recording removes only its own writer record and leaves the record of another recording of the same id', async (context) => {
+// Value: protects=the writer record of another recording of the same study id when the study of one sealed recording is saved after the seal, the save that removes a sealed recording's record since Cycle 0047 row 98; fails_when=that removal removes the record kept by the study id whatever recording it names, so the other recording loses the record that judges it (AF10); why_new=Cycle 0047 row 242 (P2CORE-2): the test acted on the seal, which since row 98 removes no record, so it could not fail; seam=the record, which the test makes name the recordings.v3 recording of the id, the seal of the recordings.v2 recording by this window's writer, and the library's save of the study that follows it
+test('the save that follows the seal of a recording removes only its own writer record and leaves the record of another recording of the same id', async (context) => {
   // Arrange: the store started recordings.v2/<id>; its record now names recordings.v3/<id>, as that recording's start would have written it.
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
@@ -368,12 +397,16 @@ test('the seal of a recording removes only its own writer record and leaves the 
 
   // Act
   await recording.writer.finish(1)
+  await saveStudyOfRecording(storage, recording.studyId)
 
   // Assert
   assert.deepEqual(
     {
       isRecordPresent: await isPresent(recordPath),
-      namedRecording: JSON.parse(await readFile(recordPath, 'utf8')).recording,
+      namedRecording: await readFile(recordPath, 'utf8').then(
+        (text) => JSON.parse(text).recording,
+        () => 'no record',
+      ),
     },
     {
       isRecordPresent: true,
@@ -492,8 +525,8 @@ test('a recording made by 0.2.29.0 is judged by its header as before: its writer
   })
 })
 
-// Value: protects=a recording whose run ended, which no writer holds any more, whatever its header names; fails_when=a sealed recording, or a folder whose header cannot be read, is judged by the process its header names, so a sealed recording of a live window is taken for that window's reservation and stays unlisted, or a removal refuses it; why_new=Cycle 0046 review AF4: the seal had no test of its own once the yes-or-no form went; seam=the header, which names a live child process of the test, and a header the test makes unreadable
-test('a sealed recording, and one whose header cannot be read, have no writer any more, whatever their header names', async (context) => {
+// Value: protects=a recording whose run ended, which no writer holds any more, whatever its header names, and a folder whose header stands and cannot be read, which names no writer and proves none absent; fails_when=a sealed recording is judged by the process its header names, so a sealed recording of a live window is taken for that window's reservation and stays unlisted, or a removal refuses it; or a header that stands and gives nothing counts as finished, so a removal moves without the learner's choice a recording whose header a scanner holds while another window still records it or still has to save it (Cycle 0047 row 251, which changed this case's answer from finished to unreadable); why_new=Cycle 0046 review AF4: the seal had no test of its own once the yes-or-no form went; seam=the header, which names a live child process of the test, and a header the test makes unreadable
+test('a sealed recording has no writer any more, whatever its header names, and one whose header stands and cannot be read is unreadable', async (context) => {
   // Arrange: two recordings whose headers name a live process of this machine; one is sealed, the other's header is no JSON.
   const storage = await recordingStorage(context)
   const liveProcess = await idleChild(context)
@@ -514,7 +547,7 @@ test('a sealed recording, and one whose header cannot be read, have no writer an
   // Assert
   assert.deepEqual(answers, {
     sealed: { kind: 'finished' },
-    unreadable: { kind: 'finished' },
+    unreadable: { kind: 'unreadable' },
   })
 })
 
@@ -654,7 +687,7 @@ test('this window’s recording under a changed host name is still its own while
     owner: { pid: process.pid, hostname: 'laptop.home-network' },
   })
   const startsWithoutOwn = (): ProcessStartsOfList =>
-    new Map([[process.pid, Promise.resolve(undefined)]])
+    new Map([[`${process.pid}`, Promise.resolve(undefined)]])
 
   // Act
   const answers = {
@@ -686,16 +719,19 @@ test('a live writer of this user whose recorded start cannot be read here may st
       sessionId: randomUUID(),
     },
   })
+  const recordedStart = await readProcessStart(otherWindow.pid!)
   await rewriteWriterRecord(storage.directory, recording.studyId, {
     pid: otherWindow.pid!,
-    processStart: await readProcessStart(otherWindow.pid!),
+    processStart: recordedStart,
   })
 
   // Act
   const writer = await writerOf(
     recording.folder,
     'ignored',
-    new Map([[otherWindow.pid!, Promise.resolve(undefined)]]),
+    new Map([
+      [`${otherWindow.pid!} ${recordedStart}`, Promise.resolve(undefined)],
+    ]),
   )
 
   // Assert
@@ -718,7 +754,7 @@ test('a live writer whose start lies 30 s after the recording was created may st
     createdAt: '2026-10-18T09:00:00.000Z',
   })
   const startedAt = (start: string): ProcessStartsOfList =>
-    new Map([[liveProcess.pid!, Promise.resolve(`win:${start}`)]])
+    new Map([[`${liveProcess.pid!}`, Promise.resolve(`win:${start}`)]])
 
   // Act
   const writers = {
@@ -894,7 +930,7 @@ const NAME_IN_A_RECORDING_AS_0_2_29_0_ACCEPTS_IT =
 
 // Value: protects=a window of 0.2.29.0 that shares the storage (until it is reloaded after an update, and after a rollback), which must still list and replay what this build records; fails_when=this build writes the writer's identity into the header or the recording's folder, or puts any entry that is no recording folder into a recordings root, which 0.2.29.0 refuses ("Recording library contains a non-directory entry.", "Recording contains unknown files.", a header schema error); why_new=Cycle 0046 /ship review R10: the record of the writer is new and lies outside every recording; seam=none, the folders as this build writes them, read with 0.2.29.0's rules
 test('the folders this build writes for a recording stay as 0.2.29.0 reads them: the header names its writer in the three fields it knows, and the record of the writer lies outside every recordings root', async (context) => {
-  // Arrange: one recording that is being written and one that was sealed.
+  // Arrange: one recording that is being written and one that was sealed before its run saved its study, which keeps the record of its writer until that save (Cycle 0047 row 36).
   const storage = await recordingStorage(context)
   const beingWritten = await startRecording(storage),
     sealed = await startRecording(storage)
@@ -934,23 +970,29 @@ test('the folders this build writes for a recording stay as 0.2.29.0 reads them:
         (name) => !NAME_IN_A_RECORDING_AS_0_2_29_0_ACCEPTS_IT.test(name),
       ),
       learningDirectory: (await readdir(storage.directory)).sort(),
-      writerRecords: await readdir(join(storage.directory, 'recording-owners')),
+      writerRecords: (
+        await readdir(join(storage.directory, 'recording-owners'))
+      ).sort(),
     },
     {
       ownersRead: [true, true],
       everyRootEntryIsARecordingFolder: true,
       namesUnknownTo0_2_29_0: [],
       learningDirectory: ['recording-owners', 'recordings.v2'],
-      writerRecords: [`${beingWritten.studyId}.json`],
+      writerRecords: [
+        `${beingWritten.studyId}.json`,
+        `${sealed.studyId}.json`,
+      ].sort(),
     },
   )
 })
 
-// Value: protects=the record of a recording's writer lasting exactly as long as the writer, so it never judges a finished recording and never stays behind; fails_when=the record is not written when the recording starts (the recording is judged by its header alone), or stays after the seal; why_new=Cycle 0046 /ship review R10 (b); seam=none, the store's own start and seal
-test('the record of a recording’s writer names this window’s process when the recording starts and is gone once the recording is sealed', async (context) => {
-  // Arrange
+// Value: protects=the record of a recording's writer lasting exactly as long as its run holds the recording, so it never judges a finished recording and never stays behind, also for a run whose checkpoint saved the study while it ran; fails_when=the record is not written when the recording starts (the recording is judged by its header alone), the seal removes it because a checkpoint saved the study before the seal, so the study's final state is not saved yet while nothing holds the recording (Cycle 0047 row 98, ADV-10), or the save that follows the seal leaves it; why_new=Cycle 0046 /ship review R10 (b); the record went at the seal of a recording whose study was saved until Cycle 0047 row 98 (ADV-10); seam=none, the store's own start and seal, and the library's saves
+test('the record of a recording’s writer names this window’s process when the recording starts, stays at the seal after a checkpoint saved the study, and goes with the save that follows the seal', async (context) => {
+  // Arrange: the run's checkpoint has saved its study before the recording is sealed.
   const storage = await recordingStorage(context)
   const recording = await startRecording(storage)
+  await saveStudyOfRecording(storage, recording.studyId)
   const recordPath = recordingOwnerRecordPath(
     storage.directory,
     recording.studyId,
@@ -961,6 +1003,9 @@ test('the record of a recording’s writer names this window’s process when th
 
   // Act
   await recording.writer.finish(1)
+  const isRecordLeftAfterTheSeal = await isPresent(recordPath)
+  await saveStudyOfRecording(storage, recording.studyId)
+  const isRecordLeftAfterTheSaveThatFollowsTheSeal = await isPresent(recordPath)
 
   // Assert
   assert.deepEqual(
@@ -969,15 +1014,40 @@ test('the record of a recording’s writer names this window’s process when th
       hostname: recordAtStart.hostname,
       machineId: recordAtStart.machineId,
       processStart: recordAtStart.processStart,
-      isRecordLeftAfterTheSeal: await isPresent(recordPath),
+      isRecordLeftAfterTheSeal,
+      isRecordLeftAfterTheSaveThatFollowsTheSeal,
     },
     {
       pid: process.pid,
       hostname: hostname(),
       machineId: 'machine-a',
       processStart: await readProcessStart(process.pid),
-      isRecordLeftAfterTheSeal: false,
+      isRecordLeftAfterTheSeal: true,
+      isRecordLeftAfterTheSaveThatFollowsTheSeal: false,
     },
+  )
+})
+
+// Value: protects=the finished recording of a run that has not saved its study yet, which another window must neither list as what is left of a removed study nor move to the Trash before that save; fails_when=the seal removes the record of the writer whatever the study's state, so nothing tells another window that the run still holds the recording, or the save leaves the record, so after the archive was removed by hand the rest stays unlisted while the writer runs; why_new=Cycle 0047 row 36 (P3RT14); seam=none, the store's own start and seal, and the library's save; no_claim=a second editor window (studyRemoval tests)
+test('the record of a recording’s writer stays after the seal while the run has not saved its study, and goes with the study’s save', async (context) => {
+  // Arrange
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  const recordPath = recordingOwnerRecordPath(
+    storage.directory,
+    recording.studyId,
+  )
+
+  // Act
+  await recording.writer.finish(1)
+  const isRecordLeftAfterTheSeal = await isPresent(recordPath)
+  await saveStudyOfRecording(storage, recording.studyId)
+  const isRecordLeftAfterTheSave = await isPresent(recordPath)
+
+  // Assert
+  assert.deepEqual(
+    { isRecordLeftAfterTheSeal, isRecordLeftAfterTheSave },
+    { isRecordLeftAfterTheSeal: true, isRecordLeftAfterTheSave: false },
   )
 })
 
@@ -1244,6 +1314,74 @@ test('the saved studies list reads the start of each writer process once per lis
       listed: [[writers.ofCrashedWindow], [writers.ofCrashedWindow]],
       readsOfTheFirstList: [writers.liveWindow, writers.laterProcess].sort(),
       readsOfTheSecondList: [writers.liveWindow],
+    },
+  )
+})
+
+// Value: protects=the live recording of a window whose process id an earlier, crashed window's recording names too, on Windows, where the start of a process this user may not read (one run as administrator) comes from the process table and confirms only the start it is asked for (row 33); fails_when=the list keeps one read per process id whatever start a record expects, so the earlier record's read (the table's time, which confirms no other start) answers the live window's record too: its writer is judged gone, a gone writer is not judged again while this window runs, and this window's Delete moves the live recording to the Trash, so the live window's next save throws StudyRemovedWithItsRecordingError; why_new=Cycle 0047 row 236 (P2CLA-2): the list's reads were kept by process id alone; seam=the reader of process starts of the loaded judgement, which answers for the live window's process as the Windows table does: the record's start when it is the one asked for, the table's time otherwise; no_claim=a real process table on Windows (row 33's tests read it)
+test('a live window’s recording is judged by its own recorded start when an earlier recording of the same list names its process id with another start', async (context) => {
+  // Arrange: a recording of a crashed window and one of a live window, both naming the live window's process id; the crashed one's record keeps an earlier start.
+  const storage = await recordingStorage(context)
+  const liveWindow = await idleChild(context)
+  const liveStart = (await readProcessStart(liveWindow.pid!))!
+  const startForm = liveStart.slice(0, liveStart.indexOf(':'))
+  const crashedStart = `${startForm}:the start of the crashed window`
+  const tableTime = `${startForm}:the creation time of the process table`
+  const ofCrashedWindow = await startRecording(storage)
+  const ofLiveWindow = await startRecording(storage)
+  for (const [recording, processStart] of [
+    [ofCrashedWindow, crashedStart],
+    [ofLiveWindow, liveStart],
+  ] as const) {
+    await rewriteHeader(recording.folder, {
+      owner: { pid: liveWindow.pid!, hostname: hostname() },
+    })
+    await rewriteWriterRecord(storage.directory, recording.studyId, {
+      pid: liveWindow.pid!,
+      processStart,
+    })
+  }
+  const judge = await loadModule<typeof judgeModule>(
+    resolve(__dirname, '../utils/isRecordingWriterLive.js'),
+    {
+      './readProcessStart': {
+        readProcessStart: async (
+          ...[pid, inputs]: Parameters<typeof readProcessStart>
+        ): ReturnType<typeof readProcessStart> => {
+          if (pid !== liveWindow.pid) return readProcessStart(pid, inputs)
+          // The process table confirms only the start it is asked for; any other start is answered by the table's own time.
+          return inputs?.expectedStart === liveStart ? liveStart : tableTime
+        },
+      },
+    },
+    { Error },
+  )
+  const { recordingWriterOf: judgedWriterOf } = await loadModule<
+    typeof writerModule
+  >(
+    resolve(__dirname, '../utils/recordingWriterOf.js'),
+    { './isRecordingWriterLive': judge },
+    { Error },
+  )
+  const kindOf = async (
+    folder: string,
+    starts: ProcessStartsOfList,
+  ): Promise<string> => (await judgedWriterOf(folder, 'counts', starts)).kind
+
+  // Act: one list judges the crashed window's recording first; a later list, as a removal makes, judges the live one again.
+  const oneList: ProcessStartsOfList = new Map()
+  const inOneList = {
+    ofCrashedWindow: await kindOf(ofCrashedWindow.folder, oneList),
+    ofLiveWindow: await kindOf(ofLiveWindow.folder, oneList),
+  }
+  const ofLiveWindowInALaterList = await kindOf(ofLiveWindow.folder, new Map())
+
+  // Assert
+  assert.deepEqual(
+    { inOneList, ofLiveWindowInALaterList },
+    {
+      inOneList: { ofCrashedWindow: 'gone', ofLiveWindow: 'may-run' },
+      ofLiveWindowInALaterList: 'may-run',
     },
   )
 })

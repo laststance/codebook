@@ -176,15 +176,15 @@ test('the dialog about a recording whose writer this computer cannot confirm nam
   assert.deepEqual(dialogs, {
     anotherComputer: {
       title:
-        "This study's recording may still be running on another computer. Move the study to the Trash anyway?",
+        "This study's recording may still be in use on another computer. Move the study to the Trash anyway?",
       detail:
-        'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records it. If a window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
+        'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records it or still has to save it. If a window still records it or still has to save it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
     },
     thisComputer: {
       title:
-        "This study's recording may still be running in another editor window. Move the study to the Trash anyway?",
+        "This study's recording may still be in use in another editor window. Move the study to the Trash anyway?",
       detail:
-        'Its recording was started on workstation at 10/1/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer still records it. If a window still records it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
+        'Its recording was started on workstation at 10/1/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer still records it or still has to save it. If a window still records it or still has to save it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
     },
     button: 'Move to Trash Anyway',
     buttonOnWindows: 'Move to Recycle Bin Anyway',
@@ -225,14 +225,14 @@ test('the dialog about several recordings whose writers this computer cannot con
   // Assert
   assert.deepEqual(details, {
     anotherComputerFirst:
-      'Its recordings were started on host-one at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records them. If a window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+      'Its recordings were started on host-one at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records them or still has to save them. If a window still records one of them or still has to save it, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
     thisComputerOnly:
-      'Its recordings were started on workstation at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer still records them. If a window still records one of them, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+      'Its recordings were started on workstation at 10/1/2026, 10:00:00 AM and on workstation at 10/17/2026, 10:00:00 AM. Codebook cannot tell whether an editor window of this computer still records them or still has to save them. If a window still records one of them or still has to save it, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
   })
 })
 
 // Value: protects=the learner reading the title of the dialog about several recordings, which names how many and only the places that apply; fails_when=the title takes the first writer's place alone, so it is singular for several recordings and names only another computer when one of them is of this computer (S6); why_new=Cycle 0046 third review PD3-4 (S6); seam=none
-test('the title of the dialog about several recordings says some of them may still be running, on another computer, in another editor window, or in both', () => {
+test('the title of the dialog about several recordings says some of them may still be in use, on another computer, in another editor window, or in both', () => {
   // Arrange
   const messages = studyRemovalMessages('Trash')
   const ofHostOne = {
@@ -265,10 +265,58 @@ test('the title of the dialog about several recordings says some of them may sti
   // Assert
   assert.deepEqual(titles, {
     bothOnOtherComputers:
-      "Some of this study's recordings may still be running on another computer. Move the study to the Trash anyway?",
+      "Some of this study's recordings may still be in use on another computer. Move the study to the Trash anyway?",
     bothOnThisComputer:
-      "Some of this study's recordings may still be running in another editor window. Move the study to the Trash anyway?",
+      "Some of this study's recordings may still be in use in another editor window. Move the study to the Trash anyway?",
     inBothPlaces:
-      "Some of this study's recordings may still be running on another computer or in another editor window. Move the study to the Trash anyway?",
+      "Some of this study's recordings may still be in use on another computer or in another editor window. Move the study to the Trash anyway?",
+  })
+})
+
+// Value: protects=the learner reading the dialog about a recording whose header or writer record Codebook could not read now, which names no host and no start; fails_when=the dialog names a host and a start the recording never gave, says nothing of the failed read, or calls such a recording one of another computer, so the learner moves the study of a window that may still save it without knowing why Codebook asks; why_new=Cycle 0047 row 251 (P3CXA-C1): a recording read by a look that may have failed is no longer finished, and Delete asks about it; seam=none
+test('the dialog about a recording whose files Codebook could not read says so and why, names it as one in another editor window, and speaks of the other recordings beside named ones', () => {
+  // Arrange
+  const messages = studyRemovalMessages('Trash')
+  const unreadable = { place: 'unreadable' } as const,
+    ofOldLaptop = {
+      host: 'old-laptop.local',
+      startedAt: '10/1/2026, 10:00:00 AM',
+      place: 'another-computer',
+    } as const
+  // Act
+  const dialogs = {
+    one: {
+      title: messages.unconfirmedWriterTitle([unreadable]),
+      detail: messages.unconfirmedWriterDetail([unreadable]),
+    },
+    two: {
+      title: messages.unconfirmedWriterTitle([unreadable, unreadable]),
+      detail: messages.unconfirmedWriterDetail([unreadable, unreadable]),
+    },
+    besideOneOfAnotherComputer: {
+      title: messages.unconfirmedWriterTitle([ofOldLaptop, unreadable]),
+      detail: messages.unconfirmedWriterDetail([ofOldLaptop, unreadable]),
+    },
+  }
+  // Assert
+  assert.deepEqual(dialogs, {
+    one: {
+      title:
+        "This study's recording may still be in use in another editor window. Move the study to the Trash anyway?",
+      detail:
+        'Codebook could not read the files of its recording now. A virus scanner may hold them, or another editor window may still record it or still have to save it. If a window still records it or still has to save it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
+    },
+    two: {
+      title:
+        "Some of this study's recordings may still be in use in another editor window. Move the study to the Trash anyway?",
+      detail:
+        'Codebook could not read the files of its recordings now. A virus scanner may hold them, or another editor window may still record them or still have to save them. If a window still records one of them or still has to save it, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+    },
+    besideOneOfAnotherComputer: {
+      title:
+        "Some of this study's recordings may still be in use on another computer or in another editor window. Move the study to the Trash anyway?",
+      detail:
+        'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records it or still has to save it. Codebook could not read the files of its other recording now. A virus scanner may hold them, or another editor window may still record it or still have to save it. If a window still records one of them or still has to save it, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+    },
   })
 })

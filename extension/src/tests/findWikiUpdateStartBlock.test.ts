@@ -125,6 +125,117 @@ test('an earlier publish that left its journal behind blocks the start and names
   }
 })
 
+// Value: protects=the learner who presses Update after a publish or a preview (`--render-only`) was stopped and left its publish lock beside the Wiki folder (since row 172); fails_when=the start check looks for the journal alone, so the update starts, the agent prepares (row 209: `--prepare` takes no lock) and writes a whole candidate, and only its preview or its publish is refused for the lock, after all that work; why_new=Cycle 0047 row 237 (P2CLA-3): the check named the journal only; seam=none (the shipped publisher prepares and refuses beside the lock); no_claim=the lock's owner, which the start check does not judge, as it does not judge the journal's
+test('a publish lock a stopped publish or preview left blocks the start and names the lock, as the real publisher refuses the publish beside it', async () => {
+  // Arrange: a lock written a minute before the check looks.
+  const wiki = await publishedWikiFixture()
+  await writeFile(
+    `${wiki.outputDirectory}.publish-lock.json`,
+    JSON.stringify({ pid: 99_999_999 }),
+  )
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+      { now: () => Date.now() + 60_000 },
+    )
+
+    // Assert
+    assert.deepEqual(block, {
+      cause: 'held-publish-lock',
+      paths: ['wiki.publish-lock.json'],
+    })
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, { heading: 'Second' })
+    await assert.rejects(
+      wiki.publish(stage),
+      /Another publish of this Wiki holds its publish lock/,
+    )
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the learner who presses Update while a publish swaps the Wiki folders, when its journal stands beside its publish lock, or after a publish was stopped with both standing; fails_when=the start check names the journal first and says that an earlier publish did not finish, and sends the learner to the recovery, which refuses while that publish runs, although a running publish holds its lock as long as its journal stands; why_new=Cycle 0047 row 253 (P3SM-09: the cell "journal and lock both stand" had no test; P3OCR2a1-2 = P3CLA-8); seam=none; no_claim=the owner of either record, which the start check does not judge
+test('a journal and a publish lock that stand together block the start with the lock, which a running publish holds as long as its journal stands', async () => {
+  // Arrange: a journal and a lock, both written a minute before the check looks.
+  const wiki = await publishedWikiFixture()
+  await writeFile(
+    `${wiki.outputDirectory}.publish-journal.json`,
+    JSON.stringify({ operation: 'publish', pid: process.pid }),
+  )
+  await writeFile(
+    `${wiki.outputDirectory}.publish-lock.json`,
+    JSON.stringify({ pid: process.pid }),
+  )
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+      { now: () => Date.now() + 60_000 },
+    )
+
+    // Assert
+    assert.deepEqual(block, {
+      cause: 'held-publish-lock',
+      paths: ['wiki.publish-lock.json'],
+    })
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the learner who presses Update while a publish or a preview is ending: its publish lock, written a moment ago, gets the journal's second look; fails_when=a fresh lock is reported at once as an unfinished publish although the run that holds it ends within the look, or a lock that stays at the second look is let through; why_new=Cycle 0047 row 237 (P2CLA-3); seam=the check's wait, during which the test removes the lock or leaves it; no_claim=the time a real publish holds its lock
+test('a publish lock written a moment ago is looked at once more: one gone by then does not block the start, one still there does', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  const lockPath = `${wiki.outputDirectory}.publish-lock.json`
+  const waits: number[] = []
+  try {
+    await writeFile(lockPath, '{}')
+    const lockThatGoes = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+      {
+        wait: async (delayMs) => {
+          waits.push(delayMs)
+          // The run that holds the lock ends while the check waits for its second look.
+          await rm(lockPath)
+        },
+      },
+    )
+    await writeFile(lockPath, '{}')
+
+    // Act
+    const lockThatStays = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      wiki.projectRoot,
+      {
+        wait: async (delayMs) => {
+          waits.push(delayMs)
+        },
+      },
+    )
+
+    // Assert
+    assert.deepEqual(
+      { lockThatGoes, lockThatStays, waits },
+      {
+        lockThatGoes: undefined,
+        lockThatStays: {
+          cause: 'held-publish-lock',
+          paths: ['wiki.publish-lock.json'],
+        },
+        waits: [2_000, 2_000],
+      },
+    )
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
 test('a published Wiki nobody touched does not block the start, and the learner’s own file is not mistaken for an edit', async () => {
   // Arrange
   const wiki = await publishedWikiFixture()

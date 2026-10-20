@@ -84,7 +84,7 @@ export type HeldUpdateStep =
  * @param options.cursor - Whether the host is Cursor (the agent runs through its CLI) instead of VS Code (chat plus watch).
  * @param options.chatFails - Makes VS Code's chat command throw: "Chat is unavailable" for `true`, the given message for a text.
  * @param options.chatReply - What VS Code's chat command resolves with once it took the request, as it does with `blockOnResponse` when the chat's response completed (`{}`), completed with an error (`{ errorDetails }`) or waits for a confirmation (`{ type: 'confirmation' }`); a reply that waits for a confirmation, at once, when omitted, so the chat counts as working. A promise that never settles is a chat that never answers.
- * @param options.chatAnswerClock - Sleep handed to the start of the update in the chat (the hand-over of the request, the looks at the Wiki's output, the wait for the first answer and the withdrawal of an unanswered request), so a test can pass the bound of the session's start, the 30 second bound and the withdrawal's settle time without waiting.
+ * @param options.chatAnswerClock - Sleep handed to the start of the update in the chat (the hand-over of the request, the looks at the Wiki's output and the wait for the first answer), so a test can pass the bound of the session's start and the 30 second bound without waiting.
  * @param options.missingEditorCommands - Commands this editor does not have: the list of its commands leaves them out, and running one throws the editor's "command not found". An editor has the chat's commands when omitted.
  * @param options.signWatchFails - Makes the editor throw this message when the extension registers its listener for opened documents.
  * @param options.editorCommand - What the editor does when the extension runs a command other than the chat request (the reveal of the chat, which is the chat command without a query, the editor's New Chat, the chat's Cancel and its "Remove All Queued", for example): it gets the command's name, and what it returns or throws is the command's result. Such a command returns nothing when omitted.
@@ -546,7 +546,7 @@ export async function openWikiUpdateWindow(options: {
             : freshness
         },
       },
-      // The real start in the chat runs (the hand-over, the wait for the first answer, the withdrawal); only its sleep is replaced by the test's clock when one is given.
+      // The real start in the chat runs (the hand-over, the wait for the first answer, the end of an unanswered request); only its sleep is replaced by the test's clock when one is given.
       './utils/startWikiChatUpdate': {
         startWikiChatUpdate: (
           startOptions: Parameters<typeof startWikiChatUpdate>[0],

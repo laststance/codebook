@@ -13,7 +13,7 @@ import fsPromises, {
   writeFile,
 } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
@@ -24,6 +24,7 @@ import { RecordingStore } from '../recordingStore'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { lookAtRecording } from '../utils/lookAtRecording'
 import { readProcessStart } from '../utils/readProcessStart'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { systemTrashName } from '../utils/systemTrashName'
@@ -8254,15 +8255,15 @@ async function unsealedRecordingOf(
 
 /** The dialog that offers "Move to Trash Anyway" for a recording of old-laptop.local started on 2026-10-01 at 08:00 UTC, as the reader opens it. */
 const DIALOG_OF_A_RECORDING_ON_ANOTHER_HOST = {
-  title: `This study's recording may still be running on another computer. Move the study to the ${TRASH} anyway?`,
+  title: `This study's recording may still be in use on another computer. Move the study to the ${TRASH} anyway?`,
   options: {
     modal: true,
-    detail: `Its recording was started on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it. If a window still records it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+    detail: `Its recording was started on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it. If a window still records it or still has to save it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
   },
   items: [`Move to ${TRASH} Anyway`],
 }
 
-// Value: protects=a learner whose saved study has the recording an editor left when it crashed on this Mac under an earlier host name (macOS takes it from the network), or on another computer, which Codebook cannot probe; fails_when=the removal refuses for good with "Another editor window is still recording this study", although no such window exists, and nothing else can remove the study; why_new=Cycle 0046 OCR review OC1: R9's refusal took a recording of another host for a live writer of this machine; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
+// Value: protects=a learner whose saved study has the recording an editor left when it crashed on this Mac under an earlier host name (macOS takes it from the network), or on another computer, which Codebook cannot probe; fails_when=the removal refuses for good with "Another editor window has not finished recording and saving this study", although no such window exists, and nothing else can remove the study; why_new=Cycle 0046 OCR review OC1: R9's refusal took a recording of another host for a live writer of this machine; seam=the recording's header (another host, no record of its writer, as 0.2.29.0 leaves it), and the editor's dialogs and Trash, stubbed at the vscode boundary
 test('a saved study whose crashed recording names another host is moved with its recording after the learner chooses Move to Trash Anyway in a dialog that names that host and the recording’s start', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -8396,10 +8397,10 @@ test('a saved study whose recordings name two other hosts is moved with both aft
       {
         dialogs: [
           {
-            title: `Some of this study's recordings may still be running on another computer. Move the study to the ${TRASH} anyway?`,
+            title: `Some of this study's recordings may still be in use on another computer. Move the study to the ${TRASH} anyway?`,
             options: {
               modal: true,
-              detail: `Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them. If a window still records one of them, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`,
+              detail: `Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them or still has to save them. If a window still records one of them or still has to save it, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.`,
             },
             items: [`Move to ${TRASH} Anyway`],
           },
@@ -8570,7 +8571,7 @@ test('a recording of another host that appears while the dialog is open keeps th
         studyRemoval: {
           status: 'failed',
           studyId: study.id,
-          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them.`,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Its recordings were started on other-desktop.local at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()} and on old-laptop.local at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them or still has to save them.`,
         },
       },
     )
@@ -8698,7 +8699,7 @@ test('a saved study whose recording names a live process of this computer begun 
   }
 })
 
-// Value: protects=the learner's reading of the dialog about a recording whose writer is a live process of this computer that began, by the clock, after the recording; fails_when=the dialog says the recording may still be running "on another computer" and that this computer cannot tell, although the writer would be an editor window of this very computer (CX13's case, PD3); why_new=Cycle 0046 design review PD3: the dialog had one title and detail for both places; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs, stubbed at the vscode boundary
+// Value: protects=the learner's reading of the dialog about a recording whose writer is a live process of this computer that began, by the clock, after the recording; fails_when=the dialog says the recording may still be in use "on another computer" and that this computer cannot tell, although the writer would be an editor window of this very computer (CX13's case, PD3); why_new=Cycle 0046 design review PD3: the dialog had one title and detail for both places; seam=the recording's header, which names a live child process of the test that began after the recording's creation time, without a record of its writer, and the editor's dialogs, stubbed at the vscode boundary
 test('the dialog about a recording that a live process of this computer begun after it may still write says that another editor window may still be recording it, and what is lost', async (context: TestContext) => {
   // Arrange: the recording was created on 2026-10-01; the live process that has its id now began after it. The learner cancels the dialog.
   const harness = await workspaceHarness()
@@ -8721,10 +8722,10 @@ test('the dialog about a recording that a live process of this computer begun af
     // Assert
     assert.deepEqual(structuredClone(harness.warningDialogs.slice(1)), [
       {
-        title: `This study's recording may still be running in another editor window. Move the study to the ${TRASH} anyway?`,
+        title: `This study's recording may still be in use in another editor window. Move the study to the ${TRASH} anyway?`,
         options: {
           modal: true,
-          detail: `Its recording was started on ${hostname()} at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell whether an editor window of this computer still records it. If a window still records it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+          detail: `Its recording was started on ${hostname()} at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()}. Codebook cannot tell whether an editor window of this computer still records it or still has to save it. If a window still records it or still has to save it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
         },
         items: [`Move to ${TRASH} Anyway`],
       },
@@ -8811,7 +8812,7 @@ test('a saved study whose recording a live window of this machine is still writi
         studyRemoval: {
           status: 'failed',
           studyId: study.id,
-          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.`,
         },
       },
     )
@@ -8870,11 +8871,515 @@ test('a saved study with a recording a live window of this machine still writes 
         studyRemoval: {
           status: 'failed',
           studyId: study.id,
-          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window is still recording this study. Stop its run in that window, then delete the study again.`,
+          text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.`,
         },
       },
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the study of a recorded run whose release failed after it sealed the recording (a browser that did not close): the save of the checkpoint taken once that stop had ended gives up the record of the recording's writer, which is what tells another window that a run still holds the recording, so Delete there removes the study instead of refusing it with "Save its learning replay in that window", advice that could not help; a checkpoint taken before the seal and written after it still gives up nothing; fails_when=only an archive that says the run stopped gives the record up, so a run whose stop failed after the seal holds its recording for as long as its window lives (Cycle 0047 row 140), or the release is judged when the archive is written instead of when its checkpoint was taken, so the write of a checkpoint from before the seal gives the record up and another window may remove the study before the run's state after the seal is saved (row 124's race back); why_new=Cycle 0047 row 140 (P3OCR2-1 = P3CLA-7); seam=the reader's own refresh timer, stopped so that the test's refreshes are the only checkpoints, the runtime's release, which rejects, and the library's study save, whose first call the test holds while a second checkpoint waits behind it and the run stops; no_claim=a second editor window's Delete, which judges the record by the same look (studyRemoval tests)
+test('a recorded run whose release fails after the seal gives up its recording’s writer record with the save of the checkpoint taken after that stop, and not with the save of one taken before the seal', async (context) => {
+  // Arrange: a recorded run of this window, paused at its stop and saved; the save of its next checkpoint is held, a later checkpoint taken before the seal waits behind it, and the run's release then fails.
+  const harness = await workspaceHarness(true, true)
+  try {
+    readerSeams(harness).stopOwnTimer()
+    // A run records only for a build whose source is identified.
+    harness.service.environment.build.sourceHash = sha256('recorded-build')
+    harness.acknowledgeContext()
+    const { receipt, record } = await startRun(harness)
+    record.recording!.frame({
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(100)
+    await harness.reader.action('click')
+    await waitUntil(
+      () => harness.service.state(record).historyOutcome.status === 'saved',
+      'the save of the paused run',
+      2_000,
+    )
+    const studyId = `${harness.service.instanceId}_${record.id}`,
+      recordingDirectory = join(
+        harness.reader.inspect().libraryDirectory!,
+        'recordings.v2',
+        studyId,
+      )
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    const isWriterRecordLeftAfterEachSave: boolean[] = []
+    let studySaves = 0
+    let releaseFirstSave!: () => void
+    const firstSaveHeld = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve
+    })
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        ...saved: Parameters<LearningLibrary['saveStudy']>
+      ) {
+        studySaves++
+        if (studySaves === 1) await firstSaveHeld
+        await saveStudy.apply(this, saved)
+        isWriterRecordLeftAfterEachSave.push(
+          (await lookAtRecording(recordingDirectory)).hasWriterRecord,
+        )
+      },
+    )
+    const explainBeforeTheStop = (key: string, interpretation: string) =>
+      harness.service.explain({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        key,
+        snapshotUri:
+          harness.service.state(record).participants.browser.snapshotUri!,
+        sourceHash: sha256('const nextTheme = "dark";\n'),
+        valuePaths: ['value:nextTheme'],
+        interpretation,
+      })
+    await explainBeforeTheStop('held-save', 'The theme was dark.')
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => studySaves === 1,
+      'the held save of a checkpoint taken before the seal',
+      2_000,
+    )
+    await explainBeforeTheStop(
+      'waiting-checkpoint',
+      'The theme was still dark.',
+    )
+    await readerSeams(harness).refresh()
+    const runtime = harness.runtimes[0]!,
+      stopRuntime = runtime.stop.bind(runtime)
+    runtime.stop = async (): Promise<void> => {
+      throw new Error('owned browser close: timed out')
+    }
+    harness.clock(200)
+
+    // Act: the run's stop fails after the seal; the held save ends and the checkpoint that waited behind it is written; then a checkpoint is taken after the stop.
+    const stop = await harness.service.stop(receipt).then(
+      () => 'stopped',
+      (error: unknown) => String(error),
+    )
+    // The harness's own shutdown releases the run once the test has read it.
+    runtime.stop = stopRuntime
+    releaseFirstSave()
+    await waitUntil(
+      () => isWriterRecordLeftAfterEachSave.length === 2,
+      'the writes of the two checkpoints taken before the seal',
+      2_000,
+    )
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => isWriterRecordLeftAfterEachSave.length === 3,
+      'the save of the checkpoint taken after the stop',
+      2_000,
+    )
+    const library = await harness.reader.learningStorage()
+
+    // Assert
+    assert.deepEqual(
+      {
+        stop,
+        isRecordingSealed: (await lookAtRecording(recordingDirectory)).isSealed,
+        savedState: (await library.readStudy(studyId)).state,
+        isWriterRecordLeftAfterEachSave,
+      },
+      {
+        stop: 'Error: owned browser close: timed out',
+        isRecordingSealed: true,
+        savedState: 'paused-browser',
+        isWriterRecordLeftAfterEachSave: [true, true, false],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the study of a recorded run whose checkpoint is taken while its stop is still under way after the seal: the save of that checkpoint keeps the record of the recording's writer, so another window neither lists the recording nor removes the study while the run's state after its stop is not saved, and the save of the checkpoint taken after the stop gives it up; fails_when=a checkpoint taken while the stop runs counts as one taken after the stop ended (service.ts hasStopEndedAfterSeal without its `!record.stopping`), so its save gives the record up before the run's final state is saved, and another window may delete the study, whose final save then finds it gone (Cycle 0047 row 200, state cell U39); why_new=Cycle 0047 row 200 (S2SM-U39): no test took a checkpoint between the seal and the end of the stop; seam=the reader's own refresh timer, stopped so that the test's refreshes are the only checkpoints, the recording store's read that the stop makes right after the seal, which the test holds, and the library's study save, after which the test looks at the writer record; no_claim=a second editor window's Delete, which judges the record by the same look (studyRemoval tests)
+test('a checkpoint taken while a recorded run’s stop is under way after the seal keeps the recording’s writer record, and the checkpoint taken after the stop gives it up', async (context) => {
+  // Arrange: a recorded run of this window, paused at its stop and saved; the stop's read of the recording right after the seal is held.
+  const harness = await workspaceHarness(true, true)
+  try {
+    readerSeams(harness).stopOwnTimer()
+    // A run records only for a build whose source is identified.
+    harness.service.environment.build.sourceHash = sha256('recorded-build')
+    harness.acknowledgeContext()
+    const { receipt, record } = await startRun(harness)
+    record.recording!.frame({
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(100)
+    await harness.reader.action('click')
+    await waitUntil(
+      () => harness.service.state(record).historyOutcome.status === 'saved',
+      'the save of the paused run',
+      2_000,
+    )
+    const recordingDirectory = join(
+      harness.reader.inspect().libraryDirectory!,
+      'recordings.v2',
+      `${harness.service.instanceId}_${record.id}`,
+    )
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    const isWriterRecordLeftAfterEachSave: boolean[] = []
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        ...saved: Parameters<LearningLibrary['saveStudy']>
+      ) {
+        await saveStudy.apply(this, saved)
+        isWriterRecordLeftAfterEachSave.push(
+          (await lookAtRecording(recordingDirectory)).hasWriterRecord,
+        )
+      },
+    )
+    const store = harness.service.recordings!,
+      read = store.read.bind(store)
+    let isReadAfterTheSealHeld = false
+    let releaseReadAfterTheSeal!: () => void
+    const readAfterTheSeal = new Promise<void>((resolve) => {
+      releaseReadAfterTheSeal = resolve
+    })
+    context.mock.method(
+      store,
+      'read',
+      async (...input: Parameters<typeof store.read>) => {
+        // Only the stop's first read once the recording is sealed is held.
+        if (record.recording?.isSealed && !isReadAfterTheSealHeld) {
+          isReadAfterTheSealHeld = true
+          await readAfterTheSeal
+        }
+        return read(...input)
+      },
+    )
+    harness.clock(200)
+
+    // Act: the run stops; while its stop is under way after the seal a checkpoint is taken; then the stop ends and a checkpoint is taken after it.
+    const stop = harness.service.stop(receipt).then(
+      () => 'stopped',
+      (error: unknown) => String(error),
+    )
+    await waitUntil(
+      () => isReadAfterTheSealHeld,
+      'the seal of the recording during the stop',
+      2_000,
+    )
+    const hasStopEndedWhileItRuns =
+      harness.service.hasStopEndedAfterSeal(record)
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => isWriterRecordLeftAfterEachSave.length === 1,
+      'the save of the checkpoint taken while the stop runs',
+      2_000,
+    )
+    releaseReadAfterTheSeal()
+    const stopOutcome = await stop
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => isWriterRecordLeftAfterEachSave.length === 2,
+      'the save of the checkpoint taken after the stop',
+      2_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        hasStopEndedWhileItRuns,
+        stopOutcome,
+        isWriterRecordLeftAfterEachSave,
+      },
+      {
+        hasStopEndedWhileItRuns: false,
+        stopOutcome: 'stopped',
+        isWriterRecordLeftAfterEachSave: [true, false],
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a study whose run in this window has stopped and saved it, which another window then deletes with its recording: the run's next checkpoint (an explanation saved after the stop, as an agent's learning summary is) does not write the archive back without its recording, the run's history ends as removed, and the reader no longer lists the study; fails_when=the library writes the archive whenever the run's checkpoint asks, so the study the learner deleted comes back without its recording, the outcome the writer record was kept to prevent (Cycle 0047 row 162); why_new=Cycle 0047 row 162 (CORE3-2): row 124 releases the writer record at the first save that says the run stopped, and a run that stays in the window is saved again; seam=a second LearningLibrary over the same storage, which removes the study as another window's Delete does (its mover deletes what it is given), and the reader's own refresh timer, stopped so that the test's refresh is the only checkpoint; no_claim=a learning summary's own content (any explanation takes the same checkpoint), a second editor process
+test('a stopped and saved run whose study another window deletes with its recording does not write the study back at its next checkpoint, and its history ends as removed', async () => {
+  // Arrange: a recorded run of this window, stopped and saved; another window deletes its study, archive and recording.
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const directory = harness.reader.inspect().libraryDirectory!,
+      library = await harness.reader.learningStorage()
+    const otherWindow = new LearningLibrary(directory, library.workspaceKey)
+    const movedByTheOtherWindow: string[] = []
+    const removal = await otherWindow.removeStudy(
+      harness.studyId,
+      async (path) => {
+        movedByTheOtherWindow.push(relative(directory, path))
+        await rm(path, { recursive: true })
+      },
+    )
+
+    // Act: an agent saves an explanation of the stopped run, and the reader takes its checkpoint.
+    await harness.service.explain({
+      instanceId: harness.service.instanceId,
+      runId: harness.record.id,
+      key: 'after-the-deletion',
+      snapshotUri: harness.service.state(harness.record).participants.browser
+        .snapshotUri!,
+      sourceHash: sha256('const nextTheme = "dark";\n'),
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The theme was dark when the run stopped.',
+    })
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.service.state(harness.record).historyOutcome.status !==
+        'pending',
+      'the end of the checkpoint after the deletion',
+      2_000,
+    )
+
+    // Assert
+    const history = harness.service.state(harness.record).historyOutcome
+    assert.deepEqual(
+      {
+        removal: { ...removal },
+        movedByTheOtherWindow,
+        filesOfTheStudy: (await readdir(directory)).filter((name) =>
+          name.startsWith(harness.studyId),
+        ),
+        recordings: await readdir(join(directory, 'recordings.v2')),
+        listed: (await library.list()).map((entry) => entry.id),
+        history: { status: history.status, reason: history.reason },
+      },
+      {
+        removal: { outcome: 'moved' },
+        movedByTheOtherWindow: [
+          join('recordings.v2', harness.studyId),
+          `${harness.studyId}.study.meta.v3.json`,
+          `${harness.studyId}.study.v3.json`,
+        ],
+        filesOfTheStudy: [],
+        recordings: [],
+        listed: [],
+        history: {
+          status: 'unavailable',
+          reason:
+            "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the pane's storage line of a study that another window deleted with its recording after one of its saves failed here: once the next save is refused and this window forgets the study, no "History not saved: …" line is left for a study that no longer waits; fails_when=the refused save forgets the study and its pending archive but keeps the line of the earlier failure until Retry storage / refresh, so the learner reads that a history is not saved, and is offered a retry, for a study that was deleted (Cycle 0047 row 256); why_new=Cycle 0047 row 256 (P3MAINT-6): row 162's test had no earlier failed save; seam=the library's study save, which fails once with ENOSPC, a second LearningLibrary over the same storage, which removes the study as another window's Delete does (its mover deletes what it is given), and the reader's own refresh timer, stopped so that the test's refreshes are the only checkpoints; no_claim=a real full disk, a second editor process
+test('a study whose save failed and that another window then deletes with its recording leaves no "History not saved: …" line once its next save is refused', async (context) => {
+  // Arrange: a recorded run of this window, stopped and saved; the save of its next checkpoint fails once, and another window then deletes its study, archive and recording.
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const directory = harness.reader.inspect().libraryDirectory!,
+      library = await harness.reader.learningStorage()
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    let hasSaveFailed = false
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        ...input: Parameters<LearningLibrary['saveStudy']>
+      ) {
+        // Only the first save of the test fails, as a full disk refuses it.
+        if (!hasSaveFailed) {
+          hasSaveFailed = true
+          throw Object.assign(
+            new Error('ENOSPC: no space left on device, write'),
+            { code: 'ENOSPC' },
+          )
+        }
+        return saveStudy.apply(this, input)
+      },
+    )
+    const explainAndCheckpoint = async (
+      key: string,
+      interpretation: string,
+      endsWhen: (status: string) => boolean,
+    ): Promise<void> => {
+      await harness.service.explain({
+        instanceId: harness.service.instanceId,
+        runId: harness.record.id,
+        key,
+        snapshotUri: harness.service.state(harness.record).participants.browser
+          .snapshotUri!,
+        sourceHash: sha256('const nextTheme = "dark";\n'),
+        valuePaths: ['value:nextTheme'],
+        interpretation,
+      })
+      await readerSeams(harness).refresh()
+      await waitUntil(
+        () =>
+          endsWhen(harness.service.state(harness.record).historyOutcome.status),
+        'the end of the checkpoint',
+        2_000,
+      )
+    }
+    await explainAndCheckpoint(
+      'before-the-deletion',
+      'The theme was dark when the run stopped.',
+      (status) => status === 'failed',
+    )
+    const linesAfterTheFailedSave = structuredClone(
+      harness.reader.inspect().view!.errors,
+    )
+    const removal = await new LearningLibrary(
+      directory,
+      library.workspaceKey,
+    ).removeStudy(harness.studyId, async (path) => {
+      await rm(path, { recursive: true })
+    })
+
+    // Act: an agent saves another explanation of the stopped run, and the reader takes its checkpoint, whose save the library refuses.
+    await explainAndCheckpoint(
+      'after-the-deletion',
+      'The theme stayed dark after the stop.',
+      (status) => status === 'unavailable',
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        linesAfterTheFailedSave,
+        removal: { ...removal },
+        linesAfterTheRefusedSave: structuredClone(
+          harness.reader.inspect().view!.errors,
+        ),
+        listed: (await library.list()).map((entry) => entry.id),
+      },
+      {
+        linesAfterTheFailedSave: [
+          'Error: History not saved: Error: ENOSPC: no space left on device, write',
+        ],
+        removal: { outcome: 'moved' },
+        linesAfterTheRefusedSave: [],
+        listed: [],
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a recorded run of this window whose first saves cannot look at its recording folder (a permission denied, a disk error, a folder Windows is deleting or a scanner holds): the study stays this window's, the failure is told in the line "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at again; fails_when=the save counts every failure of that look as the recording having left the library with the study, so the reader forgets the study and drops its pending checkpoint as if another window had deleted it, and the run's learning is never saved although nothing was removed (Cycle 0047 row 170); why_new=Cycle 0047 row 170 (S2CR-2, S2CXA-C2-1, S2OCR2-1, S2CLA-2, S2CXS-1): row 162's test has only a recording folder that is gone; seam=the look at the run's recording folder that the library's study save makes, refused with EACCES while the test says so (every other look reaches the disk)
+test('a recorded run whose saves cannot look at its recording folder keeps its study, tells "History not saved: …", and Retry storage / refresh saves the study once the folder can be looked at', async (context) => {
+  // Arrange: a recorded run of this window; while it runs and stops, every study save's look at the run's recording folder is refused.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const saveStudy = LearningLibrary.prototype.saveStudy,
+      lstatBefore = fsPromises.lstat
+    let isLookRefused = true,
+      refusedLook: string | undefined
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        ...input: Parameters<LearningLibrary['saveStudy']>
+      ) {
+        // Only the look this save makes at the run's recording folder is refused.
+        refusedLook = isLookRefused ? input[1]?.recordingDirectory : undefined
+        try {
+          return await saveStudy.apply(this, input)
+        } finally {
+          refusedLook = undefined
+        }
+      },
+    )
+    context.mock.method(
+      fsPromises,
+      'lstat',
+      async (...input: Parameters<typeof lstatBefore>) => {
+        if (refusedLook !== undefined && input[0] === refusedLook)
+          throw Object.assign(new Error('EACCES: permission denied, lstat'), {
+            code: 'EACCES',
+          })
+        return lstatBefore(...input)
+      },
+    )
+    // A run records only for a build whose source is identified.
+    harness.service.environment.build.sourceHash = sha256('recorded-build')
+    harness.acknowledgeContext()
+    const { record } = await startRun(harness)
+    record.recording!.frame({
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+        'base64',
+      ),
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(100)
+    await harness.reader.action('click').catch(() => undefined)
+    harness.clock(200)
+    const studyId = `${harness.service.instanceId}_${record.id}`,
+      library = await harness.reader.learningStorage()
+
+    // Act: the learner stops the run while the look is refused, then presses Retry storage / refresh once the folder can be looked at.
+    await harness.reader.action('stop').catch(() => undefined)
+    const afterStop = structuredClone({
+      isStopped: record.stopped,
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+      history: harness.service.state(record).historyOutcome.status,
+    })
+    isLookRefused = false
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(afterStop, {
+      isStopped: true,
+      errors: [
+        'Error: History not saved: Error: EACCES: permission denied, lstat',
+      ],
+      // Retry storage / refresh is offered beside the one line.
+      unretryableErrorCount: 0,
+      history: 'failed',
+    })
+    assert.deepEqual(
+      {
+        errors: structuredClone(harness.reader.inspect().view!.errors),
+        history: harness.service.state(record).historyOutcome.status,
+        listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+        isRecordingSealed: (await lookAtRecording(record.recording!.directory))
+          .isSealed,
+      },
+      {
+        errors: [],
+        history: 'saved',
+        listed: [[studyId, 'v3']],
+        isRecordingSealed: true,
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })

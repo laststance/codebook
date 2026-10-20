@@ -50,7 +50,7 @@ test('a command line that names the publisher’s script or the Wiki’s folder 
   assert.deepEqual(signs, [true, true, false, false])
 })
 
-// Value: protects=the learner who runs a command of their own in the half minute the chat has not answered yet; fails_when=a command that names a folder beside the Wiki whose name only starts like it, or that mentions the publisher's script in its text or as a file it reads, counts as the chat's work, so Codebook skips the withdrawal of the unanswered request, watches for up to 15 minutes, reserves the Wiki, and refuses later updates although none runs; why_new=Cycle 0046 /ship hosted Codex review CX4 (P2); seam=none
+// Value: protects=the learner who runs a command of their own in the half minute the chat has not answered yet; fails_when=a command that names a folder beside the Wiki whose name only starts like it, or that mentions the publisher's script in its text or as a file it reads, counts as the chat's work, so Codebook does not end the unanswered update at the 30 seconds, watches for up to 15 minutes, reserves the Wiki, and refuses later updates although none runs; why_new=Cycle 0046 /ship hosted Codex review CX4 (P2); seam=none
 test('a command that names a folder beside the Wiki’s folder, or mentions the publisher’s script only in quoted text, in another argument or as a name without its folder, is no step of an update', () => {
   // Act
   const signs = [
@@ -121,7 +121,7 @@ test('Node.js that checks, evaluates or prints code, or shows its help or its ve
   ])
 })
 
-// Value: protects=the first sign of an update whose chat writes the publisher's path from the home folder, or changes into a folder before it runs the publisher or names the Wiki's folder; fails_when=`~`, `$HOME` or `${HOME}` at the start of an argument is read as text, or a `cd <folder>` before `&&` or `;` is not followed, so a relative script or `--output .codebook/wiki` resolves against nothing, no sign comes, and the request is taken back at 30 s while the chat works; why_new=Cycle 0046 /ship adversarial review AD19; seam=none
+// Value: protects=the first sign of an update whose chat writes the publisher's path from the home folder, or changes into a folder before it runs the publisher or names the Wiki's folder; fails_when=`~`, `$HOME` or `${HOME}` at the start of an argument is read as text, or a `cd <folder>` before `&&` or `;` is not followed, so a relative script or `--output .codebook/wiki` resolves against nothing, no sign comes, and the update ends as failed at 30 s while the chat works; why_new=Cycle 0046 /ship adversarial review AD19; seam=none
 test('the publisher written from the home folder with ~, $HOME or ${HOME}, or run after cd into its folder, and the Wiki’s folder written relative to the folder of a cd before it, are steps of an update', () => {
   // Arrange: the skill of an editor installed in the learner's home folder.
   const home = '/home/learner'

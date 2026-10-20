@@ -712,3 +712,134 @@ test('after the reply’s end a probe that fails at every look ends the watch at
   assert.deepEqual(result, { outcome: 'timed-out' })
   assert.equal(nowMs, 10_000)
 })
+
+// Value: protects=the learner whose publisher failed between its two renames and left no Wiki folder, after the chat's reply ended; fails_when=a publish token that stays unreadable after the reply's end keeps the watch going to its 15 minute bound, so the page says "Updating LLM Wiki…" for 15 minutes before the run names the missing Wiki; why_new=Cycle 0047 row 30 (P3RT8); seam=the watch's clock, which its sleeps move; no_claim=the sentence the run's end words for the missing Wiki (classifyWikiUpdateEnd)
+test('after the reply’s end a publish token that stays unreadable ends the watch as reply-ended once its grace passed, not at the 15 minute bound', async () => {
+  // Arrange: the reply has ended, and the Wiki folder is gone, so no look can read the publish token.
+  const replyEnded = new AbortController()
+  replyEnded.abort()
+  let nowMs = 0
+  let reads = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => {
+      reads += 1
+      return undefined
+    },
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      nowMs += delayMs
+    },
+  })
+
+  // Assert: looks at 0, 2, 4, 6, 8 and 10 seconds; the sixth one is past the grace.
+  assert.deepEqual(result, { outcome: 'reply-ended' })
+  assert.equal(nowMs, 10_000)
+  assert.equal(reads, 6)
+})
+
+// Value: protects=a publish whose site is being replaced while the chat's reply is still open; fails_when=the grace of an unreadable publish token ends the watch, or makes later looks skip a site that came back, before the reply ended, so a publisher that restores the Wiki or publishes after a slow swap is not seen; why_new=Cycle 0047 row 30 (P3RT8), the side of the fix that must not change; seam=the watch's clock, which its sleeps move
+test('while the reply is open a publish token that stays unreadable past its grace keeps the watch going, and the publish that follows ends it as published', async () => {
+  // Arrange: no look can read the token for the first 20 seconds, and nothing is written meanwhile; the new site is there at 22 seconds.
+  let nowMs = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readStamp: async () => (nowMs < 22_000 ? '-' : 'wiki=new'),
+    readToken: async () => (nowMs < 22_000 ? undefined : 'new@2'),
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: new AbortController().signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      nowMs += delayMs
+    },
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+  assert.equal(nowMs, 22_000)
+})
+
+// Value: protects=a publish whose token could not be read past its grace while nothing the stamp names changed (a read error of the moment, not a missing folder); fails_when=the look after the grace keeps its stamp, so every later look is skipped while the stamp stays the same, and the publish that becomes readable is never read: the watch ends as timed out or reply-ended over a site that was published; why_new=Cycle 0047 row 86 (CX-S1); seam=the watch's clock, which its sleeps move, and the stamp reader, which answers the same stamp at every look; no_claim=the run's end for a watch that timed out
+test('while the reply is open a publish token that becomes readable after its grace with the same stamp as before is read, and the watch ends as published', async () => {
+  // Arrange: no look can read the token for the first 20 seconds; the new publish can be read from 22 seconds on; the stamp never changes.
+  let nowMs = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readStamp: async () => 'wiki=18:1790000000000:20481/3:1790000000000',
+    readToken: async () => (nowMs < 22_000 ? undefined : 'new@2'),
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: new AbortController().signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      nowMs += delayMs
+    },
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+  assert.equal(nowMs, 22_000)
+})
+
+// Value: protects=a site swap that begins anew after the publish token was readable for one look; fails_when=the grace of an unreadable token is counted from the first time it could not be read, also after a look read it again, so the look after the reply's end takes the second swap for no new publish and the watch ends as reply-ended before that publish lands; why_new=Cycle 0047 row 86 (TEST-7); seam=the watch's clock, which its sleeps move, and the watch's sleep, during which the test ends the reply; no_claim=a stamp reader, which the test leaves out
+test('a publish token that cannot be read again after one look read it gets a new grace, so after the reply’s end the watch waits for the second swap and ends as published', async () => {
+  // Arrange: the token cannot be read from 0 to 6 seconds, is read at 8 seconds, cannot be read from 10 to 18 seconds, and names the new publish at 20 seconds; the reply ends at 12 seconds.
+  const replyEnded = new AbortController()
+  let nowMs = 0
+  const tokenAt = (moment: number): string | undefined => {
+    if (moment === 8_000) return 'old@1'
+    return moment < 20_000 ? undefined : 'new@2'
+  }
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => tokenAt(nowMs),
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      nowMs += delayMs
+      if (nowMs === 12_000) replyEnded.abort()
+    },
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+  assert.equal(nowMs, 20_000)
+})

@@ -8,7 +8,7 @@ Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/50\
 Goal issue: https://github.com/laststance/codebook/issues/1\
 Goal links: G01, G03, G04, G06\
-Source state: [Cycle 0029](0029-active-increment.md) closure and its [carry-over list](0029-active-increment.md#cycle-0030-carry-over-from-the-cycle-0029-reviews); [PROJECT_STATE.md](../../PROJECT_STATE.md)
+Source state: [Cycle 0029](0029-active-increment.md) closure and its [carry-over list](0029-active-increment.md#cycle-0030-carry-over-from-the-cycle-0029-reviews); [PROJECT_STATE.md](https://github.com/laststance/codebook/blob/ef38585a32a1632c5af5d89ae5c4e08cf866fefc/PROJECT_STATE.md)
 
 ## Question and authorized scope
 

@@ -51,7 +51,7 @@ function isOwnLeftover(
  * Says whether a candidate shows work in progress that is not this window's own; called by {@link selectActiveWikiCandidate} for each candidate.
  * @param candidate - A candidate bound to this Wiki.
  * @param options - The clock, the bound of "recent" and this window's last run.
- * @returns `true` for a candidate written within `activeWithinMs` that is no leftover of this window's finished run ({@link isOwnLeftover}).
+ * @returns `true` for a candidate written less than `activeWithinMs` ago that is no leftover of this window's finished run ({@link isOwnLeftover}).
  * @example
  * blocksStart({ name: 'wiki.stage-1', writtenAtMs: 1_000_000, ownedPaths: [] }, { nowMs: 1_060_000, activeWithinMs: 900_000, lastRun: undefined }) // => true
  */
@@ -59,8 +59,9 @@ function blocksStart(
   candidate: WikiCandidate,
   options: ActiveCandidateOptions,
 ): boolean {
+  // The wait for a candidate is over at its writing plus the bound, as the wait for a stopped watch is at its end plus the bound: a press at that moment is not refused.
   const isRecent =
-    candidate.writtenAtMs >= options.nowMs - options.activeWithinMs
+    options.nowMs < candidate.writtenAtMs + options.activeWithinMs
   return isRecent && !isOwnLeftover(candidate, options.lastRun)
 }
 
@@ -87,10 +88,10 @@ function isWrittenAfter(
  *
  * @param candidates - Candidates bound to this Wiki ({@link listWikiCandidates}).
  * @param options.nowMs - Current time in epoch milliseconds.
- * @param options.activeWithinMs - How recently a candidate must have been written to count as work in progress (the watch bound).
+ * @param options.activeWithinMs - How recently a candidate must have been written to count as work in progress (the watch bound); one written exactly that long ago no longer counts.
  * @param options.lastRun - How this window's last run of this output ended; undefined when it has had none (the caller passes none for a record of another output).
  * @returns The most recently written candidate that blocks the start, or undefined when the start may go ahead:
- * - A candidate older than `activeWithinMs` never blocks
+ * - A candidate written `activeWithinMs` ago or longer never blocks
  * - A candidate written while the last run lasted is this window's own leftover and does not block, unless the agent may still work (a VS Code watch that stopped before its chat did): then it blocks, like one written after the watch stopped
  * - Any other recent candidate (written before the last run began, after it ended, or without any run of this window) is somebody else's and blocks
  *

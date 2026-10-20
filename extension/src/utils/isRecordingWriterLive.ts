@@ -23,8 +23,11 @@ export type RecordingWriterOfHeader = {
 /** Whether a recording this very process started counts like any other (`counts`) or is left to the caller's own run state (`ignored`); see {@link recordingWriterState}. */
 export type OwnProcessRule = 'counts' | 'ignored'
 
-/** The process starts one list of recordings has read, by process id, so that each process is read once in that list, also when several judgements ask for it at once; the caller makes one for each list and drops it with the list. */
-export type ProcessStartsOfList = Map<number, Promise<string | undefined>>
+/**
+ * The process starts one list of recordings has read, by process id and the start a record expects of it, so that each writer's process is read once in that list for each start it is expected to have, also when several judgements ask for it at once; the caller makes one for each list and drops it with the list.
+ * A key is the process id alone for a read that expects no start, and the process id, a space and the expected start otherwise ({@link listReadKeyOf}): on Windows the answer depends on the expected start, which the process table's time confirms only when it is the one asked for ({@link readProcessStart}), so a read for one record's start cannot answer another record of the same process id (Cycle 0047 row 236).
+ */
+export type ProcessStartsOfList = Map<string, Promise<string | undefined>>
 
 /**
  * What a judgement found of a recording's writer.
@@ -45,18 +48,32 @@ export type RecordingWriterState =
 const goneWriters = new Set<string>()
 
 /**
- * Gives the reader of process starts for one list: each process id is read once, and every judgement of that list that asks for it shares the read, also one under way; called by {@link recordingWriterState} for the reads of {@link isRecordedOwnerGone} and {@link hasIdGoneToALaterProcess}.
- * Within one list a process's start is read once and answers every recording of that list, whatever start a record expects: the caller compares. A later list reads again ({@link readProcessStart} keeps no start of another process by itself).
+ * Names the read of one process's start in a list's starts ({@link ProcessStartsOfList}); called by {@link readStartOncePerList} for every read.
+ * @param pid - The process id.
+ * @param expectedStart - The start the record expects the process to have; `undefined` for a read that expects none.
+ * @returns The process id alone without an expected start; otherwise the process id, a space and that start.
+ * @example
+ * listReadKeyOf(4242, undefined)                            // => '4242'
+ * listReadKeyOf(4242, 'win:2026-10-05T09:12:33.1234567Z') // => '4242 win:2026-10-05T09:12:33.1234567Z'
+ */
+function listReadKeyOf(pid: number, expectedStart: string | undefined): string {
+  return expectedStart === undefined ? `${pid}` : `${pid} ${expectedStart}`
+}
+
+/**
+ * Gives the reader of process starts for one list: each process id is read once for each start a record expects of it (and once for the reads that expect none), and every judgement of that list that asks the same shares the read, also one under way; called by {@link recordingWriterState} and {@link sealedRecordingWriterState} for the reads of {@link isRecordedOwnerGone}, {@link isUnreadableProcessOfAnotherUser} and {@link hasIdGoneToALaterProcess}.
+ * Why by the expected start too: on Windows a start this user may not read is answered by the process table's time, which confirms only the start it is asked for ({@link readProcessStart}); a read kept by process id alone would answer a live window's record by the read of an earlier record of the same id, and call that live writer gone (Cycle 0047 row 236). A later list reads again ({@link readProcessStart} keeps no start of another process by itself).
  * @param starts - The starts of the list.
  * @returns A reader with the signature of {@link readProcessStart}.
  * @example const readStart = readStartOncePerList(new Map()); await readStart(4242); await readStart(4242) // one query
  */
 function readStartOncePerList(starts: ProcessStartsOfList): ProcessStartReader {
   return (pid, inputs) => {
-    const kept = starts.get(pid)
+    const key = listReadKeyOf(pid, inputs?.expectedStart)
+    const kept = starts.get(key)
     if (kept) return kept
     const read = readProcessStart(pid, inputs)
-    starts.set(pid, read)
+    starts.set(key, read)
     return read
   }
 }
@@ -108,7 +125,7 @@ async function writerStateByRecord(
 
 /**
  * Says whether the live process that has a recorded writer's id belongs to another user ({@link isProcessOfAnotherUser}) and its start cannot be read here, so that the start the record keeps neither confirms it as the writer nor tells another process; called by {@link writerStateByRecord} for a record with a start that {@link isRecordedOwnerGone} did not call gone.
- * Windows refuses this user the start of another user's process (and of one run as administrator), which leaves such a record's writer judged running for as long as that process lives; the start reads of Linux and macOS read every user's process.
+ * Windows refuses PowerShell the start of another user's process (and of one run as administrator); the read then takes the creation time from the process table ({@link readProcessStart}), and a start stays unread only where that query fails too, or where Linux hides other users' processes (`hidepid`). Such a record's writer would otherwise be judged running for as long as that process lives.
  * @param pid - The writer's process id, which a live process has.
  * @param recordedStart - The start the record keeps, which the reader is given as `expectedStart`.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}); the start is read once per list.
@@ -175,7 +192,7 @@ async function liveWriterStateHere(
 }
 
 /**
- * Judges a recording's writer by its header alone, for a recording without a record of its full identity (one 0.2.29.0 made, one whose record could not be written, or another format's recording of the same id) that is not this process's own ({@link isOwnRecording}); called by {@link recordingWriterState}.
+ * Judges a recording's writer by its header alone, for a recording without a record of its full identity (one 0.2.29.0 made, one whose record could not be written, or another format's recording of the same id) that is not this process's own ({@link isOwnRecording}); called by {@link recordingWriterState}, and by {@link sealedRecordingWriterState} for a sealed recording whose record the look saw standing and that cannot be read now (Cycle 0047 row 251).
  * @param header - What the header says of the writer.
  * @param readStart - The list's reader of process starts ({@link readStartOncePerList}).
  * @returns
@@ -204,7 +221,7 @@ async function writerStateByHeader(
 /**
  * Judges the editor process that writes an unsealed recording, the one rule for every judgment of a recording's writer: {@link recordingWriterOf}, through which the library's list ({@link LearningLibrary.entryWithoutArchive}) and the removal of a study ({@link LearningLibrary.writerVerdictsOf}, before its storage lock) tell a writer of this machine from one it cannot confirm, and {@link isRecordingWriterLive}, through which only the status {@link RecordingStore.ownerState} gives a recording another session wrote.
  * This process's own recording ({@link isOwnRecording}: its header names this process and one of its writer sessions) is told first, before any machine or host check. Otherwise the record of the writer's full identity that this build keeps outside the recording decides when it exists and names this recording ({@link readRecordingWriterRecord}: the record is kept by the study id, which recordings of several formats can share); a recording without such a record (made by 0.2.29.0, or another format's recording of the same id) is judged by its header's host name and process id, a process id that a process of another user or a process begun after the recording has leaving the learner the choice (`unconfirmed-here`, {@link writerStateByHeader}); a record without the writer's start is judged as its header is, once its process id is in use.
- * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
+ * Cost: a judgement may ask the system for a process's start (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows). A list hands every judgement of it one {@link ProcessStartsOfList}, so each process is asked once in that list for each start a record expects of it; a writer its record shows gone is not judged again while this window runs (a judgement by the header alone is made again at every list).
  * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`; its writer record ({@link recordingOwnerRecordPath}) may not exist, or may name another recording.
  * @param header - What the recording's header says of its writer.
  * @param ownProcess - `counts` (the default) when this very process counts like any other writer; `ignored` when the caller judges its own recordings by its own run state.
@@ -238,6 +255,45 @@ export async function recordingWriterState(
   // Only a record's judgement is stable: a header's alone can change once the writer's record appears, so it is not remembered.
   if (state.kind === 'gone' && recordedOwner) goneWriters.add(recording)
   return state
+}
+
+/**
+ * Judges what holds a sealed recording: the run that wrote it, while that run has not saved its study from a checkpoint taken after the seal, so that another window takes the recording neither for what is left of a removed study nor for something a removal may move; called by {@link recordingWriterOf} for a sealed recording with a readable header whose run has not released it ({@link isSealedRecordingReleased}); a released one is finished without this judgement.
+ * A sealed recording keeps the record of its writer's full identity ({@link recordingOwnerRecordPath}) after its seal ({@link RecordingWriter.finish}) until its study is saved from a checkpoint its run took after the seal ({@link removeWriterRecordsOfSealedRecordings}), and that record decides, as it does for an unsealed recording ({@link writerStateByRecord}). Nothing holds a sealed recording without such a record (its study was saved so, it was made by 0.2.29.0, or its record could not be written), nor this window's own: this window lists the finished recording of its own run whose archive could not be saved yet, and Retry storage there writes the archive. Its caller has already answered both by the look ({@link isSealedRecordingReleased}), but only where the look read the record, or proved it absent: a header of this window's own reaches this judgement when the look could not read the record that stands there ({@link RecordingLook.mayHaveFailedRead}, Cycle 0047 row 239), and a record that names this very process is still told here.
+ * The record is read again here, after the look saw it standing: a read that fails again (a scanner still holds the file, or it is no record of this recording) proves no more than a recording without a record has, so the header judges the writer ({@link writerStateByHeader}), and only a header of this window's own answers that nothing holds it (Cycle 0047 row 251).
+ * @param directory - The directory of the recording, `<learning directory>/recordings.vN/<study id>`.
+ * @param header - What the recording's header says of its writer.
+ * @param starts - The process starts of the caller's list; a new one, for this judgement alone, when left out.
+ * @returns The state of the writer whose run may still save the study ({@link RecordingWriterState}: `may-run`, `on-another-host`, `unconfirmed-here`, or `gone`), by its record, or by its header when the record cannot be read now; `undefined` when this window's own run holds it (its record names this very process, or, with no record read, its header names this window), which its caller judges.
+ * @example
+ * await sealedRecordingWriterState('/storage/learning/recordings.v2/<id>', header) // => { kind: 'may-run' } while another window of this machine has not saved that study
+ * await sealedRecordingWriterState('/storage/learning/recordings.v2/<id>', header) // => { kind: 'may-run' } as well while a scanner holds that window's record, judged by its header
+ */
+export async function sealedRecordingWriterState(
+  directory: string,
+  header: RecordingWriterOfHeader,
+  starts: ProcessStartsOfList = new Map(),
+): Promise<RecordingWriterState | undefined> {
+  const recordedOwner = await readRecordingWriterRecord(
+    directory,
+    header.createdAt,
+  )
+  const readStart = readStartOncePerList(starts)
+  // A record the look saw standing that gives nothing now proves no more than none: the header judges its writer, and this window judges its own.
+  if (!recordedOwner)
+    return isOwnRecording(header.owner)
+      ? undefined
+      : writerStateByHeader(header, readStart)
+  // A record that names this very process (its id and its start on this machine) is this window's own as well.
+  const identity = await currentStorageOwner()
+  if (
+    recordedOwner.pid === process.pid &&
+    recordedOwner.processStart !== undefined &&
+    recordedOwner.processStart === identity.processStart &&
+    isSameStorageMachine(recordedOwner, identity)
+  )
+    return undefined
+  return writerStateByRecord(recordedOwner, header, readStart)
 }
 
 /**

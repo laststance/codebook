@@ -7,6 +7,7 @@ import {
   readProcessStart,
   type ProcessStartInputs,
 } from '../utils/readProcessStart'
+import { runBoundedQuery } from '../utils/runBoundedQuery'
 
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
@@ -231,7 +232,7 @@ test('gives no start when ps or PowerShell fails, answers nothing, times out or 
   })
 })
 
-// Value: protects=a Windows pid is told by its creation time, asked of the system's own PowerShell; fails_when=argv loses -NoProfile, -NonInteractive or the pid, the query opens a console window or loses its bounds, the ISO check is dropped, or the program is named without its path under the system root, so a powershell.exe in the editor's current directory or earlier in the search path is started in its place (Cycle 0046 row 107); why_new=new utility (ER-1); seam=the injected platform, environment and query runner. The real query runs in the Windows job.
+// Value: protects=a Windows pid is told by its creation time, asked of the system's own PowerShell, which falls back to the process table (Win32_Process CreationDate) where it may not read the process's start; fails_when=argv loses -NoProfile, -NonInteractive or the pid, the query opens a console window or loses its bounds, the ISO check is dropped, the fall-back is dropped or runs as a second query (Cycle 0047 row 33), or the program is named without its path under the system root, so a powershell.exe in the editor's current directory or earlier in the search path is started in its place (Cycle 0046 row 107); why_new=new utility (ER-1); seam=the injected platform, environment and query runner. The real query runs in the Windows job.
 test('reads a Windows start as UTC ISO text with a fixed command line, from the PowerShell under the system root', async () => {
   // Arrange
   const query = answeringQuery({ stdout: '2026-10-05T09:12:33.1234567Z\r\n' })
@@ -250,7 +251,7 @@ test('reads a Windows start as UTC ISO text with a fixed command line, from the 
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        "(Get-Process -Id 4194305 -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')",
+        "$process = Get-Process -Id 4194305 -ErrorAction Stop; try { $start = $process.StartTime } catch { $start = $null }; if ($null -ne $start) { $start.ToUniversalTime().ToString('o') } else { 'wmi:' + (Get-WmiObject -Class Win32_Process -Filter 'ProcessId=4194305' -ErrorAction Stop).CreationDate }",
       ],
       options: {
         timeout: 3_000,
@@ -303,6 +304,131 @@ test('starts PowerShell from SystemRoot or windir only, and starts no program an
       started: ['D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'],
       start: 'win:2026-10-05T09:12:33.1234567Z',
     },
+  })
+})
+
+// Value: protects=a storage lock or a claim a killed editor left on Windows whose process id went to a process this user may not query (another user's, or one run as administrator); fails_when=the creation time the system's process table gives for such a process (Win32_Process CreationDate, to the microsecond) is no start, so the start stays unknown, the process may be the owner, and the dead editor's lock refuses every write for as long as that process runs; or that creation time is compared with a recorded start to the 100 ns, so a live owner run as administrator counts as gone; why_new=Cycle 0047 row 33 (P3RT11); seam=the injected platform, environment and query runner, which answers as PowerShell does after its fall-back to the process table; no_claim=the real PowerShell and its process table, which the Windows job runs
+test('a Windows process whose start PowerShell may not read is told by its creation time in the process table, which confirms a recorded start of the same microsecond and names another start as read', async () => {
+  // Arrange: PowerShell answers the creation time to the microsecond, marked as read from the process table.
+  const startOf = (expectedStart?: string): Promise<string | undefined> =>
+    readProcessStart(ID_OF_NO_PROCESS, {
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: answeringQuery({ stdout: 'wmi:20261005181233.123456+540\r\n' }).run,
+      ...(expectedStart !== undefined && { expectedStart }),
+    })
+
+  // Act
+  const starts = {
+    recordedInTheSameMicrosecond: await startOf(
+      'win:2026-10-05T09:12:33.1234567Z',
+    ),
+    recordedAMicrosecondLater: await startOf(
+      'win:2026-10-05T09:12:33.1234570Z',
+    ),
+    recordedAnHourEarlier: await startOf('win:2026-10-05T08:12:33.1234567Z'),
+    withoutARecordedStart: await startOf(),
+  }
+
+  // Assert
+  assert.deepEqual(starts, {
+    recordedInTheSameMicrosecond: 'win:2026-10-05T09:12:33.1234567Z',
+    recordedAMicrosecondLater: 'win:2026-10-05T09:12:33.1234560Z',
+    recordedAnHourEarlier: 'win:2026-10-05T09:12:33.1234560Z',
+    withoutARecordedStart: 'win:2026-10-05T09:12:33.1234560Z',
+  })
+})
+
+// Value: protects=the start of a process whose creation time the process table names to the microsecond is never confirmed by a recorded start that a text of another shape names; fails_when=the fall-back's answer is taken as it is, without WMI's DMTF form with its offset from UTC (Cycle 0047 row 117: also the round-trip form PowerShell's own conversion printed, and a date out of range), or a recorded start of another system or without a time confirms it; why_new=Cycle 0047 row 33 (P3RT11); seam=the injected platform, environment and query runner
+test('a creation time from the Windows process table that is not in WMI’s form with its UTC offset is no start, and a recorded start of another form is never confirmed by it', async () => {
+  // Arrange
+  const startOf = (
+    stdout: string,
+    expectedStart?: string,
+  ): Promise<string | undefined> =>
+    readProcessStart(ID_OF_NO_PROCESS, {
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: answeringQuery({ stdout }).run,
+      ...(expectedStart !== undefined && { expectedStart }),
+    })
+
+  // Act
+  const starts = {
+    localTime: await startOf('wmi:05.10.2026 11:12:33\r\n'),
+    errorText: await startOf(
+      'wmi:Sie können keine Methode für einen Ausdruck mit dem Wert NULL aufrufen.\r\n',
+    ),
+    roundTripUtcTime: await startOf('wmi:2026-10-05T09:12:33.1234560Z\r\n'),
+    withoutItsOffset: await startOf('wmi:20261005181233.123456\r\n'),
+    withUnknownFields: await startOf('wmi:20261005181233.******+540\r\n'),
+    aThirtiethOfFebruary: await startOf('wmi:20260230181233.123456+540\r\n'),
+    nothingAfterTheMark: await startOf('wmi:\r\n'),
+    markOfTheEarlierQuery: await startOf(
+      'cim:2026-10-05T09:12:33.1234560Z\r\n',
+    ),
+    recordedOnLinux: await startOf(
+      'wmi:20261005181233.123456+540\r\n',
+      'linux@4026531836:16362446',
+    ),
+    recordedWithoutATime: await startOf(
+      'wmi:20261005181233.123456+540\r\n',
+      'win:sometime',
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(starts, {
+    localTime: undefined,
+    errorText: undefined,
+    roundTripUtcTime: undefined,
+    withoutItsOffset: undefined,
+    withUnknownFields: undefined,
+    aThirtiethOfFebruary: undefined,
+    nothingAfterTheMark: undefined,
+    markOfTheEarlierQuery: undefined,
+    recordedOnLinux: 'win:2026-10-05T09:12:33.1234560Z',
+    recordedWithoutATime: 'win:2026-10-05T09:12:33.1234560Z',
+  })
+})
+
+// Value: protects=a live Windows window run as administrator, or a publisher of another user, whose storage lock or claim is judged by the creation time in the process table while its clock was set back an hour (the repeated hour at the end of daylight saving time); fails_when=the creation time is read as a local time and converted to UTC by the time zone's rules, which give the repeated hour one offset only, so a process created in one of its two halves is named an hour off, its recorded start is not confirmed, and the live owner counts as gone (its lock is taken over while it writes); or the offset WMI names is not taken out of its local digits exactly; why_new=Cycle 0047 row 117 (ADV2-10); seam=the injected platform, environment and query runner, which answers as Windows PowerShell 5.1 prints Win32_Process CreationDate through Get-WmiObject: its local digits and its offset from UTC in minutes; no_claim=the real process table in a time zone with daylight saving time, which no runner of this project has
+test('a creation time from the Windows process table in the repeated hour at the end of daylight saving time is named by its own UTC offset, so the two halves of that hour are two starts', async () => {
+  // Arrange: in London, 01:30 local time on 25 October 2026 comes twice: at +60 minutes (00:30 UTC) and an hour later at +0 (01:30 UTC).
+  const startOf = (
+    stdout: string,
+    expectedStart?: string,
+  ): Promise<string | undefined> =>
+    readProcessStart(ID_OF_NO_PROCESS, {
+      platform: 'win32',
+      environment: { SystemRoot: 'C:\\Windows' },
+      run: answeringQuery({ stdout }).run,
+      ...(expectedStart !== undefined && { expectedStart }),
+    })
+
+  // Act
+  const starts = {
+    firstHalfOfTheHour: await startOf('wmi:20261025013000.123456+060\r\n'),
+    secondHalfOfTheHour: await startOf('wmi:20261025013000.123456+000\r\n'),
+    firstHalfConfirmingItsRecordedStart: await startOf(
+      'wmi:20261025013000.123456+060\r\n',
+      'win:2026-10-25T00:30:00.1234567Z',
+    ),
+    secondHalfAgainstTheFirstHalfsRecordedStart: await startOf(
+      'wmi:20261025013000.123456+000\r\n',
+      'win:2026-10-25T00:30:00.1234567Z',
+    ),
+    westOfUtc: await startOf('wmi:20261101013000.123456-240\r\n'),
+  }
+
+  // Assert
+  assert.deepEqual(starts, {
+    firstHalfOfTheHour: 'win:2026-10-25T00:30:00.1234560Z',
+    secondHalfOfTheHour: 'win:2026-10-25T01:30:00.1234560Z',
+    firstHalfConfirmingItsRecordedStart: 'win:2026-10-25T00:30:00.1234567Z',
+    secondHalfAgainstTheFirstHalfsRecordedStart:
+      'win:2026-10-25T01:30:00.1234560Z',
+    westOfUtc: 'win:2026-11-01T05:30:00.1234560Z',
   })
 })
 
@@ -490,6 +616,37 @@ test('a start kept for a sweep that differs from the recorded one is read again'
   assert.equal(reads, 2)
 })
 
+// Value: protects=a sweep that meets two records of one process id (the stale storage claims, the claims of a Wiki update marker, the abandoned browser profiles), whose first read of that process's start found none (a query that failed once, a process that was not readable yet), reads the start again at the second record; fails_when=the sweep's cache answers a kept read that found no start also to a caller without keepsUnreadable, so one failed read decides every later record of that id in the sweep and an owner that is gone by the start read now is kept until the next sweep; why_new=Cycle 0047 row 152 (P3COV-2): an always-keep cache passed every test of the files that use it; seam=the injected platform and file read; no_claim=the storage lock's takeover, which keeps an unreadable start on purpose (keepsUnreadable)
+test('a sweep without keepsUnreadable reads a start again after a read of it found none', async () => {
+  // Arrange: a sweep with its own cache and no keepsUnreadable; the first read of the process's stat fails, and the second finds the process begun at tick 200.
+  const stats: (() => string)[] = [
+    () => {
+      throw new Error('EIO: i/o error, read')
+    },
+    () => linuxStat(200),
+  ]
+  let reads = 0
+  const sweep: ProcessStartInputs = {
+    platform: 'linux',
+    readFile: async () => stats[reads++]!(),
+    readLink: inNamespace4026531836,
+    cache: new Map(),
+    expectedStart: 'linux@4026531836:200',
+  }
+  // Act
+  const atTheFirstRecord = await readProcessStart(ID_OF_NO_PROCESS, sweep),
+    atTheSecondRecord = await readProcessStart(ID_OF_NO_PROCESS, sweep)
+  // Assert
+  assert.deepEqual(
+    { atTheFirstRecord, atTheSecondRecord, reads },
+    {
+      atTheFirstRecord: undefined,
+      atTheSecondRecord: 'linux@4026531836:200',
+      reads: 2,
+    },
+  )
+})
+
 // Value: protects=the real read is stable and tells two processes apart; fails_when=the real answer changes between two reads, two processes share one, or the platform's answer is refused by its own check; why_new=only a real read shows it (decision D6); seam=none (two real child processes)
 test('names a running process by a start that stays the same and differs from another process’s', async (context) => {
   // Arrange: two processes started more than a second apart, which is the coarsest step a platform's answer has (`ps` prints whole seconds).
@@ -525,5 +682,93 @@ test(
     // Assert
     assert.match(namespaceNumber, /^\d+$/)
     assert.equal(start.slice(0, start.indexOf(':')), `linux@${namespaceNumber}`)
+  },
+)
+
+/** The process id Windows gives its System process, which runs from the boot to the shutdown and is a process of another user than the tests'. */
+const WINDOWS_SYSTEM_PROCESS_ID = 4
+
+/**
+ * Runs the product's own PowerShell start query in the real PowerShell, with its read of the process's start made to fail as it fails where this user may not read the process ("Access is denied"), so that the query falls back to the process table as it does there; it records what PowerShell printed.
+ * @returns The runner to inject, how many queries had their read of the start denied, and what each query printed.
+ * @example
+ * const query = queryWithStartReadDenied()
+ * await realProcessStart(4, { run: query.run }) // => 'win:2026-10-19T02:21:17.7593480Z'; query.printed => ['wmi:20261019112117.759348+540']
+ */
+function queryWithStartReadDenied(): {
+  run: NonNullable<ProcessStartInputs['run']>
+  deniedReads: number
+  printed: string[]
+} {
+  const query = {
+    deniedReads: 0,
+    printed: [] as string[],
+    run: (async (file, queryArguments, options) => {
+      const command = queryArguments.at(-1) ?? ''
+      const commandWithDeniedRead = command.replace(
+        '$process.StartTime',
+        () => "$(throw 'Access is denied')",
+      )
+      if (commandWithDeniedRead !== command) query.deniedReads += 1
+      const answer = await runBoundedQuery(
+        file,
+        [...queryArguments.slice(0, -1), commandWithDeniedRead],
+        options,
+      )
+      query.printed.push(answer.stdout.trim())
+      return answer
+    }) satisfies NonNullable<ProcessStartInputs['run']>,
+  }
+  return query
+}
+
+// Value: protects=the storage locks and claims of Windows windows, whose owners' process ids can go to processes of other users, as the System process is one; fails_when=the real PowerShell answers the start of such a process in another shape than the round-trip UTC time to the 100 ns that the product checks, or another text at each read, so the process is never told by its start (Cycle 0047 row 93, TEST-4: the start query of row 33 was only run with stubs); why_new=Cycle 0047 row 93 (TEST-4); seam=none (the real PowerShell and the System process). Windows only: no other system has PowerShell's query; the Windows job runs this file.
+test(
+  'the real PowerShell names the Windows System process by a start in round-trip UTC form to the 100 ns, the same at a second read',
+  {
+    skip:
+      process.platform !== 'win32' &&
+      'the PowerShell query runs on Windows only',
+  },
+  async () => {
+    // Arrange: the System process, which runs for as long as Windows does.
+    const pid = WINDOWS_SYSTEM_PROCESS_ID
+    // Act
+    const start = await realProcessStart(pid),
+      startAgain = await realProcessStart(pid)
+    // Assert
+    assert.match(start, /^win:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/)
+    assert.equal(startAgain, start)
+  },
+)
+
+// Value: protects=a storage lock or a claim of a killed Windows window whose process id went to a process this user may not query (another user's, or one run as administrator); fails_when=the fall-back of the real PowerShell to the process table (Win32_Process through WMI's Get-WmiObject of the Windows PowerShell 5.1 the product starts, row 33, row 117) prints no creation time, prints it in another shape than WMI's DMTF text with its UTC offset, or its time is not taken for the start, so the start stays unknown and the dead window's lock refuses every write for as long as that process runs; or the creation time to the microsecond does not confirm the start PowerShell reads to the 100 ns, so a live owner counts as gone; why_new=Cycle 0047 row 93 (TEST-4): the fall-back was only run with stubs; seam=the product's query run in the real PowerShell with its read of the start denied, as it is denied to a user who may not read the process (a runner of the Windows job is an administrator, who may read the System process's start); no_claim=a standard user's own denial, which the same query meets on a developer's computer. Windows only: no other system has PowerShell's query; the Windows job runs this file.
+test(
+  'where PowerShell may not read the start of the Windows System process, the real query names it by its creation time in the process table, the same at a second read, and that time confirms the start read where PowerShell may',
+  {
+    skip:
+      process.platform !== 'win32' &&
+      'the PowerShell query runs on Windows only',
+  },
+  async () => {
+    // Arrange: the start of the System process as this user reads it, and the product's query with its read of the start denied.
+    const pid = WINDOWS_SYSTEM_PROCESS_ID
+    const startReadByPowerShell = await realProcessStart(pid)
+    const query = queryWithStartReadDenied()
+    // Act
+    const creation = await realProcessStart(pid, { run: query.run }),
+      creationAgain = await realProcessStart(pid, { run: query.run }),
+      confirmed = await realProcessStart(pid, {
+        run: query.run,
+        expectedStart: startReadByPowerShell,
+      })
+    // Assert
+    assert.equal(query.deniedReads, 3)
+    assert.equal(query.printed.length, 3)
+    for (const printed of query.printed)
+      assert.match(printed, /^wmi:\d{14}\.\d{6}[+-]\d{3}$/)
+    assert.match(creation, /^win:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}0Z$/)
+    assert.equal(creationAgain, creation)
+    assert.equal(confirmed, startReadByPowerShell)
   },
 )

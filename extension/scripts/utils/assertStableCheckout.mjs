@@ -10,7 +10,7 @@ import { readBuildIdentity } from './readBuildIdentity.mjs'
  * @param paths - The paths to name, at least one.
  * @returns The quoted paths joined by commas, followed by "and N more" when some are left out.
  * @example
- * namedPaths(['PROJECT_STATE.md', 'notes.txt'])       // => '"PROJECT_STATE.md", "notes.txt"'
+ * namedPaths(['README.md', 'notes.txt'])       // => '"README.md", "notes.txt"'
  * namedPaths(['a', 'b', 'c', 'd', 'e', 'f', 'g'])     // => '"a", "b", "c", "d", "e" and 2 more'
  */
 function namedPaths(paths) {
@@ -34,7 +34,7 @@ function namedPaths(paths) {
  * @param changes - The entries in Git's order ({@link listCheckoutChanges}).
  * @returns The paths in that order; for a rename or a copy the new path and then the earlier one.
  * @example
- * pathsOfChanges([' M PROJECT_STATE.md', '?? notes.txt']) // => ['PROJECT_STATE.md', 'notes.txt']
+ * pathsOfChanges([' M README.md', '?? notes.txt']) // => ['README.md', 'notes.txt']
  * pathsOfChanges(['R  x.md', 'my file.md'])               // => ['x.md', 'my file.md']
  */
 function pathsOfChanges(changes) {
@@ -59,8 +59,8 @@ function pathsOfChanges(changes) {
  * @param changes - What Git reports now ({@link listCheckoutChanges}).
  * @returns `undefined` when the state is the same; otherwise one clause: that Git reports changes now, with their paths; that the checkout counts as changed although Git names no path (an ignored or index-hidden package input that differs from its revision); or that Git reports no change any more.
  * @example
- * dirtyStateChange(false, true, [' M PROJECT_STATE.md']) // => 'Git reported no change before and reports changes now ("PROJECT_STATE.md")'
- * dirtyStateChange(true, true, [' M PROJECT_STATE.md'])  // => undefined
+ * dirtyStateChange(false, true, [' M README.md']) // => 'Git reported no change before and reports changes now ("README.md")'
+ * dirtyStateChange(true, true, [' M README.md'])  // => undefined
  */
 function dirtyStateChange(wasDirty, isDirty, changes) {
   if (wasDirty === isDirty) return undefined
@@ -103,7 +103,7 @@ function sourceChange(before, now) {
  * @throws An `Error` whose message is `The checkout changed during <phase>: <what changed>. Retry from a stable checkout.`, where what changed is one clause for each of the three that differs, joined by semicolons: the two revisions; the paths Git reports now for a checkout that was clean; the sources whose bytes differ. At most {@link CHECKOUT_CHANGE_SHOWN_PATH_LIMIT} paths are named per clause.
  * @example
  * await assertStableCheckout('/work/codebook', before, scratch, 'compilation')
- * // throws 'The checkout changed during compilation: Git reported no change before and reports changes now ("PROJECT_STATE.md"). Retry from a stable checkout.'
+ * // throws 'The checkout changed during compilation: Git reported no change before and reports changes now ("README.md"). Retry from a stable checkout.'
  */
 export async function assertStableCheckout(
   repository,

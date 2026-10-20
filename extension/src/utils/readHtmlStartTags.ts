@@ -32,6 +32,28 @@ export type HtmlAttribute = {
 /** A start tag a browser reads: its name in ASCII lower case and its attributes in the order written. */
 export type HtmlStartTag = { name: string; attributes: HtmlAttribute[] }
 
+/**
+ * How a browser reads a page where browsers part: by the select rules the HTML standard took in 2025, as Chrome 151 does (`current`: a select keeps the insertion mode it came in, holds any markup and ends the scope of what lies below it), or by the rules before them, which a browser without that change keeps (`before-2025`: in a select the parser ignores every start tag but a few, a style, an iframe, an xmp, a title, a plaintext, an svg and a div among them); and with scripting enabled, so that a noscript holds text, or disabled, so that it holds markup (a browser with JavaScript off, and a document of `DOMParser`).
+ */
+export type HtmlReading = {
+  selectRules: 'current' | 'before-2025'
+  scriptingEnabled: boolean
+}
+
+/** Chrome 151's reading with scripting enabled: the one by which the reader rebinds Codebook's addresses and finds a page's ids, its rail's link and its body's end. */
+const CHROME_READING: HtmlReading = {
+  selectRules: 'current',
+  scriptingEnabled: true,
+}
+
+/** A page as one reading reads it: its start tags in source order; where the end tag of its body starts, when the parser took one as the body's end (`undefined` for a page without, for a frameset, and for a body no `<body>` tag opened, on which the pinned parser records no place); and whether a start tag put in right before that end, or at the page's end, would take the rules of svg or MathML content, as it does where such an element other than an integration point is the current node, so that a script tag there would be an svg or MathML element, which loads nothing. */
+export type HtmlPageReading = {
+  startTags: HtmlStartTag[]
+  bodyEndTagStart: number | undefined
+  bodyEndInForeignContent: boolean
+  pageEndInForeignContent: boolean
+}
+
 /** White space between the parts of a tag: the five characters a browser separates them at. */
 const WHITESPACE = /[\t\n\f\r ]*/y
 /** The rest of a tag's name after its first letter: up to white space, a slash or `>`. */
@@ -244,9 +266,9 @@ function readTagAt(html: string, nameAt: number): HtmlStartTag | undefined {
 }
 
 /**
- * Keeps original start-tag spans while parse5 owns the complete HTML tree; created by {@link readHtmlStartTags} for each page.
- * Its adapters use current select rules (a select changes no insertion mode, so table tokens close it by the table rules, and an input closes it by the body rule) and require a matching table section before closing a row; an open select ends every scope but the table scope; it resets the insertion mode by HTML elements alone, skips each end tag that provably changes nothing, writes an end's name in svg case under an svg element and compares a foreign element's name with it as Chrome does, and ignores a body-rule end at an svg or MathML integration point. Other tree construction stays with the pinned parser.
- * It depends on parse5 8.0.1 internals, which an upgrade must recheck one by one: the protected hooks it overrides (`_startTagOutsideForeignContent`, `_endTagOutsideForeignContent`, `_resetInsertionMode`, `_resetInsertionModeForSelect`, `onItemPush`, `onItemPop`, `onStartTag`, `onEndTag`) and the order the pinned parser calls them in; the pinned reset's walk, which reads `openElements.tagIDs` from the current node down and stops at the first tag id of `RESET_MODE_TAG_IDS`, whatever the namespace, so that the reader's reset may hide a foreign element's tag id for one pass; the @internal fields it reads or changes (`openElements` with `items`, `tagIDs`, `stackTop` and `tmplCount`, `insertionMode` with the mode numbers in constants.ts, `formElement`, `currentNotInHTML`, `skipNextNewLine`, `currentToken`); the methods of `activeFormattingElements` it wraps, which must stay the only ones that add or remove entries; the four scope checks of `openElements` it wraps (`hasInScope`, `hasInListItemScope`, `hasInButtonScope`, `hasNumberedHeaderInScope`), whose scope ends `SCOPE_END_TAG_IDS`, `LIST_ITEM_SCOPE_END_TAG_IDS`, `BUTTON_SCOPE_END_TAG_IDS` and `FOREIGN_SCOPE_END_TAG_IDS` repeat from parse5's open-element-stack.js; `_isSpecialElement` and the body rule for an end of an unknown name, which matches by tag id before it asks whether an element is special; and `foreignContent.adjustTokenSVGTagName` with its svg case table, which lacks the names of `HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS` (recheck the table against the HTML standard's at an upgrade), the hook `shouldProcessStartTagTokenInForeignContent` it overrides to add them for start tags, and `_getAdjustedCurrentElement`.
+ * Keeps original start-tag spans while parse5 owns the complete HTML tree; created by {@link readHtmlPage} for each page and reading ({@link HtmlReading}).
+ * Under the reading's `current` select rules its select adapters apply them (a select changes no insertion mode, so table tokens close it by the table rules, and an input closes it by the body rule; an open select ends every scope but the table scope); under `before-2025` it leaves a select to the pinned parser, whose select rules are those of the HTML standard before 2025. In either reading it requires a matching table section before closing a row; it resets the insertion mode by HTML elements alone, skips each end tag that provably changes nothing, writes an end's name in svg case under an svg element and compares a foreign element's name with it as Chrome does, and ignores a body-rule end at an svg or MathML integration point. Other tree construction stays with the pinned parser.
+ * It depends on parse5 8.0.1 internals, which an upgrade must recheck one by one: the protected hooks it overrides (`_startTagOutsideForeignContent`, `_endTagOutsideForeignContent`, `_resetInsertionMode`, `_resetInsertionModeForSelect`, `onItemPush`, `onItemPop`, `onStartTag`, `onEndTag`) and the order the pinned parser calls them in; the pinned reset's walk, which reads `openElements.tagIDs` from the current node down and stops at the first tag id of `RESET_MODE_TAG_IDS`, whatever the namespace, so that the reader's reset may hide a foreign element's tag id for one pass; the @internal fields it reads or changes (`openElements` with `items`, `tagIDs`, `stackTop` and `tmplCount`, `insertionMode` with the mode numbers in constants.ts, `formElement`, `currentNotInHTML`, `skipNextNewLine`, `currentToken`); the methods of `activeFormattingElements` it wraps, which must stay the only ones that add or remove entries; the four scope checks of `openElements` it wraps (`hasInScope`, `hasInListItemScope`, `hasInButtonScope`, `hasNumberedHeaderInScope`), whose scope ends `SCOPE_END_TAG_IDS`, `LIST_ITEM_SCOPE_END_TAG_IDS`, `BUTTON_SCOPE_END_TAG_IDS` and `FOREIGN_SCOPE_END_TAG_IDS` repeat from parse5's open-element-stack.js; `_isSpecialElement` and the body rule for an end of an unknown name, which matches by tag id before it asks whether an element is special; and `foreignContent.adjustTokenSVGTagName` with its svg case table, which lacks the names of `HTML_PARSER_SVG_CASE_NAMES_PARSE5_LACKS` (recheck the table against the HTML standard's at an upgrade), the hook `shouldProcessStartTagTokenInForeignContent` it overrides to add them for start tags, and `_getAdjustedCurrentElement`; the @internal `tokenizer.inForeignNode`, which the pinned parser sets after each push and pop and the reader reads at a body end and at the page's end (the hook `onEof`), and the body's end tag location, which the pinned parser records on the body, second on the stack, when it takes a `</body>`.
  * @example new HtmlPageReader('<p>text</p>').tokenizer.write('<p>text</p>', true)
  */
 class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
@@ -255,25 +277,53 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private readonly openNames = new Map<string, number>()
   /** How many HTML select elements are open, so that a start tag finds no open select without a scan of the stack. */
   private openHtmlSelectCount = 0
-  /** The insertion mode each open HTML select was pushed in: current rules give a select no mode of its own, so the mode stays while it is open and comes back when it closes. */
-  private readonly selectPushModes = new WeakMap<
+  /**
+   * How each HTML select was pushed, recorded by {@link HtmlPageReader.recordSelectPush}:
+   * - `mode`: the insertion mode it came in; current rules give a select no mode of its own, so the mode stays while it is open and comes back when it closes;
+   * - `index` and `below`: its place on the stack and the element below it, by which the reading by the select rules before 2025 knows that the stack below a closed select is the one it was pushed on.
+   */
+  private readonly selectPushes = new WeakMap<
     Parse5.DefaultTreeAdapterMap['element'],
-    number
+    {
+      mode: number
+      index: number
+      below: Parse5.DefaultTreeAdapterMap['parentNode'] | undefined
+    }
   >()
   /** The HTML select that left the stack last, whose push mode {@link HtmlPageReader.closeSelect} restores. */
   private lastPoppedSelect: Parse5.DefaultTreeAdapterMap['element'] | undefined
+  /** The HTML select whose pop was the last change of the stack, `undefined` once any element entered or left it since: the moment the pinned parser's select rules reset the mode after they closed it. */
+  private selectPoppedByLastStackChange:
+    Parse5.DefaultTreeAdapterMap['element'] | undefined
   /** The element names of the list of active formatting elements, each with how many entries of that name it holds, markers aside. */
   private readonly formattingEntryNames = new Map<string, number>()
+  /** Whether the reading takes the select rules of 2025 ({@link HtmlReading}), which the select adapters apply; otherwise the pinned parser's own select rules stand. */
+  private readonly followsCurrentSelectRules: boolean
+  /** Where the `</body>` the parser took as the body's end starts (the offset of its `<`): the last one the body rules met while the body was in scope, which the pinned parser records on the body; recorded by {@link HtmlPageReader.onEndTag}. `undefined` while the parser took none, and for a body no `<body>` tag opened, on which the pinned parser records no place (only such a body can give its place to a frameset). */
+  bodyEndTagStart: number | undefined = undefined
+  /** Whether a start tag put in right before the `</body>` the parser took as the body's end would take the rules of svg or MathML content; recorded by {@link HtmlPageReader.onEndTag}. */
+  bodyEndInForeignContent = false
+  /** Whether a start tag put in at the page's end would take the rules of svg or MathML content; recorded by {@link HtmlPageReader.onEof}. */
+  pageEndInForeignContent = false
 
   /**
-   * Retains the original page for attribute offsets; called only by {@link readHtmlStartTags}.
+   * Retains the original page for attribute offsets; called only by {@link readHtmlPage}.
    * @param page - The unmodified HTML source.
-   * @example new HtmlPageReader('<p title="a">text</p>')
+   * @param reading - The select rules and the scripting flag the page is read with.
+   * @example new HtmlPageReader('<p title="a">text</p>', CHROME_READING)
    */
-  constructor(private readonly page: string) {
-    super({ sourceCodeLocationInfo: true, scriptingEnabled: true })
+  constructor(
+    private readonly page: string,
+    reading: HtmlReading,
+  ) {
+    super({
+      sourceCodeLocationInfo: true,
+      scriptingEnabled: reading.scriptingEnabled,
+    })
+    this.followsCurrentSelectRules = reading.selectRules === 'current'
     this.countFormattingEntries()
-    this.endScopesAtOpenSelect()
+    // The rules before 2025 keep the ordinary scopes in a select, as the pinned parser's own checks do.
+    if (this.followsCurrentSelectRules) this.endScopesAtOpenSelect()
   }
 
   /**
@@ -315,6 +365,11 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
    * @example reader._startTagOutsideForeignContent(selectToken) // closes an earlier select in scope
    */
   override _startTagOutsideForeignContent(token: Parse5.Token.TagToken): void {
+    // The rules before 2025 are the pinned parser's own.
+    if (!this.followsCurrentSelectRules) {
+      super._startTagOutsideForeignContent(token)
+      return
+    }
     if (token.tagID === htmlTree.TAG_ID.SELECT && this.hasOpenSelect()) {
       this.closeSelect()
       return
@@ -341,7 +396,12 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     // parse5 8.0.1 accepts either scope; HTML requires both before closing a row.
     if (this.shouldIgnoreTableSectionEnd(token)) return
     if (this.isEndAtForeignSpecialElement(token)) return
-    if (token.tagID === htmlTree.TAG_ID.SELECT && this.hasOpenSelect()) {
+    // Under the rules before 2025 a select's end takes the pinned parser's select modes.
+    if (
+      this.followsCurrentSelectRules &&
+      token.tagID === htmlTree.TAG_ID.SELECT &&
+      this.hasOpenSelect()
+    ) {
       this.closeSelect()
       return
     }
@@ -385,7 +445,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Reads one entry of the stack of open elements as an element and its tag id; called by the reader's own walks of the stack.
+   * Reads one entry of the stack of open elements as an element and its tag id; called by the two walks of the stack that look at an element's namespace, {@link HtmlPageReader.isEndAtForeignSpecialElement} and {@link HtmlPageReader.isInScopeEndingAtSelect}, and by {@link HtmlPageReader.tookAsBodyEnd}, which reads the body, second on the stack, after a `</body>`.
    * @param index - A position on the stack, from 0 to its top.
    * @returns The element and its tag id, or `undefined` for an entry that is no element.
    * @example reader.openElementAt(reader.openElements.stackTop) // => { element: currentNode, tagID: TAG_ID.P }
@@ -407,11 +467,14 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
 
   /**
    * Resets the insertion mode by the elements of the HTML namespace alone, as the HTML standard and browsers do: the pinned reset reads a tag id whatever the namespace, so an svg or MathML td sets the cell mode, and a later table end in that mode pops the whole stack and throws.
-   * Called by the pinned parser wherever it resets the mode (after a table, a template or a caption closes) and by the select adapters of this reader. An element of another namespace with a tag id the reset reads is read as unknown for this one pass, down to where the reset stops, so the walk takes no longer than the pinned reset's own.
+   * Called by the pinned parser wherever it resets the mode (after a table, a template or a caption closes, and under the select rules before 2025 after a select closes) and by the select adapters of this reader. An element of another namespace with a tag id the reset reads is read as unknown for this one pass, down to where the reset stops, so the walk takes no longer than the pinned reset's own.
    * @returns Nothing; the mode is the one the HTML elements of the stack give.
    * @example reader._resetInsertionMode() // IN_TABLE, not IN_CELL, for '<table><svg><td><foreignObject>'
    */
   override _resetInsertionMode(): void {
+    // Under the rules before 2025 a select's end, or a tag that closes it, resets the mode right after the select left; the mode it came in needs no walk of the stack.
+    if (!this.followsCurrentSelectRules && this.restoreModeOfClosedSelect())
+      return
     const { items, tagIDs, stackTop } = this.openElements
     const hiddenTagIDs: { index: number; tagID: Parse5.html.TAG_ID }[] = []
     // From the current node down to the first HTML element the reset sets a mode at, where the pinned reset stops.
@@ -437,17 +500,41 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
+   * Gives the reading by the select rules before 2025 the mode a select came in when the pinned parser resets the mode right after that select closed: while it was open those rules ignored or closed it at every tag that could change the stack below it (only an option, an optgroup, an hr, a script or a template opens in it), so the reset would find the mode the select came in, after a walk of the stack as deep as the nesting; called by {@link HtmlPageReader._resetInsertionMode}.
+   * The select's place and the element below it are checked, so a stack that changed below it takes the full reset.
+   * @returns Whether the mode was restored; `false` leaves the reset to walk the stack.
+   * @example reader.restoreModeOfClosedSelect() // => true right after '<x><select></select>' closed the select, the mode IN_BODY
+   */
+  private restoreModeOfClosedSelect(): boolean {
+    const select = this.selectPoppedByLastStackChange
+    const push = select && this.selectPushes.get(select)
+    if (
+      push === undefined ||
+      this.openElements.stackTop !== push.index - 1 ||
+      this.openElements.current !== push.below
+    )
+      return false
+    this.insertionMode = push.mode
+    return true
+  }
+
+  /**
    * Continues the insertion-mode reset below an open select, as current HTML has no select modes; the pinned reset calls this when it meets a select.
    * @param selectIndex - Where the reset met the select on the stack of open elements.
    * @returns Nothing; the mode is the one the elements below every open select give.
    * @example reader._resetInsertionModeForSelect(3) // IN_CELL for a select in a table cell
    */
   override _resetInsertionModeForSelect(selectIndex: number): void {
+    // The rules before 2025 give an open select a mode of its own, in select or in select in table, as the pinned parser does.
+    if (!this.followsCurrentSelectRules) {
+      super._resetInsertionModeForSelect(selectIndex)
+      return
+    }
     // An HTML select keeps the mode it was pushed in; the pinned reset would read the elements below it, an svg colgroup or td as a table's.
     const select = this.openElements.items[selectIndex]
     const pushMode =
       select && this.treeAdapter.isElementNode(select)
-        ? this.selectPushModes.get(select)
+        ? this.selectPushes.get(select)?.mode
         : undefined
     if (pushMode !== undefined) {
       this.insertionMode = pushMode
@@ -527,7 +614,8 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private closeSelect(): void {
     this.openElements.popUntilTagNamePopped(htmlTree.TAG_ID.SELECT)
     const pushMode =
-      this.lastPoppedSelect && this.selectPushModes.get(this.lastPoppedSelect)
+      this.lastPoppedSelect &&
+      this.selectPushes.get(this.lastPoppedSelect)?.mode
     // A select without a recorded push takes the mode the elements below it give.
     if (pushMode === undefined) this._resetInsertionMode()
     else this.insertionMode = pushMode
@@ -549,7 +637,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     const { current } = this.openElements
     const pushMode =
       current && this.treeAdapter.isElementNode(current)
-        ? this.selectPushModes.get(current)
+        ? this.selectPushes.get(current)?.mode
         : undefined
     if (pushMode === undefined) this._resetInsertionMode()
     else this.insertionMode = pushMode
@@ -568,6 +656,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     tagId: number,
     isTop: boolean,
   ): void {
+    this.selectPoppedByLastStackChange = undefined
     if (isTop) {
       this.addOpenName(node)
       this.recordSelectPush(node)
@@ -595,6 +684,9 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
         this.openHtmlSelectCount -= 1
         this.lastPoppedSelect = node
       }
+      this.selectPoppedByLastStackChange = this.isHtmlSelect(node)
+        ? node
+        : undefined
     }
     super.onItemPop(node, isTop)
   }
@@ -613,7 +705,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Records the insertion mode an HTML select is pushed in, before the pinned parser leaves it for its old select mode; called by {@link HtmlPageReader.onItemPush} for a push on top.
+   * Records the insertion mode an HTML select is pushed in, before the pinned parser leaves it for its old select mode, and its place on the stack; called by {@link HtmlPageReader.onItemPush} for a push on top.
    * @param node - The element pushed.
    * @returns Nothing; another element changes no record.
    * @example reader.recordSelectPush(select) // in a table cell, records IN_CELL
@@ -621,8 +713,14 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   private recordSelectPush(
     node: Parse5.DefaultTreeAdapterMap['parentNode'],
   ): void {
-    if (this.treeAdapter.isElementNode(node) && this.isHtmlSelect(node))
-      this.selectPushModes.set(node, this.insertionMode)
+    if (!this.treeAdapter.isElementNode(node) || !this.isHtmlSelect(node))
+      return
+    const { items, stackTop } = this.openElements
+    this.selectPushes.set(node, {
+      mode: this.insertionMode,
+      index: stackTop,
+      below: items[stackTop - 1],
+    })
   }
 
   /**
@@ -718,6 +816,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
         isTarget,
         htmlScopeEnds,
       )
+      // The first element that is looked for or ends the scope decides; any other lets the walk go on below it.
       if (answer !== undefined) return answer
     }
     return true
@@ -742,6 +841,7 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
     htmlScopeEnds: ReadonlySet<Parse5.html.TAG_ID>,
   ): boolean | undefined {
     const namespace = this.treeAdapter.getNamespaceURI(element)
+    // Only an HTML element can be the one looked for, and an HTML select ends every scope it wraps.
     if (namespace === htmlTree.NS.HTML) {
       if (isTarget(tagID)) return true
       return htmlScopeEnds.has(tagID) || tagID === htmlTree.TAG_ID.SELECT
@@ -824,12 +924,57 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
   }
 
   /**
-   * Skips an end tag that provably changes nothing, so that a page of many such ends after deep nesting takes no scan of the stack per end; the pinned parser's foreign rule and its body rule for an unknown name each walk the stack.
+   * Reads an end tag ({@link HtmlPageReader.readEndTag}), and for a `</body>` the parser takes as the body's end records where it starts and whether a start tag put in right before it would take the rules of svg or MathML content: the body's end closes no element, so such a start tag meets the stack this end meets. The tokenizer calls this for each end tag.
    * @param token - The source end token.
-   * @returns Nothing; every other end keeps the parser's rules.
-   * @example reader.onEndTag(spanEnd) // no stack scan for an absent span in a table cell
+   * @returns Nothing; {@link HtmlPageReader.bodyEndTagStart} and {@link HtmlPageReader.bodyEndInForeignContent} hold the body's end.
+   * @example reader.onEndTag(bodyEnd) // records true for '<body><svg><g></body>'
    */
   override onEndTag(token: Parse5.Token.TagToken): void {
+    const isBodyEnd = token.tagID === htmlTree.TAG_ID.BODY
+    const startTagIsForeign = this.tokenizer.inForeignNode
+    this.readEndTag(token)
+    // Only a `</body>` the parser takes is the body's end; one it ignores, inside a template or an svg foreignObject, leaves the record of an earlier one.
+    if (isBodyEnd && this.tookAsBodyEnd(token)) {
+      this.bodyEndTagStart = token.location?.startOffset
+      this.bodyEndInForeignContent = startTagIsForeign
+    }
+  }
+
+  /**
+   * Tells whether the parser took an end tag as the body's end, by the place it records on the body, which stays second on the stack until the page ends; called by {@link HtmlPageReader.onEndTag} after a `</body>`.
+   * @param token - The `</body>` just read.
+   * @returns Whether the body's end tag is this one.
+   * @example reader.tookAsBodyEnd(bodyEnd) // => false for '<body><template></body>'
+   */
+  private tookAsBodyEnd(token: Parse5.Token.TagToken): boolean {
+    const start = token.location?.startOffset
+    const body = this.openElementAt(1)
+    return (
+      start !== undefined &&
+      body?.tagID === htmlTree.TAG_ID.BODY &&
+      this.treeAdapter.getNodeSourceCodeLocation(body.element)?.endTag
+        ?.startOffset === start
+    )
+  }
+
+  /**
+   * Records whether a start tag put in at the page's end would take the rules of svg or MathML content, before the pinned parser ends the page and closes every element; the tokenizer calls this once, after the page's last characters.
+   * @param token - The end-of-file token.
+   * @returns Nothing; {@link HtmlPageReader.pageEndInForeignContent} holds the answer.
+   * @example reader.onEof(endOfFile) // records true for '<body><svg><g>'
+   */
+  override onEof(token: Parse5.Token.EOFToken): void {
+    this.pageEndInForeignContent = this.tokenizer.inForeignNode
+    super.onEof(token)
+  }
+
+  /**
+   * Skips an end tag that provably changes nothing, so that a page of many such ends after deep nesting takes no scan of the stack per end; the pinned parser's foreign rule and its body rule for an unknown name each walk the stack. Called by {@link HtmlPageReader.onEndTag}.
+   * @param token - The source end token.
+   * @returns Nothing; every other end keeps the parser's rules.
+   * @example reader.readEndTag(spanEnd) // no stack scan for an absent span in a table cell
+   */
+  private readEndTag(token: Parse5.Token.TagToken): void {
     if (this.isAbsentEndWithoutEffect(token.tagName)) {
       // Preserve onEndTag's bookkeeping even when tree construction is a no-op.
       this.skipNextNewLine = false
@@ -876,8 +1021,6 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
       }
       const tagName = this.treeAdapter.getTagName(element)
       if (tagName === token.tagName) {
-        // The token takes the element's own name, as the pinned rule gives it for the end location.
-        token.tagName = tagName
         this.openElements.shortenToLength(index)
         return
       }
@@ -921,14 +1064,42 @@ class HtmlPageReader extends Parser<Parse5.DefaultTreeAdapterMap> {
 }
 
 /**
- * Reads original start tags using full HTML tree feedback, for the Wiki address filter and local-editor link binder.
+ * Reads a page as one reading of a browser does ({@link HtmlReading}): its original start tags, using full HTML tree feedback, where the end tag of its body starts, and whether svg or MathML content is open there and at the page's end; for the Wiki address filter, which also puts the reader's script tag at that end, or without one at the page's end, after a tag that leaves such content where a reading leaves it open there; to learn that of a reading beside Chrome's, the filter reads the page up to the tag's place by that reading and asks whether such content is open at that end.
  * Raw attribute slices keep duplicates and untouched text; the tree parser decides where markup is active.
  * @param html - The unchanged page source.
- * @returns Start tags in source order, with every original attribute's exact positions and values.
- * @example readHtmlStartTags('<!-- <a href=x> --><a HREF=y>').map(tag => tag.name) // => ['a']
+ * @param reading - The select rules and the scripting flag to read the page with; Chrome 151's with scripting when omitted.
+ * @returns The start tags in source order, with every original attribute's exact positions and values, the start of the body's end tag, and whether a start tag right before it or at the page's end takes the rules of svg or MathML content ({@link HtmlPageReading}).
+ * @example
+ * readHtmlPage('<body><!-- </body> --><p>x</BODY>').bodyEndTagStart // => 26
+ * readHtmlPage('<body><svg><g></body>').bodyEndInForeignContent // => true
  */
-export function readHtmlStartTags(html: string): HtmlStartTag[] {
-  const reader = new HtmlPageReader(html)
+export function readHtmlPage(
+  html: string,
+  reading: HtmlReading = CHROME_READING,
+): HtmlPageReading {
+  const reader = new HtmlPageReader(html, reading)
   reader.tokenizer.write(html, true)
-  return reader.startTags
+  return {
+    startTags: reader.startTags,
+    bodyEndTagStart: reader.bodyEndTagStart,
+    bodyEndInForeignContent: reader.bodyEndInForeignContent,
+    pageEndInForeignContent: reader.pageEndInForeignContent,
+  }
+}
+
+/**
+ * Reads original start tags using full HTML tree feedback, for the Wiki address filter and local-editor link binder ({@link readHtmlPage}).
+ * Raw attribute slices keep duplicates and untouched text; the tree parser decides where markup is active.
+ * The address filter reads a page under each reading a browser may take ({@link HtmlReading}); every other caller reads it as Chrome 151 does with scripting ({@link CHROME_READING}).
+ * @param html - The unchanged page source.
+ * @param reading - The select rules and the scripting flag to read the page with; Chrome 151's with scripting when omitted.
+ * @returns Start tags in source order, with every original attribute's exact positions and values.
+ * @example
+ * readHtmlStartTags('<!-- <a href=x> --><a HREF=y>').map(tag => tag.name) // => ['a']
+ */
+export function readHtmlStartTags(
+  html: string,
+  reading: HtmlReading = CHROME_READING,
+): HtmlStartTag[] {
+  return readHtmlPage(html, reading).startTags
 }

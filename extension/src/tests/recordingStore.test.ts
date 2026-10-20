@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import {
+import fsPromises, {
   appendFile,
   mkdir,
   mkdtemp,
@@ -555,23 +555,171 @@ test('a recording refused by a full library names no delete remedy after this ed
   })
 })
 
-test('interrupted reservations count against capacity and legacy learner bytes remain untouched', async (context) => {
-  // Arrange
+// Value: protects=the place of the saved study limit that a recording start takes only when it starts; fails_when=a start that fails after it made the recording's folder (its header or its empty journal cannot be written, a full disk) leaves the folder: a folder with this window's header is the reservation of a run of this machine, which no list shows and no removal deletes, and it takes a place of the limit until the editor ends (row 86's rule; row 95 fixed it for the Node test history only); why_new=Cycle 0047 row 35 (P3RT13); seam=the store's disk operations, whose header write and journal creation fail once each; no_claim=a crash between the folder and its header, which leaves an interrupted reservation (the next test)
+test('a recording start that fails after making its folder leaves no folder behind, and the next start under a limit of one is admitted', async (context) => {
+  // Arrange: the first start cannot write its header, the second cannot create its journal.
+  let failing: 'header' | 'journal' | undefined = 'header'
   const { directory, binding, store } = await recordingHarness(
     context,
     { slots: 1 },
     {
       ...recordingDiskIo,
-      async json() {
-        throw new Error('injected header failure')
+      async json(path, value, limit) {
+        if (failing === 'header' && path.endsWith('header.json'))
+          throw new Error('ENOSPC: no space left on device, write')
+        await recordingDiskIo.json(path, value, limit)
+      },
+      async binary(path, bytes) {
+        if (failing === 'journal' && path.endsWith('frames.jsonl'))
+          throw new Error('ENOSPC: no space left on device, open')
+        await recordingDiskIo.binary(path, bytes)
       },
     },
   )
+  const studyIdOf = (runId: string): string => `${binding.instanceId}_${runId}`
+  const journalRunId = randomUUID(),
+    admittedRunId = randomUUID()
+
+  // Act
+  const headerFailure = await store.start(binding, 0).then(
+    () => 'started',
+    (error: unknown) => String(error),
+  )
+  const leftAfterHeaderFailure = await readdir(store.directory)
+  failing = 'journal'
+  const journalFailure = await store
+    .start(
+      { ...binding, runId: journalRunId, studyId: studyIdOf(journalRunId) },
+      0,
+    )
+    .then(
+      () => 'started',
+      (error: unknown) => String(error),
+    )
+  const leftAfterJournalFailure = await readdir(store.directory)
+  failing = undefined
+  const admitted = await new RecordingStore(directory, workspaceKey, {
+    slots: 1,
+  })
+    .start(
+      { ...binding, runId: admittedRunId, studyId: studyIdOf(admittedRunId) },
+      0,
+    )
+    .then(
+      async (writer) => {
+        await writer.finish(1)
+        return 'started'
+      },
+      (error: unknown) => String(error),
+    )
+
+  // Assert
+  assert.deepEqual(
+    {
+      headerFailure,
+      leftAfterHeaderFailure,
+      journalFailure,
+      leftAfterJournalFailure,
+      admitted,
+      listed: (await store.list()).map((entry) => entry.studyId),
+    },
+    {
+      headerFailure: 'Error: ENOSPC: no space left on device, write',
+      leftAfterHeaderFailure: [],
+      journalFailure: 'Error: ENOSPC: no space left on device, open',
+      leftAfterJournalFailure: [],
+      admitted: 'started',
+      listed: [studyIdOf(admittedRunId)],
+    },
+  )
+})
+
+// Value: protects=a recording start whose write under the storage lock succeeded while the release of the lock fails at each of its attempts (a scanner or an indexer holds writer.lock on Windows): the run records, and the lock it left is taken back by this window's next write (row 199); fails_when=the release's failure fails the start, so the run goes on without its recording while the folder and the writer record it made stay this window's reservation, which no list shows and no removal deletes, and which takes a place of the saved study limit until the editor closes; why_new=Cycle 0047 row 240 (P2CLA-12): the release's failure failed every write that succeeded; seam=node:fs/promises unlink, which refuses to remove writer.lock while the test blocks it; no_claim=a real scanner on Windows
+test('a recording start whose storage lock cannot be released after it made the recording still starts, and the next start takes the lock back', async (context) => {
+  // Arrange: a library with room for two recordings; the removal of writer.lock is refused during the first start.
+  const { directory, binding, store } = await recordingHarness(context, {
+    slots: 2,
+  })
+  await mkdir(directory, { recursive: true })
+  const lockPath = join(directory, 'writer.lock')
+  const unlinkBefore = fsPromises.unlink
+  const blockedRelease = context.mock.method(
+    fsPromises,
+    'unlink',
+    async (...input: Parameters<typeof unlinkBefore>) => {
+      if (input[0] === lockPath)
+        throw Object.assign(
+          new Error(`EPERM: operation not permitted, unlink '${lockPath}'`),
+          { code: 'EPERM' },
+        )
+      return unlinkBefore(...input)
+    },
+  )
+  const secondRunId = randomUUID()
+  const secondStudyId = `${binding.instanceId}_${secondRunId}`
+
+  // Act
+  const firstStart = await store.start(binding, 10).then(
+    async (writer) => {
+      writer.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+      await writer.finish(120)
+      return 'started and sealed'
+    },
+    (error: unknown) => String(error),
+  )
+  const lockLeftByTheFirstStart = await readFile(lockPath).then(
+    () => true,
+    () => false,
+  )
+  blockedRelease.mock.restore()
+  const secondStart = await store
+    .start({ ...binding, runId: secondRunId, studyId: secondStudyId }, 10)
+    .then(
+      async (writer) => {
+        writer.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+        await writer.finish(120)
+        return 'started and sealed'
+      },
+      (error: unknown) => String(error),
+    )
+
+  // Assert
+  assert.deepEqual(
+    {
+      firstStart,
+      lockLeftByTheFirstStart,
+      secondStart,
+      lockLeftAtTheEnd: await readFile(lockPath).then(
+        () => true,
+        () => false,
+      ),
+      listed: (await store.list())
+        .map((entry) => ({ studyId: entry.studyId, status: entry.status }))
+        .sort((left, right) => left.studyId.localeCompare(right.studyId)),
+    },
+    {
+      firstStart: 'started and sealed',
+      lockLeftByTheFirstStart: true,
+      secondStart: 'started and sealed',
+      lockLeftAtTheEnd: false,
+      listed: [
+        { studyId: binding.studyId, status: 'finalized' },
+        { studyId: secondStudyId, status: 'finalized' },
+      ].sort((left, right) => left.studyId.localeCompare(right.studyId)),
+    },
+  )
+})
+
+test('interrupted reservations count against capacity and legacy learner bytes remain untouched', async (context) => {
+  // Arrange: the folder a start made before its editor ended, without a header (since Cycle 0047 row 35 a start that fails while the editor runs removes its folder, so the crash's folder is made here).
+  const { directory, binding, store } = await recordingHarness(context, {
+    slots: 1,
+  })
   await writeFile(
     join(directory, 'progress.v2.json'),
     'existing learner choices',
   )
-  await assert.rejects(store.start(binding, 0), /header failure/)
+  await mkdir(store.path(binding.studyId), { recursive: true })
   const newRunId = randomUUID(),
     fresh = new RecordingStore(directory, workspaceKey, { slots: 1 })
   // Act / Assert

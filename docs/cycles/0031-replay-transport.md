@@ -8,7 +8,7 @@ Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/53\
 Goal issue: https://github.com/laststance/codebook/issues/1\
 Goal links: G03, G04, G05, G07, G11\
-Source state: [Cycle 0030 closure](0030-node-run-integrity.md#corrective-delivery-closure-2026-09-30), [PROJECT_STATE](../../PROJECT_STATE.md)
+Source state: [Cycle 0030 closure](0030-node-run-integrity.md#corrective-delivery-closure-2026-09-30), [PROJECT_STATE](https://github.com/laststance/codebook/blob/ef38585a32a1632c5af5d89ae5c4e08cf866fefc/PROJECT_STATE.md)
 
 Current owner authorization: [D043](https://github.com/laststance/codebook/blob/e32add3a723888166383a951d202d7d62d509d88/DECISIONS.md#d043--resume-completion-and-authorize-protected-mac-use-2026-09-30) explicitly revokes D042's conditional stop. Continue the current ACK repair/proof and then the existing completion workflow, including reviews/PR/CI/merge and later bounded cycles. Protected Mac use while the owner sleeps is authorized. D042 stop statements in earlier receipts/review plans below are historical, not current next actions; all product/evidence/preservation gates remain.
 

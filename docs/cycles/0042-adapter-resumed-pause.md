@@ -8,7 +8,7 @@ Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/78\
 Goal issue: https://github.com/laststance/codebook/issues/1\
 Goal links: G01, G03, G06, G11\
-Source state: [Cycle 0041 delivery closure](0041-live-first-run-both-chats.md#delivery-closure-2026-10-03), [PROJECT_STATE](../../PROJECT_STATE.md)
+Source state: [Cycle 0041 delivery closure](0041-live-first-run-both-chats.md#delivery-closure-2026-10-03), [PROJECT_STATE](https://github.com/laststance/codebook/blob/ef38585a32a1632c5af5d89ae5c4e08cf866fefc/PROJECT_STATE.md)
 
 Owner authority:
 - [D045](https://github.com/laststance/codebook/blob/e32add3a723888166383a951d202d7d62d509d88/DECISIONS.md#d045--resume-cycle-after-cycle-work-after-the-pause-2026-10-02): continue cycle after cycle (`/spec`, plan reviews as needed, implementation, local CodeRabbit CLI and `open-code-review-delegate`, `/ship`, CI, merge, next cycle). The owner cannot answer, so this cycle takes the recommended option at every decision point and records each one below.

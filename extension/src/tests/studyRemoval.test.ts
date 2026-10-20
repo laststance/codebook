@@ -21,9 +21,13 @@ import { isDeepStrictEqual } from 'node:util'
 import type * as libraryModule from '../learningLibrary'
 import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
+import type * as lookModule from '../utils/lookAtRecording'
 import { readProcessStart } from '../utils/readProcessStart'
+import type * as writerRecordModule from '../utils/readRecordingWriterRecord'
+import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import { recordingWriterOf } from '../utils/recordingWriterOf'
+import { studyRemovalMessages } from '../utils/studyRemovalMessages'
 import type * as lockModule from '../utils/withStorageLock'
 import { withStorageLock } from '../utils/withStorageLock'
 
@@ -1569,6 +1573,812 @@ test('a recording that is still being written for a study that is not saved yet 
 })
 
 /**
+ * Starts the recording of a distinct study that is not saved yet, as another editor's run starts it: the recording's header and the record of its writer name that editor's process and host instead of this test process. The tests that use it show what they vary themselves: the record of another machine, the saves of the study and the seal, in their order.
+ * @param storage - The removal storage of the test.
+ * @param writer - The editor process the recording names: its id and its host name.
+ * @returns The study, which is not saved, and the writer of its recording, which is not sealed.
+ * @example const { study, recording } = await recordingStartedBy(storage, { pid: otherWindow.pid!, hostname: hostname() })
+ */
+async function recordingStartedBy(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  writer: { pid: number; hostname: string },
+) {
+  const study = createConfiguredStudy(),
+    runId = randomUUID()
+  for (const observation of study.observations)
+    observation.snapshotUri = observation.snapshotUri.replace(
+      study.runId,
+      runId,
+    )
+  study.runId = runId
+  study.id = `${study.instanceId}_${runId}`
+  const recording = await storage.recordings.start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  await nameWriterOfRecording(storage, study.id, writer)
+  return { study, recording }
+}
+
+/**
+ * Records and seals the recording of a run whose study is not saved yet, as another editor window leaves it when its run has ended and its first save has not happened: the recording names a live process of this machine, the other window, in its header and in the record of its writer.
+ * @param context - The test, at whose end the other window's process is killed.
+ * @param storage - The removal storage of the test.
+ * @returns The study the other window has not saved yet, whose id the recording has.
+ * @example const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+ */
+async function sealedRecordingOfAnotherWindow(
+  context: TestContext,
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+) {
+  const otherWindow = await idleChild(context)
+  const { study, recording } = await recordingStartedBy(storage, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  await recording.finish(1)
+  return study
+}
+
+// Value: protects=the recording of another window's run that has ended and has not saved its study yet (its first save failed and waits for Retry storage, or is still on its way); fails_when=a sealed recording counts as finished whatever run holds it, so this window lists it as "Archive missing; remaining files kept" and Delete moves it to the Trash before the other window saves the study, which then has no recording (data loss); why_new=Cycle 0047 row 36 (P3RT14); seam=the recording's header and writer record, which name a live child process of the test as the other window, and the injected mover; no_claim=a real second editor window
+test('the finished recording of another window whose study that window has not saved yet is neither listed nor moved by this window', async (context) => {
+  // Arrange
+  const storage = await removalStorage(context, 4)
+  const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+
+  // Act
+  const listed = (await storage.library.list()).map((entry) => entry.id)
+  const removal = await storage.library.removeStudy(
+    unsaved.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed,
+      removal,
+      moved: storage.moved,
+      recordingLeft: await readdir(join(storage.directory, 'recordings.v2')),
+    },
+    {
+      listed: [],
+      removal: {
+        outcome: 'nothing-moved',
+        cause: 'Study archive is unavailable.',
+      },
+      moved: [],
+      recordingLeft: [unsaved.id],
+    },
+  )
+})
+
+// Value: protects=a learner's library after an editor window of this computer was closed (or crashed) once its run had sealed its recording and before it ever saved the run's study: the recording, whose writer record names that window's process that has ended, is listed as what is left of the study and moves to the Trash with it; fails_when=a sealed recording's writer record keeps it held whatever its writer's state (isRecordingWriterLive.ts sealedRecordingWriterState does not judge the record's writer), so the recording of a window that will never save is hidden from Saved studies and refuses Delete for good (Cycle 0047 row 200, state cell U40); why_new=Cycle 0047 row 200 (S2SM-U40): the sealed-recording tests had a live writer only; seam=the recording's header and writer record, which name a process id of no process on this machine as the closed window, and the injected mover
+test('the finished recording of a closed window of this computer that never saved its study is listed and moves to the Trash with the study', async (context) => {
+  // Arrange: a recording sealed by a run whose window, a process of this machine, has ended before it saved the study.
+  const storage = await removalStorage(context, 4)
+  const instanceId = randomUUID(),
+    runId = randomUUID(),
+    studyId = `${instanceId}_${runId}`
+  const recording = await storage.recordings.start(
+    {
+      workspaceKey: storage.workspaceKey,
+      studyId,
+      instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: 'repository-browser',
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  await nameWriterOfRecording(storage, studyId, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+  })
+  await recording.finish(1)
+
+  // Act
+  const listed = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+  }))
+  const removal = await storage.library.removeStudy(
+    studyId,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed,
+      removal,
+      moved: storage.moved,
+      recordingsLeft: await readdir(join(storage.directory, 'recordings.v2')),
+    },
+    {
+      listed: [{ id: studyId, format: 'archive-missing' }],
+      removal: { outcome: 'moved' },
+      moved: [join('recordings.v2', studyId)],
+      recordingsLeft: [],
+    },
+  )
+})
+
+// Value: protects=the finished recording of another window's run once that window saved its study: from then on the study is listed by its archive, and what its archive leaves when it is removed by hand is listed again and removable (Cycle 0046 row 86); fails_when=the record of the writer that keeps the finished recording for its run's first save outlives the save, so after the archive was removed by hand the rest stays unlisted and keeps its place while the other window runs; why_new=Cycle 0047 row 36 (P3RT14): the seal keeps that record until the save; seam=the recording's header and writer record, which name a live child process of the test as the other window, the library's save of the study, as the other window saves it, and the injected mover; no_claim=a real second editor window
+test('once another window saved the study of its finished recording, the study is listed by its archive, and what is left after its archive was removed by hand is listed and moves to the Trash', async (context) => {
+  // Arrange: the other window saves its study; later the learner removes its archive and its catalog sidecar by hand.
+  const storage = await removalStorage(context, 4)
+  const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+  await storage.library.saveStudy(unsaved)
+  const listedWhenSaved = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+  }))
+  await rm(join(storage.directory, `${unsaved.id}.study.meta.v3.json`))
+  await rm(join(storage.directory, `${unsaved.id}.study.v3.json`))
+
+  // Act
+  const listedAfterRemovalByHand = (await storage.library.list()).map(
+    (entry) => ({ id: entry.id, format: entry.format }),
+  )
+  const removal = await storage.library.removeStudy(
+    unsaved.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listedWhenSaved,
+      listedAfterRemovalByHand,
+      removal,
+      moved: storage.moved,
+    },
+    {
+      listedWhenSaved: [{ id: unsaved.id, format: 'v3' }],
+      listedAfterRemovalByHand: [{ id: unsaved.id, format: 'archive-missing' }],
+      removal: { outcome: 'moved' },
+      moved: [join('recordings.v2', unsaved.id)],
+    },
+  )
+})
+
+// Value: protects=the study of another window's run whose checkpoint saved it while it ran, after that run sealed its recording and before its save of the final state; fails_when=the seal removes the record of the writer because an archive of the study exists, or an archive alone releases a sealed recording, so this window's Delete moves the study and its recording to the Trash between that window's seal and its final save, which then writes the study back without its recording (data loss); why_new=Cycle 0047 row 98 (ADV-10); seam=the recording's header and writer record, which name a live child process of the test as the other window, the library's saves of the study, as that window's checkpoints save it, and the injected mover; no_claim=a real second editor window
+test('the study of another window that its run saved before sealing the recording is not moved before that window saves it again after the seal, and moves with its recording once it did', async (context) => {
+  // Arrange: another window of this machine records a study, its checkpoint saves the study while the run goes on, and the run then seals the recording.
+  const storage = await removalStorage(context, 4)
+  const otherWindow = await idleChild(context)
+  const { study, recording } = await recordingStartedBy(storage, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  await storage.library.saveStudy(study)
+  await recording.finish(1)
+
+  // Act
+  const removalBeforeTheSaveAfterTheSeal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  const movedBeforeTheSaveAfterTheSeal = [...storage.moved]
+  await storage.library.saveStudy(study)
+  const removalAfterTheSaveAfterTheSeal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removalBeforeTheSaveAfterTheSeal: { ...removalBeforeTheSaveAfterTheSeal },
+      movedBeforeTheSaveAfterTheSeal,
+      removalAfterTheSaveAfterTheSeal: { ...removalAfterTheSaveAfterTheSeal },
+      moved: storage.moved,
+    },
+    {
+      removalBeforeTheSaveAfterTheSeal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
+      },
+      movedBeforeTheSaveAfterTheSeal: [],
+      removalAfterTheSaveAfterTheSeal: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
+/**
+ * Loads a study library whose looks at a recording read its files through a reader that fails once, under the storage lock, for one path: the read answers nothing, as a read of a file a scanner holds for a moment on Windows does.
+ * @param storage - The removal storage of the test.
+ * @param failingPath - The file whose first read under the lock fails.
+ * @returns A library on the test's learning directory, and whether the read failed.
+ * @example const observed = await libraryWhoseReadFailsOnceUnderTheLock(storage, headerPath)
+ */
+async function libraryWhoseReadFailsOnceUnderTheLock(
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+  failingPath: string,
+): Promise<{ library: LearningLibrary; hasReadFailed: () => boolean }> {
+  let isUnderTheLock = false,
+    hasReadFailed = false
+  const failingReader = {
+    readWikiRegularFile: async (
+      ...reading: Parameters<typeof readWikiRegularFile>
+    ): ReturnType<typeof readWikiRegularFile> => {
+      if (isUnderTheLock && !hasReadFailed && reading[0] === failingPath) {
+        hasReadFailed = true
+        return undefined
+      }
+      return readWikiRegularFile(...reading)
+    },
+  }
+  const writerRecordReader = await loadModule<typeof writerRecordModule>(
+    resolve(__dirname, '../utils/readRecordingWriterRecord.js'),
+    { './readWikiRegularFile': failingReader },
+    { Error },
+  )
+  const look = await loadModule<typeof lookModule>(
+    resolve(__dirname, '../utils/lookAtRecording.js'),
+    {
+      './readWikiRegularFile': failingReader,
+      './readRecordingWriterRecord': writerRecordReader,
+    },
+    { Error },
+  )
+  const { LearningLibrary: ObservedLibrary } = await loadModule<
+    typeof libraryModule
+  >(
+    resolve(__dirname, '../learningLibrary.js'),
+    {
+      './utils/lookAtRecording': look,
+      './utils/withStorageLock': {
+        withStorageLock: async (
+          ...[directory, operation]: Parameters<typeof withStorageLock>
+        ): ReturnType<typeof withStorageLock> =>
+          withStorageLock(directory, async () => {
+            isUnderTheLock = true
+            try {
+              return await operation()
+            } finally {
+              isUnderTheLock = false
+            }
+          }),
+      },
+    },
+    { Error },
+  )
+  return {
+    library: new ObservedLibrary(
+      storage.directory,
+      storage.workspaceKey,
+      () => 4,
+    ),
+    hasReadFailed: () => hasReadFailed,
+  }
+}
+
+/**
+ * Records and seals the recording of a study that another editor window saved while its run went on and has not saved after the seal, so that window still holds the recording: its header and the record of its writer name a live process of this machine, the other window.
+ * @param context - The test, at whose end the other window's process is killed.
+ * @param storage - The removal storage of the test.
+ * @returns The study's id.
+ * @example const studyId = await studySavedBeforeItsSealedRecording(context, storage)
+ */
+async function studySavedBeforeItsSealedRecording(
+  context: TestContext,
+  storage: Awaited<ReturnType<typeof removalStorage>>,
+): Promise<string> {
+  const otherWindow = await idleChild(context)
+  const { study, recording } = await recordingStartedBy(storage, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  await storage.library.saveStudy(study)
+  await recording.finish(1)
+  return study.id
+}
+
+// Value: protects=the finished recording of another window's run that has not saved its study after the seal, while a read of its header or of its writer record fails for a moment under the removal's storage lock (a scanner on Windows holds the file); fails_when=the look under the lock takes the read that failed for a header or a record that is not there, counts the sealed recording as released and moves it to the Trash with the study, so that window's checkpoint after the seal is lost; why_new=Cycle 0047 row 239 (P2CLA-7): the look told no failed read from a missing file; seam=the file reader of the loaded library's looks, which answers nothing at its first read of the header, or of the writer record, under the lock, and the injected mover; no_claim=a real scanner on Windows
+test('a read of the header or of the writer record that fails once under the removal’s lock keeps another window’s finished recording, whose study it has not saved after the seal', async (context) => {
+  // Arrange: in two libraries, another window of this machine saved a study while its run went on and then sealed the recording; it has not saved the study after the seal.
+  const ofTheHeaderCase = await removalStorage(context, 4),
+    ofTheRecordCase = await removalStorage(context, 4)
+  const headerCaseStudy = await studySavedBeforeItsSealedRecording(
+      context,
+      ofTheHeaderCase,
+    ),
+    recordCaseStudy = await studySavedBeforeItsSealedRecording(
+      context,
+      ofTheRecordCase,
+    )
+  const headerReadFails = await libraryWhoseReadFailsOnceUnderTheLock(
+    ofTheHeaderCase,
+    join(
+      ofTheHeaderCase.directory,
+      'recordings.v2',
+      headerCaseStudy,
+      'header.json',
+    ),
+  )
+  const recordReadFails = await libraryWhoseReadFailsOnceUnderTheLock(
+    ofTheRecordCase,
+    recordingOwnerRecordPath(ofTheRecordCase.directory, recordCaseStudy),
+  )
+
+  // Act
+  const removalWhoseHeaderReadFails = await headerReadFails.library.removeStudy(
+    headerCaseStudy,
+    ofTheHeaderCase.moveToTrash,
+  )
+  const removalWhoseRecordReadFails = await recordReadFails.library.removeStudy(
+    recordCaseStudy,
+    ofTheRecordCase.moveToTrash,
+  )
+
+  // Assert
+  const refusal = {
+    outcome: 'nothing-moved',
+    cause:
+      'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
+  }
+  assert.deepEqual(
+    {
+      removalWhoseHeaderReadFails: { ...removalWhoseHeaderReadFails },
+      removalWhoseRecordReadFails: { ...removalWhoseRecordReadFails },
+      readsFailed: [
+        headerReadFails.hasReadFailed(),
+        recordReadFails.hasReadFailed(),
+      ],
+      moved: [ofTheHeaderCase.moved, ofTheRecordCase.moved],
+    },
+    {
+      removalWhoseHeaderReadFails: refusal,
+      removalWhoseRecordReadFails: refusal,
+      readsFailed: [true, true],
+      moved: [[], []],
+    },
+  )
+})
+
+/**
+ * Makes every read of one file fail for the rest of the test, as a scanner on Windows that holds the file through a whole Delete does: its open throws, and with `isLookFailing` so does the look at it that does not follow a link (`lstat`), each with the code the test names.
+ * @param context - The test, at whose end both calls are restored.
+ * @param path - The file whose reads fail.
+ * @param failure - The code both calls throw, and whether the look at the file fails as well.
+ * @example failEveryReadOf(context, headerPath, { code: 'EBUSY', isLookFailing: false })
+ */
+function failEveryReadOf(
+  context: TestContext,
+  path: string,
+  failure: { code: 'EBUSY' | 'EACCES'; isLookFailing: boolean },
+): void {
+  const failed = (call: string): Error =>
+    Object.assign(new Error(`${failure.code}: ${call} '${path}'`), {
+      code: failure.code,
+    })
+  const openBefore = fsPromises.open
+  context.mock.method(
+    fsPromises,
+    'open',
+    async (...input: Parameters<typeof openBefore>) => {
+      if (input[0] === path) throw failed('open')
+      return openBefore(...input)
+    },
+  )
+  // The look at the file fails only where the test asks for it.
+  if (!failure.isLookFailing) return
+  const lstatBefore = fsPromises.lstat
+  context.mock.method(
+    fsPromises,
+    'lstat',
+    async (...input: Parameters<typeof lstatBefore>) => {
+      if (input[0] === path) throw failed('lstat')
+      return lstatBefore(...input)
+    },
+  )
+}
+
+// Value: protects=the finished recording of another window's run that has not saved its study, while every read of its header fails through a whole Delete (a scanner on Windows holds the file); fails_when=a look without a header counts the recording as finished before it asks whether the header stands and gave nothing, so Delete moves the recording to the Trash, both looks without a header being the same, before that window saved its study (data loss), or the list hides a recording whose writer nobody can name; why_new=Cycle 0047 row 251 (P3CXA-C1, P3S7-G2): row 239 held only for a read that fails under the lock; seam=the open of the header, which fails at every read, and the injected mover; no_claim=a real scanner on Windows, the editor's dialog (studyWorkspaceRemoval tests)
+test('a header that fails at every read of a Delete keeps another window’s finished recording until the learner moves it anyway: the list shows it, and Delete asks first', async (context) => {
+  // Arrange: another window of this machine sealed the recording of a study it has not saved; every read of the recording's header fails.
+  const storage = await removalStorage(context, 4)
+  const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+  const directory = join(storage.directory, 'recordings.v2', unsaved.id)
+  failEveryReadOf(context, join(directory, 'header.json'), {
+    code: 'EBUSY',
+    isLookFailing: false,
+  })
+
+  // Act
+  const listed = (await storage.library.list()).map((entry) => ({
+    id: entry.id,
+    format: entry.format,
+  }))
+  const removal = await storage.library.removeStudy(
+    unsaved.id,
+    storage.moveToTrash,
+  )
+  const movedBeforeTheLearnersChoice = [...storage.moved]
+  const recordingsBeforeTheLearnersChoice = await readdir(
+    join(storage.directory, 'recordings.v2'),
+  )
+  const agreed =
+    removal.outcome === 'nothing-moved' && removal.unconfirmedWriter
+      ? [removal.unconfirmedWriter]
+      : []
+  const removalAnyway = await storage.library.removeStudy(
+    unsaved.id,
+    storage.moveToTrash,
+    undefined,
+    { move: agreed },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed,
+      removal: { ...removal },
+      movedBeforeTheLearnersChoice,
+      recordingsBeforeTheLearnersChoice,
+      removalAnyway: { ...removalAnyway },
+      moved: storage.moved,
+    },
+    {
+      listed: [{ id: unsaved.id, format: 'archive-missing' }],
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Codebook could not read the files of its recording now. A virus scanner may hold them, or another editor window may still record it or still have to save it.',
+        unconfirmedWriter: { directory, place: 'unreadable' },
+      },
+      movedBeforeTheLearnersChoice: [],
+      recordingsBeforeTheLearnersChoice: [unsaved.id],
+      removalAnyway: { outcome: 'moved' },
+      moved: [join('recordings.v2', unsaved.id)],
+    },
+  )
+})
+
+// Value: protects=the finished recording of another window's run that has not saved its study, while every read of its writer record fails through a whole Delete (a scanner on Windows holds the file); fails_when=the judgement reads the record again, takes the read that fails for no record and counts the sealed recording as finished, so the list shows it as what is left of a removed study and Delete moves it to the Trash, the look under the lock failing the same way, before that window saved its study (data loss); why_new=Cycle 0047 row 251 (P3CXA-C1, P3OCR2a1-1, P3S7-G2); seam=the open of the writer record, which fails at every read, and the injected mover; no_claim=a real scanner on Windows
+test('a writer record that fails at every read of a Delete keeps another window’s finished recording: its header names that live window, so the list does not show the recording and nothing moves', async (context) => {
+  // Arrange: another window of this machine sealed the recording of a study it has not saved; every read of the record of its writer fails.
+  const storage = await removalStorage(context, 4)
+  const unsaved = await sealedRecordingOfAnotherWindow(context, storage)
+  failEveryReadOf(
+    context,
+    recordingOwnerRecordPath(storage.directory, unsaved.id),
+    { code: 'EBUSY', isLookFailing: false },
+  )
+
+  // Act
+  const listed = (await storage.library.list()).map((entry) => entry.id)
+  const removal = await storage.library.removeStudy(
+    unsaved.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      listed,
+      removal: { ...removal },
+      moved: storage.moved,
+      recordingLeft: await readdir(join(storage.directory, 'recordings.v2')),
+    },
+    {
+      listed: [],
+      removal: {
+        outcome: 'nothing-moved',
+        cause: 'Study archive is unavailable.',
+      },
+      moved: [],
+      recordingLeft: [unsaved.id],
+    },
+  )
+})
+
+// Value: protects=the finished recording of another window's run that has not saved its study after the seal, while every read of its writer record and every look at that file fail through a whole Delete (EACCES); fails_when=the look turns every failed look at the record into no record, so it proves the record absent, counts the sealed recording as released, and Delete moves the study and the recording to the Trash before that window saved its state after the seal (data loss); why_new=Cycle 0047 row 251 (P3CXA-C2): the look told no missing file from a look that failed; seam=the open and the lstat of the writer record, which throw EACCES at every call, and the injected mover; no_claim=a real file the user may not read
+test('a writer record whose read and whose look both fail at every call of a Delete keeps another window’s finished recording and its study: nothing moves, and the removal says that window has to save it', async (context) => {
+  // Arrange: another window of this machine saved a study while its run went on and sealed the recording; every open and every look at the record of its writer fails with EACCES.
+  const storage = await removalStorage(context, 4)
+  const studyId = await studySavedBeforeItsSealedRecording(context, storage)
+  failEveryReadOf(
+    context,
+    recordingOwnerRecordPath(storage.directory, studyId),
+    {
+      code: 'EACCES',
+      isLookFailing: true,
+    },
+  )
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    studyId,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal: { ...removal },
+      moved: storage.moved,
+      recordingLeft: await readdir(join(storage.directory, 'recordings.v2')),
+    },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
+      },
+      moved: [],
+      recordingLeft: [studyId],
+    },
+  )
+})
+
+// Value: protects=the learner's way out for a study whose recording's header is damaged for good: Delete asks, and Move to Trash Anyway moves the study with its recording; fails_when=a header that stands and gives nothing keeps the study for good, so it can never be deleted, or it is moved without the learner's choice although the header may only have failed to read for a moment; why_new=Cycle 0047 row 251 (P3CXA-C1): a header that stands and gives nothing no longer counts as finished; seam=the recording's header.json, which the test overwrites with text that is no JSON, and the injected mover
+test('a study whose recording’s header is damaged for good moves to the Trash with its recording once the learner chooses Move to Trash Anyway, and not before', async (context) => {
+  // Arrange: a saved study whose finished recording's header is no JSON.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const directory = join(storage.directory, 'recordings.v2', study.id)
+  await writeFile(join(directory, 'header.json'), 'no JSON')
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  const movedBeforeTheLearnersChoice = [...storage.moved]
+  const agreed =
+    removal.outcome === 'nothing-moved' && removal.unconfirmedWriter
+      ? [removal.unconfirmedWriter]
+      : []
+  const removalAnyway = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    undefined,
+    { move: agreed },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal: { ...removal },
+      movedBeforeTheLearnersChoice,
+      removalAnyway: { ...removalAnyway },
+      moved: storage.moved,
+    },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Codebook could not read the files of its recording now. A virus scanner may hold them, or another editor window may still record it or still have to save it.',
+        unconfirmedWriter: { directory, place: 'unreadable' },
+      },
+      movedBeforeTheLearnersChoice: [],
+      removalAnyway: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
+// Value: protects=the study of another window's run whose checkpoint was taken before that run sealed its recording and was saved after the seal, before the run's save of its final state; fails_when=the save releases the recording because the disk shows it sealed at the save, not because the archive it saved was taken after the seal, so this window's Delete moves the study and its recording to the Trash between that checkpoint's save and the final save, which then writes the study back without its recording (data loss; Cycle 0047 row 124, ADV2-2 = CXA2-1); or the final save, whose archive says the run stopped after the seal, keeps the recording held; why_new=Cycle 0047 row 124 (ADV2-2 = CXA2-1); seam=the recording's header and writer record, which name a live child process of the test as the other window, the library's saves of that window's checkpoints (the archive taken while the run stopped, and the one taken once it had stopped), and the injected mover; no_claim=a real second editor window and its checkpoint queue (studyWorkspace tests)
+test('the study of another window whose checkpoint taken before the seal is saved after it is not moved before that window saves the study it took after the seal, and moves with its recording once it did', async (context) => {
+  // Arrange: another window of this machine records a study; a checkpoint of its study is taken while its run stops, and the run seals the recording before that checkpoint's save ends.
+  const storage = await removalStorage(context, 4)
+  const otherWindow = await idleChild(context)
+  const { study: finalStudy, recording } = await recordingStartedBy(storage, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  finalStudy.savedAt = '2026-09-20T00:00:20.000Z'
+  const checkpointTakenBeforeTheSeal = {
+    ...finalStudy,
+    state: 'stopping',
+    savedAt: '2026-09-20T00:00:10.000Z',
+  }
+  await recording.finish(1)
+  await storage.library.saveStudy(checkpointTakenBeforeTheSeal)
+
+  // Act
+  const removalBeforeTheFinalSave = await storage.library.removeStudy(
+    finalStudy.id,
+    storage.moveToTrash,
+  )
+  const movedBeforeTheFinalSave = [...storage.moved]
+  await storage.library.saveStudy(finalStudy)
+  const removalAfterTheFinalSave = await storage.library.removeStudy(
+    finalStudy.id,
+    storage.moveToTrash,
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removalBeforeTheFinalSave: { ...removalBeforeTheFinalSave },
+      movedBeforeTheFinalSave,
+      removalAfterTheFinalSave: { ...removalAfterTheFinalSave },
+      moved: storage.moved,
+    },
+    {
+      removalBeforeTheFinalSave: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
+      },
+      movedBeforeTheFinalSave: [],
+      removalAfterTheFinalSave: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', finalStudy.id),
+        `${finalStudy.id}.study.meta.v3.json`,
+        `${finalStudy.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
+// Value: protects=a learner whose Delete meets the finished recording of a run on another computer (a shared storage folder) that has not saved its study yet, reading a refusal and a dialog that are true for it; fails_when=the refusal and the dialog say only that the recording "may still be running" and that Codebook cannot tell whether a window "still records it", although the recording is sealed and its run only still has to save it, so the learner takes Move to Trash Anyway for safe because no window records any more; why_new=Cycle 0047 row 57: since row 36 a sealed recording stays its run's until the study is saved, so a writer this computer cannot confirm also holds a finished recording; seam=the recording's header and the record of its writer, which name an editor of another machine, the removal's messages, and the injected mover; no_claim=a real second computer, the editor's dialog (studyWorkspaceRemoval tests)
+test('the finished recording of a run on another computer that has not saved its study keeps the study, and the refusal and its dialog say a window there may still have to save it', async (context) => {
+  // Arrange: a recording without a saved study, sealed; its header and the record of its writer name an editor of another machine, whose run has not saved the study.
+  const storage = await removalStorage(context, 4)
+  const instanceId = randomUUID(),
+    runId = randomUUID()
+  const studyId = `${instanceId}_${runId}`
+  const recording = await storage.recordings.start(
+    {
+      workspaceKey: storage.workspaceKey,
+      studyId,
+      instanceId,
+      runId,
+      runtimeId: randomUUID(),
+      profile: 'repository-browser',
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+  )
+  await nameWriterOfRecording(storage, studyId, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'old-laptop.local',
+  })
+  await rewriteWriterRecord(storage.directory, studyId, {
+    machineId: 'machine-b',
+  })
+  await recording.finish(1)
+  const directory = join(storage.directory, 'recordings.v2', studyId)
+  const { createdAt }: { createdAt: string } = JSON.parse(
+    await readFile(join(directory, 'header.json'), 'utf8'),
+  )
+  const startedAt = new Date(createdAt).toLocaleString()
+  const messages = studyRemovalMessages('Trash')
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    studyId,
+    storage.moveToTrash,
+  )
+  const dialog = {
+    title: messages.unconfirmedWriterTitle([
+      { host: 'old-laptop.local', startedAt, place: 'another-computer' },
+    ]),
+    detail: messages.unconfirmedWriterDetail([
+      { host: 'old-laptop.local', startedAt, place: 'another-computer' },
+    ]),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { removal, dialog, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause: `Its recording was started on old-laptop.local at ${startedAt}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it.`,
+        unconfirmedWriter: {
+          directory,
+          host: 'old-laptop.local',
+          startedAt: createdAt,
+          place: 'another-computer',
+        },
+      },
+      dialog: {
+        title:
+          "This study's recording may still be in use on another computer. Move the study to the Trash anyway?",
+        detail: `Its recording was started on old-laptop.local at ${startedAt}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it. If a window still records it or still has to save it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=a learner whose Delete meets the study of a run on another computer (a shared storage folder) that a checkpoint taken before the seal saved and whose final save failed there, reading a refusal and a dialog that are true for it; fails_when=the archive of the earlier checkpoint releases the sealed recording again (as before Cycle 0047 row 98), so Delete moves the study and its recording without a word while the window there may still save it by Retry storage and write the study back without its recording; or the refusal stops saying that a window there may still have to save it; why_new=Cycle 0047 row 128 (ADV2-11): the study stays held by its writer's record after a failed final save, and Delete asks; seam=the recording's header and the record of its writer, which name an editor of another machine, the library's save of that run's checkpoint taken while it stopped, the removal's messages, and the injected mover; no_claim=a real second computer and its failed write, the editor's dialog (studyWorkspaceRemoval tests)
+test('the study of a run on another computer whose final save failed after a checkpoint saved it before the seal keeps its recording held, and the refusal and its dialog say a window there may still have to save it', async (context) => {
+  // Arrange: an editor of another machine records a study; a checkpoint taken while its run stopped saved the study; the run sealed the recording, and its save of the final state failed there.
+  const storage = await removalStorage(context, 4)
+  const { study, recording } = await recordingStartedBy(storage, {
+    pid: ID_OF_NO_PROCESS,
+    hostname: 'old-laptop.local',
+  })
+  study.state = 'stopping'
+  await rewriteWriterRecord(storage.directory, study.id, {
+    machineId: 'machine-b',
+  })
+  await storage.library.saveStudy(study)
+  await recording.finish(1)
+  const directory = join(storage.directory, 'recordings.v2', study.id)
+  const { createdAt }: { createdAt: string } = JSON.parse(
+    await readFile(join(directory, 'header.json'), 'utf8'),
+  )
+  const startedAt = new Date(createdAt).toLocaleString()
+  const messages = studyRemovalMessages('Trash')
+
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  const dialog = {
+    title: messages.unconfirmedWriterTitle([
+      { host: 'old-laptop.local', startedAt, place: 'another-computer' },
+    ]),
+    detail: messages.unconfirmedWriterDetail([
+      { host: 'old-laptop.local', startedAt, place: 'another-computer' },
+    ]),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { removal, dialog, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause: `Its recording was started on old-laptop.local at ${startedAt}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it.`,
+        unconfirmedWriter: {
+          directory,
+          host: 'old-laptop.local',
+          startedAt: createdAt,
+          place: 'another-computer',
+        },
+      },
+      dialog: {
+        title:
+          "This study's recording may still be in use on another computer. Move the study to the Trash anyway?",
+        detail: `Its recording was started on old-laptop.local at ${startedAt}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it. If a window still records it or still has to save it, on that computer or on this one, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.`,
+      },
+      moved: [],
+    },
+  )
+})
+
+/**
  * Leaves a recording of a saved study in one recording format's folder as a window of 0.2.29.0 leaves it, a header without a record of its writer, naming the writer's process and host and the time the recording was created.
  * @param storage - The removal storage of the test.
  * @param studyId - The saved study's id.
@@ -1623,7 +2433,7 @@ test('a study whose recordings name two other hosts is refused with both hosts a
     {
       removal: {
         outcome: 'nothing-moved',
-        cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them.`,
+        cause: `Its recordings were started on host-one at ${new Date('2026-10-01T08:00:00.000Z').toLocaleString()} and on host-two at ${new Date('2026-10-17T08:00:00.000Z').toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records them or still has to save them.`,
         unconfirmedWriter: {
           directory: join(storage.directory, 'recordings.v3', study.id),
           host: 'host-one',
@@ -1677,15 +2487,19 @@ test('a learner’s move that names the writers of a dialog keeps the study when
   // Assert
   assert.deepEqual(
     {
-      agreedHosts: agreed.map((writer) => writer.host),
+      agreedHosts: agreed.map((writer) =>
+        'host' in writer ? writer.host : undefined,
+      ),
       outcome: removal.outcome,
       named:
         removal.outcome === 'moved'
           ? []
           : [
-              removal.unconfirmedWriter?.host,
-              ...(removal.otherUnconfirmedWriters ?? []).map(
-                (writer) => writer.host,
+              removal.unconfirmedWriter && 'host' in removal.unconfirmedWriter
+                ? removal.unconfirmedWriter.host
+                : undefined,
+              ...(removal.otherUnconfirmedWriters ?? []).map((writer) =>
+                'host' in writer ? writer.host : undefined,
               ),
             ],
       moved: storage.moved,
@@ -1820,7 +2634,7 @@ test('a recording whose header names an editor of another machine is listed but 
       listed: [{ id: ofAnotherMachine, format: 'archive-missing' }],
       removal: {
         outcome: 'nothing-moved',
-        cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it.`,
+        cause: `Its recording was started on another-machine at ${new Date(header.createdAt).toLocaleString()}. Codebook cannot tell from this computer whether an editor window still records it or still has to save it.`,
         unconfirmedWriter: {
           directory: join(storage.directory, 'recordings.v2', ofAnotherMachine),
           host: 'another-machine',
@@ -1903,7 +2717,7 @@ test('a saved study whose recording another live editor window is still writing 
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
       isRecordingInPlace: true,
@@ -2002,7 +2816,7 @@ test('a removal judges the writers of the study’s recordings before it takes t
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       whileJudging: [{ isLockHeld: false, writeOfTheOtherWindow: 'written' }],
       moved: [],
@@ -2071,7 +2885,50 @@ test('a header written between the removal’s judgement and its lock keeps the 
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
+
+// Value: protects=a study whose recording another window had only begun (its folder made, its header not yet written) when this window judged the writers before its lock, while the header that window then writes fails to read under the lock (a scanner holds it); fails_when=the look under the lock is compared without whether a read may have failed, so two looks without a header are the same, the verdict 'finished' of the folder without a header is used again, and the recording the other window has just started moves to the Trash; why_new=Cycle 0047 row 251 (P3CXA-C1): the comparison of the two looks left out mayHaveFailedRead; seam=the storage lock of the loaded library, right before which the test writes the header and makes every later read of it fail, and the injected mover; no_claim=a real scanner on Windows
+test('a header written between the removal’s judgement and its lock that fails to read under the lock keeps the study: nothing moves, and the removal says another window records it', async (context) => {
+  // Arrange: a saved study whose recording folder another window has just made, without its header yet; right before the lock the header appears and a scanner holds it.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const folder = join(storage.directory, 'recordings.v2', study.id)
+  await mkdir(folder, { recursive: true })
+  const headerPath = join(folder, 'header.json')
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    await writeFile(
+      headerPath,
+      JSON.stringify({
+        owner: {
+          pid: process.pid,
+          hostname: hostname(),
+          sessionId: randomUUID(),
+        },
+        createdAt: new Date().toISOString(),
+      }),
+    )
+    failEveryReadOf(context, headerPath, {
+      code: 'EBUSY',
+      isLookFailing: false,
+    })
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
     },
@@ -2115,18 +2972,55 @@ test('a writer record written between the removal’s judgement and its lock kee
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
     },
   )
 })
 
-// Value: protects=a study whose recording another window of this machine sealed between this window's judgement and its lock; fails_when=the removal reuses the verdict of a live writer found before the lock, so it refuses a study whose run has just ended, or a look under the lock that skips the seal keeps refusing it; why_new=Cycle 0046 testing review TC1: no test changed the disk between the judgement and the lock; seam=the storage lock of the loaded library, right before which the test writes the recording's seal
-test('a recording sealed between the removal’s judgement and its lock moves with the study', async (context) => {
-  // Arrange: a saved study whose recording a live window of this machine writes; that window seals it right before the removal's lock.
+// Value: protects=a study whose recording another window of this machine sealed, and whose study that window saved after the seal, between this window's judgement and its lock; fails_when=the removal reuses the verdict of a live writer found before the lock, so it refuses a study whose run has just ended and saved it, or a look under the lock that skips the seal or the writer's record keeps refusing it; why_new=Cycle 0046 testing review TC1: no test changed the disk between the judgement and the lock; since Cycle 0047 row 98 (ADV-10) the seal alone releases no recording whose writer's record is kept, the save that follows the seal does, so the step is the seal and that save; seam=the storage lock of the loaded library, right before which the test writes the recording's seal and saves the study as that window does
+test('a recording sealed, and its study saved after the seal, between the removal’s judgement and its lock moves with the study', async (context) => {
+  // Arrange: a saved study whose recording a live window of this machine writes; that window seals it and saves the study right before the removal's lock.
   const storage = await removalStorage(context, 4)
   const study = await saveStudy(storage)
+  const otherWindow = await idleChild(context)
+  const recording = await recordingStillWrittenBy(storage, study, {
+    pid: otherWindow.pid!,
+    hostname: hostname(),
+  })
+  let isRunEnded = false
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    // The other window ends its run once: a later lock of the removal finds the study moved.
+    if (isRunEnded) return
+    isRunEnded = true
+    await writeFile(join(recording, 'sealed.json'), '{}')
+    await storage.library.saveStudy(study)
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: { outcome: 'moved' },
+      moved: [
+        join('recordings.v2', study.id),
+        `${study.id}.study.meta.v3.json`,
+        `${study.id}.study.v3.json`,
+      ],
+    },
+  )
+})
+
+// Value: protects=a learner who deletes what is left of a study (its catalog file) while another open window of this machine ends the run that records it: that window seals the recording between this window's judgement and its lock and has not saved the study yet; fails_when=the refusal still says that window "is still recording this study" and asks to "Stop its run", although its run has ended and only its save is missing, so the learner looks for a recording that no longer runs; why_new=Cycle 0047 row 55: since row 36 a sealed recording stays its run's until the study is saved, so the refusal of another window's recording also meets a finished one; seam=the recording's header and writer record, which name a live child process of the test as the other window, the storage lock of the loaded library, right before which the test writes the recording's seal, and the injected mover; no_claim=a real second editor window
+test('a recording another window seals between the removal’s judgement and its lock, before it saved the study, keeps the study, and the refusal asks to save that window’s learning replay instead of saying it still records', async (context) => {
+  // Arrange: a study of which only the catalog file is left beside the recording a live window of this machine writes; that window seals the recording right before the removal's lock and has not saved the study.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await rm(join(storage.directory, `${study.id}.study.v3.json`))
   const otherWindow = await idleChild(context)
   const recording = await recordingStillWrittenBy(storage, study, {
     pid: otherWindow.pid!,
@@ -2141,13 +3035,22 @@ test('a recording sealed between the removal’s judgement and its lock moves wi
 
   // Assert
   assert.deepEqual(
-    { removal: { ...removal }, moved: storage.moved },
     {
-      removal: { outcome: 'moved' },
-      moved: [
-        join('recordings.v2', study.id),
+      removal: { ...removal },
+      moved: storage.moved,
+      leftInTheLibrary: (await readdir(storage.directory)).sort(),
+    },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
+      },
+      moved: [],
+      leftInTheLibrary: [
         `${study.id}.study.meta.v3.json`,
-        `${study.id}.study.v3.json`,
+        'recording-owners',
+        'recordings.v2',
       ],
     },
   )
@@ -2187,7 +3090,7 @@ test('a recording started between the removal’s judgement and its lock keeps t
       removal: {
         outcome: 'nothing-moved',
         cause:
-          'Another editor window is still recording this study. Stop its run in that window, then delete the study again.',
+          'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.',
       },
       moved: [],
     },

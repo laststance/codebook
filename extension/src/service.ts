@@ -1052,7 +1052,7 @@ export class StudyService {
    * @param signal - The request's cancellation; an abandoned request releases its wait.
    * @returns
    * - Without `answer` and for a Node test run: what {@link StudyService.continue} answers
-   * - With `answer: "next"`: `accepted`, `runUri`, the run's `state` (the run resource) and `next`, which names what ended the wait: `observation` (the next pause is committed and can be continued), `result` (the result was observed), `failure` (the run failed, also at its deadlines) or `stopped` (the run was stopped or the service is shutting down)
+   * - With `answer: "next"`: `accepted`, `runUri`, the run's `state` (the run resource) and `next`, which names what ended the wait: `observation` (the next pause is committed and can be continued), `result` (the result was observed and the run's final save succeeded), `failure` (the run failed, also at its deadlines) or `stopped` (the run was stopped or the service is shutting down)
    * - At the bound, and for an abandoned request: the same without `next`, with the latest state; the agent then polls
    * @throws What {@link StudyService.continue} throws; nothing is awaited after a refused continuation.
    * @example
@@ -1091,7 +1091,7 @@ export class StudyService {
    * @param committedBefore - The ids of the snapshots committed before the continuation.
    * @returns
    * - `'failure'` once the run has an error, a runtime or evidence failure, or passed its whole-run deadline ({@link StudyService.expireAtDeadline} applies it at once instead of at the next maintenance turn)
-   * - `'result'` once the runtime completed, also while the service already cleans the completed run up
+   * - `'result'` once the runtime completed and its final save succeeded, also while the service already cleans the completed run up
    * - `'stopped'` once a run that did not complete is being stopped or was cancelled, or the service is shutting down
    * - `'observation'` once a participant is paused at a snapshot committed after the continuation
    * - `undefined` while the run is still on its way; a snapshot that was committed and then failed its inspection is no observation to continue, and the failure that follows it is what ends the wait
@@ -1117,9 +1117,9 @@ export class StudyService {
    * @param status - The status of that view; `undefined` without a runtime.
    * @returns
    * - `'failure'` for a failed run ({@link StudyService.hasRunFailed})
-   * - `'result'` for a completed runtime, also while the service already cleans the completed run up
+   * - `'result'` for a completed runtime whose final save settled, also while the service already cleans the completed run up
    * - `'stopped'` for a run that is being stopped or was cancelled ({@link StudyService.isRunBeingStopped})
-   * - `undefined` while the run is still on its way
+   * - `undefined` while the run is still on its way, and while a completed runtime's final save is under way ({@link StudyRuntime.isSavingCompletion})
    * @example this.endedRunState(record, runtime, 'completed') // => 'result'
    */
   private endedRunState(
@@ -1128,8 +1128,9 @@ export class StudyService {
     status: RuntimeView['status'] | undefined,
   ): 'failure' | 'stopped' | 'result' | undefined {
     if (this.hasRunFailed(record, runtime, status)) return 'failure'
-    // Before the stop check: the service cleans a completed run up by itself, and that cleanup is no stop of the run.
-    if (status === 'completed') return 'result'
+    // Before the stop check: the service cleans a completed run up by itself, and that cleanup is no stop of the run. A completion whose final save is under way is no result yet: a failed save fails the run (Cycle 0047 row 241).
+    if (status === 'completed')
+      return record.runtime?.isSavingCompletion?.() ? undefined : 'result'
     return this.isRunBeingStopped(record, status) ? 'stopped' : undefined
   }
 
@@ -1965,9 +1966,30 @@ export class StudyService {
     ).message
   }
 
-  /** Projects bounded current state and actionable next steps without copying the full event log. @example service.state(record).nextActions */
-  state(record: StudyRecord) {
+  /**
+   * Gives the runtime's view as the run resource shows it, with the runtime's outcome beside it; read by {@link StudyService.state} once per state.
+   * While a completed run's final save of its events and run record is under way ({@link StudyRuntime.isSavingCompletion}), the completion is no result yet: a failed save fails the run (Cycle 0047 row 197). So the run shows the state it had before its completion (`resuming`, the state of a run after its last continuation), without its runtime outcome and its observed result, until that save settled, as the continuation's answer waits for it ({@link StudyService.endedRunState}, rows 241 and 252). An agent that polls then reads no result that the save can still fail.
+   * @param record - The run.
+   * @returns The runtime's view (`undefined` without a runtime) and its outcome; during the final save the view says `resuming` and has no `observed`, and the outcome is `undefined`.
+   * @example this.shownRuntimeOf(record) // => { runtime: { status: 'resuming', observed: undefined, … }, runtimeOutcome: undefined } while runtime.json of the completed run is written
+   */
+  private shownRuntimeOf(record: StudyRecord): {
+    runtime: RuntimeView | undefined
+    runtimeOutcome: RuntimeView['runtimeOutcome'] | undefined
+  } {
     const runtime = record.runtime?.view()
+    // Only a completion whose final save is under way is held back; any other view is shown as the runtime gives it.
+    if (!runtime || !record.runtime?.isSavingCompletion?.())
+      return { runtime, runtimeOutcome: runtime?.runtimeOutcome }
+    return {
+      runtime: { ...runtime, status: 'resuming', observed: undefined },
+      runtimeOutcome: undefined,
+    }
+  }
+
+  /** Projects bounded current state and actionable next steps without copying the full event log; a completed run whose final save is under way shows no result yet ({@link StudyService.shownRuntimeOf}). @example service.state(record).nextActions */
+  state(record: StudyRecord) {
+    const { runtime, runtimeOutcome } = this.shownRuntimeOf(record)
     const evidenceFailure = this.runEvidenceFailure(record)
     // A runtime failure can quote adapter text of any length; the saved study's reason holds at most MAX_UI_TEXT_CHARS.
     const runtimeFailure = this.runtimeFailureOf(record, runtime)?.slice(
@@ -2224,7 +2246,7 @@ export class StudyService {
             `snapshots/${encodeURIComponent(snapshot.id)}/source/typescript`,
           ),
         })) ?? [],
-      runtimeOutcome: runtime?.runtimeOutcome,
+      runtimeOutcome,
       captureOutcome: runtime?.captureOutcome,
       finalOutcome,
       terminalReason,
@@ -3008,6 +3030,18 @@ export class StudyService {
     return (await recordings.admitsStudy(`${this.instanceId}_${record.id}`))
       ? undefined
       : fullLibraryMessage('run', limit, this.removalAvailability)
+  }
+
+  /**
+   * Says whether the run's stop has ended after it sealed the run's recording, whether that stop stopped the run or failed after the seal ({@link stopRecord}); asked by {@link StudyWorkspace.checkpoint} as it takes a checkpoint of the run, which then holds the run's state after the seal.
+   * Why: the save of such a checkpoint releases the record of the recording's writer ({@link removeWriterRecordsOfSealedRecordings}). A run whose release failed after the seal is never marked stopped, and nothing retries its stop by itself, so a release that waited for an archive that says `stopped` kept the recording held while the window lived, and Delete in another window was refused (Cycle 0047 row 140). A checkpoint taken before the seal, or while a stop runs, holds no state after the seal.
+   * @param record - The run a checkpoint is taken of.
+   * @returns `true` once the run's recording is sealed and no stop of the run is running; `false` while a stop runs, and for a run whose recording is not sealed or that has none.
+   * @example
+   * service.hasStopEndedAfterSeal(record) // => true after `await service.stop(identity)` rejected with 'owned browser close: timed out' once the recording was sealed
+   */
+  hasStopEndedAfterSeal(record: StudyRecord): boolean {
+    return !record.stopping && record.recording?.isSealed === true
   }
 
   /** Serializes release after acquisitions and accepted explanation writes settle. @example await this.stopRecord(record) */

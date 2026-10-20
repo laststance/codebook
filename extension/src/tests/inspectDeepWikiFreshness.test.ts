@@ -704,6 +704,60 @@ test('the backup the publisher keeps beside a visible Wiki folder is not counted
   }
 })
 
+// Value: protects=the freshness label and the Update button of a project that does not ignore the files the publisher keeps beside its Wiki folder: a stopped publish, preview or recovery leaves its publish lock (row 172), the journal's side file, its list of copies, the files through which a record gets its name, clock files and recovery claims, all named after the journal or the lock, and none of them is source; fails_when=a rule that tells them from source is lost: the journal's own name (isWikiSourceCandidate), the lockfile rule that takes every name with `-lock.` (sourceExclusion), or the extension rule that takes every name with a suffix after `.json`, so such a leftover reads as a file added since the generation and the Wiki looks outdated; why_new=Cycle 0047 row 249 (found while fixing row 237): no test named these files, which the check already leaves out; seam=none (a real Git repository and the real check); no_claim=the names a real stopped publish leaves together (the publisher's own tests make them)
+test('the files the publisher keeps beside a visible Wiki folder, named after its journal or its publish lock, are not counted as added source', async () => {
+  // Arrange: one file of each name the publisher gives beside docs/wiki, and one source file added since the generation.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-freshness-publisher-files-'),
+  )
+  const root = await realpath(directory)
+  const original = 'export const answer = 1;\n'
+  await writeFile(join(root, 'source.ts'), original)
+  const revision = await commitAll(root)
+  const outputDirectory = join(root, 'docs', 'wiki')
+  await mkdir(outputDirectory, { recursive: true })
+  await writeFile(join(outputDirectory, 'index.html'), '<h1>Wiki</h1>')
+  const id = '3f6c2b1e-7a4d-4c0f-9b51-2d6e8f0a1c37',
+    otherId = '9b51e2d6-0a1c-4f37-8c0f-7a4d3f6c2b1e',
+    digest = 'a'.repeat(64)
+  const publisherFiles = [
+    'wiki.publish-journal.json',
+    'wiki.publish-lock.json',
+    `wiki.publish-journal.json.prepared-${id}-${digest}`,
+    `wiki.publish-journal.json.copies-${id}`,
+    `wiki.publish-journal.json.pending-${id}`,
+    `wiki.publish-lock.json.pending-${id}`,
+    `wiki.publish-lock.json.clock-${id}`,
+    `wiki.publish-journal.json.recovery-${digest}`,
+    `wiki.publish-lock.json.recovery-${id}`,
+    `wiki.publish-journal.json.recovery-${digest}.pending-${otherId}`,
+    `wiki.publish-lock.json.recovery-${id}.clock-${otherId}`,
+  ]
+  for (const name of publisherFiles)
+    await writeFile(join(root, 'docs', name), '{}')
+  await writeFile(join(root, 'added.ts'), 'export const added = 2;\n')
+  try {
+    // Act
+    const freshness = await inspectDeepWikiFreshness(
+      root,
+      [
+        {
+          path: 'source.ts',
+          sha256: createHash('sha256').update(original).digest('hex'),
+        },
+      ],
+      revision,
+      [],
+      { outputDirectory },
+    )
+
+    // Assert: only the source file the learner added counts.
+    assert.deepEqual(freshness.addedPaths, ['added.ts'])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('a freshness check reads several indexed sources at once and still names changed files in the manifest’s order', async () => {
   // Arrange
   const directory = await mkdtemp(

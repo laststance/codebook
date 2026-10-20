@@ -4,6 +4,8 @@ import { test } from 'node:test'
 
 import ts from 'typescript'
 
+import { readCurrentState } from './utils/currentState.mjs'
+
 const repositoryRoot = new URL('../../../', import.meta.url)
 
 /** The folders whose files are the product's own text: what a learner or an agent can be shown comes from one of them. Test files, browser checks (`*-qa.mjs`) and fixtures are left out ({@link productText}). */
@@ -23,80 +25,7 @@ const CODE_FILE = /\.(?:ts|mjs)$/
  * A quotation of the newest entry that the product builds from several strings, with those strings as the code holds them ({@link stringTextsOf}: `${}` marks a value a template takes in); for {@link partsOf}, which otherwise takes a quotation's parts from the quotation itself.
  * A quotation that is not listed here is one string of the code, apart from the values its `<…>` marks stand for.
  */
-const COMPOSED_QUOTATIONS = new Map([
-  [
-    'No Wiki was found at <folder>: its manifest (codebook-wiki.json) does not exist',
-    [
-      'No Wiki was found at ${}: its ${} (${}) does not exist',
-      'manifest',
-      'codebook-wiki.json',
-    ],
-  ],
-  [
-    'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list.',
-    [
-      'Copilot Chat receives the update request for this project ${}; the chat you have open ${}. ${} A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
-      'in a new chat',
-      'keeps its place in the chat list',
-    ],
-  ],
-  [
-    'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
-    [
-      'Codebook saw no sign of the update in the editor chat within ${}${}',
-      ' and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
-    ],
-  ],
-  [
-    'If you refuse a step of the chat, press Cancel in the editor’s status bar; otherwise Codebook keeps watching for the whole 15 minutes.',
-    [
-      'If you refuse a step of the chat, press Cancel',
-      ' in the editor’s status bar; otherwise Codebook keeps watching for the whole ',
-    ],
-  ],
-  [
-    "Wiki page <path> opens <name> and never closes it; close every element inside the page's content, the last opened first.",
-    [
-      'Wiki page ${} ${}',
-      'opens <${}> and never closes it; ${}',
-      "close every element inside the page's content, the last opened first.",
-    ],
-  ],
-  [
-    "The run's explanation budget (32 keys) is spent; Codebook accepts no new explanation key for this run, and a key it already accepted answers its receipt again.",
-    [
-      "The run's explanation budget (${} keys) is spent; Codebook accepts no new explanation key for this run, and a key it already accepted answers its receipt again.",
-    ],
-  ],
-  [
-    'When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
-    [
-      ' When the cause above is resolved, run ${} again: it goes on with the config.',
-      'Codebook: Remove Managed Cursor Skill',
-    ],
-  ],
-  [
-    'The checkout changed during compilation: Git reported no change before and reports changes now ("PROJECT_STATE.md"). Retry from a stable checkout.',
-    [
-      'The checkout changed during ${}: ${}. Retry from a stable checkout.',
-      'Git reported no change before and reports changes now (${})',
-    ],
-  ],
-  [
-    'The managed Cursor skill was edited after setup: <path>. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
-    [
-      'The managed Cursor skill was edited after setup: ${}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run ${} again.',
-      'Codebook: Set Up AI Chat',
-    ],
-  ],
-  [
-    'Codebook will not read through a link: <path>. To finish the removal, remove the link, then run Codebook: Remove Managed Cursor Skill again.',
-    [
-      'Codebook will not read through a link: ${}. To finish the removal, remove the link, then run ${} again.',
-      'Codebook: Remove Managed Cursor Skill',
-    ],
-  ],
-])
+const COMPOSED_QUOTATIONS = new Map()
 
 /**
  * Reads a document of the repository by its path from the repository root.
@@ -211,16 +140,6 @@ function partsOf(quotation) {
   )
 }
 
-/**
- * Names the cycle the project state gives as active, so a test can tell the entry of a cycle that is still being delivered from one that is history.
- * @param {string} projectState - The text of `PROJECT_STATE.md`.
- * @returns {string | undefined} The cycle's four digits; `undefined` when the state table links no active cycle.
- * @example
- * activeCycleOf('| Active cycle | [Cycle 0046](docs/cycles/0046-x.md) |') // => '0046'
- */
-const activeCycleOf = (projectState) =>
-  /^\| Active cycle \| \[Cycle (\d{4})\]/m.exec(projectState)?.[1]
-
 // Value: protects=a reader who opens the change history to see what the delivered version changed; fails_when=the version in VERSION is raised without an entry of that version at the top of the change history, or the entry's heading loses its date or its mark as a development candidate; why_new=Cycle 0046 row 120: the version and its entry are written in two files and nothing compared them; seam=none
 test('the newest entry of the change history is the entry of the version in VERSION, with its date and its mark as a development candidate', async () => {
   // Arrange
@@ -243,7 +162,8 @@ test('while its cycle is the active one, every sentence the newest entry of the 
   // Arrange
   const { text } = newestEntryOf(await readDocument('CHANGELOG.md'))
   const cycleOfEntry = /^Cycle (\d{4}) /m.exec(text)?.[1]
-  const activeCycle = activeCycleOf(await readDocument('PROJECT_STATE.md'))
+  // The active cycle is the one whose record holds the current state.
+  const activeCycle = (await readCurrentState()).cycle
   // The entry of a closed cycle is history: a later cycle may reword a sentence it quotes, and the entry stays as it was delivered.
   if (cycleOfEntry !== activeCycle) {
     context.skip(
@@ -275,7 +195,8 @@ test('while its cycle is the active one, the newest entry of the change history 
   // Arrange
   const { text } = newestEntryOf(await readDocument('CHANGELOG.md'))
   const cycleOfEntry = /^Cycle (\d{4}) /m.exec(text)?.[1]
-  const activeCycle = activeCycleOf(await readDocument('PROJECT_STATE.md'))
+  // The active cycle is the one whose record holds the current state.
+  const activeCycle = (await readCurrentState()).cycle
   if (cycleOfEntry !== activeCycle) {
     context.skip(
       `The newest entry is the entry of Cycle ${cycleOfEntry}, and the active cycle is ${activeCycle}: its numbers are history.`,

@@ -356,6 +356,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private cleaning = false
   private cleaned = false
   private resourcesReleased = false
+  /** True from the completion of the run until its final save of its events and run record settled ({@link observeAfter}); read through {@link isSavingCompletion}. */
+  private savingCompletion = false
   private status = 'preparing'
   private origin?: string
   private operation?: ConfiguredRuntimeView['operation']
@@ -5232,7 +5234,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.afterDeadlineReason())
     this.track(this.observeAfter(continuation))
   }
-  /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, waits until no participant is still paused at a pause the adapter made for itself, and reads the conditions once more after the after image, failing the run when they no longer hold. @example await this.observeAfter(continuation) */
+  /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, waits until no participant is still paused at a pause the adapter made for itself, and reads the conditions once more after the after image, failing the run when they no longer hold; the run completes with the save of its final events and run record, and fails when that save fails. @example await this.observeAfter(continuation) */
   private async observeAfter(continuation: Continuation): Promise<void> {
     const current = (): void => {
       this.alive()
@@ -5290,13 +5292,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.operation!.afterVerified = true
     this.status = 'completed'
+    // The completion is the result only once its final save settled ({@link isSavingCompletion}).
+    this.savingCompletion = true
+    // A completed run has no deadline left: neither its phase's nor its whole-run deadline may fail it while it waits for its release.
     clearTimeout(this.progressTimer)
+    clearTimeout(this.runTimer)
     this.evidence.record('screen.observed', {
       snapshotId: this.snapshot!.id,
       pause: continuation.pause,
       actionId: REPOSITORY_BROWSER_ACTION,
     })
-    await this.persist()
+    try {
+      await this.persist()
+    } catch (error) {
+      // The final save belongs to the completion: a run whose final events or record were not saved (a failed write, the event limit passed by this last event) fails with it, so its journal ends with `run.failed` and its recording is sealed partial (Cycle 0047 row 197). A failure that reaches the run after this save leaves it completed (row 41).
+      if (this.status === 'completed') this.enterFailure(String(error))
+    } finally {
+      this.savingCompletion = false
+    }
+  }
+
+  /**
+   * Says whether the run completed and its final save of its events and run record has not settled yet; asked by {@link StudyService.endedRunState}, so that a continuation waiting for the next state answers the result only once that save succeeded, and the failure when it failed (Cycle 0047 row 241), and by {@link StudyService.shownRuntimeOf}, so that the run resource shows no result during that save (row 252).
+   * Why: the run shows `completed` from its completion on, also during that save, as the run record it saves says (row 197's failure turns it into `failed` after the save); an agent answered with the result in between would report a run that then fails.
+   * @returns `true` while the final save is under way; `false` before the completion and once the save settled.
+   * @example run.isSavingCompletion() // => true while runtime.json of the completed run is written
+   */
+  isSavingCompletion(): boolean {
+    return this.savingCompletion
   }
 
   /** Evaluates owned DOM data only after origin verification; invalid selectors/conditions never dispatch input. @example await this.readDom('before') */
@@ -5693,9 +5716,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // No journal entry: a playing replay renews on every frame, and the bounded journal must keep its room for the run's own events.
     this.holdPauseDeadline()
   }
-  /** Revokes every completion token immediately and schedules cleanup after the failing activity can settle. @example run.fail('source changed') */
+  /** Revokes every completion token immediately and schedules cleanup after the failing activity can settle; a run that is cleaning, that failed already or that completed is left as it is, so a failure that arrives while a completed run waits for its release does not take its result. @example run.fail('source changed') */
   fail(reason: string): void {
-    if (this.cleaning || this.status === 'failed') return
+    // A completed run's result was verified; only its release is left, which reports its own failures.
+    if (
+      this.cleaning ||
+      this.status === 'failed' ||
+      this.status === 'completed'
+    )
+      return
+    this.enterFailure(reason)
+  }
+  /**
+   * Fails the run: records the reason, revokes every completion token, journals `run.failed` and schedules the cleanup; the body of {@link fail} for a run that may still fail, and called by {@link observeAfter} for a completed run whose final save failed, which {@link fail} leaves completed (Cycle 0047 row 197).
+   * @param reason - The failure, as the run's failures and its journal name it.
+   * @example this.enterFailure('Error: ENOSPC: no space left on device, write')
+   */
+  private enterFailure(reason: string): void {
     this.failures.push(reason)
     this.status = 'failed'
     this.continuation = undefined

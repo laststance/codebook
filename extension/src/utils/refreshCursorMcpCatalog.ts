@@ -1,9 +1,10 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomInt, randomUUID } from 'node:crypto'
 import { constants as fileFlags, type BigIntStats } from 'node:fs'
 import {
   link,
   lstat,
   open,
+  readdir,
   rename,
   unlink,
   type FileHandle,
@@ -15,8 +16,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 import {
   CURSOR_MCP_CATALOG_LOCK_RETRIES,
   CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS,
+  CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS,
   CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
   CURSOR_MCP_CATALOG_REFRESH_STEP_MS,
+  CURSOR_MCP_STAGED_CONFIG_GRACE_MS,
   PRIVATE_FILE_MODE,
 } from '../constants'
 
@@ -703,6 +706,20 @@ async function advanceOwnedRefreshId(
   return refreshId
 }
 
+/**
+ * Removes the staged name of Codebook's config, where a name that is already gone counts as removed; called by {@link refreshCursorMcpCatalog} once the config is in place (the staged name is its second name then) and by {@link recoverCreation} for a staged file that was never put in place.
+ * Why: a window of another Cursor profile, with a storage folder and a lock of its own, sweeps the staged names older than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS} ({@link removeLeftStagedConfigs}); a window that slept past that minute before its removal finds the name gone, which is what the removal was for (Cycle 0047 row 238).
+ * @param stagedPath - The staged name, `<Cursor's settings folder>/.codebook-<uuid>.mcp.json`.
+ * @throws What the removal threw for a name that is still there (a file held open on Windows, a folder this user may not change).
+ * @example await removeStagedName('/home/user/.cursor/.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json')
+ */
+async function removeStagedName(stagedPath: string): Promise<void> {
+  await unlink(stagedPath).catch((error: unknown) => {
+    // A name another profile's sweep removed is removed.
+    if (!isMissing(error)) throw error
+  })
+}
+
 /** Completes ownership after an atomic config publication, or discards only its verified unpublished staging file. @param commandToRunAgain - The command the learner ran, which a refusal of the creation record names as the one to run again. @example await recoverCreation(pending, receipt, target, cursorDirectory, 'Codebook: Set Up AI Chat') */
 async function recoverCreation(
   pendingPath: string,
@@ -750,7 +767,7 @@ async function recoverCreation(
       CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
     )
   // Codebook's own unpublished file goes; a config that was edited in place right after its publication still has the staged name as a second name: that name goes, the file stays at its path.
-  if (staged) await unlink(record.stagedPath)
+  if (staged) await removeStagedName(record.stagedPath)
   else
     refuseUnopenedConfig(
       await dropSecondNameOfOneFile(targetPath, record.stagedPath),
@@ -884,22 +901,189 @@ async function recoverRemoval(
   return undefined
 }
 
-/** Waits briefly for another active Cursor window's catalog writer, also one that is taking a stale lock over; the retries displace no lock themselves. {@link withStorageLock} takes over a lock whose writer process is gone from this machine, and any other lock that stays through the retries is reported. Only the lock's own refusal ({@link StorageLockHeldError}) is waited for, never any failure with an `EEXIST` under it. @example await withCatalogLockRetry(() => withStorageLock('/private', update)) */
-async function withCatalogLockRetry<Result>(
+/**
+ * Holds the catalog's storage lock for one write, and waits for other active Cursor windows' catalog writers, also one that is taking a stale lock over; called by {@link refreshCursorMcpCatalog}, {@link captureOwnedCursorMcpCatalogGeneration} and {@link removeOwnedCursorMcpCatalog} for their write under that lock. The retries displace no lock themselves: {@link withStorageLock} takes over a lock whose writer process is gone from this machine, and any other lock that stays through the retries is reported. Only the lock's own refusal ({@link StorageLockHeldError}) is waited for, never any failure with an `EEXIST` under it.
+ * Cursor windows that restart together all refresh the catalog at once. Each pause is {@link CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS} plus a random draw below {@link CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS}, so the windows do not ask again in step, and {@link CURSOR_MCP_CATALOG_LOCK_RETRIES} tries leave room for dozens of them.
+ * The tries share one cache of process starts, and one memory of this window's own leftover lock whose take-back was found kept, which this call owns and hands to {@link withStorageLock} at each try: a leftover that stays unreadable is tried once for all the tries, not at each try (each such try spends the release's attempts, about half a second; Cycle 0047 row 199), and the start of a live window that holds the lock is read once for all of them (a PowerShell of up to {@link PROCESS_START_QUERY_TIMEOUT_MS} on Windows, a `/bin/ps` on macOS), not at each try, so the retries take the pauses' one to three seconds, one read for each holder and at most one such take-back; a start that cannot be read is read once too, since it counts as a running holder at every try anyway ({@link removeStaleStorageLock}). A kept answer only keeps its holder running: a holder whose process ended is still taken over at the next try, since no process has its id then; one whose process id went to another process between the tries is answered as the live holder until this call ends, and its lock is reported (the safe direction; the next call reads that start again).
+ * @param storageDirectory - The catalog's private storage directory, whose `writer.lock` each try holds.
+ * @param operation - The write to run while the lock is held.
+ * @returns What the write returned at the first try that got the lock.
+ * @throws The lock's refusal after the last retry, and every other failure at once.
+ * @example await withCatalogLock('/private/cursor-mcp-catalog', update)
+ */
+async function withCatalogLock<Result>(
+  storageDirectory: string,
   operation: () => Promise<Result>,
 ): Promise<Result> {
+  const holderStarts = new Map<number, Promise<string | undefined>>(),
+    keptTakeBacks = new Set<string>()
   for (let retry = 0; ; retry += 1) {
     try {
-      return await operation()
+      return await withStorageLock(
+        storageDirectory,
+        operation,
+        undefined,
+        holderStarts,
+        keptTakeBacks,
+      )
     } catch (error) {
       if (
         !(error instanceof StorageLockHeldError) ||
         retry >= CURSOR_MCP_CATALOG_LOCK_RETRIES
       )
         throw error
-      await delay(CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS)
+      // A pause of its own length for each window: windows that asked together ask again apart.
+      await delay(
+        CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS +
+          randomInt(CURSOR_MCP_CATALOG_LOCK_RETRY_JITTER_MS),
+      )
     }
   }
+}
+
+/**
+ * Writes Codebook's empty config into the staged file and records it for recovery, for {@link refreshCursorMcpCatalog} right after it created the file and before it links the file into place as the config.
+ * The caller removes the staged file when this fails: no record names the file then, and nothing else would remove it.
+ * @param stagedHandle - The staged file, just created; it is closed here.
+ * @param stagedPath - The staged file's path in Cursor's settings folder, which the record names.
+ * @param targetPath - The config's path, which the receipt names.
+ * @param pendingCreationPath - The creation record ({@link recoverCreation}).
+ * @returns The receipt the published config gets, with the staged file's device and inode numbers.
+ * @throws What the write, the flush, the look at the file, its close or the record's write threw.
+ * @example const owner = await recordStagedConfig(stagedHandle, stagedPath, '/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/pending-creation.json')
+ */
+async function recordStagedConfig(
+  stagedHandle: FileHandle,
+  stagedPath: string,
+  targetPath: string,
+  pendingCreationPath: string,
+): Promise<CatalogReceipt> {
+  let staged
+  try {
+    await stagedHandle.writeFile(EMPTY_MCP_CONFIG)
+    await stagedHandle.sync()
+    staged = await stagedHandle.stat({ bigint: true })
+  } finally {
+    await stagedHandle.close()
+  }
+  const owner: CatalogReceipt = {
+    schemaVersion: 1,
+    targetPath,
+    sha256: EMPTY_MCP_CONFIG_SHA256,
+    device: recordedFileId(staged.dev),
+    inode: recordedFileId(staged.ino),
+    installed: true,
+  }
+  const pending: PendingCreation = { schemaVersion: 1, owner, stagedPath }
+  await atomicPrivateWrite(
+    pendingCreationPath,
+    pending,
+    CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
+  )
+  return owner
+}
+
+/**
+ * Creates Codebook's new config under a staged name of its own in Cursor's settings folder and records it for recovery ({@link recordStagedConfig}), for {@link refreshCursorMcpCatalog} when no config stands at the config's path, and again when the staged file was swept before it was linked ({@link isStagedConfigSwept}).
+ * @param cursorDirectory - Cursor's settings folder.
+ * @param targetPath - The config's path, which the receipt names.
+ * @param pendingCreationPath - The creation record ({@link recoverCreation}), which then names this staged file.
+ * @returns The staged file's path and the receipt the published config gets.
+ * @throws What creating the file threw (a file of that name is never opened: the name is new), and what {@link recordStagedConfig} threw, after the staged file was removed: no record names it then.
+ * @example const { stagedPath, owner } = await stageConfig('/home/user/.cursor', '/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/pending-creation.json')
+ */
+async function stageConfig(
+  cursorDirectory: string,
+  targetPath: string,
+  pendingCreationPath: string,
+): Promise<{ stagedPath: string; owner: CatalogReceipt }> {
+  const stagedPath = join(cursorDirectory, `.codebook-${randomUUID()}.mcp.json`)
+  const stagedHandle = await open(
+    stagedPath,
+    fileFlags.O_CREAT |
+      fileFlags.O_EXCL |
+      fileFlags.O_NOFOLLOW |
+      fileFlags.O_RDWR,
+    PRIVATE_FILE_MODE,
+  )
+  try {
+    return {
+      stagedPath,
+      owner: await recordStagedConfig(
+        stagedHandle,
+        stagedPath,
+        targetPath,
+        pendingCreationPath,
+      ),
+    }
+  } catch (stagingError) {
+    // The record was not written, so nothing names the staged file: it is Codebook's own and goes before the failure is reported.
+    await unlink(stagedPath).catch(() => undefined)
+    throw stagingError
+  }
+}
+
+/**
+ * Says whether the link of a staged config failed because the staged file is gone from Cursor's settings folder while the folder stays: the sweep of another Cursor profile's window took it for one a killed window left ({@link removeLeftStagedConfigs}), as it does for every such file older than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS}, when this window slept that long between staging and linking; called by {@link refreshCursorMcpCatalog} when its link fails.
+ * @param linkFailure - What the link threw.
+ * @param stagedPath - The staged file's path.
+ * @returns `true` for an `ENOENT` of the link while nothing stands at the staged path and the settings folder is still a folder; `false` for every other failure, also when the folder itself is gone (the link's refusal names that).
+ * @example await isStagedConfigSwept(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }), '/home/user/.cursor/.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json') // => true after another window's sweep removed the file
+ */
+async function isStagedConfigSwept(
+  linkFailure: unknown,
+  stagedPath: string,
+): Promise<boolean> {
+  if (systemErrorCode(linkFailure) !== 'ENOENT') return false
+  const [isStagedFileGone, isFolderLeft] = await Promise.all([
+    lstat(stagedPath).then(
+      () => false,
+      (error: unknown) => systemErrorCode(error) === 'ENOENT',
+    ),
+    lstat(dirname(stagedPath)).then(
+      (folder) => folder.isDirectory(),
+      () => false,
+    ),
+  ])
+  return isStagedFileGone && isFolderLeft
+}
+
+/** The name {@link refreshCursorMcpCatalog} gives Codebook's new config in Cursor's settings folder until the file is linked into place: `.codebook-<uuid>.mcp.json`, with a random UUID as {@link randomUUID} writes it. */
+const STAGED_CONFIG_NAME =
+  /^\.codebook-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mcp\.json$/
+
+/**
+ * Says whether an entry of Cursor's settings folder is a staged config that a window left when it was killed after it created the file and before it recorded it; for {@link removeLeftStagedConfigs}.
+ * The entry is looked at without following a link and is not opened: what Codebook stages is known by its name and its size, and a running window stages its file for an instant.
+ * @param cursorDirectory - Cursor's settings folder.
+ * @param name - The entry's name.
+ * @returns `true` for a regular file of Codebook's staged name ({@link STAGED_CONFIG_NAME}) that holds no more bytes than Codebook's empty config and was last changed longer ago than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS}; `false` for every other entry, for a younger file (a running window may be staging it), for a larger one (it holds more than Codebook stages) and for a path that cannot be looked at.
+ * @example await isLeftStagedConfig('/home/user/.cursor', '.codebook-123e4567-e89b-12d3-a456-426614174000.mcp.json') // => true for an empty file a killed window created two minutes ago
+ */
+async function isLeftStagedConfig(
+  cursorDirectory: string,
+  name: string,
+): Promise<boolean> {
+  if (!STAGED_CONFIG_NAME.test(name)) return false
+  const entry = await lstat(join(cursorDirectory, name)).catch(() => undefined)
+  return (
+    entry !== undefined &&
+    entry.isFile() &&
+    entry.size <= Buffer.byteLength(EMPTY_MCP_CONFIG) &&
+    Date.now() - entry.mtimeMs > CURSOR_MCP_STAGED_CONFIG_GRACE_MS
+  )
+}
+
+/**
+ * Removes the staged configs that windows left in Cursor's settings folder when they were killed after they created the file and before they recorded it, so that no such file stays there for good; called by {@link refreshCursorMcpCatalog} and {@link removeOwnedCursorMcpCatalog} under the catalog's storage lock, after {@link recoverCreation} has settled the staged file that a record names.
+ * Only a file that {@link isLeftStagedConfig} judges left goes: a window whose catalog has a storage folder and a lock of its own may be staging a file at this moment, and a file with more bytes than Codebook stages is not Codebook's. Such a window that slept longer than {@link CURSOR_MCP_STAGED_CONFIG_GRACE_MS} between staging its file and linking it finds the file gone and stages it again, once ({@link isStagedConfigSwept}); one that slept after the link finds the staged name, the config's second name then, gone, which counts as removed ({@link removeStagedName}). A name that cannot be removed stays for the next sweep; the sweep never fails the command.
+ * @param cursorDirectory - Cursor's settings folder, `~/.cursor`.
+ * @example await removeLeftStagedConfigs('/home/user/.cursor')
+ */
+async function removeLeftStagedConfigs(cursorDirectory: string): Promise<void> {
+  for (const name of await readdir(cursorDirectory).catch(() => []))
+    if (await isLeftStagedConfig(cursorDirectory, name))
+      await unlink(join(cursorDirectory, name)).catch(() => undefined)
 }
 
 /** Wakes Cursor's MCP catalog and returns the generation of an unchanged Codebook-owned empty file. @example await refreshCursorMcpCatalog('/private', '/home/user/.cursor') */
@@ -908,129 +1092,115 @@ export async function refreshCursorMcpCatalog(
   cursorDirectory = join(homedir(), '.cursor'),
 ): Promise<string | undefined> {
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
-  return withCatalogLockRetry(() =>
-    withStorageLock(storageDirectory, async () => {
-      await regularDirectory(cursorDirectory, SET_UP_AI_CHAT_COMMAND)
-      const targetPath = join(cursorDirectory, 'mcp.json'),
-        receiptPath = join(storageDirectory, 'receipt.json')
-      const pendingCreationPath = join(
-        storageDirectory,
-        'pending-creation.json',
-      )
-      await recoverCreation(
-        pendingCreationPath,
-        receiptPath,
-        targetPath,
+  return withCatalogLock(storageDirectory, async () => {
+    await regularDirectory(cursorDirectory, SET_UP_AI_CHAT_COMMAND)
+    const targetPath = join(cursorDirectory, 'mcp.json'),
+      receiptPath = join(storageDirectory, 'receipt.json')
+    const pendingCreationPath = join(storageDirectory, 'pending-creation.json')
+    await recoverCreation(
+      pendingCreationPath,
+      receiptPath,
+      targetPath,
+      cursorDirectory,
+      SET_UP_AI_CHAT_COMMAND,
+    )
+    await removeLeftStagedConfigs(cursorDirectory)
+    await recoverRemoval(
+      join(storageDirectory, 'pending-removal.json'),
+      receiptPath,
+      targetPath,
+      storageDirectory,
+      SET_UP_AI_CHAT_COMMAND,
+    )
+    const previous = await privateJson(receiptPath, SET_UP_AI_CHAT_COMMAND)
+    if (previous !== undefined)
+      parseReceipt(previous, targetPath, receiptPath, SET_UP_AI_CHAT_COMMAND)
+    let handle
+    try {
+      handle = await openConfigForRefresh(targetPath)
+    } catch (error) {
+      // Only a path that holds nothing is filled; every refusal already carries its sentence.
+      if (!isMissing(error)) throw error
+      let staged = await stageConfig(
         cursorDirectory,
-        SET_UP_AI_CHAT_COMMAND,
-      )
-      await recoverRemoval(
-        join(storageDirectory, 'pending-removal.json'),
-        receiptPath,
         targetPath,
-        storageDirectory,
-        SET_UP_AI_CHAT_COMMAND,
+        pendingCreationPath,
       )
-      const previous = await privateJson(receiptPath, SET_UP_AI_CHAT_COMMAND)
-      if (previous !== undefined)
-        parseReceipt(previous, targetPath, receiptPath, SET_UP_AI_CHAT_COMMAND)
-      let handle
-      try {
-        handle = await openConfigForRefresh(targetPath)
-      } catch (error) {
-        // Only a path that holds nothing is filled; every refusal already carries its sentence.
-        if (!isMissing(error)) throw error
-        const stagedPath = join(
+      let createError = await link(staged.stagedPath, targetPath).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      // A window of another Cursor profile (its own storage folder and lock) swept the staged file while this window slept past the sweep's minute between staging and linking (a closed lid, a debugger pause): the config is staged again, once (Cycle 0047 row 198).
+      if (
+        createError !== undefined &&
+        (await isStagedConfigSwept(createError, staged.stagedPath))
+      ) {
+        staged = await stageConfig(
           cursorDirectory,
-          `.codebook-${randomUUID()}.mcp.json`,
-        )
-        const stagedHandle = await open(
-          stagedPath,
-          fileFlags.O_CREAT |
-            fileFlags.O_EXCL |
-            fileFlags.O_NOFOLLOW |
-            fileFlags.O_RDWR,
-          PRIVATE_FILE_MODE,
-        )
-        let staged
-        try {
-          await stagedHandle.writeFile(EMPTY_MCP_CONFIG)
-          await stagedHandle.sync()
-          staged = await stagedHandle.stat({ bigint: true })
-        } finally {
-          await stagedHandle.close()
-        }
-        const owner: CatalogReceipt = {
-          schemaVersion: 1,
           targetPath,
-          sha256: EMPTY_MCP_CONFIG_SHA256,
-          device: recordedFileId(staged.dev),
-          inode: recordedFileId(staged.ino),
-          installed: true,
-        }
-        const pending: PendingCreation = { schemaVersion: 1, owner, stagedPath }
-        await atomicPrivateWrite(
           pendingCreationPath,
-          pending,
-          CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
         )
-        try {
-          await link(stagedPath, targetPath)
-        } catch (createError) {
-          // Only a file that is already there is another writer's publication; every other refusal gets its sentence.
-          if (systemErrorCode(createError) !== 'EEXIST')
-            throw refusalOfConfigLink(createError, targetPath)
-          await recoverCreation(
-            pendingCreationPath,
-            receiptPath,
-            targetPath,
-            cursorDirectory,
-            SET_UP_AI_CHAT_COMMAND,
-          )
-          handle = await openPublishedConfig(targetPath)
-        }
-        if (!handle) {
-          if (!(await ownedFile(targetPath, owner, SET_UP_AI_CHAT_COMMAND)))
-            throw new Error(
-              `Cursor MCP config changed during publication: ${targetPath}. Codebook preserved it and its recovery record. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
-            )
-          await atomicPrivateWrite(
-            receiptPath,
-            owner,
-            CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
-          )
-          await unlink(stagedPath)
-          await unlink(pendingCreationPath)
-          handle = await openPublishedConfig(targetPath)
-        }
+        createError = await link(staged.stagedPath, targetPath).then(
+          () => undefined,
+          (error: unknown) => error,
+        )
       }
-      try {
-        const status = await handle.stat()
-        if (!status.isFile())
-          throw new Error(configNotRegularSentence(targetPath))
-        if (status.size === 0) throw new Error(configEmptySentence(targetPath))
-        // Cursor 3.21.16 may connect an extension server without publishing it to Agent until this file watcher fires.
-        await setTimesOfOpenConfig(
-          handle,
-          targetPath,
-          status.atime,
-          new Date(
-            Math.max(
-              Date.now(),
-              status.mtimeMs + CURSOR_MCP_CATALOG_REFRESH_STEP_MS,
-            ),
-          ),
-        )
-        return advanceOwnedRefreshId(
+      if (createError !== undefined) {
+        // Only a file that is already there is another writer's publication; every other refusal gets its sentence.
+        if (systemErrorCode(createError) !== 'EEXIST')
+          throw refusalOfConfigLink(createError, targetPath)
+        await recoverCreation(
+          pendingCreationPath,
           receiptPath,
           targetPath,
+          cursorDirectory,
           SET_UP_AI_CHAT_COMMAND,
         )
-      } finally {
-        await handle.close()
+        handle = await openPublishedConfig(targetPath)
       }
-    }),
-  )
+      if (!handle) {
+        if (
+          !(await ownedFile(targetPath, staged.owner, SET_UP_AI_CHAT_COMMAND))
+        )
+          throw new Error(
+            `Cursor MCP config changed during publication: ${targetPath}. Codebook preserved it and its recovery record. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
+          )
+        await atomicPrivateWrite(
+          receiptPath,
+          staged.owner,
+          CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
+        )
+        await removeStagedName(staged.stagedPath)
+        await unlink(pendingCreationPath)
+        handle = await openPublishedConfig(targetPath)
+      }
+    }
+    try {
+      const status = await handle.stat()
+      if (!status.isFile())
+        throw new Error(configNotRegularSentence(targetPath))
+      if (status.size === 0) throw new Error(configEmptySentence(targetPath))
+      // Cursor 3.21.16 may connect an extension server without publishing it to Agent until this file watcher fires.
+      await setTimesOfOpenConfig(
+        handle,
+        targetPath,
+        status.atime,
+        new Date(
+          Math.max(
+            Date.now(),
+            status.mtimeMs + CURSOR_MCP_CATALOG_REFRESH_STEP_MS,
+          ),
+        ),
+      )
+      return advanceOwnedRefreshId(
+        receiptPath,
+        targetPath,
+        SET_UP_AI_CHAT_COMMAND,
+      )
+    } finally {
+      await handle.close()
+    }
+  })
 }
 
 /** Reserves the current owned catalog generation before explicit skill removal without creating or touching a user config, or says why there is no config to retire ({@link CursorCatalogCapture}). @param commandToRunAgain - The command the learner ran, which a refusal of one of the catalog's records names as the one to run again: the removal command hands in its own title, so that its warning leaves one next step. @example await captureOwnedCursorMcpCatalogGeneration('/private') */
@@ -1040,51 +1210,49 @@ export async function captureOwnedCursorMcpCatalogGeneration(
   commandToRunAgain: string = SET_UP_AI_CHAT_COMMAND,
 ): Promise<CursorCatalogCapture> {
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
-  return withCatalogLockRetry(() =>
-    withStorageLock(storageDirectory, async () => {
-      const targetPath = join(cursorDirectory, 'mcp.json'),
-        receiptPath = join(storageDirectory, 'receipt.json')
-      // Without Cursor's settings folder no config stands in it: nothing is recovered or reserved, and that is no refusal.
-      if (!(await lstat(cursorDirectory).catch(passIfMissing)))
-        return {
+  return withCatalogLock(storageDirectory, async () => {
+    const targetPath = join(cursorDirectory, 'mcp.json'),
+      receiptPath = join(storageDirectory, 'receipt.json')
+    // Without Cursor's settings folder no config stands in it: nothing is recovered or reserved, and that is no refusal.
+    if (!(await lstat(cursorDirectory).catch(passIfMissing)))
+      return {
+        unowned: await whyNoConfigIsOwned(
+          receiptPath,
+          targetPath,
+          commandToRunAgain,
+        ),
+      }
+    await regularDirectory(cursorDirectory, commandToRunAgain)
+    await recoverCreation(
+      join(storageDirectory, 'pending-creation.json'),
+      receiptPath,
+      targetPath,
+      cursorDirectory,
+      commandToRunAgain,
+    )
+    await recoverRemoval(
+      join(storageDirectory, 'pending-removal.json'),
+      receiptPath,
+      targetPath,
+      storageDirectory,
+      commandToRunAgain,
+    )
+    const ownedGeneration = await advanceOwnedRefreshId(
+      receiptPath,
+      targetPath,
+      commandToRunAgain,
+    )
+    // Without a generation nothing is retired later; the removal's notice says why.
+    return ownedGeneration === undefined
+      ? {
           unowned: await whyNoConfigIsOwned(
             receiptPath,
             targetPath,
             commandToRunAgain,
           ),
         }
-      await regularDirectory(cursorDirectory, commandToRunAgain)
-      await recoverCreation(
-        join(storageDirectory, 'pending-creation.json'),
-        receiptPath,
-        targetPath,
-        cursorDirectory,
-        commandToRunAgain,
-      )
-      await recoverRemoval(
-        join(storageDirectory, 'pending-removal.json'),
-        receiptPath,
-        targetPath,
-        storageDirectory,
-        commandToRunAgain,
-      )
-      const ownedGeneration = await advanceOwnedRefreshId(
-        receiptPath,
-        targetPath,
-        commandToRunAgain,
-      )
-      // Without a generation nothing is retired later; the removal's notice says why.
-      return ownedGeneration === undefined
-        ? {
-            unowned: await whyNoConfigIsOwned(
-              receiptPath,
-              targetPath,
-              commandToRunAgain,
-            ),
-          }
-        : { ownedGeneration }
-    }),
-  )
+      : { ownedGeneration }
+  })
 }
 
 /** Retires only Codebook's unchanged empty Cursor catalog, optionally limited to one refresh generation. @param commandToRunAgain - The command the learner ran, which a refusal of one of the catalog's records names as the one to run again: the removal command hands in its own title, so that its warning leaves one next step. @example await removeOwnedCursorMcpCatalog('/private', '/home/user/.cursor') */
@@ -1095,80 +1263,79 @@ export async function removeOwnedCursorMcpCatalog(
   commandToRunAgain: string = SET_UP_AI_CHAT_COMMAND,
 ): Promise<CursorCatalogCleanup> {
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
-  return withCatalogLockRetry(() =>
-    withStorageLock(storageDirectory, async () => {
-      await regularDirectory(cursorDirectory, commandToRunAgain)
-      const targetPath = join(cursorDirectory, 'mcp.json'),
-        receiptPath = join(storageDirectory, 'receipt.json')
-      const pendingPath = join(storageDirectory, 'pending-removal.json')
-      await recoverCreation(
-        join(storageDirectory, 'pending-creation.json'),
-        receiptPath,
+  return withCatalogLock(storageDirectory, async () => {
+    await regularDirectory(cursorDirectory, commandToRunAgain)
+    const targetPath = join(cursorDirectory, 'mcp.json'),
+      receiptPath = join(storageDirectory, 'receipt.json')
+    const pendingPath = join(storageDirectory, 'pending-removal.json')
+    await recoverCreation(
+      join(storageDirectory, 'pending-creation.json'),
+      receiptPath,
+      targetPath,
+      cursorDirectory,
+      commandToRunAgain,
+    )
+    await removeLeftStagedConfigs(cursorDirectory)
+    const recovered = await recoverRemoval(
+      pendingPath,
+      receiptPath,
+      targetPath,
+      storageDirectory,
+      commandToRunAgain,
+    )
+    if (recovered) return recovered
+    const rawReceipt = await privateJson(receiptPath, commandToRunAgain)
+    if (rawReceipt === undefined) return 'not-owned'
+    const owner = parseReceipt(
+      rawReceipt,
+      targetPath,
+      receiptPath,
+      commandToRunAgain,
+    )
+    if (
+      expectedRefreshId !== undefined &&
+      owner.refreshId !== expectedRefreshId
+    )
+      return 'preserved'
+    if (
+      !owner.installed ||
+      !(await ownedFile(targetPath, owner, commandToRunAgain))
+    )
+      return whyNothingIsRetired(owner, targetPath)
+    // Retain the actual file privately; a concurrent edit or replacement must never be unlinked after a stale check.
+    if (
+      (await lstat(cursorDirectory, { bigint: true })).dev !==
+      (await lstat(storageDirectory, { bigint: true })).dev
+    )
+      return 'preserved'
+    const retiredPath = join(
+      storageDirectory,
+      `retired-${randomUUID()}.mcp.json`,
+    )
+    const pending: PendingRemoval = { schemaVersion: 1, owner, retiredPath }
+    await atomicPrivateWrite(
+      pendingPath,
+      pending,
+      CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
+    )
+    await rename(targetPath, retiredPath)
+    if (!(await ownedFile(retiredPath, owner, commandToRunAgain))) {
+      // The config changed between the check and the move: it goes back to its place and stays the learner's.
+      await leaveChangedConfigInPlace(
         targetPath,
-        cursorDirectory,
-        commandToRunAgain,
-      )
-      const recovered = await recoverRemoval(
+        retiredPath,
         pendingPath,
-        receiptPath,
-        targetPath,
-        storageDirectory,
         commandToRunAgain,
-      )
-      if (recovered) return recovered
-      const rawReceipt = await privateJson(receiptPath, commandToRunAgain)
-      if (rawReceipt === undefined) return 'not-owned'
-      const owner = parseReceipt(
-        rawReceipt,
-        targetPath,
-        receiptPath,
-        commandToRunAgain,
-      )
-      if (
-        expectedRefreshId !== undefined &&
-        owner.refreshId !== expectedRefreshId
-      )
-        return 'preserved'
-      if (
-        !owner.installed ||
-        !(await ownedFile(targetPath, owner, commandToRunAgain))
-      )
-        return whyNothingIsRetired(owner, targetPath)
-      // Retain the actual file privately; a concurrent edit or replacement must never be unlinked after a stale check.
-      if (
-        (await lstat(cursorDirectory, { bigint: true })).dev !==
-        (await lstat(storageDirectory, { bigint: true })).dev
-      )
-        return 'preserved'
-      const retiredPath = join(
-        storageDirectory,
-        `retired-${randomUUID()}.mcp.json`,
-      )
-      const pending: PendingRemoval = { schemaVersion: 1, owner, retiredPath }
-      await atomicPrivateWrite(
-        pendingPath,
-        pending,
-        CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
-      )
-      await rename(targetPath, retiredPath)
-      if (!(await ownedFile(retiredPath, owner, commandToRunAgain))) {
-        // The config changed between the check and the move: it goes back to its place and stays the learner's.
-        await leaveChangedConfigInPlace(
-          targetPath,
-          retiredPath,
-          pendingPath,
-          commandToRunAgain,
-        )
-        await unlink(pendingPath)
-        return 'preserved'
-      }
-      await atomicPrivateWrite(
-        receiptPath,
-        { ...owner, installed: false, retiredPath },
-        CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
       )
       await unlink(pendingPath)
-      return 'removed'
-    }),
-  )
+      return 'preserved'
+    }
+    await atomicPrivateWrite(
+      receiptPath,
+      { ...owner, installed: false, retiredPath },
+      CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
+    )
+    await unlink(pendingPath)
+    return 'removed'
+  })
 }
