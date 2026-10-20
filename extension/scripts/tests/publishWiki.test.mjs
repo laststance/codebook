@@ -21678,6 +21678,15 @@ test(
         { mode: '640', isFile: true },
       )
     } finally {
+      // The armed swaps are cleared, so a failure before the read cannot leak them into a later test.
+      swapAfterReading(
+        () => false,
+        async () => undefined,
+      )
+      swapBeforeWriting(
+        () => false,
+        async () => undefined,
+      )
       await rm(wiki.directory, { recursive: true, force: true })
     }
   },
@@ -21713,6 +21722,11 @@ test('a publish whose learner’s file is touched right after its bytes are read
       '2021-03-04T05:06:07.000Z',
     )
   } finally {
+    // The armed swap is cleared, so a failure before the read cannot leak it into a later test.
+    swapAfterReading(
+      () => false,
+      async () => undefined,
+    )
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
