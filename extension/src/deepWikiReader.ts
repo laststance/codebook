@@ -24,6 +24,7 @@ import {
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
   WIKI_QUESTION_STATUS_STYLE,
+  WIKI_READER_FOREIGN_HOST_REFUSAL,
   WIKI_REFUSED_STEP_ADVICE,
   WIKI_RESPONSE_PART_BYTES,
   WIKI_RESPONSE_SEND_LIMIT_MS,
@@ -422,7 +423,7 @@ export async function startDeepWikiReader(
     response.setHeader('Cache-Control', 'no-store')
     // A request that names another host is no request of the reader's own page, or of the editor's forward of it: nothing is read for it.
     if (!isOwnHost(request)) {
-      sendJson(response, 403, { error: 'Unknown Wiki reader host.' })
+      sendJson(response, 403, { error: WIKI_READER_FOREIGN_HOST_REFUSAL })
       return
     }
     const url = new URL(request.url ?? '/', origin)

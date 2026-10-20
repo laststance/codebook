@@ -2078,6 +2078,44 @@ test('while six pages are in hand, a further page request is refused at once wit
   )
 })
 
+// Value: protects=the learner of a window whose forward goes to another host (a tunnel, a browser-based editor): the reader refuses that Host, never serves its page there, and the refusal says in a sentence that the reader answers only on this computer; fails_when=the reader accepts a forward that is not loopback as its Host, or answers it with a refusal that does not say the reader answers only on this computer; why_new=Cycle 0048 task 42 (Red Team); seam=none (the reader's real answer to a raw request with a chosen Host header); no_claim=that the editor or a tunnel can serve such a page by another route
+test('a window whose forward goes to another host gets a 403 that says the reader answers only on this computer', async () => {
+  // Arrange: a tunnel forwards the reader's port to tunnel.example, and the editor offers that address to the reader.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-tunnel-')),
+  )
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => {
+      throw new Error('No model request expected.')
+    },
+  )
+  try {
+    reader.acceptForwardedOrigin(
+      `https://tunnel.example${new URL(reader.url).pathname}`,
+    )
+
+    // Act
+    const answer = await askAndReadSlowly(
+      reader.url,
+      { Host: 'tunnel.example' },
+      0,
+    )
+
+    // Assert
+    assert.equal(answer.status, 403)
+    assert.deepEqual(JSON.parse(String(answer.body)), {
+      error:
+        'The Wiki reader answers only on this computer, at its own loopback address or at the loopback address the editor forwards it to. This address is neither, so the reader shows no page.',
+    })
+  } finally {
+    await reader.close()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
+
 /**
  * Asks the reader for an address over a connection of its own that does not read the answer, as a browser that stopped reading does: the answer fills the connection's buffers, and the reader holds the rest until the connection takes it.
  * Called by the tests of answers that their browser does not receive.
