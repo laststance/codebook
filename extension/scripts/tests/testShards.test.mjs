@@ -708,7 +708,7 @@ test('the shard script refuses a silence limit that is no number above 0 and a w
     [zeroSeconds, wordForSeconds, wholeFilesWithAShard].map(
       ({ code, stderr }) => ({
         code,
-        refusal: /Error: (--[a-z-]+ [^\n]*)/.exec(stderr)?.[1],
+        refusal: /✖ (--[a-z-]+ [^\n]*)/.exec(stderr)?.[1],
       }),
     ),
     [
@@ -721,6 +721,67 @@ test('the shard script refuses a silence limit that is no number above 0 and a w
     ],
   )
   assert.deepEqual(await readExecuted(root), [])
+})
+
+// Value: protects=the reader of a refused option: every option refusal of test-shard.mjs is one line `✖ <message>` with exit code 1, like its timings refusal, and not the script's stack trace; fails_when=a refusal is thrown uncaught, so stderr holds the source line, `Error: …`, `at …` frames and the Node version; why_new=Cycle 0048 task 108 (QA capture 006); seam=test-shard.mjs started as a process on a fixture build, one call per refused option; no_claim=the refusals of a missing build and a failed recording, which are no option
+test('the shard script writes each refused option as one line and nothing else, with exit code 1', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'a.test.js': loggingTestSource(['opens']) },
+    timings: { files: { 'a.test.js': { totalMs: 10 } } },
+  })
+  const refusedCalls = [
+    ['--shard', '4/3'],
+    ['--shard', 'second'],
+    ['--lanes', '0'],
+    ['--silence-seconds', 'soon'],
+    ['--shard', '2/3', '--whole-split-files'],
+  ]
+
+  // Act
+  const refusals = []
+  for (const args of refusedCalls)
+    refusals.push(await runShardScript(root, args))
+  const unknownOption = await runShardScript(root, ['--unknown-option'])
+
+  // Assert
+  assert.deepEqual(
+    refusals.map(({ code, stdout, stderr }) => ({ code, stdout, stderr })),
+    [
+      {
+        code: 1,
+        stdout: '',
+        stderr: '✖ --shard must be index/total with 1 <= index <= total.\n',
+      },
+      {
+        code: 1,
+        stdout: '',
+        stderr: '✖ --shard must be index/total with 1 <= index <= total.\n',
+      },
+      {
+        code: 1,
+        stdout: '',
+        stderr: '✖ --lanes must be a positive integer.\n',
+      },
+      {
+        code: 1,
+        stdout: '',
+        stderr: '✖ --silence-seconds must be a number above 0.\n',
+      },
+      {
+        code: 1,
+        stdout: '',
+        stderr:
+          '✖ --whole-split-files runs on one runner; leave out --shard.\n',
+      },
+    ],
+  )
+  // Node words the refusal of an unknown option itself, so the test reads its start and its one line only.
+  assert.equal(unknownOption.code, 1)
+  assert.match(
+    unknownOption.stderr,
+    /^✖ Unknown option '--unknown-option'[^\n]*\n$/,
+  )
 })
 
 // Value: protects=the shard job's result: a failed call must fail the job; fails_when=test-shard.mjs ends with exit code 0 although a call failed, or prints no failure line; why_new=Cycle 0048 task 27 (test guide, 2026-10-02: the script's own exit code had no test); seam=test-shard.mjs started as a process on a fixture build
@@ -944,7 +1005,7 @@ test('the shard script refuses a silence limit of Infinity or above what a timer
   assert.deepEqual(
     refusals.map(({ code, stderr }) => ({
       code,
-      refusal: /Error: (--[a-z-]+ [^\n]*)/.exec(stderr)?.[1],
+      refusal: /✖ (--[a-z-]+ [^\n]*)/.exec(stderr)?.[1],
     })),
     Array(3).fill({
       code: 1,

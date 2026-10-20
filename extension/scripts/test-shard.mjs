@@ -169,9 +169,22 @@ async function runLanes(lanes, silenceSeconds) {
   }
 }
 
-const options = readOptions()
-if (options.wholeSplitFiles && options.shards !== 1)
-  throw new Error('--whole-split-files runs on one runner; leave out --shard.')
+/** Reads the command line and checks the options that depend on each other; a refusal is one line for the reader, not a stack trace of this script, and ends the script with code 1. @example readCheckedOptions() // => { shard: 1, shards: 1, lanes: 2, list: false, record: false, wholeSplitFiles: false, silenceSeconds: 120 } */
+function readCheckedOptions() {
+  try {
+    const checked = readOptions()
+    if (checked.wholeSplitFiles && checked.shards !== 1)
+      throw new Error(
+        '--whole-split-files runs on one runner; leave out --shard.',
+      )
+    return checked
+  } catch (error) {
+    console.error(`✖ ${error.message}`)
+    process.exit(1)
+  }
+}
+
+const options = readCheckedOptions()
 const files = await readTestFiles()
 if (options.record) {
   await recordTimings(files, options.silenceSeconds)
