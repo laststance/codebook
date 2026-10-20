@@ -20636,3 +20636,65 @@ test('a publish names a learner’s file saved after its last check, which went 
     await rm(wiki.directory, { recursive: true, force: true })
   }
 })
+
+for (const { names, liveStartText, outcome, recovery, journal } of [
+  {
+    names: 'began at the recorded start',
+    liveStartText: 'Mon Oct  5 09:12:33 2026',
+    outcome:
+      'is refused as one that may still be running, and the journal is kept',
+    recovery: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+    journal: 'kept',
+  },
+  {
+    names: 'began at another time than the recorded start',
+    liveStartText: 'Tue Oct  6 10:00:00 2026',
+    outcome: 'is recovered: the process id is another process’s now',
+    recovery: 'published-or-restored',
+    journal: 'gone',
+  },
+]) {
+  // Value: protects=the learner whose publish still runs on this computer, where no boot id is compared and no digest of the computer's id is named on both sides (reg.exe or ioreg blocked), and who passes the pair that the refusal names for this computer's own place; fails_when=the pair takes such an owner for gone without a probe of its process id, so the recovery moves the Wiki under a live publish, or it refuses an owner whose process id another process has now; why_new=Cycle 0048 task 5 (S11-N2); seam=a recovery on a stand-in macOS whose sysctl and ioreg answer nothing, run by the test process whose id the journal names, and whose ps prints the start the row names; no_claim=a real second computer with this host name, or a real macOS
+  test(`a recovery with the pair of this computer’s own place beside a journal of this host name and space, without a boot id or a digest of the computer’s id, whose process id a live process has that ${names} ${outcome}`, async () => {
+    // Arrange: the journal names the test process, this host, the stand-in's space, this boot's time, a recorded start and no digest; the stand-in's ps prints the row's start for the process.
+    const { wiki, killed, record } = await publishKilledAfterItsJournal(
+      (record) => {
+        record.pid = process.pid
+        record.owner = {
+          host: record.owner.host,
+          space: 'darwin',
+          boot: { atMs: Date.now() - Math.round(uptime() * 1000) },
+          start: 'ps:Mon Oct  5 09:12:33 2026',
+        }
+      },
+    )
+    const run = async (program) =>
+      program === '/bin/ps' ? liveStartText : undefined
+    try {
+      // Act
+      const answer = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        goneOwners: [{ host: record.owner.host, space: 'darwin' }],
+        system: { platform: 'darwin', environment: {}, run },
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          recovery: answer,
+          journal: existsSync(`${wiki.output}.publish-journal.json`)
+            ? 'kept'
+            : 'gone',
+        },
+        { killed: '', recovery, journal },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
