@@ -16558,6 +16558,8 @@ test('a publish syncs each file it writes before its close, the journal’s fold
           // The folder that holds the journal and the lock, once the journal has its name.
           'sync .',
           'close .',
+          // The learner's file is read through one handle (Cycle 0048 task 66), which is closed after the read; nothing is written through it.
+          'close wiki/manual.txt',
           // The list of copies: its name, then its line, synced before the copy it names begins.
           'sync .',
           'close .',
