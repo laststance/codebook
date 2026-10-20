@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
-import { readCurrentState } from './utils/currentState.mjs'
+import { activeTableNameOf, readCurrentState } from './utils/currentState.mjs'
 
 /**
  * Reads a document of the repository by its path from the repository root, so every test of this file names its documents the way a reader does.
@@ -23,6 +24,49 @@ const readDocument = (path) =>
  */
 const retiredLogCitations = (text) =>
   text.match(/\bD0[0-4]\d\b|DECISIONS\.md/g) ?? []
+
+/**
+ * Lists the relative links of a Markdown text that lead to the removed state file `PROJECT_STATE.md`: inline links, with `./` or `../` steps, in angle brackets, with an anchor or a title; reference definitions; and HTML `href` and `src` attributes. A link with a scheme or a host (the state file's last published form on GitHub) is not relative and is kept on purpose, and a path in code text is no link.
+ * @param {string} text - The document's text.
+ * @returns {string[]} The link targets as written, angle brackets left out, in the order they stand; empty when none leads there.
+ * @example
+ * stateFileLinksOf('[state](./PROJECT_STATE.md "the state")\n[s]: ../PROJECT_STATE.md') // => ['./PROJECT_STATE.md', '../PROJECT_STATE.md']
+ */
+const stateFileLinksOf = (text) =>
+  [
+    ...text.matchAll(/\]\(\s*(<[^>\n]*>|[^\s)]+)/g),
+    ...text.matchAll(/^ {0,3}\[[^\]\n]+\]:[ \t]*(<[^>\n]*>|\S+)/gm),
+    ...text.matchAll(/\b(?:href|src)\s*=\s*["']?([^"'\s>]+)/gi),
+  ]
+    .toSorted((first, second) => first.index - second.index)
+    .map((match) => match[1].replace(/^<|>$/g, ''))
+    .filter((target) => /^(?:\.{1,2}\/)*PROJECT_STATE\.md(?:#|$)/.test(target))
+
+/**
+ * Lists the Markdown files of the repository, every one Git tracks or would track (ignored files left out), by their paths from the repository root, so a check of links reaches the packaged README, the skill and any folder added later, not only the root and `docs/`.
+ * @returns {string[]} The paths, as Git lists them.
+ * @throws When Git cannot list them, so the check never passes on an empty list.
+ * @example
+ * markdownFilesOfRepository() // => ['AGENTS.md', …, 'extension/README.md', 'extension/skills/codebook/SKILL.md', …]
+ */
+const markdownFilesOfRepository = () => {
+  const listing = spawnSync(
+    'git',
+    [
+      'ls-files',
+      '-z',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '--',
+      '*.md',
+    ],
+    { cwd: new URL('../../../', import.meta.url), encoding: 'utf8' },
+  )
+  if (listing.status !== 0)
+    throw new Error(`git ls-files failed: ${listing.stderr}`)
+  return listing.stdout.split('\0').filter((path) => path !== '')
+}
 
 /**
  * Returns README's whole "Implementation status" section, from its heading to the next heading of the same level, so a check of the status also sees a paragraph added below the first one.
@@ -104,32 +148,87 @@ test('no state file stands at the repository root, and no live document names on
   assert.deepEqual(namingDocuments, [])
 })
 
-// Value: protects=a reader who follows a link to the current state from any document of the repository; fails_when=a Markdown file links PROJECT_STATE.md by a relative path, which no longer exists since the owner removed it on 2026-10-19; why_new=Cycle 0047 row 203 (S2RT-1): three documents and every closed cycle record still linked the removed file; seam=none; no_claim=links to the state file's last published form on GitHub, which are kept on purpose
+// Value: protects=a reader who follows a link to the current state from any document of the repository; fails_when=a Markdown file links PROJECT_STATE.md by a relative path, which no longer exists since the owner removed it on 2026-10-19; why_new=Cycle 0047 row 203 (S2RT-1): three documents and every closed cycle record still linked the removed file; row 277 (P3OCR1a-3): the scan read the root and docs/ only, and missed links with `./`, a title or a reference definition; seam=none; no_claim=links to the state file's last published form on GitHub, which are kept on purpose
 test('no Markdown document links the removed state file by a relative path, apart from the snapshots kept byte for byte', async () => {
-  // Arrange: the Markdown files at the root and under docs/; a snapshot whose bytes a record pins with its SHA-256 (docs/history, the evidence checkpoints of a cycle) keeps its links as they were.
-  const rootNames = await readdir(new URL('../../../', import.meta.url))
-  const docsNames = await readdir(new URL('../../../docs/', import.meta.url), {
-    recursive: true,
-  })
-  const documents = [
-    ...rootNames.filter((name) => name.endsWith('.md')),
-    ...docsNames
-      .filter((name) => name.endsWith('.md'))
-      .map((name) => `docs/${name.split('\\').join('/')}`),
-  ].filter(
+  // Arrange: every Markdown file of the repository; a snapshot whose bytes a record pins with its SHA-256 (docs/history, the evidence checkpoints of a cycle) keeps its links as they were.
+  const documents = markdownFilesOfRepository().filter(
     (path) =>
       !path.startsWith('docs/history/') &&
       !/^docs\/cycles\/\d{4}-evidence-checkpoint-/.test(path),
   )
 
-  // Act
+  // Act: a file Git still lists but that is gone from the checkout links nothing; any other failed read fails the check.
   const linkingDocuments = []
-  for (const path of documents)
-    if (/\]\((?:\.\.\/)*PROJECT_STATE\.md[#)]/.test(await readDocument(path)))
-      linkingDocuments.push(path)
+  for (const path of documents) {
+    const text = await readDocument(path).catch((error) => {
+      if (error.code === 'ENOENT') return ''
+      throw error
+    })
+    if (stateFileLinksOf(text).length > 0) linkingDocuments.push(path)
+  }
 
   // Assert
   assert.deepEqual(linkingDocuments, [])
+})
+
+// Value: protects=the scan above for links to the removed state file; fails_when=a link reaches PROJECT_STATE.md in a form the scan does not read (`./`, angle brackets, a title, a reference definition, an HTML attribute), so a reader again follows a link to a file that is gone; why_new=Cycle 0047 row 277 (P3OCR1a-3); seam=none; no_claim=a link a renderer builds from text the scan does not read, such as one inside an HTML comment
+test('the scan for links to the removed state file reads every form of a relative Markdown or HTML link, and leaves the file’s published form on GitHub and paths in code text alone', () => {
+  // Arrange
+  const text = [
+    '[state](PROJECT_STATE.md)',
+    '[state](./PROJECT_STATE.md#current)',
+    '[state](../../PROJECT_STATE.md "the state")',
+    '[state](<PROJECT_STATE.md>)',
+    '[s]: ./PROJECT_STATE.md',
+    '<a href="../PROJECT_STATE.md">state</a>',
+    '[published](https://github.com/laststance/codebook/blob/c18c0d6e/PROJECT_STATE.md)',
+    '`git show c18c0d6e:PROJECT_STATE.md`',
+    '[record](docs/cycles/0047-carried-defects-of-cycle-0046.md)',
+  ].join('\n')
+
+  // Act
+  const links = stateFileLinksOf(text)
+
+  // Assert
+  assert.deepEqual(links, [
+    'PROJECT_STATE.md',
+    './PROJECT_STATE.md#current',
+    '../../PROJECT_STATE.md',
+    'PROJECT_STATE.md',
+    './PROJECT_STATE.md',
+    '../PROJECT_STATE.md',
+  ])
+})
+
+// Value: protects=the count check and the replay-action check of the current state, which judge it against the active cycle's own carried-defects table; fails_when=the state links an earlier cycle's table before its own and the checks read that one, so a stale count or a "Fix N" of a closed row passes (row 202's defect back); why_new=Cycle 0047 row 277 (P3OCR1a-1); seam=none; no_claim=whether the state's prose names the right cycle
+test("the checks of the current state read the active cycle's own carried-defects table, never an earlier cycle's that the state links first", () => {
+  // Arrange: states of Cycle 0047 that link Cycle 0046's table first, link their own from the root with a title or by a reference, link only Cycle 0046's, or link none.
+  const states = {
+    earlierTableFirst:
+      'Cycle 0046 left [its tasks](0046-carried-defects.md). [All tasks](0047-carried-defects.md): 278 rows, 250 closed.',
+    fromTheRootWithATitle:
+      '[All tasks](docs/cycles/0047-carried-defects.md "the table")',
+    byAReference: '[All tasks][tasks]\n\n[tasks]: 0047-carried-defects.md',
+    onlyAnEarlierTable: 'Cycle 0046 left [its tasks](0046-carried-defects.md).',
+    noTable: 'A feature cycle carries no defect.',
+  }
+
+  // Act
+  const tableNames = Object.fromEntries(
+    Object.entries(states).map(([form, state]) => [
+      form,
+      activeTableNameOf('0047', state) ?? 'none',
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(tableNames, {
+    earlierTableFirst: '0047-carried-defects.md',
+    fromTheRootWithATitle: '0047-carried-defects.md',
+    byAReference: '0047-carried-defects.md',
+    onlyAnEarlierTable: 'none',
+    noTable: 'none',
+  })
 })
 
 // Value: protects=the hosted reviewer, which reads the active cycle record as a guideline for every file; fails_when=another cycle record takes the current state and .coderabbit.yaml still maps the earlier record, which only a comment kept in step; why_new=Cycle 0047 row 202 (S2OCR3-2); seam=none; no_claim=the hosted review itself, which this repository does not run
@@ -251,11 +350,10 @@ test('the gap table of the current state has one row for each row of the accepta
   assert.deepEqual(gapRows, mapRows)
 })
 
-// Value: protects=a reader of the current state who takes its count of closed defects as the cycle's; fails_when=the carried-defects table of the active bug-fix cycle gains or closes a row and the state keeps the earlier counts, or the state counts rows while it links no table; why_new=the local CodeRabbit review of Cycle 0046 found the state file at 62 closed rows while the table had 63; seam=none
+// Value: protects=a reader of the current state who takes its count of closed defects as the cycle's; fails_when=the carried-defects table of the active bug-fix cycle gains or closes a row and the state keeps the earlier counts, or the state counts rows while it links no table; why_new=the local CodeRabbit review of Cycle 0046 found the state file at 62 closed rows while the table had 63; Cycle 0047 row 277 (P3OCR1a-1): the check took the first table the state linked, which can be an earlier cycle's; seam=none
 test("the current state counts the rows and the closed rows of the active cycle's carried-defects table as the table has them", async () => {
-  // Arrange
-  const { state } = await readCurrentState()
-  const tableName = /\d{4}-carried-defects\.md/.exec(state)?.[0]
+  // Arrange: the active cycle's own table, never an earlier cycle's that the state also links.
+  const { state, tableName } = await readCurrentState()
   const table = tableName ? await readDocument(`docs/cycles/${tableName}`) : ''
 
   // Act: a row is a table line that begins with its number, and it is closed when its last cell begins with FIXED or EVIDENCE.
