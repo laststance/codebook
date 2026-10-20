@@ -35,6 +35,7 @@ import type { ProcessStartsOfList } from '../utils/isRecordingWriterLive'
 import type * as lookModule from '../utils/lookAtRecording'
 import { openWithoutFollowing } from '../utils/openWithoutFollowing'
 import { readProcessStart } from '../utils/readProcessStart'
+import * as regularFileReader from '../utils/readWikiRegularFile'
 import type * as regularFileModule from '../utils/readWikiRegularFile'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import type * as writerModule from '../utils/recordingWriterOf'
@@ -889,6 +890,121 @@ test('an unsealed recording whose writer record stands as a regular file and can
 
   // Assert
   assert.deepEqual(writer, { kind: 'unreadable' })
+})
+
+/**
+ * Makes the second read of one recording's writer record give nothing, as a read does while a scanner on Windows holds the file for a moment, and lets every other read through: the first read is the look's ({@link lookAtRecording}), the second is the judgement's, and the third, which a header's `gone` asks for, finds the scanner gone.
+ * @param context - The test, at whose end the reader is restored.
+ * @param learningDirectory - The learning directory of the test's recording store.
+ * @param studyId - The recording's study id.
+ * @returns How many reads of the record were asked.
+ * @example const reads = failSecondReadOfWriterRecord(context, storage.directory, recording.studyId)
+ */
+function failSecondReadOfWriterRecord(
+  context: TestContext,
+  learningDirectory: string,
+  studyId: string,
+): () => number {
+  const recordPath = recordingOwnerRecordPath(learningDirectory, studyId)
+  const readBefore = regularFileReader.readWikiRegularFile
+  let reads = 0
+  context.mock.method(
+    regularFileReader,
+    'readWikiRegularFile',
+    async (...input: Parameters<typeof readBefore>) => {
+      if (input[0] !== recordPath) return readBefore(...input)
+      reads += 1
+      return reads === 2 ? undefined : readBefore(...input)
+    },
+  )
+  return () => reads
+}
+
+// Value: protects=the recording of another computer (same host name, same storage folder) that is still being written, whose writer record a scanner held at the first read and let go before the next look: Delete asks the learner; fails_when=the look that follows a header's gone only asks whether the record is unreadable, finds a valid record, answers no, and the header's gone (no process of this computer has its id) stands, so the record that names another computer is never read and Delete moves its study without asking (data loss, Cycle 0048 task 124, the path of tasks 1 and 30); why_new=Cycle 0048 task 124 (CodeRabbit: two reads of one record judged from two looks); seam=the file reader, which gives nothing at the second read of the record, a header that names this host and a process id of no process, and a record that names another machine; no_claim=a real scanner on Windows
+for (const sealing of ['an unsealed', 'a sealed'] as const)
+  test(`${sealing} recording whose writer record failed one read and is valid at the next look, naming another computer with this host name, has a writer on another host`, async (context) => {
+    // Arrange: the header calls the writer gone; the record names another machine; the second read of the record fails, the third succeeds.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    if (sealing === 'a sealed') await recording.writer.finish(1)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    await rewriteWriterRecord(storage.directory, recording.studyId, {
+      pid: ID_OF_NO_PROCESS,
+      machineId: 'machine-b',
+    })
+    const readsOfRecord = failSecondReadOfWriterRecord(
+      context,
+      storage.directory,
+      recording.studyId,
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(
+      { writer, readsOfRecord: readsOfRecord() },
+      {
+        writer: { kind: 'on-another-host', host: hostname() },
+        readsOfRecord: 3,
+      },
+    )
+  })
+
+// Value: protects=the recording of a crashed window of this machine, whose writer record failed one read and is valid at the next look, naming a process that is gone: it is gone, by the record; fails_when=the record the look reads is not used for the verdict but turned into an unreadable record, so the study of a crashed window is asked about for good; why_new=Cycle 0048 task 124 (the record the second look read decides); seam=the file reader, which gives nothing at the second read of the record, and a header and a record that name this host and a process id of no process; no_claim=a record that names another computer (the test above)
+for (const sealing of ['an unsealed', 'a sealed'] as const)
+  test(`${sealing} recording whose writer record failed one read and is valid at the next look, naming a process of this machine that is gone, has a gone writer`, async (context) => {
+    // Arrange
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    if (sealing === 'a sealed') await recording.writer.finish(1)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    await rewriteWriterRecord(storage.directory, recording.studyId, {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      processStart: undefined,
+    })
+    failSecondReadOfWriterRecord(context, storage.directory, recording.studyId)
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, { kind: 'gone' })
+  })
+
+// Value: protects=the finished recording of this very window, whose writer record failed one read and is valid at the next look; fails_when=the header's gone stands for a record that names this window, so the window's own sealed recording is judged as a gone writer's; why_new=Cycle 0048 task 124 (the sealed path tells its own window by the record it read, whichever read it was); seam=the file reader, which gives nothing at the second read of the record, and a header that names a process id of no process while the record names this process
+test('a sealed recording whose writer record failed one read and is valid at the next look, naming this very window, is this window’s: no other window holds it', async (context) => {
+  // Arrange
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await recording.writer.finish(1)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+  })
+  failSecondReadOfWriterRecord(context, storage.directory, recording.studyId)
+
+  // Act
+  const writer = await writerOf(recording.folder, 'ignored')
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'finished' })
 })
 
 // Value: protects=the recording of another computer (same host name, same storage folder) that is still being written, whose writer record stands as a regular file that is valid JSON but no owner record (a damaged or half-written record): Delete asks the learner; fails_when=only a record that is no JSON is called unreadable, so a record that parses but names no process leaves the header's gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 75); why_new=Cycle 0048 task 75 (native adversarial review: the unreadable answer stopped at JSON.parse); seam=the header, which names this host and a process id of no process, and the writer record, which holds a JSON value that fails the owner schema; no_claim=a record that is an owner record naming no recording or another one, which the header judges (the AF10 test above)
