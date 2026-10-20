@@ -6,8 +6,17 @@
     ".codex/restore-product-context.mjs": [
       ".codex/restore-product-context.test.mjs"
     ],
-    "extension/test-timings.json": []
+    "extension/test-timings.json": [],
+    ".github/workflows/*.yml": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ]
   },
-  "strays": { "allow": [".gstack"] },
-  "warn": ["literals"]
+  "strays": {
+    "allow": [
+      ".gstack"
+    ]
+  },
+  "warn": [
+    "literals"
+  ]
 }
