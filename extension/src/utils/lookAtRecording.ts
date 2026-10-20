@@ -13,6 +13,7 @@ import { recordingHeaderSchema } from '../recordingSchemas'
 import { readRecordingWriterRecord } from './readRecordingWriterRecord'
 import { readWikiRegularFile } from './readWikiRegularFile'
 import { recordingOwnerRecordPath } from './recordingOwnerRecordPath'
+import { systemErrorCode } from './systemErrorCode'
 
 /** The owner a recording's header names and when the recording was created, read without the rest of the header, whose other fields depend on the recording's format. */
 const headerOwnerSchema = z.object({
@@ -25,7 +26,7 @@ const headerOwnerSchema = z.object({
  * - `isSealed`: the seal file is there; the run ended
  * - `header`: the writer the header names and the recording's creation time; absent while the header cannot be read (a start that has made the folder and not yet written its header, or a damaged header)
  * - `hasWriterRecord`: the record of the writer's full identity is there, beside the recordings ({@link recordingOwnerRecordPath}), and names this recording ({@link readRecordingWriterRecord}); `false` without a readable header, which gives the recording's creation time
- * - `mayHaveFailedRead`: the header, or the writer record of a recording whose header was read, stands as a regular file within its bound and gave this look no header, or no record of this recording: a read that failed for a moment (a scanner on Windows holds the file), or a file that is no header or no record of this recording. Such a look proves neither absent, so it releases no sealed recording ({@link isSealedRecordingReleased}, Cycle 0047 row 239)
+ * - `mayHaveFailedRead`: the header, or the writer record of a recording whose header was read, gave this look no header, or no record of this recording, and either stands as a regular file within its bound or could not be looked at (a look that failed other than for a missing entry, such as `EACCES` or `EIO`): a read that failed for a moment (a scanner on Windows holds the file), a file this user may not read, or a file that is no header or no record of this recording. Such a look proves neither absent, so it releases no sealed recording ({@link isSealedRecordingReleased}, Cycle 0047 row 239), and a removal never takes it for a finished recording ({@link recordingWriterOf}, Cycle 0047 row 251)
  */
 export type RecordingLook = {
   isSealed: boolean
@@ -60,18 +61,24 @@ async function readHeaderOwner(
 }
 
 /**
- * Says whether a regular file of at most a bound stands at a path, looked at without following a link; called by {@link lookAtRecording} for a header or a writer record that gave the look nothing.
+ * Says whether a regular file of at most a bound may stand at a path, looked at without following a link; called by {@link lookAtRecording} for a header or a writer record that gave the look nothing.
+ * Why a failed look counts: a look that fails other than for a missing entry (`EACCES`, `EIO`) proves no file absent, and a removal that took it for none would move a recording another window still holds (Cycle 0047 row 251).
  * @param path - The file's path.
  * @param limitBytes - The largest size its reader accepts.
- * @returns `true` for such a file; `false` for a path that holds nothing, a link, a pipe, a folder, a larger file, and a path that cannot be looked at.
- * @example await isRegularFileWithin('/…/recordings.v2/<study id>/header.json', MAX_RECORDING_HEADER_BYTES) // => true for a header a scanner holds for a moment
+ * @returns `true` for such a file, and for a path whose look fails other than with `ENOENT` or `ENOTDIR`; `false` for a path that holds nothing, a link, a pipe, a folder and a larger file.
+ * @example await mayHoldRegularFileWithin('/…/recordings.v2/<study id>/header.json', MAX_RECORDING_HEADER_BYTES) // => true for a header a scanner holds for a moment, and for one this user may not look at
  */
-async function isRegularFileWithin(
+async function mayHoldRegularFileWithin(
   path: string,
   limitBytes: number,
 ): Promise<boolean> {
-  const entry = await lstat(path).catch(() => undefined)
-  return entry !== undefined && entry.isFile() && entry.size <= limitBytes
+  try {
+    const entry = await lstat(path)
+    return entry.isFile() && entry.size <= limitBytes
+  } catch (error) {
+    // Only a look that finds no entry proves the file absent; any other failure may hide one.
+    return !['ENOENT', 'ENOTDIR'].includes(systemErrorCode(error))
+  }
 }
 
 /**
@@ -92,15 +99,15 @@ export async function lookAtRecording(
   const hasWriterRecord =
     header !== undefined &&
     (await readRecordingWriterRecord(directory, header.createdAt)) !== undefined
-  // A file that stands there and gave nothing may be a read that failed for a moment: the look proves no header, or no record, absent then.
+  // A file that stands there, or cannot be looked at, and gave nothing may be a read that failed for a moment: the look proves no header, or no record, absent then.
   const mayHaveFailedRead =
     header === undefined
-      ? await isRegularFileWithin(
+      ? await mayHoldRegularFileWithin(
           join(directory, RECORDING_HEADER_FILE),
           MAX_RECORDING_HEADER_BYTES,
         )
       : !hasWriterRecord &&
-        (await isRegularFileWithin(
+        (await mayHoldRegularFileWithin(
           recordingOwnerRecordPath(
             dirname(dirname(directory)),
             basename(directory),

@@ -525,8 +525,8 @@ test('a recording made by 0.2.29.0 is judged by its header as before: its writer
   })
 })
 
-// Value: protects=a recording whose run ended, which no writer holds any more, whatever its header names; fails_when=a sealed recording, or a folder whose header cannot be read, is judged by the process its header names, so a sealed recording of a live window is taken for that window's reservation and stays unlisted, or a removal refuses it; why_new=Cycle 0046 review AF4: the seal had no test of its own once the yes-or-no form went; seam=the header, which names a live child process of the test, and a header the test makes unreadable
-test('a sealed recording, and one whose header cannot be read, have no writer any more, whatever their header names', async (context) => {
+// Value: protects=a recording whose run ended, which no writer holds any more, whatever its header names, and a folder whose header stands and cannot be read, which names no writer and proves none absent; fails_when=a sealed recording is judged by the process its header names, so a sealed recording of a live window is taken for that window's reservation and stays unlisted, or a removal refuses it; or a header that stands and gives nothing counts as finished, so a removal moves without the learner's choice a recording whose header a scanner holds while another window still records it or still has to save it (Cycle 0047 row 251, which changed this case's answer from finished to unreadable); why_new=Cycle 0046 review AF4: the seal had no test of its own once the yes-or-no form went; seam=the header, which names a live child process of the test, and a header the test makes unreadable
+test('a sealed recording has no writer any more, whatever its header names, and one whose header stands and cannot be read is unreadable', async (context) => {
   // Arrange: two recordings whose headers name a live process of this machine; one is sealed, the other's header is no JSON.
   const storage = await recordingStorage(context)
   const liveProcess = await idleChild(context)
@@ -547,7 +547,7 @@ test('a sealed recording, and one whose header cannot be read, have no writer an
   // Assert
   assert.deepEqual(answers, {
     sealed: { kind: 'finished' },
-    unreadable: { kind: 'finished' },
+    unreadable: { kind: 'unreadable' },
   })
 })
 

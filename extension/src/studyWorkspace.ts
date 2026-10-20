@@ -22202,7 +22202,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because recordings of the study have writers this computer cannot confirm (on another computer, or a process of this computer it cannot confirm as the writer), asks the learner whether to move it anyway, naming every one of them ({@link askRemovalOfUnconfirmedWriters}); called by {@link moveSavedStudy}.
+   * Moves a confirmed study's files ({@link moveStudyFiles}), and when the removal was refused only because recordings of the study have writers this computer cannot confirm (on another computer, a process of this computer it cannot confirm as the writer, or a recording whose files it could not read now), asks the learner whether to move it anyway, naming every one of them ({@link askRemovalOfUnconfirmedWriters}); called by {@link moveSavedStudy}.
    * The choice is the learner's alone: this dialog is the one way to move such a recording ({@link UnconfirmedWriterRule}), and no agent or tool path reaches it. A writer of this machine that may still run keeps the plain refusal, without the dialog.
    * While that dialog is open, the removal is `confirming` and the study stays whole. After "Move to Trash Anyway", {@link refuseStudyRemoval} checks the current state again. If allowed, the removal publishes `moving`, waits for accepted writes ({@link settleStudyWrites}), then moves the files. Cancel ends the removal without a notice.
    * @param studyId - The confirmed entry.
@@ -22254,8 +22254,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Asks the learner, in a modal dialog, whether to move a study whose recordings have writers this computer cannot confirm (on another computer, or in an editor window of this computer it cannot tell from another process): the dialog names the host each recording gives and the time it started, and offers "Move to Trash Anyway"; called by {@link moveStudyFilesWithLearnersChoice}.
-   * @param writers - The hosts the recordings name, their starts (ISO times) and the places of their writers, which the title names.
+   * Asks the learner, in a modal dialog, whether to move a study whose recordings have writers this computer cannot confirm (on another computer, in an editor window of this computer it cannot tell from another process, or a recording whose files it could not read now): the dialog names the host each recording gives and the time it started, or says that Codebook could not read its files, and offers "Move to Trash Anyway"; called by {@link moveStudyFilesWithLearnersChoice}.
+   * @param writers - The hosts the recordings name, their starts (ISO times) and the places of their writers, which the title names; an `unreadable` recording with its place alone.
    * @returns `true` for "Move to Trash Anyway"; `false` for Cancel or a dismissed dialog.
    * @example await this.askRemovalOfUnconfirmedWriters([{ host: 'laptop.home-network', startedAt: '2026-10-05T09:00:00.000Z', place: 'another-computer' }]) // => true after "Move to Trash Anyway"
    */

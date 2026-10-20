@@ -45,7 +45,7 @@ function unconfirmedWriterWarning(writers: NamedUnconfirmedWriters): string {
 
 /**
  * Words the title of the dialog about recordings whose writers this computer cannot confirm: for one recording or for several, naming only the places that apply; called by {@link studyRemovalMessages}.
- * "In use" holds for a recording that a window still records and for a sealed one whose run has not saved its study yet, which that run still holds ({@link isSealedRecordingReleased}).
+ * "In use" holds for a recording that a window still records and for a sealed one whose run has not saved its study yet, which that run still holds ({@link isSealedRecordingReleased}). A recording whose files Codebook could not read (`unreadable`) is named as one in another editor window: no host tells another computer.
  * @param writers - The recordings' writers.
  * @param trashName - The host's word for the system Trash.
  * @returns The title, which ends with the question the button answers.
@@ -56,7 +56,7 @@ function unconfirmedWriterTitleOf(
   trashName: SystemTrashName,
 ): string {
   const isElsewhere = hasWriterOnAnotherComputer(writers),
-    isHere = writers.some((writer) => writer.place === 'this-computer')
+    isHere = writers.some((writer) => writer.place !== 'another-computer')
   // Each title is written out whole, so the change history's quotations of it stand in this source word for word.
   if (writers.length === 1)
     return isElsewhere
@@ -100,11 +100,11 @@ export function studyRemovalMessages(
           ? " The run's raw evidence was left in place because its Codebook window may still be open."
           : ''
       }`,
-    /** The title of the dialog after a removal was refused only because recordings of the study have writers this computer cannot confirm ({@link UnconfirmedWriter}): on another computer, or an editor window of this computer it cannot tell from another process ({@link unconfirmedWriterTitleOf}). The learner decides, and Cancel keeps everything as it is. */
+    /** The title of the dialog after a removal was refused only because recordings of the study have writers this computer cannot confirm ({@link UnconfirmedWriter}): on another computer, an editor window of this computer it cannot tell from another process, or a recording whose files it could not read now ({@link unconfirmedWriterTitleOf}). The learner decides, and Cancel keeps everything as it is. */
     unconfirmedWriterTitle: (writers: NamedUnconfirmedWriters): string =>
       unconfirmedWriterTitleOf(writers, trashName),
     unconfirmedWriterButton: `Move to ${trashName} Anyway`,
-    /** The dialog's detail: the host each such recording names and when it started ({@link unconfirmedWriterSentences}, the sentences of the removal's cause), and what each answer does ({@link unconfirmedWriterWarning}). */
+    /** The dialog's detail: the host each such recording names and when it started, or that Codebook could not read its files now ({@link unconfirmedWriterSentences}, the sentences of the removal's cause), and what each answer does ({@link unconfirmedWriterWarning}). */
     unconfirmedWriterDetail: (writers: NamedUnconfirmedWriters): string =>
       `${unconfirmedWriterSentences(writers)} ${unconfirmedWriterWarning(writers)}`,
     nothingMoved: (cause: string): string =>

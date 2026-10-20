@@ -272,3 +272,51 @@ test('the title of the dialog about several recordings says some of them may sti
       "Some of this study's recordings may still be in use on another computer or in another editor window. Move the study to the Trash anyway?",
   })
 })
+
+// Value: protects=the learner reading the dialog about a recording whose header or writer record Codebook could not read now, which names no host and no start; fails_when=the dialog names a host and a start the recording never gave, says nothing of the failed read, or calls such a recording one of another computer, so the learner moves the study of a window that may still save it without knowing why Codebook asks; why_new=Cycle 0047 row 251 (P3CXA-C1): a recording read by a look that may have failed is no longer finished, and Delete asks about it; seam=none
+test('the dialog about a recording whose files Codebook could not read says so and why, names it as one in another editor window, and speaks of the other recordings beside named ones', () => {
+  // Arrange
+  const messages = studyRemovalMessages('Trash')
+  const unreadable = { place: 'unreadable' } as const,
+    ofOldLaptop = {
+      host: 'old-laptop.local',
+      startedAt: '10/1/2026, 10:00:00 AM',
+      place: 'another-computer',
+    } as const
+  // Act
+  const dialogs = {
+    one: {
+      title: messages.unconfirmedWriterTitle([unreadable]),
+      detail: messages.unconfirmedWriterDetail([unreadable]),
+    },
+    two: {
+      title: messages.unconfirmedWriterTitle([unreadable, unreadable]),
+      detail: messages.unconfirmedWriterDetail([unreadable, unreadable]),
+    },
+    besideOneOfAnotherComputer: {
+      title: messages.unconfirmedWriterTitle([ofOldLaptop, unreadable]),
+      detail: messages.unconfirmedWriterDetail([ofOldLaptop, unreadable]),
+    },
+  }
+  // Assert
+  assert.deepEqual(dialogs, {
+    one: {
+      title:
+        "This study's recording may still be in use in another editor window. Move the study to the Trash anyway?",
+      detail:
+        'Codebook could not read the files of its recording now. A virus scanner may hold them, or another editor window may still record it or still have to save it. If a window still records it or still has to save it, the recording is lost. If none does, nothing is lost. Cancel keeps the study and its recording as they are.',
+    },
+    two: {
+      title:
+        "Some of this study's recordings may still be in use in another editor window. Move the study to the Trash anyway?",
+      detail:
+        'Codebook could not read the files of its recordings now. A virus scanner may hold them, or another editor window may still record them or still have to save them. If a window still records one of them or still has to save it, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+    },
+    besideOneOfAnotherComputer: {
+      title:
+        "Some of this study's recordings may still be in use on another computer or in another editor window. Move the study to the Trash anyway?",
+      detail:
+        'Its recording was started on old-laptop.local at 10/1/2026, 10:00:00 AM. Codebook cannot tell from this computer whether an editor window still records it or still has to save it. Codebook could not read the files of its other recording now. A virus scanner may hold them, or another editor window may still record it or still have to save it. If a window still records one of them or still has to save it, on another computer or on this one, that recording is lost. If none does, nothing is lost. Cancel keeps the study and its recordings as they are.',
+    },
+  })
+})
