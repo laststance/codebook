@@ -14716,7 +14716,7 @@ for (const record of [
     arrange: async (wiki) => {
       const path = `${wiki.output}.publish-journal.json`
       await writeFile(path, '')
-      return path
+      return { path, killed: '' }
     },
   },
   {
@@ -14725,7 +14725,7 @@ for (const record of [
     arrange: async (wiki) => {
       const path = `${wiki.output}.publish-lock.json`
       await writeFile(path, '')
-      return path
+      return { path, killed: '' }
     },
   },
   {
@@ -14734,7 +14734,7 @@ for (const record of [
     sentenceName: 'Wiki recovery claim',
     arrange: async (wiki) => {
       const journal = `${wiki.output}.publish-journal.json`
-      runKilledPublisher({
+      const killed = runKilledPublisher({
         operation: 'publishWiki',
         options: {
           projectRoot: wiki.root,
@@ -14745,11 +14745,12 @@ for (const record of [
           { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
         ],
       })
+      // The claim is named by the digest of the journal the kill left; a missing journal fails the test here.
       const path = `${journal}.recovery-${createHash('sha256')
-        .update(await readFile(journal).catch(() => ''))
+        .update(await readFile(journal))
         .digest('hex')}`
       await writeFile(path, '')
-      return path
+      return { path, killed }
     },
   },
 ]) {
@@ -14758,7 +14759,7 @@ for (const record of [
     // Arrange: the row's record without a byte, last changed a minute ago, and a publisher that cannot create its clock file.
     const wiki = await publishedWikiWithACandidate()
     try {
-      const path = await record.arrange(wiki)
+      const { path, killed } = await record.arrange(wiki)
       const aMinuteAgo = new Date(Date.now() - 60_000)
       await utimes(path, aMinuteAgo, aMinuteAgo)
 
@@ -14781,11 +14782,13 @@ for (const record of [
       // Assert
       assert.deepEqual(
         {
+          killed,
           status: result.status,
           stderr: result.stderr,
           record: await readFile(path, 'utf8').catch(() => 'removed'),
         },
         {
+          killed: '',
           status: 1,
           stderr: `Error: The ${record.sentenceName} is empty, and its age cannot be judged: the file through which the publisher reads the clock of the file system that holds it could not be created beside it (ENOSPC). It was kept, and nothing was moved. Free space there, or give this user write access to that folder, then run --recover again.\n`,
           record: '',
