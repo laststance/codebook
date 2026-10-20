@@ -230,7 +230,7 @@ async function runAfterHeldWrites<Value>(
 }
 
 /**
- * Removes this process's own lock that its last release of the directory left, so that its next hold can place the lock again; called by {@link withStorageLock} when the lock file already exists.
+ * Removes this process's own lock that its last release of the directory left, so that the lock can be placed again: by this process's next hold, when {@link withStorageLock} calls this with a write about to follow and finds the lock file already there, and by another window, when {@link takeBackWithoutWrite} calls this at the fire of the timer that {@link planTakeBackWithoutWrite} set, with no write in progress.
  * Why: a lock that names this process is not stale while this process runs ({@link removeStaleStorageLock}), so every later write of this window would be refused until it closed. Only a path whose release this process could not finish is taken back, and only while the lock still names this process ({@link releaseStorageLock}): the holds of one directory in this process wait for each other, so no hold of this process holds that lock now.
  * A take-back that finds the lock still kept has spent the release's attempts, about half a second; a caller that asks for the lock again for one write keeps that answer for its later tries ({@link withCatalogLock}), so a leftover that stays unreadable costs one take-back per call, not one per try (Cycle 0047 row 199). The next call tries again.
  * @param path - The `writer.lock` file that is present.
