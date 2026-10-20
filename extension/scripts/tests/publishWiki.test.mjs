@@ -17552,6 +17552,87 @@ for (const wikiBefore of [
   })
 }
 
+// Value: protects=the learner's prior Wiki and files after a power cut stopped a publish once it had moved the Wiki folder aside, where the file system kept that move and lost the bytes of the journal that names the kept folder (ext4 can keep a rename and leave a file just written empty); fails_when=--recover ends the empty journal past the grace as one whose step never began, so the Wiki folder stays missing and nothing names the folder that keeps the prior Wiki and the learner's files; why_new=Cycle 0047 row 265 (P3CLA-4); seam=a publisher process killed just before the second move of its swap (scripts/tests/utils/killedPublisherProbe.mjs), whose journal the test then empties and dates a minute back, as a power cut leaves it; no_claim=a real power cut, and the syncs that keep the journal's bytes (fixer PA's half of the row)
+test('a --recover beside a journal that a power cut left empty once the publish moved the Wiki folder aside refuses with the folder that keeps the prior Wiki named, and keeps the journal, the publish lock and that folder', async () => {
+  // Arrange: the publish is killed between the two moves of its swap; its journal is then empty and a minute old.
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'renaming', folder: dirname(wiki.output), name: '^next$' },
+      ],
+    })
+    await writeFile(journal, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+    const priorWikiName = (await readdir(dirname(wiki.output))).find((name) =>
+      name.startsWith('wiki.previous-'),
+    )
+    const priorWiki = join(dirname(wiki.output), String(priorWikiName))
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        killed,
+        recovery,
+        journal: await readFile(journal, 'utf8').catch(() => 'removed'),
+        besideTheWiki: (await publisherFilesBeside(wiki.output)).map(
+          withIdsHidden,
+        ),
+        wikiFolder: existsSync(wiki.output) ? 'stands' : 'missing',
+        priorWikiPage: await readFile(join(priorWiki, 'index.html'), 'utf8'),
+      },
+      {
+        killed: '',
+        recovery: `The Wiki publication journal is empty, and the Wiki folder ${wiki.output} is missing, while the folder ${priorWiki} stands beside it, where a publish keeps the prior Wiki and the learner’s files when it replaces the Wiki: a publish stopped by a power cut or a system crash after it moved the Wiki there can leave its journal empty. Nothing was moved, and the journal was kept. Show this to the learner; once they agree, move that folder back to ${wiki.output}, then run --recover again.`,
+        journal: '',
+        besideTheWiki: [
+          'wiki.publish-journal.json',
+          'wiki.publish-journal.json.prepared-<id>-<digest>',
+          'wiki.publish-lock.json',
+        ],
+        wikiFolder: 'missing',
+        priorWikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the editor agent whose --recover refuses an empty journal beside a missing Wiki folder and names the folder that keeps the prior Wiki; fails_when=the skill does not tell the agent to keep the journal and to move that folder back only once the learner agrees, so it deletes the journal, leaves the Wiki missing, or moves a kept Wiki into place on its own; why_new=Cycle 0047 row 265 (P3CLA-4); seam=none; no_claim=what an agent does with the sentence, an eval gap the owner named (D9, D12)
+test('the bundled skill tells the agent to keep an empty journal beside a missing Wiki folder and to move the kept prior Wiki the refusal names back only once the learner agrees', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      "If recovery refuses an empty journal because the Wiki folder is missing while a folder it names beside it keeps the prior Wiki (a power cut or a system crash stopped a publish after it moved the Wiki there), do not delete the journal: show the learner that refusal, and only once the learner agrees move that folder back to the Wiki folder's path, then run `--recover --project <root> --output <output>` again.",
+    ),
+    true,
+  )
+})
+
 // The tests of Cycle 0047's second /ship, fixing cycle 2, fixer PA (rows 215 to 221 and 244 to 246): the owner judgement and the computer's id, the recovery's reads, the copy's recheck, the publish lock, the journal and the candidate's look.
 
 /** What the stand-in systems of row 215 print for their computer's id: macOS's ioreg the Mac's hardware UUID, Windows's reg.exe the machine GUID; each answers its exact query alone. */
