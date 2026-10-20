@@ -14515,12 +14515,9 @@ for (const volume of [
         },
         volume.nodeArguments,
       )
-      const leftByTheKill = (await readdir(dirname(wiki.output)))
-        .filter((name) => name.startsWith('wiki.publish-'))
-        .map((name) =>
-          name.replace(/-[0-9a-f-]{36}-[0-9a-f]{64}$/, '-<id>-<digest>'),
-        )
-        .sort()
+      const leftByTheKill = (await publisherFilesBeside(wiki.output)).map(
+        withIdsHidden,
+      )
 
       // Act: the recovery the next publish asks for, then the candidate published again.
       const recovery = await recoverWikiPublication({
@@ -14829,7 +14826,7 @@ test('a publish killed halfway through the write of the file that keeps the cand
       ],
     })
     const leftByTheKill = (await publisherFilesBeside(wiki.output)).map(
-      (name) => name.replace(/-[0-9a-f-]{36}-[0-9a-f]{64}$/, '-<id>-<digest>'),
+      withIdsHidden,
     )
 
     // Act: the recovery the next publish asks for, then the candidate published again.
@@ -14992,14 +14989,7 @@ for (const record of [
     try {
       const killed = await record.killed(wiki)
       const leftByTheKill = (await publisherFilesBeside(wiki.output)).map(
-        (name) =>
-          name
-            .replace(
-              /\.prepared-[0-9a-f-]{36}-[0-9a-f]{64}$/,
-              '.prepared-<id>-<digest>',
-            )
-            .replace(/\.pending-[0-9a-f-]{36}$/, '.pending-<id>')
-            .replace(/\.recovery-[0-9a-f]{64}/, '.recovery-<digest>'),
+        withIdsHidden,
       )
 
       // Act: the recovery, given the candidate the agent prepared.
@@ -15070,9 +15060,7 @@ test('a recovery killed while its clock file stands beside an empty journal leav
     assert.deepEqual(
       {
         killed,
-        leftByTheKill: leftByTheKill.map((name) =>
-          name.replace(/\.clock-[0-9a-f-]{36}$/, '.clock-<id>'),
-        ),
+        leftByTheKill: leftByTheKill.map(withIdsHidden),
         recovery,
         besideTheWiki: await publisherFilesBeside(wiki.output),
       },
@@ -15186,7 +15174,7 @@ test('a publish killed just before the link that gives its publish lock its name
       ],
     })
     const leftByTheKill = (await publisherFilesBeside(wiki.output)).map(
-      (name) => name.replace(/\.pending-[0-9a-f-]{36}$/, '.pending-<id>'),
+      withIdsHidden,
     )
 
     // Act
@@ -15354,8 +15342,8 @@ for (const failure of [
           status: result.status,
           stderr: result.stderr,
           journal: await readFile(journal, 'utf8').catch(() => 'removed'),
-          besideTheWiki: (await publisherFilesBeside(wiki.output)).map((name) =>
-            name.replace(/\.clock-[0-9a-f-]{36}$/, '.clock-<id>'),
+          besideTheWiki: (await publisherFilesBeside(wiki.output)).map(
+            withIdsHidden,
           ),
         },
         {
@@ -16896,17 +16884,6 @@ async function publishWithACopyKilledPastFinalize() {
   return { wiki, killed }
 }
 
-/** The names {@link publisherFilesBeside} answers, with each run's id and each digest in a name replaced by a placeholder. */
-const publisherFilesBesideNamed = async (output) =>
-  (await publisherFilesBeside(output)).map((name) =>
-    name
-      .replace(
-        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
-        '<id>',
-      )
-      .replace(/[0-9a-f]{64}$/, '<digest>'),
-  )
-
 for (const { read, code, isRead } of [
   {
     read: 'the candidate’s finalized record',
@@ -16950,7 +16927,9 @@ for (const { read, code, isRead } of [
         ({ status }) => status,
         (error) => error.message,
       )
-      const keptByTheFirst = await publisherFilesBesideNamed(wiki.output)
+      const keptByTheFirst = (await publisherFilesBeside(wiki.output)).map(
+        withIdsHidden,
+      )
       const nextRecovery = await recoverWikiPublication({
         projectRoot: wiki.root,
         outputDirectory: wiki.output,
