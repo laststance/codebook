@@ -5549,10 +5549,9 @@ test('a Retry storage / refresh that saved the earlier study keeps the line “H
     // Assert
     assert.deepEqual(afterRetry, {
       queued: 1,
-      // The line of the second run's refused save, and two lines of the selection, which follows the second run and cannot read an archive that does not exist. Retry storage / refresh answers all three.
+      // The line of the second run's refused save, and the one line of the selection, which follows the second run and cannot read an archive that does not exist (one cause, one line: Cycle 0048 task 98). Retry storage / refresh answers both.
       errors: [
         'Error: History not saved: Error: disk is read-only',
-        'Error: Study archive is unavailable.',
         'Error: Study archive is unavailable.',
       ],
       // Retry storage / refresh is still offered.
@@ -5567,6 +5566,69 @@ test('a Retry storage / refresh that saved the earlier study keeps the line “H
     assert.equal(
       harness.service.state(second.record).historyOutcome.status,
       'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=one line for one failure after Retry storage / refresh when the selection names a study that has no archive: the learner reads "Study archive is unavailable." once, beside "History not saved: …", and Retry stays offered; fails_when=the Retry's read of the selected archive and its save of the selection both fail with the one sentence and both lines stay, so the pane shows the sentence twice for one cause; why_new=Cycle 0048 task 98 (maintainability, testing: task 96's test pinned the doubled sentence; Cycle 0046 row 181 counted that doubling as a defect); seam=the library's reconcile, which the test holds so that a second run starts and its save is refused during the Retry, and the library's study save, which refuses that run's study only; no_claim=which line kind carries the sentence
+test('a Retry storage / refresh whose selection names a study without an archive shows “Study archive is unavailable.” once and keeps Retry offered', async (context) => {
+  // Arrange: the study of a first, stopped run is unsaved; the disk writes again, but not the study of a second run that starts during the Retry, so the selection follows a study that has no archive.
+  const disk = refuseStudySaves(context)
+  const reconcile = LearningLibrary.prototype.reconcile
+  let holdsReconcile = true
+  let reachReconcile: () => void = () => undefined
+  let continueReconcile: () => void = () => undefined
+  const reconcileReached = new Promise<void>((resolve) => {
+    reachReconcile = resolve
+  })
+  const reconcileMayContinue = new Promise<void>((resolve) => {
+    continueReconcile = resolve
+  })
+  context.mock.method(
+    LearningLibrary.prototype,
+    'reconcile',
+    async function (this: LearningLibrary) {
+      if (holdsReconcile) {
+        holdsReconcile = false
+        reachReconcile()
+        await reconcileMayContinue
+      }
+      return reconcile.call(this)
+    },
+  )
+  const harness = await workspaceHarness()
+  try {
+    await startRun(harness)
+    await harness.reader.action('stop')
+    readerSeams(harness).stopOwnTimer()
+    disk.refusesEveryStudy = false
+    // Act
+    const retry = harness.reader.action('retry')
+    await reconcileReached
+    const second = await startRun(harness)
+    disk.refusedStudyIds.add(
+      `${harness.service.instanceId}_${second.record.id}`,
+    )
+    await readerSeams(harness).refresh()
+    continueReconcile()
+    await retry
+    // Assert
+    assert.deepEqual(
+      structuredClone({
+        errors: harness.reader.inspect().view!.errors,
+        unretryableErrorCount:
+          harness.reader.inspect().view!.unretryableErrorCount,
+      }),
+      {
+        errors: [
+          'Error: History not saved: Error: disk is read-only',
+          'Error: Study archive is unavailable.',
+        ],
+        unretryableErrorCount: 0,
+      },
     )
   } finally {
     context.mock.restoreAll()

@@ -8589,6 +8589,7 @@ export class StudyWorkspace {
         const ledgerCleaned = await this.forgetStudiesRemovedByHandOrReport()
         // The archives are written before the selection: the library refuses a selection that names a study without its archive, and the study of a run whose archive could not be saved has none until this step writes it.
         // A failed write of an archive keeps the line of its own place, also when a forced checkpoint awaited it; the other steps' failures go to the `archive` line.
+        // A forced checkpoint's write that {@link persistArchive} ends with {@link StudyRemovedWithItsRecordingError} (the study left with its recording) throws nothing and records no failure here, so `isReportedArchiveWriteFailure` is false for it: the study is forgotten and no line is told for it. Only a failure that {@link persistArchive} did not report (a capture that changed, the list, the reconcile, the read of the selection) reaches the catch below and goes to the `archive` line.
         this.lastReportedArchiveWriteFailure = undefined
         let isArchiveWriteFailed = false
         try {
@@ -8640,7 +8641,7 @@ export class StudyWorkspace {
           await this.library!.select(this.selection)
           this.errors.delete('progress')
         } catch (error) {
-          this.report('progress', error)
+          this.reportRefusedSelectionOnce(error)
         }
       } finally {
         this.saving = false
@@ -10487,6 +10488,22 @@ export class StudyWorkspace {
       )
       throw error
     }
+  }
+
+  /**
+   * Reports the failure of Retry storage / refresh's save of the selection on the `progress` line, unless the `archive` line tells the same sentence already; called by {@link action} for Retry.
+   * A selection that names a study without an archive fails twice in one press, once when its archive is read and once when the library refuses to save the selection, with the one sentence "Study archive is unavailable."; the learner reads one line for the one cause, and either kind keeps Retry offered.
+   * @param error - What the save of the selection threw.
+   * @example this.reportRefusedSelectionOnce(new Error('Study archive is unavailable.')) // => no second line beside the `archive` line of the same sentence
+   */
+  private reportRefusedSelectionOnce(error: unknown): void {
+    // The `archive` line carries the cause; an earlier `progress` line of the same sentence goes, so that the pane shows it once.
+    if (this.errors.get('archive') === String(error)) {
+      this.errors.delete('progress')
+      this.publish()
+      return
+    }
+    this.report('progress', error)
   }
 
   /**
