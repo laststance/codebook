@@ -21096,18 +21096,40 @@ for (const kept of [
     },
     expected: { mode: '750' },
   },
+  {
+    names: 'permission bits, but not the setuid bit,',
+    isSkipped: process.platform === 'win32',
+    learnerMode: 0o4755,
+    read: async (path) => {
+      const status = await lstat(path)
+      return {
+        specialBits: (status.mode & 0o7000).toString(8),
+        permissionBits: (status.mode & 0o777).toString(8),
+      }
+    },
+    expected: { specialBits: '0', permissionBits: '755' },
+  },
 ]) {
   // Value: protects=the learner whose own file lies in the Wiki folder (a script they run, a note whose date they sort by) and who loses its execute bit or its modification date at the next publish; fails_when=the copy of the learner's file into the new Wiki is a new file with the mode the umask gives and the time of the copy; why_new=Cycle 0048 task 14 (S11-N10); seam=the real publish over a Wiki that holds a file of the learner's with a set mode and time; no_claim=owner and group, and a file system that keeps no mode (Windows reads the bits it has)
   test(
     `a publish keeps the ${kept.names} of the learner’s file in the new Wiki`,
     { skip: kept.isSkipped },
-    async () => {
-      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; a candidate stands beside it.
+    async (context) => {
+      // Arrange: a published Wiki that holds a learner's file with mode 750 (or the mode the row names) last changed on 2021-03-04; a candidate stands beside it.
       const wiki = await publishedWikiWithACandidate()
       const learnerFile = join(wiki.output, 'manual.sh')
       try {
         await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
-        await chmod(learnerFile, 0o750)
+        await chmod(learnerFile, kept.learnerMode ?? 0o750)
+        // A file system that drops the setuid bit leaves nothing to show: the row is skipped there, read back from what the system kept.
+        if (
+          kept.learnerMode !== undefined &&
+          ((await lstat(learnerFile)).mode & 0o7000) !==
+            (kept.learnerMode & 0o7000)
+        ) {
+          context.skip('the file system kept no setuid bit on the original')
+          return
+        }
         const changedAt = new Date('2021-03-04T05:06:07Z')
         await utimes(learnerFile, changedAt, changedAt)
 
