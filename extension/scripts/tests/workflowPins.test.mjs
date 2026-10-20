@@ -1672,3 +1672,23 @@ test('the pin of pnpm’s wait reads the wait and its exemptions in every form Y
     neither: { exempts: false, waitMinutes: undefined },
   })
 })
+
+// Value: protects=the restored `extension/node_modules` of the Test jobs, which must be the folder the manifest and the runner would install; fails_when=the cache key leaves out `extension/package.json` (a changed script or dependency range restores an older folder) or the runner's architecture (a folder with native packages built for another processor is restored); why_new=Cycle 0048 task 28 (test guide, 2026-10-02: the key left out both); seam=none; no_claim=that the lockfile and the manifest agree
+test('the dependency cache of the Test workflow changes with the extension manifest and the runner architecture', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+
+  // Act
+  const key = /^ +key: (extension-node-modules-.*)$/m.exec(workflow)?.[1]
+  const hashedFiles = /hashFiles\(([^)]*)\)/.exec(key ?? '')?.[1].split(', ')
+
+  // Assert
+  assert.equal(key?.includes('${{ runner.os }}-${{ runner.arch }}-'), true)
+  assert.deepEqual(hashedFiles, [
+    "'.node-version'",
+    "'extension/package.json'",
+    "'extension/pnpm-lock.yaml'",
+    "'extension/pnpm-workspace.yaml'",
+    "'extension/patches/**'",
+  ])
+})
