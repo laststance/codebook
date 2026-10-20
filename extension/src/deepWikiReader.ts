@@ -328,6 +328,8 @@ export async function startDeepWikiReader(
   let origin = ''
   /** The origin of the address the editor forwards this reader to, when that is another loopback address than its own. */
   let forwardedOrigin: string | undefined
+  /** The host and port of {@link forwardedOrigin}, as a browser writes them in the Host header of a request to it. */
+  let forwardedHost: string | undefined
   /** The freshness inspection in flight and the generation of the site it reads; requests of that generation that overlap await it. */
   let freshnessInspection:
     { generation: string; result: Promise<WikiFreshness> } | undefined
@@ -395,7 +397,21 @@ export async function startDeepWikiReader(
       ),
     )
   }
-  /** Routes only owned pages and questions; every request must carry this reader's random path token. @example await handleRequest(request, response) */
+  /**
+   * Says whether a request names this reader's own host and port in its Host header, or those of the address the editor forwards it to.
+   * Called by {@link handleRequest} first, for every request: a name of another site that a DNS answer rebinds to the loopback address reaches this server with that name as its Host, so a page of another site, which holds the reader's address with its path token (a referrer or a link of a crafted page may have leaked it), reads nothing from the reader.
+   * @param request - The request.
+   * @returns `true` when the Host header is the reader's loopback host and port, or the forwarded address's host; `false` for any other host and for no Host header.
+   * @example isOwnHost(request) // => false for `Host: rebound.example:41234`
+   */
+  function isOwnHost(request: IncomingMessage): boolean {
+    const asked = request.headers.host?.toLowerCase()
+    return (
+      asked !== undefined &&
+      (asked === new URL(origin).host || asked === forwardedHost)
+    )
+  }
+  /** Routes only owned pages and questions; every request must carry this reader's random path token and name this reader's own host ({@link isOwnHost}). @example await handleRequest(request, response) */
   async function handleRequest(
     request: IncomingMessage,
     response: ServerResponse,
@@ -404,6 +420,11 @@ export async function startDeepWikiReader(
     // Every response says nosniff, its pages, its answers and the reader's own script included: a browser then runs as script only a response typed as JavaScript, and the reader's own script is the one.
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Cache-Control', 'no-store')
+    // A request that names another host is no request of the reader's own page, or of the editor's forward of it: nothing is read for it.
+    if (!isOwnHost(request)) {
+      sendJson(response, 403, { error: 'Unknown Wiki reader host.' })
+      return
+    }
     const url = new URL(request.url ?? '/', origin)
     if (!url.pathname.startsWith(prefix)) {
       sendJson(response, 404, { error: 'Unknown Wiki reader.' })
@@ -775,8 +796,10 @@ export async function startDeepWikiReader(
       acceptForwardedOrigin(address: string): void {
         const forwarded = new URL(address)
         // A forwarded address that is not on this machine is somebody else's page.
-        if (WIKI_LOOPBACK_HOSTS.includes(forwarded.hostname))
+        if (WIKI_LOOPBACK_HOSTS.includes(forwarded.hostname)) {
           forwardedOrigin = forwarded.origin
+          forwardedHost = forwarded.host.toLowerCase()
+        }
       },
       noteSourceChange(path: string): void {
         const projectPath = relative(projectRoot, path).split(sep).join('/')

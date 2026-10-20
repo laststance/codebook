@@ -524,6 +524,85 @@ test('in a local window only the reader’s own origin is accepted', async () =>
   }
 })
 
+// Value: protects=the reader's private path token against DNS rebinding, where a page that leaked the reader's address (see the referrer filter) lets a host name of the attacker resolve to the loopback address and read the Wiki; fails_when=the reader answers a request whose Host header is neither its own loopback host and port nor the forwarded address's host, or accepts a request without a Host header, or refuses its own host or the forwarded one; why_new=Cycle 0048 task 6 (S11-N3); seam=none (the reader's real answer to raw requests with a chosen Host header); no_claim=that a browser resolves a rebound name to the reader or that the leak of the address is closed (the filter's test holds that)
+test('a request whose Host header is neither the reader’s own nor the forwarded address’s is refused with 403 and no page, while the reader’s own host and the forwarded one are served', async () => {
+  // Arrange: a remote window forwarded the reader's port to localhost:54321.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-host-')),
+  )
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => {
+      throw new Error('No model request expected.')
+    },
+  )
+  try {
+    const ownHost = new URL(reader.url).host
+    reader.acceptForwardedOrigin(
+      `http://localhost:54321${new URL(reader.url).pathname}`,
+    )
+    const pageAddress = reader.url
+
+    // Act
+    const answers = {
+      own: await askAndReadSlowly(pageAddress, { Host: ownHost }, 0),
+      forwarded: await askAndReadSlowly(
+        pageAddress,
+        { Host: 'localhost:54321' },
+        0,
+      ),
+      rebound: await askAndReadSlowly(
+        pageAddress,
+        { Host: `rebound.example:${new URL(reader.url).port}` },
+        0,
+      ),
+      otherPort: await askAndReadSlowly(
+        pageAddress,
+        { Host: 'localhost:54322' },
+        0,
+      ),
+      sameNameOtherPort: await askAndReadSlowly(
+        pageAddress,
+        { Host: '127.0.0.1:1' },
+        0,
+      ),
+    }
+    // An HTTP/1.0 request may carry no Host header at all.
+    const withoutHost = await new Promise<string>((resolveAnswer) => {
+      const connection = connect(Number(new URL(pageAddress).port), '127.0.0.1')
+      let received = ''
+      connection.on('data', (part: Buffer) => {
+        received += part.toString('utf8')
+      })
+      connection.on('error', () => undefined)
+      connection.once('close', () => resolveAnswer(received))
+      connection.write(`GET ${new URL(pageAddress).pathname} HTTP/1.0\r\n\r\n`)
+    })
+
+    // Assert
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(answers).map(([name, answer]) => [name, answer.status]),
+      ),
+      {
+        own: 200,
+        forwarded: 200,
+        rebound: 403,
+        otherPort: 403,
+        sameNameOtherPort: 403,
+      },
+    )
+    assert.match(withoutHost, /^HTTP\/1\.[01] 403 /)
+    assert.doesNotMatch(withoutHost, /<body>Wiki<\/body>/)
+    assert.doesNotMatch(String(answers.rebound.body), /<body>Wiki<\/body>/)
+  } finally {
+    await reader.close()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
+
 test('closing the reader while a question is in flight stops the question and ends at once', async () => {
   // Arrange: a question whose answer never comes by itself.
   const projectRoot = await realpath(

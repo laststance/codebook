@@ -2085,6 +2085,56 @@ test('a refresh written with spaces around its keyword loses its effect', () => 
   )
 })
 
+// Value: protects=the reader's private path token, which is in the address of every page it serves: a page a cloned repository crafted could send that address as the Referer to another site by a `referrerpolicy` of `unsafe-url` on a link, which overrides the reader's `Referrer-Policy: no-referrer` header for that link; fails_when=the filter keeps a `referrerpolicy` attribute on a link, an area, an image, a frame, a link element or a script, in any case; why_new=Cycle 0048 task 6 (S11-N3); seam=none, the served page is compared as text; no_claim=that a browser sends no Referer (a real browser was not run)
+test('a referrerpolicy attribute loses its effect on every element, in any case', () => {
+  // Arrange
+  const page =
+    '<a href="https://other.example" referrerpolicy="unsafe-url">a</a>' +
+    '<area href="https://other.example" REFERRERPOLICY=unsafe-url>' +
+    '<img src="x.png" referrerpolicy=unsafe-url>' +
+    '<iframe referrerpolicy="origin"></iframe>'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert
+  assert.equal(
+    served,
+    '<a href="https://other.example" data-codebook-unlinked="unsafe-url">a</a>' +
+      '<area href="https://other.example" data-codebook-unlinked=unsafe-url>' +
+      '<img src="x.png" data-codebook-unlinked=unsafe-url>' +
+      '<iframe data-codebook-unlinked="origin"></iframe>',
+  )
+})
+
+// Value: protects=the reader's private path token, which is in the address of every page it serves: a page a cloned repository crafted could set the whole page's referrer policy to `unsafe-url` by `<meta name="referrer">`, which overrides the reader's `Referrer-Policy: no-referrer` header for every link and request of the page; fails_when=the filter keeps a meta element's `name="referrer"` in any case, with spaces or written with references, or takes the effect from the shell's viewport and Content-Security-Policy metas or from a form field named `referrer`; why_new=Cycle 0048 task 6 (S11-N3); seam=none, the served page is compared as text; no_claim=that a browser sends no Referer (a real browser was not run)
+test('a meta element that sets the referrer policy loses its effect, in any case, while the shell’s other metas and a field named referrer stay', () => {
+  // Arrange
+  const page =
+    '<meta name="viewport" content="width=device-width">' +
+    '<meta http-equiv="Content-Security-Policy" content="script-src \'self\'">' +
+    '<meta name="referrer" content="unsafe-url">' +
+    '<meta NAME=Referrer content="origin">' +
+    '<meta name=" referrer " content="unsafe-url">' +
+    '<meta name="refer&#114;er" content="unsafe-url">' +
+    '<input name="referrer">'
+
+  // Act
+  const served = withServedAddresses(page, 'vscode')
+
+  // Assert
+  assert.equal(
+    served,
+    '<meta name="viewport" content="width=device-width">' +
+      '<meta http-equiv="Content-Security-Policy" content="script-src \'self\'">' +
+      '<meta data-codebook-unlinked="referrer" content="unsafe-url">' +
+      '<meta data-codebook-unlinked=Referrer content="origin">' +
+      '<meta data-codebook-unlinked=" referrer " content="unsafe-url">' +
+      '<meta data-codebook-unlinked="refer&#114;er" content="unsafe-url">' +
+      '<input name="referrer">',
+  )
+})
+
 // Value: protects=the learner against a link whose attribute follows a slash right after the tag's name, which a browser reads as a separator; fails_when=the filter reads `/href` as one name, or stops at the slash, so `<a/href="vscode://file/…">` is served as a live link; why_new=Cycle 0046 /ship third testing review TT25; seam=none, the served page is compared as text
 test('an attribute after a slash right after the tag’s name is judged', () => {
   // Arrange
