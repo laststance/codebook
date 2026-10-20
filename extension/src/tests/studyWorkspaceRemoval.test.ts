@@ -9390,6 +9390,100 @@ test('a study whose save failed and that another window then deletes with its re
   }
 })
 
+// Value: protects=the line "History not saved: …" and the Retry button beside it for a study whose capture failed before any write, when another study of this window is deleted by another window with its recording and its next save is refused; fails_when=the forget of the removed study takes the line of a failed save from the pane whatever other studies are unsaved, so the learner loses the line and its Retry although the first study is unsaved; why_new=Cycle 0048 task 64 (pass 1 of the second /ship): the test of the refused save after a deletion has one study only, and the capture failure test has no deletion; seam=the capture step ({@link captureStudy}), which fails for the second study until the test says otherwise, a second LearningLibrary over the same storage, which deletes the first study with its recording, and the reader's own refresh timer, stopped so that the test's refresh is the only checkpoint; no_claim=wording of the line, a second editor process
+test('the line “History not saved: …” of a study whose capture failed stays, with Retry storage / refresh beside it, when another study is deleted with its recording by another window, and is gone once Retry saved that study', async (context) => {
+  // Arrange: a recorded run of this window, stopped and saved; a second run of the same server stops and its capture fails, so its study never waits in the write queue.
+  const capture = captureStudyModule.captureStudy
+  let failedStudyId: string | undefined
+  context.mock.method(
+    captureStudyModule,
+    'captureStudy',
+    (...args: Parameters<typeof capture>) =>
+      failedStudyId === `${args[0].instanceId}_${args[1].id}`
+        ? Promise.reject(new Error('capture is unavailable'))
+        : capture(...args),
+  )
+  const harness = await recordedReaderHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const directory = harness.reader.inspect().libraryDirectory!,
+      library = await harness.reader.learningStorage()
+    const second = await startRun(harness)
+    failedStudyId = `${harness.service.instanceId}_${second.record.id}`
+    await harness.reader.action('stop')
+    const afterCaptureFailure = structuredClone({
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    // Another window deletes the first study with its recording.
+    const removal = await new LearningLibrary(
+      directory,
+      library.workspaceKey,
+    ).removeStudy(harness.studyId, async (path) => {
+      await rm(path, { recursive: true })
+    })
+
+    // Act: an agent saves another explanation of the first, stopped run, and the reader takes its checkpoint, whose save the library refuses; then the capture works again and the learner presses Retry storage / refresh.
+    await harness.service.explain({
+      instanceId: harness.service.instanceId,
+      runId: harness.record.id,
+      key: 'after-the-deletion',
+      snapshotUri: harness.service.state(harness.record).participants.browser
+        .snapshotUri!,
+      sourceHash: sha256('const nextTheme = "dark";\n'),
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The theme stayed dark after the stop.',
+    })
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.service.state(harness.record).historyOutcome.status ===
+        'unavailable',
+      'the end of the checkpoint after the deletion',
+      2_000,
+    )
+    const afterRefusedSave = structuredClone({
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    failedStudyId = undefined
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      {
+        afterCaptureFailure,
+        removal: { ...removal },
+        afterRefusedSave,
+        errorsAfterRetry: structuredClone(
+          harness.reader.inspect().view!.errors,
+        ),
+        secondHistory: harness.service.state(second.record).historyOutcome
+          .status,
+      },
+      {
+        afterCaptureFailure: {
+          errors: ['Error: History not saved: Error: capture is unavailable'],
+          unretryableErrorCount: 0,
+        },
+        removal: { outcome: 'moved' },
+        // The line and Retry storage / refresh stay for the second study.
+        afterRefusedSave: {
+          errors: ['Error: History not saved: Error: capture is unavailable'],
+          unretryableErrorCount: 0,
+        },
+        errorsAfterRetry: [],
+        secondHistory: 'saved',
+      },
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the pane's other storage failure lines (the study list, the refresh) when a study that another window deleted with its recording is forgotten after one of its saves failed here; fails_when=the forget takes the line of a failed save from the pane by clearing the one `archive` line that the list, the refresh and the Node history failures also use, so a list that still cannot be read shows no line and no Retry storage / refresh; why_new=Cycle 0048 task 19 (S11-N15): the History not saved line shared its place with those failures; seam=the reader's error report, which the test calls for a list that cannot be read, the library's save, which fails once, and a second library that deletes the study with its recording
 test('a study whose save failed and that another window then deletes with its recording leaves the line of a study list that cannot be read, and no "History not saved: …" line, once its next save is refused', async (context) => {
   // Arrange: a recorded run of this window, stopped and saved; the save of its next checkpoint fails once, and another window then deletes its study, archive and recording.
