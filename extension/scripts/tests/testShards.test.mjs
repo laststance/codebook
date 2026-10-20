@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   cp,
   copyFile,
@@ -17,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { buildTestTimings } from '../utils/buildTestTimings.mjs'
 import { parseSilenceSeconds } from '../utils/parseSilenceSeconds.mjs'
+import { plainOutputEnvironment } from '../utils/plainOutputEnvironment.mjs'
 import { planCallEnd } from '../utils/planCallEnd.mjs'
 import { planTestShards } from '../utils/planTestShards.mjs'
 import { readTestTimings } from '../utils/readTestTimings.mjs'
@@ -380,7 +381,8 @@ function runShardScript(root, args, timeoutMs = 60_000, extraEnvironment = {}) {
         env: {
           ...Object.fromEntries(
             Object.entries(process.env).filter(
-              ([name]) => name !== 'NODE_TEST_CONTEXT',
+              // An outer NO_COLOR beside the child's FORCE_COLOR makes Node warn on stderr; the child gets none.
+              ([name]) => name !== 'NODE_TEST_CONTEXT' && name !== 'NO_COLOR',
             ),
           ),
           ...extraEnvironment,
@@ -810,6 +812,26 @@ test('the shard script counts the tests of a call and passes when FORCE_COLOR is
     result.stdout,
     /Shard 1\/1: 1 tests in 1 calls on 1 lanes, \d+ s, 0 failed calls\./,
   )
+})
+
+// Value: protects=a run of the pre-gate or a shard call that holds a test which starts a child with FORCE_COLOR: Node warns on stderr when NO_COLOR is also set ("The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set"), so that test's empty-stderr claim failed inside the pre-gate's own run; fails_when=plainOutputEnvironment sets NO_COLOR again, so a nested FORCE_COLOR child prints the warning; why_new=Cycle 0048 task 116 (NO_COLOR beside FORCE_COLOR); seam=plainOutputEnvironment's result as the environment of a real node process that also sets FORCE_COLOR; no_claim=an outer NO_COLOR the caller set itself
+test('the plain output environment leaves a nested child that sets FORCE_COLOR without a NO_COLOR warning', () => {
+  // Arrange
+  const plainEnvironment = plainOutputEnvironment({
+    FORCE_COLOR: '1',
+    PATH: process.env.PATH ?? '',
+  })
+
+  // Act
+  const child = spawnSync(process.execPath, ['-e', 'console.log(1)'], {
+    encoding: 'utf8',
+    env: { ...plainEnvironment, FORCE_COLOR: '1' },
+  })
+
+  // Assert
+  assert.deepEqual(Object.keys(plainEnvironment), ['PATH'])
+  assert.equal(child.stderr, '')
+  assert.equal(child.status, 0)
 })
 
 // Value: protects=the shard job's result: a failed call must fail the job; fails_when=test-shard.mjs ends with exit code 0 although a call failed, or prints no failure line; why_new=Cycle 0048 task 27 (test guide, 2026-10-02: the script's own exit code had no test); seam=test-shard.mjs started as a process on a fixture build

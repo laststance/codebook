@@ -230,7 +230,8 @@ async function runPregateRunner(root, selection, extraEnvironment = {}) {
       env: {
         ...Object.fromEntries(
           Object.entries(process.env).filter(
-            ([name]) => name !== 'NODE_TEST_CONTEXT',
+            // An outer NO_COLOR beside a FORCE_COLOR the test gives makes Node warn on stderr; the runner gets none.
+            ([name]) => name !== 'NODE_TEST_CONTEXT' && name !== 'NO_COLOR',
           ),
         ),
         ORDER_LOG: orderLog,
