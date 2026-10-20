@@ -682,6 +682,8 @@ export class StudyWorkspace {
   /** The archives a disposed reader of this window could not save, as the constructor took them, until {@link initialize} knows this reader's library ({@link queueHandedOverArchives}). What is left afterwards belongs to another workspace's library: it is never written here and is handed on again by {@link releaseUnsavedStudies}. */
   private handedOverArchives: UnsavedStudyArchive[]
   private readonly archiveWrites = new Map<string, Promise<void>>()
+  /** What the last failed archive write threw, once {@link persistArchive} reported it on the `history-not-saved` line; {@link action} compares a failure with it so that a write failure seen through a forced checkpoint is not reported a second time on the `archive` line. */
+  private lastReportedArchiveWriteFailure?: { error: unknown }
   /** The learner's last removal of a saved study, from its confirmation dialog to its outcome; while it is `moving`, its study is neither written nor opened. */
   private studyRemoval?: StudyRemovalView
   /** The files this reader listed for the removal by hand of saved studies in a window without a Trash, by study. {@link studyRemoval} holds one answer at a time, and each pane asks for the entry it has chosen: the lists are kept apart from it, so one pane's request does not take another pane's list away. */
@@ -8585,14 +8587,11 @@ export class StudyWorkspace {
         // A study whose files the learner removed by hand is forgotten before the ledger is read and the selection written.
         const ledgerCleaned = await this.forgetStudiesRemovedByHandOrReport()
         // The archives are written before the selection: the library refuses a selection that names a study without its archive, and the study of a run whose archive could not be saved has none until this step writes it.
-        // A failed write of a waiting archive keeps the line of its own place; the other steps' failures go to the `archive` line.
-        let isArchiveWriteFailed = false
+        // A failed write of an archive keeps the line of its own place, also when a forced checkpoint awaited it; the other steps' failures go to the `archive` line.
+        this.lastReportedArchiveWriteFailure = undefined
         try {
           for (const id of this.pendingArchives.keys())
-            await this.persistArchive(id).catch((error: unknown) => {
-              isArchiveWriteFailed = true
-              throw error
-            })
+            await this.persistArchive(id)
           // Historical interpretations remain writable after a later run becomes current.
           if (this.service)
             for (const record of this.service.records.values())
@@ -8620,10 +8619,9 @@ export class StudyWorkspace {
               this.selectedArchive = archive
           }
         } catch (error) {
-          this.report(
-            isArchiveWriteFailed ? 'history-not-saved' : 'archive',
-            error,
-          )
+          // A failed archive write has reported its own line ({@link persistArchive}); only another step's failure is the `archive` line's.
+          if (!this.isReportedArchiveWriteFailure(error))
+            this.report('archive', error)
         }
         try {
           this.progress = await this.library!.readProgress()
@@ -10487,6 +10485,19 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Says whether a failure is the archive write that {@link persistArchive} has already reported on the `history-not-saved` line; called by {@link action} for Retry storage / refresh, whose forced checkpoints await such a write.
+   * @param error - What the retry's storage steps threw.
+   * @returns `true` for the very value the last failed write threw since the retry began; `false` for any other step's failure (the list, the reconcile, a capture that changed).
+   * @example if (!this.isReportedArchiveWriteFailure(error)) this.report('archive', error)
+   */
+  private isReportedArchiveWriteFailure(error: unknown): boolean {
+    return (
+      this.lastReportedArchiveWriteFailure !== undefined &&
+      this.lastReportedArchiveWriteFailure.error === error
+    )
+  }
+
   /** Coalesces writes while only a matching latest receipt can change the combined study outcome. @example await this.persistArchive(study.id) */
   private persistArchive(id: string): Promise<void> {
     const existing = this.archiveWrites.get(id)
@@ -10580,6 +10591,7 @@ export class StudyWorkspace {
               'history-not-saved',
               new Error(`History not saved: ${String(error)}`),
             )
+            this.lastReportedArchiveWriteFailure = { error }
             throw error
           }
           checkpoint = this.pendingArchives.get(id)

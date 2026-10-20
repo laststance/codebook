@@ -1219,6 +1219,52 @@ for (const retired of [false, true])
     }
   })
 
+// Value: protects=the one line a learner reads when Retry storage / refresh writes the history of a stopped run again and the write fails: "History not saved: …" and not a second line "…" of the archive kind for the same failure; fails_when=the forced checkpoint of Retry awaits the failed write, {@link persistArchive} reports it on the History not saved line and the catch of the retry reports it again on the archive line; why_new=Cycle 0048 task 37 (CodeRabbit: a forced checkpoint whose archive write fails is reported twice); seam=the library's saveStudy, which succeeds at the stop and fails at the Retry, and the reader's error lines; no_claim=the lines a failed list, reconcile or changed capture show (they stay on the archive line)
+test('a Retry whose forced checkpoint cannot write the history shows the History not saved line once and no archive line', async (context) => {
+  // Arrange: a run stopped and saved; the next write of the library is refused.
+  const harness = await workspaceHarness(),
+    saveStudy = LearningLibrary.prototype.saveStudy
+  let refuseWrites = false
+  context.mock.method(
+    LearningLibrary.prototype,
+    'saveStudy',
+    async function (
+      this: LearningLibrary,
+      study: Parameters<LearningLibrary['saveStudy']>[0],
+    ) {
+      if (refuseWrites) throw new Error('Retry archive write denied')
+      return saveStudy.call(this, study)
+    },
+  )
+  try {
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = [...harness.service.records.values()][0]!
+    await record.preparation
+    await harness.reader.open()
+    await harness.reader.action('stop')
+    refuseWrites = true
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(readerSeams(harness).errorLines(), [
+      'Error: History not saved: Error: Retry archive write denied',
+    ])
+    assert.equal(readerSeams(harness).hasErrorOfKind('archive'), false)
+    assert.equal(readerSeams(harness).hasErrorOfKind('history-not-saved'), true)
+  } finally {
+    refuseWrites = false
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 test('an older successful save cannot erase the failed final archive from explicit Retry', async (context) => {
   // Arrange
   const harness = await workspaceHarness(),
