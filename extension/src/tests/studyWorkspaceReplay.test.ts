@@ -40,7 +40,7 @@ import {
 
 // Regression: 558 — replacing the historical source cannot orphan its native keyboard.
 // Found by /qa on 2026-10-15.
-// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md
+// Report: https://github.com/laststance/codebook/blob/docs-archive-2026-10-20/docs/cycles/0046-carried-defects-of-cycle-0045.md
 // Value: protects=source keyboard through a historical seek; fails_when=a replacement hides its focused input while preserving focus; why_new=recording tests omit a genuine source selection before seeking; seam=none; no_claim=native keyboard (controlled editor).
 for (const scenario of [
   {
@@ -775,7 +775,7 @@ test('historical source annotations identify the recorded file, time, hash and s
 
 // Regression: 466 — failed Reload must retain its initiating Summary and recovery controls.
 // Found by /qa on 2026-10-11.
-// Report: docs/cycles/0046-carried-defects-of-cycle-0045.md
+// Report: https://github.com/laststance/codebook/blob/docs-archive-2026-10-20/docs/cycles/0046-carried-defects-of-cycle-0045.md
 // Value: protects=the current Summary document through failed Reload and retry; fails_when=reload withdraws its HTML before reading the archive; why_new=existing failed-reload coverage checks Wiki Return only; seam=none
 test('Reload in Learning summary keeps its recovery controls after a read failure and retries without reopening the summary', async () => {
   // Arrange
@@ -8144,7 +8144,7 @@ test('opening the recording of this session’s own run while no study is select
 })
 
 // Regression: Cycle0046 original85 — a native recording open leaves bottom Saved studies for Summary BODY.
-// Found by /qa on 2026-10-13; report: docs/cycles/0046-carried-defects-of-cycle-0045.md#original85-recording-open-cause-confirmed-on-c40-2026-10-13
+// Found by /qa on 2026-10-13; report: https://github.com/laststance/codebook/blob/docs-archive-2026-10-20/docs/cycles/0046-carried-defects-of-cycle-0045.md#original85-recording-open-cause-confirmed-on-c40-2026-10-13
 // Value: protects=bottom replay-control keyboard across recording entry; fails_when=native Summary reveal forces focus; why_new=DOM cases omit host focus commands; seam=existing view-focus port; no_claim=native input or pixel proof.
 test('opening a recording while the bottom pane holds keyboard reveals Summary without taking that keyboard', async () => {
   // Arrange: both contributed views exist, and the general bottom pane reports its real input ownership.

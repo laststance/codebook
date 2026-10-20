@@ -1,7 +1,7 @@
 /**
  * Lists the shell commands a workflow runs, one per line of every `run` key, so a pin reads commands and never comments.
  *
- * Used by the script tests that compare a workflow with a manifest or with a guide (`workflowPins.test.mjs`, `readerDomDocs.test.mjs`).
+ * Used by the script test that compares a workflow with a manifest (`workflowPins.test.mjs`).
  *
  * @param definition - The text of a workflow or of a composite action.
  * @returns The trimmed command lines in file order; empty when the file runs no command.

@@ -958,24 +958,20 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
 })
 
 // Review of Cycle 0045 (tests-1 #11): the pin knew npm, npx and pnpm only, so a job that added a tool with yarn, pip, corepack or a piped download stayed green.
-// Value: protects=a reader of a pull request's checks, who must see from a failed check's name what failed on Windows; fails_when=the workflow, its job or its test step is named after the storage lock again, the first of the twelve kinds of test the job runs, or the guide gives another name for the check than the workflow has; why_new=Cycle 0046 row 264: a failed test of the Cursor MCP catalog or of the process listing showed as "Storage lock tests on Windows"; seam=none
-test('the Windows workflow, its job and its test step are named after the file system and process tests they run, none after the storage lock alone, and the guide gives the check under the name a pull request shows', async () => {
+// Value: protects=a reader of a pull request's checks, who must see from a failed check's name what failed on Windows; fails_when=the workflow, its job or its test step is named after the storage lock again, the first of the twelve kinds of test the job runs; why_new=Cycle 0046 row 264: a failed test of the Cursor MCP catalog or of the process listing showed as "Storage lock tests on Windows"; seam=none
+test('the Windows workflow, its job and its test step are named after the file system and process tests they run, none after the storage lock alone', async () => {
   // Arrange
-  const guide = await repositoryText('docs/qa/test-execution.md')
   const workflow = await repositoryText(
     '.github/workflows/storage-locks-windows.yml',
   )
 
-  // Act: every name the workflow gives (itself, its job, its steps) in file order, the step that starts the tests, and the guide's section.
+  // Act: every name the workflow gives (itself, its job, its steps) in file order, and the step that starts the tests.
   const names = workflow
     .split('\n')
     .map((line) => line.trim().replace(/^- /, ''))
     .filter((line) => line.startsWith('name: '))
     .map((line) => line.slice('name: '.length))
   const testStep = stepLines(workflow, 'Run the file system and process tests')
-  const section =
-    guide.split(/^## /m).find((part) => part.startsWith('The Windows job\n')) ??
-    ''
 
   // Assert
   assert.deepEqual(names, [
@@ -998,13 +994,6 @@ test('the Windows workflow, its job and its test step are named after the file s
       line.startsWith('run: node --test --test-concurrency=1 dist/tests/'),
     ),
     true,
-  )
-  assert.equal(
-    section.includes(
-      "Among a pull request's checks the job shows as `Windows file system and process tests / File system and process tests on Windows`; the workflow's file keeps the name it got in Cycle 0045, when the job ran the storage lock's tests alone.",
-    ),
-    true,
-    'the guide does not give the check under the name the workflow and its job have',
   )
 })
 
@@ -1397,8 +1386,8 @@ test('a module that a comment or a docstring of a test file only quotes is not a
 })
 
 /**
- * The kinds of test the Windows job runs, as the test execution guide and the workflow's header name them, each with its test files; for the pin below.
- * The two documents name kinds and no files, so a test file added to a kind they already name changes neither of them: it is added here, under its kind. A file of a kind they do not name fails the pin, which then asks for the kind's name in both.
+ * The kinds of test the Windows job runs, as the workflow's header names them, each with its test files; for the pin below.
+ * The header names kinds and no files, so a test file added to a kind it already names changes nothing there: it is added here, under its kind. A file of a kind it does not name fails the pin, which then asks for the kind's name in the header.
  * A test of `extension/src/tests` is named by its name alone (`withStorageLock`); a script test of `extension/scripts/tests` by `scripts/` and its name (`scripts/openWithoutFollowing`), so it is told from an extension test of the same name ({@link testNameInTheJob}).
  */
 const WINDOWS_JOB_TEST_KINDS = [
@@ -1476,18 +1465,14 @@ function testNameInTheJob(path) {
   return path.slice('extension/src/tests/'.length, -'.test.ts'.length)
 }
 
-// Value: protects=a maintainer who reads in the guide, or at the head of the workflow, what the Windows job tests, how it runs and which files its filter leaves out; fails_when=the job gains a test file of a kind neither document names, a kind they name has no test file in the job any more, the two documents name different kinds, or the guide states another way of running or other left-out files than the workflow has; why_new=Cycle 0046 row 237: the guide named three kinds and one left-out file while the job ran twenty-four files of ten kinds and left out two; seam=none
-test('the test execution guide and the header of the Windows workflow name every kind of test the job runs, every test file of its run command belongs to a kind they name, and the guide states how the job runs and which two files its filter leaves out', async () => {
+// Value: protects=a maintainer who reads at the head of the workflow what the Windows job tests, and the job's way of running and its filter; fails_when=the job gains a test file of a kind the header does not name, a kind it names has no test file in the job any more, the job runs several files at a time, or its filter leaves out other files than the two that change with most pull requests; why_new=Cycle 0046 row 237: the guide named three kinds and one left-out file while the job ran twenty-four files of ten kinds and left out two; seam=none
+test('the header of the Windows workflow names every kind of test the job runs, every test file of its run command belongs to a kind it names, the job runs one file at a time and its filter leaves out two files', async () => {
   // Arrange
-  const guide = await repositoryText('docs/qa/test-execution.md')
   const workflow = await repositoryText(
     '.github/workflows/storage-locks-windows.yml',
   )
 
-  // Act: the guide's section, the workflow's header comment as one text, the test files of the run command, and what the filter leaves out of what they load.
-  const section =
-    guide.split(/^## /m).find((part) => part.startsWith('The Windows job\n')) ??
-    ''
+  // Act: the workflow's header comment as one text, the test files of the run command, and what the filter leaves out of what they load.
   const header = workflow
     .slice(0, workflow.indexOf('\non:\n'))
     .split('\n')
@@ -1495,8 +1480,8 @@ test('the test execution guide and the header of the Windows workflow name every
     .map((line) => line.slice('# '.length))
     .join(' ')
   const kindsSentence =
-    /It runs the tests of (.+?)\.(?: |$)/m.exec(section)?.[1] ?? ''
-  const kindsOfGuide = kindsSentence.split(/, of | and of /)
+    /This job runs the tests of (.+?), on Windows,/.exec(header)?.[1] ?? ''
+  const kindsOfHeader = kindsSentence.split(/, of | and of /)
   const testsOfCommand = testSourcesRunBy(workflow).map(testNameInTheJob)
   const testsOfKinds = WINDOWS_JOB_TEST_KINDS.flatMap(({ tests }) => tests)
   const [pushFilter] = pathFiltersOf(workflow)
@@ -1504,49 +1489,32 @@ test('the test execution guide and the header of the Windows workflow name every
     await sourcesLoadedBy(testSourcesRunBy(workflow))
   ).filter((path) => !pushFilter.includes(path))
 
-  // Assert: the kinds in both documents, in the same words; no file without a kind and no kind without a file.
+  // Assert: the kinds the header names; no file without a kind and no kind without a file.
   assert.equal(
     kindsSentence,
     "the storage lock and its owner's identity, of the Wiki update marker and its claim, of the reader of Wiki metadata files, of the opener that refuses a link, of the file hash, of the Cursor MCP catalog's opens and file ids, of the recovery that puts a moved file back, of the process listing, of the removal walk, of the folder listing, of the sweep of abandoned browser profiles and of the program check of the search for Git",
   )
   assert.deepEqual(
-    kindsOfGuide,
+    kindsOfHeader,
     WINDOWS_JOB_TEST_KINDS.map(({ kind }) => kind),
-  )
-  assert.equal(
-    header.includes(`This job runs the tests of ${kindsSentence}`),
-    true,
-    "the header of the workflow does not name the kinds of test in the guide's words",
   )
   assert.deepEqual(
     testsOfCommand.filter((name) => !testsOfKinds.includes(name)),
     [],
-    'a test file of the run command belongs to no kind: add it to its kind in WINDOWS_JOB_TEST_KINDS, or name a new kind there, in the guide and in the header of the workflow',
+    'a test file of the run command belongs to no kind: add it to its kind in WINDOWS_JOB_TEST_KINDS, or name a new kind there and in the header of the workflow',
   )
   assert.deepEqual(
     testsOfKinds.filter((name) => !testsOfCommand.includes(name)),
     [],
     'a test file listed under a kind is not in the run command',
   )
-  // How the job runs, and what its filter leaves out, as the workflow has them.
-  assert.equal(
-    section.includes(
-      'It runs one test file at a time (`--test-concurrency=1`): these tests start PowerShell and read real process starts, which the product bounds at 3 seconds, and with several files side by side such a read went past that bound on the runner.',
-    ),
-    true,
-  )
+  // How the job runs, and what its filter leaves out: one file at a time, as these tests start PowerShell and read real process starts that the product bounds at 3 seconds.
   assert.equal(
     runCommandsOf(workflow)
       .filter((command) => command.startsWith('node --test '))
       .every((command) =>
         command.startsWith('node --test --test-concurrency=1 '),
       ),
-    true,
-  )
-  assert.equal(
-    section.includes(
-      "The filter leaves out two files those tests load, `extension/src/constants.ts` and `extension/src/runtimeSupport/constants.ts`, because they change with most pull requests, although the first holds the lock's times, its path and its file modes.",
-    ),
     true,
   )
   assert.deepEqual(leftOutOfFilter, [
