@@ -2935,6 +2935,40 @@ test('a header written between the removal’s judgement and its lock that fails
   )
 })
 
+// Value: protects=the learner who deletes a study while a read of a recording's writer record failed at the look before the lock and does not at the look under it (a scanner on Windows held the file for a moment); fails_when=a look that differs only because a failed read ended gets the sentence of another window's recording, so the learner is sent to save a recording in a window that may not exist; why_new=Cycle 0048 task 20 (S11-N16): the failed read that ends between the two looks was worded as another window's run; seam=the storage lock of the loaded library, right before which the test removes the file at the writer record's place that gave no record, and the injected mover; no_claim=a real scanner on Windows
+test('a read that failed before the removal’s lock and no longer fails under it keeps the study with a sentence about the read, not about another window', async (context) => {
+  // Arrange: a saved study whose recording has a header of this host and a process id of no process, and a file that is no record at the place of its writer record; right before the lock that file goes.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await headerOnlyRecording(storage, study.id, 'recordings.v2', {
+    pid: ID_OF_NO_PROCESS,
+    hostname: hostname(),
+    createdAt: '2026-10-01T08:00:00.000Z',
+  })
+  const recordPath = recordingOwnerRecordPath(storage.directory, study.id)
+  await mkdir(dirname(recordPath), { recursive: true })
+  await writeFile(recordPath, 'no JSON')
+  const library = await libraryWithStepBeforeTheLock(storage, async () => {
+    await rm(recordPath)
+  })
+
+  // Act
+  const removal = await library.removeStudy(study.id, storage.moveToTrash)
+
+  // Assert
+  assert.deepEqual(
+    { removal: { ...removal }, moved: storage.moved },
+    {
+      removal: {
+        outcome: 'nothing-moved',
+        cause:
+          'Codebook could not read a recording of this study just now. Delete the study again.',
+      },
+      moved: [],
+    },
+  )
+})
+
 // Value: protects=a study whose recording another computer with this host name writes, when that computer's writer record appears between this window's judgement and its lock (the instant after its header was written); fails_when=the look under the lock does not compare whether a writer record is there, so the verdict 'gone' of the header alone (this host name, no process of its id here) is reused and the recording is moved with no refusal and no dialog (TT33, CX12); why_new=Cycle 0046 third testing review TT33: no test made a record appear between the judgement and the lock; seam=the storage lock of the loaded library, right before which the test writes the record that names the recording and machine-b
 test('a writer record written between the removal’s judgement and its lock keeps the study: nothing moves, and the removal says another window records it', async (context) => {
   // Arrange: a saved study whose recording has its header alone, of this host name and a process id of no process; its record appears right before the removal's lock.

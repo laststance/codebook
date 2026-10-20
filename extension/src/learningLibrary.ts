@@ -88,6 +88,12 @@ const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
   'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.'
 
 /**
+ * Why {@link LearningLibrary.removeStudy} moved nothing of a study when a read of a recording's header or writer record failed at the look before the lock and not at the look under it, and the looks agree in all else (a scanner on Windows held a file for a moment): no other window's run is known to write it, so the sentence names the read and not a window (Cycle 0048 task 20). The removal's outcome line puts it after "Nothing was deleted."
+ */
+const STUDY_RECORDING_READ_CHANGED_MESSAGE =
+  'Codebook could not read a recording of this study just now. Delete the study again.'
+
+/**
  * What a removal changed on disk.
  * - `moved`: every file of the study is in the system Trash; `unreleasedLock` names the failure when the storage lock could not be released afterwards.
  * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back. With `unconfirmedWriter` (and `otherUnconfirmedWriters`) when recordings of the study have writers this computer cannot confirm, each named by its host, its start and its place ({@link UnconfirmedWriter}).
@@ -606,7 +612,9 @@ export class LearningLibrary {
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
    * @returns `sealed` for a sealed recording its run has released; the verdict found before the lock while the look is the same, or only a seal came since.
-   * @throws "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then.
+   * @throws
+   * - "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then
+   * - "Codebook could not read a recording of this study just now. …" ({@link STUDY_RECORDING_READ_CHANGED_MESSAGE}) when the two looks differ only because a read that may have failed in the look before the lock does not under it
    * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed and its study saved
    */
   private async verdictUnderLock(
@@ -617,10 +625,20 @@ export class LearningLibrary {
     // A sealed recording that a run of another window still holds for the save of a checkpoint of its study taken after the seal keeps that writer's verdict.
     if (now.isSealed && isSealedRecordingReleased(now)) return 'sealed'
     const before = verdicts.get(recording)
-    // A start under way between the two looks gives a recording another window may have just begun to write.
-    if (!before || !isSameRecordingLook(before.look, now))
-      throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
-    return before
+    // A recording that appeared since the judgement may have just been begun by another window.
+    if (!before) throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
+    if (isSameRecordingLook(before.look, now)) return before
+    // Looks that differ only because a read that failed before no longer fails name no other window's run: the read is what changed. A file that appeared since (a read failing now that did not before) may be another window's start.
+    throw new Error(
+      before.look.mayHaveFailedRead &&
+        !now.mayHaveFailedRead &&
+        isSameRecordingLook(before.look, {
+          ...now,
+          mayHaveFailedRead: before.look.mayHaveFailedRead,
+        })
+        ? STUDY_RECORDING_READ_CHANGED_MESSAGE
+        : STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE,
+    )
   }
 
   /**
