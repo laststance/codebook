@@ -22,7 +22,7 @@ export function failWriteOf(isAwaited, code, swap) {
   }
 }
 
-/** The status read or the close through a handle that a test asked to fail: the file it waits for, the call, the system error and what runs first in the failing call; gone once it failed or was stopped. */
+/** The close, the status read, the `chmod` or the `utimes` through a handle that a test asked to fail: the file it waits for, the call, the system error and what runs first in the failing call; gone once it failed or was stopped. */
 let pendingHandleCallFailure
 
 /**
@@ -56,7 +56,35 @@ export function failStatOf(isAwaited, code, swap) {
 }
 
 /**
- * The stop of a close or a status read that {@link failCloseOf} or {@link failStatOf} asked to fail: it drops that failure while it is still to come and leaves a newer one, which another call asked for since, in place. Called by both.
+ * Asks the next `chmod` through a handle of a file that `isAwaited` names to fail with a system error, once, and change no mode: as a file system that keeps no mode answers it (`EPERM` on a FAT or exFAT volume mounted for another owner, `ENOTSUP` on some network shares, `ENOSYS` on a FUSE file system without the call), or as a disk that cannot be written answers it (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process.
+ * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose `chmod` fails.
+ * @param {string} code - The system error, such as `EIO`, `EPERM`, `ENOTSUP`.
+ * @returns {() => void} Drops this failure while it is still to come, without clearing a newer one ({@link stopHandleCallFailureOf}).
+ * @example
+ * const stop = failChmodOf((path) => path.endsWith('/next/manual.sh'), 'EIO'); stop()
+ */
+export function failChmodOf(isAwaited, code) {
+  const failure = { isAwaited, call: 'chmod', code }
+  pendingHandleCallFailure = failure
+  return stopHandleCallFailureOf(failure)
+}
+
+/**
+ * Asks the next `utimes` through a handle of a file that `isAwaited` names to fail with a system error, once, and change no time: as a file system that keeps no time answers it (`EPERM` or `EACCES` on a share or a volume mounted for another owner, `ENOTSUP` or `ENOSYS` on a FUSE file system without the call), or as a disk that cannot be written answers it (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process.
+ * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose `utimes` fails.
+ * @param {string} code - The system error, such as `EIO`, `EPERM`, `ENOTSUP`.
+ * @returns {() => void} Drops this failure while it is still to come, without clearing a newer one ({@link stopHandleCallFailureOf}).
+ * @example
+ * const stop = failUtimesOf((path) => path.endsWith('/next/manual.sh'), 'EIO'); stop()
+ */
+export function failUtimesOf(isAwaited, code) {
+  const failure = { isAwaited, call: 'utimes', code }
+  pendingHandleCallFailure = failure
+  return stopHandleCallFailureOf(failure)
+}
+
+/**
+ * The stop of a close, a status read, a `chmod` or a `utimes` that {@link failCloseOf}, {@link failStatOf}, {@link failChmodOf} or {@link failUtimesOf} asked to fail: it drops that failure while it is still to come and leaves a newer one, which another call asked for since, in place. Called by all four.
  * @param {object} failure - The failure that call put in place.
  * @returns {() => void} The stop.
  * @example
@@ -70,9 +98,9 @@ function stopHandleCallFailureOf(failure) {
 }
 
 /**
- * Wraps an open handle so that its `close` runs `swap`, closes the file and then fails with `code`, or its `stat` runs `swap` and then fails with `code` and reads nothing; every other member is the handle's own.
+ * Wraps an open handle so that its `close` runs `swap`, closes the file and then fails with `code`, or its `stat`, `chmod` or `utimes` runs `swap` and then fails with `code` and reads or changes nothing; every other member is the handle's own.
  * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered.
- * @param {'close' | 'stat'} call - The call that fails.
+ * @param {'close' | 'stat' | 'chmod' | 'utimes'} call - The call that fails.
  * @param {string} code - The system error.
  * @param {() => Promise<void>} [swap] - What runs first in the failing call, while the handle is still open.
  * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
@@ -215,7 +243,7 @@ function handleWhoseClosesAreObserved(handle, path) {
 }
 
 /**
- * Opens a file as `open` does; the handle of the file {@link failWriteOf} waits for fails its write partway, once, the handle of the file {@link failCloseOf} or {@link failStatOf} waits for fails that call, once, every handle tells the observer of {@link observeWrites} each `writeFile` through it, and the observer of {@link observeCloses} each close of it.
+ * Opens a file as `open` does; the handle of the file {@link failWriteOf} waits for fails its write partway, once, the handle of the file {@link failCloseOf}, {@link failStatOf}, {@link failChmodOf} or {@link failUtimesOf} waits for fails that call, once, every handle tells the observer of {@link observeWrites} each `writeFile` through it, and the observer of {@link observeCloses} each close of it.
  * @param {string} path - The file to open.
  * @param {...unknown} rest - The caller's flags and mode, handed on unchanged.
  * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers, wrapped for the awaited file.
@@ -231,7 +259,7 @@ export async function open(path, ...rest) {
 }
 
 /**
- * Opens a file as `open` does, wrapped to fail where {@link failWriteOf}, {@link failCloseOf} or {@link failStatOf} waits for it. Called by {@link open}.
+ * Opens a file as `open` does, wrapped to fail where {@link failWriteOf}, {@link failCloseOf}, {@link failStatOf}, {@link failChmodOf} or {@link failUtimesOf} waits for it. Called by {@link open}.
  * @param {string} path - The file to open.
  * @param {...unknown} rest - The caller's flags and mode, handed on unchanged.
  * @returns {Promise<import('node:fs/promises').FileHandle>} What `open` answers, wrapped for the awaited file.

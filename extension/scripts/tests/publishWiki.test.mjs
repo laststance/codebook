@@ -37,11 +37,13 @@ import {
   nameFolderAlso,
 } from './utils/aliasedFolderFileSystem.mjs'
 import {
+  failChmodOf,
   failCloseOf,
   failLinkOf,
   failLookOf,
   failRenameOf,
   failStatOf,
+  failUtimesOf,
   failWriteOf,
   observeCloses,
   observeRemovals,
@@ -2355,7 +2357,7 @@ const markedCopies = new Map()
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
- * - `?failing`: the write of the file a test names with {@link failWriteOf} through a handle stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write through a handle tells the observer of {@link observeWrites} its path and byte count first, each close of a handle tells the observer of {@link observeCloses} its path once the file is closed, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
+ * - `?failing`: the write of the file a test names with {@link failWriteOf} through a handle stops partway with a system error, its close ({@link failCloseOf}), its status read ({@link failStatOf}), its `chmod` ({@link failChmodOf}) or its `utimes` ({@link failUtimesOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write through a handle tells the observer of {@link observeWrites} its path and byte count first, each close of a handle tells the observer of {@link observeCloses} its path once the file is closed, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
  * - `?aliased-folder`: the folder a test names with {@link nameFolderAlso} answers to another name beside it too, as one folder does to names of another case on macOS and Windows (`aliasedFolderFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
  * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing' | '?aliased-folder'} mark - The mark of its stand-in.
@@ -21155,6 +21157,198 @@ for (const kept of [
         // Assert
         assert.deepEqual(await kept.read(learnerFile), kept.expected)
       } finally {
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    },
+  )
+}
+
+// Cycle 0048 task 181 (Codex adversarial): the copy of a learner's file lets pass only the errors of a file system that keeps no mode or no time.
+for (const failed of [
+  { call: 'chmod', fail: failChmodOf },
+  { call: 'utimes', fail: failUtimesOf },
+]) {
+  // Value: protects=the learner whose own file lies in the Wiki folder and the Wiki itself, when the disk fails (EIO) while the publish sets the mode or the times of that file's copy: the publish stops before its swap, so the learner is not left with a Wiki whose copy has the mode or the time of its write; fails_when=writeOwnFile lets every error of the copy's chmod or utimes pass (`.catch(() => undefined)`), so a disk error publishes the copy with the mode and time of its write; why_new=Cycle 0048 task 181 (Codex adversarial); seam=a copy of the shipped publisher whose `node:fs/promises` fails the chmod or the utimes through the handle of the learner's file in the candidate with EIO (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf, failUtimesOf); no_claim=a chmod or utimes that fails on a real file system
+  test(`a publish whose copy of the learner’s file gets EIO from its ${failed.call} is refused with that error, leaves no copy in the candidate and keeps the Wiki and the learner’s file as they were`, async () => {
+    // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04, a candidate beside it, and a disk error at the row's call on the copy.
+    const { publishWiki: publishWhoseCopyGetsADiskError } =
+      await loadMarkedCopy('publish-wiki.mjs', '?failing')
+    const wiki = await publishedWikiWithACandidate()
+    const learnerFile = join(wiki.output, 'manual.sh'),
+      changedAt = new Date('2021-03-04T05:06:07Z')
+    const stopFailing = failed.fail(
+      (path) => path === join(wiki.next, 'manual.sh'),
+      'EIO',
+    )
+    try {
+      await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+      await chmod(learnerFile, 0o750)
+      await utimes(learnerFile, changedAt, changedAt)
+      const wikiBefore = await wikiAndLearnerFileOf(wiki.output, learnerFile)
+
+      // Act
+      const refusal = await publishWhoseCopyGetsADiskError({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => 'published',
+        (error) => error.code,
+      )
+      const copyInTheCandidate = await readFile(
+        join(wiki.next, 'manual.sh'),
+        'utf8',
+      ).catch(() => 'no copy')
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          copyInTheCandidate,
+          wikiAfter: await wikiAndLearnerFileOf(wiki.output, learnerFile),
+        },
+        {
+          refusal: 'EIO',
+          copyInTheCandidate: 'no copy',
+          wikiAfter: wikiBefore,
+        },
+      )
+    } finally {
+      stopFailing()
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+/**
+ * What a test compares to tell that a Wiki folder and a learner's file in it are as they were: the manifest's and the home page's bytes, and the learner's file's bytes, mode and modification time.
+ * @param {string} output - The Wiki folder.
+ * @param {string} learnerFile - The learner's file in it.
+ * @returns {Promise<Record<string, string>>} The values to compare.
+ * @example
+ * await wikiAndLearnerFileOf('/repo/.codebook/wiki', '/repo/.codebook/wiki/manual.sh') // => { manifest: '{…}', homePage: '<h1>Published</h1>…', learnerFile: '#!/bin/sh…', mode: '750', modifiedAt: '2021-03-04T05:06:07.000Z' }
+ */
+async function wikiAndLearnerFileOf(output, learnerFile) {
+  const status = await lstat(learnerFile)
+  return {
+    manifest: await readFile(join(output, 'codebook-wiki.json'), 'utf8'),
+    homePage: await readFile(join(output, 'index.html'), 'utf8'),
+    learnerFile: await readFile(learnerFile, 'utf8'),
+    mode: (status.mode & 0o777).toString(8),
+    modifiedAt: status.mtime.toISOString(),
+  }
+}
+
+// A file system that keeps no mode or no time answers with one of these; the copy then keeps the mode and time of its write.
+for (const code of [
+  'EPERM',
+  'EACCES',
+  'EINVAL',
+  'EISDIR',
+  'ENOTSUP',
+  'ENOSYS',
+]) {
+  // Value: protects=the learner whose Wiki folder lies on a volume that keeps no mode (FAT or exFAT mounted for another owner, a share, a FUSE file system) and who must still be able to publish: the copy of their file is published with the mode of its write and the times of the original; fails_when=writeOwnFile passes on the file system's answer to chmod, so a volume that keeps no mode refuses every publish that has a learner's file; why_new=Cycle 0048 task 181 (Codex adversarial: only such errors pass); seam=a copy of the shipped publisher whose `node:fs/promises` fails the chmod through the handle of the learner's file in the candidate with the row's code (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf); no_claim=the mode such a volume gives a file (the test reads it back from the volume the test runs on); Windows, which keeps only the read-only bit
+  test(
+    `a publish whose copy of the learner’s file gets ${code} from its chmod is published with the mode of the copy’s write and the times of the original`,
+    { skip: process.platform === 'win32' || process.umask() !== 0o022 },
+    async () => {
+      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; the copy's chmod fails as the row says, so the copy keeps the mode its creation gave (666 less the umask 022).
+      const { publishWiki: publishWhoseCopyKeepsNoMode } = await loadMarkedCopy(
+        'publish-wiki.mjs',
+        '?failing',
+      )
+      const wiki = await publishedWikiWithACandidate()
+      const learnerFile = join(wiki.output, 'manual.sh'),
+        changedAt = new Date('2021-03-04T05:06:07Z')
+      const stopFailing = failChmodOf(
+        (path) => path === join(wiki.next, 'manual.sh'),
+        code,
+      )
+      try {
+        await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+        await chmod(learnerFile, 0o750)
+        await utimes(learnerFile, changedAt, changedAt)
+
+        // Act
+        const result = await publishWhoseCopyKeepsNoMode({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        }).then(
+          ({ preservedManualFiles }) => ({ preservedManualFiles }),
+          (error) => error.message,
+        )
+        const copy = await lstat(learnerFile)
+
+        // Assert
+        assert.deepEqual(
+          {
+            result,
+            mode: (copy.mode & 0o777).toString(8),
+            modifiedAt: copy.mtime.toISOString(),
+          },
+          {
+            result: { preservedManualFiles: 1 },
+            mode: '644',
+            modifiedAt: '2021-03-04T05:06:07.000Z',
+          },
+        )
+      } finally {
+        stopFailing()
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    },
+  )
+
+  // Value: protects=the learner whose Wiki folder lies on a volume that keeps no time (a share, a FUSE file system) and who must still be able to publish: the copy of their file is published with the mode of the original and the time of its write; fails_when=writeOwnFile passes on the file system's answer to utimes, so a volume that keeps no time refuses every publish that has a learner's file; why_new=Cycle 0048 task 181 (Codex adversarial: only such errors pass); seam=a copy of the shipped publisher whose `node:fs/promises` fails the utimes through the handle of the learner's file in the candidate with the row's code (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failUtimesOf); no_claim=the time such a volume gives a file
+  test(
+    `a publish whose copy of the learner’s file gets ${code} from its utimes is published with the mode of the original and the time of the copy’s write`,
+    { skip: process.platform === 'win32' },
+    async () => {
+      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; the copy's utimes fails as the row says.
+      const { publishWiki: publishWhoseCopyKeepsNoTime } = await loadMarkedCopy(
+        'publish-wiki.mjs',
+        '?failing',
+      )
+      const wiki = await publishedWikiWithACandidate()
+      const learnerFile = join(wiki.output, 'manual.sh'),
+        changedAt = new Date('2021-03-04T05:06:07Z')
+      const stopFailing = failUtimesOf(
+        (path) => path === join(wiki.next, 'manual.sh'),
+        code,
+      )
+      try {
+        await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+        await chmod(learnerFile, 0o750)
+        await utimes(learnerFile, changedAt, changedAt)
+
+        // Act
+        const result = await publishWhoseCopyKeepsNoTime({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        }).then(
+          ({ preservedManualFiles }) => ({ preservedManualFiles }),
+          (error) => error.message,
+        )
+        const copy = await lstat(learnerFile)
+
+        // Assert
+        assert.deepEqual(
+          {
+            result,
+            mode: (copy.mode & 0o777).toString(8),
+            isWrittenAfter2021: copy.mtime > new Date('2022-01-01T00:00:00Z'),
+          },
+          {
+            result: { preservedManualFiles: 1 },
+            mode: '750',
+            isWrittenAfter2021: true,
+          },
+        )
+      } finally {
+        stopFailing()
         await rm(wiki.directory, { recursive: true, force: true })
       }
     },
