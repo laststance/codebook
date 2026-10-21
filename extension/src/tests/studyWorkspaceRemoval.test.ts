@@ -7799,6 +7799,67 @@ test('a Node test history opened while the neighbour of a removed study is being
   }
 })
 
+// Value: protects=display ownership while a test replay is selected: refreshes after the background saved-study selection changed leave the replay's source, its debugger and its selected stop as they were (EN9); fails_when=the periodic refresh renders the changed background selection over the replay and its source pane shows the saved-study placeholder; why_new=the refresh called renderSelection whenever no browser recording was active (studyWorkspace.ts:10312-10352, AC6); seam=the library's archive read, held by the test, and the refreshes the test runs; no_claim=native editor group behavior (N49)
+test('refreshes after the background selection changed leave a selected test replay’s source and debugger on its stop', async (context) => {
+  // Arrange: a saved study the learner removes while a test replay shows its stop.
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const neighbour = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:01.000Z',
+      ),
+      removed = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await chooseStudy(harness, removed.id)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    const neighbourRead = holdArchiveRead(context, neighbour.id)
+    const removal = requestRemoval(harness, removed.id)
+    await neighbourRead.started
+    await sendChoice(harness, 'node-history', nodeHistory.studyId)
+    const opened = harness.reader.inspect().view!
+    await readerSeams(harness).receive(
+      {
+        type: 'node-history-stop',
+        revision: opened.revision,
+        studyId: nodeHistory.studyId,
+        sequence: opened.nodeHistory!.entries.find(
+          (entry) => entry.type === 'stop',
+        )!.sequence,
+      },
+      'context',
+    )
+    neighbourRead.release()
+    await removal
+    const sourceOfStop = harness.reader.inspect().sourceUri
+    const positionOfStop =
+      harness.reader.inspect().view!.nodeHistoryPosition?.sequence
+    const presentationsBefore = harness.historicalDebugPresentations.length,
+      invalidationsBefore = harness.historicalDebugInvalidations()
+
+    // Act: the reader's timer refreshes three times.
+    for (let refresh = 0; refresh < 3; refresh++)
+      await readerSeams(harness).refresh()
+
+    // Assert
+    const inspected = harness.reader.inspect()
+    assert.equal(inspected.sourceUri, sourceOfStop)
+    assert.equal(inspected.view!.nodeHistoryPosition?.sequence, positionOfStop)
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+    assert.equal(harness.historicalDebugInvalidations(), invalidationsBefore)
+    assert.equal(inspected.view!.model.selection.studyId, undefined)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=a Node test history whose open is discarded because the reader changed meanwhile ends its loading state; fails_when=the handler returns for the changed revision and nothing clears `loading` (0040-ER-obs); why_new=only a saved study's discarded open was tested; seam=the Node history store's read, held by the test
 test('a chosen Node test history whose open is discarded because the reader changed meanwhile stops loading', async (context) => {
   // Arrange: a recorded saved run is shown; a Node test history is chosen and its read is held. A recording open that fails meanwhile changes the reader's revision.
