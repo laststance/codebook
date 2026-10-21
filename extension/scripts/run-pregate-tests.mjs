@@ -8,7 +8,7 @@
 // A run that prints nothing for the silence limit (120 s by default, as in test-shard.mjs; 300 s for a run that holds package.test.mjs, whose
 // `before` hook builds the package without output; --silence-seconds sets one limit for every run) is ended, named, and fails the lane.
 // The build is ended with everything it started, and the lane fails, when it takes longer than the build limit (300 s by default).
-// The build and the runs stay in this runner's process group (no session of their own), so whoever ends the group ends them; a SIGINT, SIGTERM or SIGHUP to the runner alone ends every live child's whole tree and exits with 128 plus the signal's number.
+// The build and the runs stay in this runner's process group (no session of their own), so whoever ends the group ends them, with one exception: the package commands that `package.test.mjs` starts inside a run (`runPackageCommand`: `detached: true`, and pnpm moves its lifecycle scripts into groups of their own too) run in process groups of their own, which a kill of the lane's group does not reach (no handler runs at SIGKILL); they end at their own limit and at a SIGINT, SIGTERM, SIGHUP or SIGQUIT to the package test. The build starts no process (`build-fast.mjs` emits the files in its own process), so the sentence holds for it without exception. A SIGINT, SIGTERM or SIGHUP to the runner alone ends every live child's whole tree and exits with 128 plus the signal's number.
 // Each run's output is written as it comes and only its end is kept (for the combined summary), so a test that prints without end does not fill the runner's memory.
 import { spawn } from 'node:child_process'
 import { relative } from 'node:path'
