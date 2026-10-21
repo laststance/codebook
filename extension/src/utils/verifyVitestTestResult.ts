@@ -36,7 +36,7 @@ const EXECUTED_STATUSES = new Set(['passed', 'failed'])
  * @throws When the report is missing, too large or unreadable, names another file, or shows zero, several or a different executed test.
  * @example
  * ```ts
- * await verifyVitestTestResult('/tmp/codebook-vitest-report-x/vitest-report.json', '/repo/app/lib/data.test.ts', ['invoice data queries', 'returns undefined']) // => 'passed'
+ * await verifyVitestTestResult('/tmp/codebook-vitest-report-x/vitest-report.json', '/repo/src/scheduler.test.ts', ['job scheduler', 'runs a delayed job after its timer']) // => 'passed'
  * ```
  */
 export async function verifyVitestTestResult(

@@ -13,7 +13,7 @@ import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
  * @throws {@link StudyError} `INVALID_CONFIGURATION` when `testName` is present or `testTitles` is missing.
  * @example
  * ```ts
- * requireNodeTestTitles({ ...configuration, testTitles: ['invoice data queries', 'returns undefined'] }) // => ['invoice data queries', 'returns undefined']
+ * requireNodeTestTitles({ ...configuration, testTitles: ['job scheduler', 'runs a delayed job after its timer'] }) // => ['job scheduler', 'runs a delayed job after its timer']
  * ```
  */
 export function requireNodeTestTitles(
