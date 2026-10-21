@@ -24,6 +24,7 @@ import {
   planPregateRuns,
   runSummaryLine,
 } from '../utils/planPregateRuns.mjs'
+import { readRunSummary } from '../utils/readRunSummary.mjs'
 import { runBuildWithLimit } from '../utils/runBuildWithLimit.mjs'
 import { silenceLimitOfRun } from '../utils/silenceLimitOfRun.mjs'
 import {
@@ -1340,6 +1341,178 @@ test('the output keeper cuts a line longer than its bound where it stands, and l
         '[… 22 characters of earlier output left out; at most the last 10 are kept]\nccdddddddd',
       atLineStart:
         '[… 6 characters of earlier output left out; at most the last 10 are kept]\nab\ncdefghi',
+    },
+  )
+})
+
+/** One whole summary block as Node 24 prints it: two tests, one passed, one failed, with the lines `readRunSummary` knows. */
+const TWO_TESTS_SUMMARY_BLOCK =
+  'ℹ tests 2\nℹ suites 0\nℹ pass 1\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 41.5\n'
+
+/** The counts that {@link TWO_TESTS_SUMMARY_BLOCK} holds, as `readRunSummary` answers them. */
+const TWO_TESTS_SUMMARY_COUNTS = {
+  tests: 2,
+  suites: 0,
+  pass: 1,
+  fail: 1,
+  cancelled: 0,
+  skipped: 0,
+  todo: 0,
+  duration_ms: 41.5,
+}
+
+/** The report of the failing tests that Node 24 prints after the summary: a heading, then the failure with every line indented. It is longer than 700 characters. @example failureReportOfNode24() */
+function failureReportOfNode24() {
+  return `\n✖ failing tests:\n\ntest at a.test.mjs:4:1\n✖ bad (0.5ms)\n${'  AssertionError: a long line of the failure report\n'.repeat(20)}`
+}
+
+// Value: protects=the count of a call whose failing tests' report is longer than the output bound: Node 24 prints the summary block before the report, so the report pushes the summary out of the kept end, and the shard script counted no test for the call while the pre-gate's combined summary left the run out; fails_when=the keeper keeps only the last characters and the summary is not kept with them; why_new=Cycle 0048 task 153 (Red Team, core, parent's probe: Node 24.21 prints the summary before the report); seam=createBoundedOutput with readRunSummary; no_claim=the bound of the runners (TEST_OUTPUT_KEEP_CHARS), a constant; Node's real output (the test below)
+test('the output keeper still reads the counts of a call whose failure report after the summary is longer than the bound', () => {
+  // Arrange
+  const output = createBoundedOutput(300)
+
+  // Act
+  output.append('✔ ok (0.9ms)\n✖ bad (0.5ms)\n')
+  output.append(TWO_TESTS_SUMMARY_BLOCK)
+  output.append(failureReportOfNode24())
+
+  // Assert
+  const text = output.text()
+  assert.deepEqual(readRunSummary(text), TWO_TESTS_SUMMARY_COUNTS)
+  assert.match(
+    text,
+    /^\[… \d+ characters of earlier output left out; at most the last 300 are kept\]\n/,
+  )
+  assert.ok(
+    text.endsWith(
+      `[… the runner’s own summary, repeated from the output left out:]\n${TWO_TESTS_SUMMARY_BLOCK}`,
+    ),
+    'the summary block is repeated at the end under a note',
+  )
+})
+
+// Value: protects=the count of a call against a line a test printed in the summary's form: a block printed by a test before the runner's own summary, and an indented block inside the failure report, count nothing when the report cuts the summary away; fails_when=the keeper repeats the first block or the printed one, or reads an indented line of the report as a summary line; why_new=Cycle 0048 task 153 (the last block is the runner's own, task 135); seam=createBoundedOutput with readRunSummary; no_claim=what Node prints for a real run (the test below)
+test('the output keeper repeats the runner’s own last summary block, never a block a test printed or an indented one in the failure report', () => {
+  // Arrange
+  const output = createBoundedOutput(300)
+  const printedByTest = 'ℹ tests 99\nℹ pass 99\nℹ fail 0\n'
+  const indentedInReport = '  ℹ tests 77\n  ℹ pass 77\n  ℹ fail 0\n'
+
+  // Act
+  output.append(printedByTest)
+  output.append(TWO_TESTS_SUMMARY_BLOCK)
+  output.append(failureReportOfNode24())
+  output.append(indentedInReport)
+  output.append(failureReportOfNode24())
+
+  // Assert
+  assert.deepEqual(readRunSummary(output.text()), TWO_TESTS_SUMMARY_COUNTS)
+})
+
+// Value: protects=the count of a call whose output reaches the keeper in chunks of any size: a summary block, or even one summary line, split across chunks is read whole, and the last line of the output needs no line break; fails_when=the keeper reads each chunk alone, so a line cut between two chunks is no summary line; why_new=Cycle 0048 task 153 (a summary block that arrives split across chunks); seam=createBoundedOutput with readRunSummary; no_claim=the sizes of the chunks a pipe delivers
+test('the output keeper reads a summary block that arrives split across chunks, with no line break after its last line', () => {
+  // Arrange
+  const output = createBoundedOutput(300)
+  const wholeOutput = `${TWO_TESTS_SUMMARY_BLOCK.trimEnd()}${failureReportOfNode24()}`
+  const lastBlockEnd = 'ℹ tests 3\nℹ pass 3\nℹ fail 0'
+
+  // Act
+  for (let start = 0; start < wholeOutput.length; start += 7)
+    output.append(wholeOutput.slice(start, start + 7))
+  const endsWithBlock = createBoundedOutput(20)
+  endsWithBlock.append(
+    `${'a line of output\n'.repeat(60)}ℹ tests 3\nℹ pass 3\nℹ f`,
+  )
+  endsWithBlock.append('ail 0')
+
+  // Assert
+  assert.deepEqual(readRunSummary(output.text()), TWO_TESTS_SUMMARY_COUNTS)
+  assert.deepEqual(readRunSummary(endsWithBlock.text()), {
+    tests: 3,
+    pass: 3,
+    fail: 0,
+  })
+  assert.ok(
+    endsWithBlock
+      .text()
+      .endsWith(
+        `[… the runner’s own summary, repeated from the output left out:]\n${lastBlockEnd}\n`,
+      ),
+  )
+})
+
+// Value: protects=the count of a runner that died: an output with no complete summary block still counts none, however long, and the keeper adds no block of its own; a line longer than any summary line ends a block and is not held; fails_when=the keeper repeats a lone summary line or an incomplete block as a summary, or a long line between two summary lines does not break the block; why_new=Cycle 0048 task 153 (output that holds no summary); seam=createBoundedOutput with readRunSummary; no_claim=the note of the left out characters (the keeper tests above)
+test('the output keeper counts no test for an output with no complete summary block, even when a long line breaks a block in two', () => {
+  // Arrange
+  const died = createBoundedOutput(300)
+  const brokenByLongLine = createBoundedOutput(300)
+
+  // Act
+  died.append('ℹ tests 99\nℹ pass 99\n')
+  died.append('a line of output that goes on\n'.repeat(60))
+  brokenByLongLine.append('ℹ tests 5\nℹ pass 5\n')
+  for (let part = 0; part < 10; part += 1)
+    brokenByLongLine.append('x'.repeat(100))
+  brokenByLongLine.append('\nℹ fail 0\n')
+
+  // Assert
+  assert.equal(readRunSummary(died.text()), undefined)
+  assert.equal(died.text().includes('repeated from the output left out'), false)
+  assert.equal(readRunSummary(brokenByLongLine.text()), undefined)
+})
+
+// Value: protects=the count of a real `node --test` call whose failure report is longer than the bound, as Node 24 prints it (the summary before the report, the report's lines indented, a block a test printed before the summary); fails_when=Node's order or form of the output differs from what the keeper assumes, or the keeper does not keep the real call's counts; why_new=Cycle 0048 task 153 (the parent's probe on Node 24.21 and the check of task 135 on that version); seam=a real `node --test` run of a fixture file through createBoundedOutput; no_claim=other Node versions than the one that runs the tests
+test('the output keeper keeps the counts of a real node --test call whose failure report is longer than its bound', async (context) => {
+  // Arrange
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-bounded-output-'))
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  const fixture = join(folder, 'long-failure.test.mjs')
+  await writeFile(
+    fixture,
+    [
+      "import { test } from 'node:test'",
+      "test('prints a summary-shaped block', () => { console.log('ℹ tests 99\\nℹ pass 99\\nℹ fail 0') })",
+      "test('fails with a long report', () => { throw new Error(('ℹ tests 77\\nℹ pass 77\\nℹ fail 0\\n' + 'a long line of the failure message\\n').repeat(60)) })",
+      '',
+    ].join('\n'),
+  )
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => name !== 'NODE_TEST_CONTEXT' && name !== 'NO_COLOR',
+    ),
+  )
+
+  // Act
+  const run = spawnSync(
+    process.execPath,
+    ['--test', '--test-reporter=spec', fixture],
+    { encoding: 'utf8', timeout: 60_000, env: environment },
+  )
+  const output = createBoundedOutput(500)
+  for (let start = 0; start < run.stdout.length; start += 4096)
+    output.append(run.stdout.slice(start, start + 4096))
+
+  // Assert
+  const pickCounts = ({ tests, pass, fail } = {}) => ({ tests, pass, fail })
+  const failureReportLines = run.stdout
+    .slice(run.stdout.indexOf('✖ failing tests:'))
+    .split('\n')
+  assert.deepEqual(
+    {
+      summaryComesBeforeReport:
+        run.stdout.indexOf('ℹ duration_ms') <
+        run.stdout.indexOf('✖ failing tests:'),
+      reportHasSummaryShapedLinesAtColumnZero: failureReportLines.some((line) =>
+        /^ℹ (tests|pass|fail) \d+$/.test(line),
+      ),
+      reportIsLongerThanBound: run.stdout.length > 2 * 500,
+      counts: pickCounts(readRunSummary(output.text())),
+    },
+    {
+      summaryComesBeforeReport: true,
+      reportHasSummaryShapedLinesAtColumnZero: false,
+      reportIsLongerThanBound: true,
+      counts: { tests: 2, pass: 1, fail: 1 },
     },
   )
 })

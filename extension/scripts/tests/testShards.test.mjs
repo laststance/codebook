@@ -1505,6 +1505,22 @@ test('the last summary block is read only when it is whole, and a line a test pr
   ])
 })
 
+// Value: protects=the bounded reader of the summary: a summary line is short, so a count of more than 15 digits (or a fraction of more than 20 digits) is no summary line and breaks the block, which lets the output keeper drop a long line unread and still agree with the whole-output reading; fails_when=a line of 16 digits is read as a count again, so the keeper's reading of a long line and this reading differ; why_new=Cycle 0048 task 153 (the keeper holds only lines of up to 100 characters); seam=none; no_claim=a count a real runner prints; the outputs are hard-coded strings
+test('a summary line with a count of 16 digits is no summary line and breaks the block, and 15 digits still count', () => {
+  // Arrange
+  const tooLong = 'ℹ tests 2\nℹ pass 1\nℹ fail 9999999999999999'
+  const longestCount = 'ℹ tests 2\nℹ pass 1\nℹ fail 999999999999999'
+
+  // Act
+  const answers = [tooLong, longestCount].map(readRunSummary)
+
+  // Assert
+  assert.deepEqual(answers, [
+    undefined,
+    { tests: 2, pass: 1, fail: 999999999999999 },
+  ])
+})
+
 /** Writes a script that prints text and then ends, into a fresh folder, for the tests that need a runner with a known amount of output. @example const path = await writeScript(context, "console.log('hello')") */
 async function writeScript(context, source) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-printing-script-'))
