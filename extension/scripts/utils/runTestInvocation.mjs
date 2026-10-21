@@ -79,7 +79,7 @@ export function runTestInvocation(
     const watch = watchCallSilence(child, { silenceTimeoutMs, killGraceMs })
     // Only the end of the output is kept: a test that keeps printing keeps the silence watch alive, and must not fill the memory too.
     const output = createBoundedOutput(outputKeepChars)
-    // The keeper holds an unfinished line per stream: a chunk of stderr between two chunks of one summary line of stdout must not splice that line.
+    // The keeper reads the summary from stdout alone and keeps a chunk of stderr in the text only: a chunk of stderr between two chunks of one summary line of stdout must not splice that line.
     const keep = (stream) => (chunk) => {
       output.append(chunk, stream)
       watch.keepAlive()
