@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  constants,
+  existsSync,
+  openSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs'
 import {
   access,
   chmod,
@@ -58,6 +65,7 @@ import {
   swapBeforeLinking,
   swapBeforeMaking,
   swapAfterReading,
+  swapBeforeOpeningToRead,
   swapBeforeReading,
   swapBeforeRenaming,
   swapBeforeWriting,
@@ -22017,6 +22025,239 @@ test('a publish of a candidate that holds a page the published Wiki owns but its
 })
 
 // Cycle 0048 task 66 (Security, OCR A, native adversarial): the copy of a learner's file takes its mode and times from the file whose bytes were read.
+
+/** How long a test lets a publish run whose read of a path was swapped for a FIFO after the publisher's look at it: the refusal comes within milliseconds, so a publish that is still running after this has blocked on the FIFO, as one that opens it for reading without `O_NONBLOCK` does until a writer opens it. */
+const FIFO_SWAP_WAIT_MS = 5_000
+
+/**
+ * Puts a FIFO at a path, in place of what stands there, as another process that swaps a learner's file or a candidate's file after the publisher looked at it. Called by the tests of the reads that follow a look at the same path (Cycle 0048 task 199).
+ * @param {string} path - Where the FIFO goes.
+ * @returns {Promise<void>} Once the FIFO stands at the path.
+ * @throws When `mkfifo` is missing or fails.
+ * @example
+ * await putFifoAt(join(wiki.output, 'manual.sh'))
+ */
+async function putFifoAt(path) {
+  await rm(path, { force: true })
+  const made = spawnSync('mkfifo', [path], { timeout: FIFO_SWAP_WAIT_MS })
+  assert.equal(made.status, 0, 'mkfifo made the FIFO')
+}
+
+/**
+ * Lets an open for reading that waits on a FIFO go on, by opening the FIFO for writing without waiting and closing it again: the test's clean-up, so a publish that blocked on the FIFO (the code under test being wrong) ends and leaves no pending call that keeps the test process alive.
+ * @param {string} path - The FIFO.
+ * @returns {void}
+ * @example
+ * releaseReadersOf(join(wiki.output, 'manual.sh'))
+ */
+function releaseReadersOf(path) {
+  try {
+    closeSync(openSync(path, constants.O_WRONLY | constants.O_NONBLOCK))
+  } catch {
+    // No reader waits on the FIFO (ENXIO), or nothing stands at the path: there is nothing to release.
+  }
+}
+
+/**
+ * Waits for a publish to end for a bounded time, and answers how it ended: the sentence of its refusal, `published`, or that it was still running when the time was out, so a publish that hangs fails its test instead of hanging it.
+ * @param {Promise<unknown>} publishing - The publish.
+ * @param {number} milliseconds - The most to wait.
+ * @returns {Promise<string>} How the publish ended.
+ * @example
+ * await outcomeWithin(publishWiki({ projectRoot, outputDirectory, stageDirectory }), 5_000) // => 'published'
+ */
+async function outcomeWithin(publishing, milliseconds) {
+  let timer
+  const timeOut = new Promise((resolve) => {
+    timer = setTimeout(
+      () => resolve(`still running after ${milliseconds} ms`),
+      milliseconds,
+    )
+  })
+  try {
+    return await Promise.race([
+      publishing.then(
+        () => 'published',
+        (error) => error.message,
+      ),
+      timeOut,
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Cycle 0048 task 199 (native adversarial): a read of a path the publisher looked at first cannot wait on a FIFO put at the path after the look, and follows no link put there.
+const SWAPPED_READS = [
+  {
+    names: 'learner’s file',
+    isFileSwapped: (wiki) => join(wiki.output, 'manual.sh'),
+    arm: (path, swap) => swapBeforeOpeningToRead((read) => read === path, swap),
+    isJournalKept: false,
+    refusal: (path) => `A manual Wiki file changed during publication: ${path}`,
+  },
+  {
+    names: 'candidate’s manifest',
+    isFileSwapped: (wiki) => join(wiki.next, 'codebook-wiki.json'),
+    arm: (path, swap) => swapBeforeReading((read) => read === path, swap),
+    isJournalKept: false,
+    refusal: (path) => `Wiki publication requires a regular file: ${path}`,
+  },
+]
+const SWAPPED_BY = [
+  {
+    names: 'a FIFO',
+    isLinkFollowed: false,
+    put: (path) => putFifoAt(path),
+  },
+  {
+    names: 'a link to another file',
+    isLinkFollowed: true,
+    put: async (path, elsewhere) => {
+      await rm(path, { force: true })
+      await symlink(elsewhere, path)
+    },
+  },
+]
+for (const swapped of [
+  ...SWAPPED_READS.flatMap((read) => SWAPPED_BY.map((by) => ({ ...read, by }))),
+  {
+    names: 'candidate’s copy of the learner’s file before it is synced',
+    isFileSwapped: (wiki) => join(wiki.next, 'manual.sh'),
+    arm: (path, swap) => swapBeforeOpeningToRead((read) => read === path, swap),
+    // The refusal of a candidate that cannot be synced keeps the journal for --recover.
+    isJournalKept: true,
+    by: SWAPPED_BY[0],
+    refusal: (path) =>
+      `The candidate could not be synced to the disk before the swap: ${path} (it is no regular file or folder now). Nothing was moved and the Wiki is as it was, and the publication journal was kept. Run --recover, then prepare a candidate and publish again.`,
+  },
+]) {
+  // Value: protects=the agent and the learner whose publish holds the Wiki's lock while it reads: a FIFO put at a path after the publisher's look at it (by a tool, a sync client or a hostile clone's hook) makes the publish end with a refusal in seconds, and not wait for a writer for ever with the lock held and the Wiki folder in use, and a link put there is refused and not followed; fails_when=the read opens the path for reading without O_NONBLOCK and O_NOFOLLOW (a plain open or readFile), which blocks on the FIFO until a writer opens it and reads the file a link leads to; why_new=Cycle 0048 task 199 (native adversarial); seam=the publisher copy over a file system that runs a swap right before the open or the read of the path the test names (scripts/tests/utils/swappedFolderFileSystem.mjs, swapBeforeOpeningToRead and swapBeforeReading), a real FIFO made with mkfifo or a link, and the real publish bounded in time; no_claim=a writer that opens the FIFO (the test lets none); Windows, which has no FIFO in the file namespace and whose links need a privilege
+  test(
+    `a publish whose ${swapped.names} is swapped for ${swapped.by.names} after the publisher looked at it ends within ${FIFO_SWAP_WAIT_MS / 1000} seconds, with the Wiki and the publish lock as they were`,
+    { skip: process.platform === 'win32' },
+    async () => {
+      // Arrange: a published Wiki with a learner's file and a candidate; just before the publisher reads the file the row names, what the row names takes its place.
+      const { publishWiki: publishWhoseReadFindsASwap } = await loadMarkedCopy(
+        'publish-wiki.mjs',
+        '?swapped-folder',
+      )
+      const wiki = await publishedWikiWithACandidate()
+      const swappedPath = swapped.isFileSwapped(wiki),
+        elsewhere = join(wiki.directory, 'elsewhere.txt')
+      let publishing
+      try {
+        await writeFile(
+          join(wiki.output, 'manual.sh'),
+          '#!/bin/sh\necho notes\n',
+        )
+        await writeFile(elsewhere, 'other text')
+        const manifestBefore = await readFile(
+          join(wiki.output, 'codebook-wiki.json'),
+          'utf8',
+        )
+        swapped.arm(swappedPath, () => swapped.by.put(swappedPath, elsewhere))
+
+        // Act
+        publishing = publishWhoseReadFindsASwap({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        })
+        const outcome = await outcomeWithin(publishing, FIFO_SWAP_WAIT_MS)
+
+        // Assert
+        assert.deepEqual(
+          {
+            outcome,
+            manifest: await readFile(
+              join(wiki.output, 'codebook-wiki.json'),
+              'utf8',
+            ),
+            homePage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+            lockKept: existsSync(`${wiki.output}.publish-lock.json`),
+            journalKept: existsSync(`${wiki.output}.publish-journal.json`),
+          },
+          {
+            outcome: swapped.refusal(swappedPath),
+            manifest: manifestBefore,
+            homePage: wiki.wikiPage,
+            lockKept: false,
+            journalKept: swapped.isJournalKept,
+          },
+        )
+      } finally {
+        // A publish that blocked on the FIFO is let go and ended, so the test leaves no pending call behind; the armed swaps are cleared.
+        releaseReadersOf(swappedPath)
+        if (publishing !== undefined)
+          await outcomeWithin(publishing, FIFO_SWAP_WAIT_MS)
+        swapBeforeReading(
+          () => false,
+          async () => undefined,
+        )
+        swapBeforeOpeningToRead(
+          () => false,
+          async () => undefined,
+        )
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    },
+  )
+}
+
+// Value: protects=the agent and the learner whose --recover holds the Wiki's lock while it reads the copy of a learner's file a stopped publish left in its candidate: a FIFO put at the copy's path after the recovery's look at it makes the recovery end in seconds, treating the FIFO as no copy of its own (an entry that is no regular file is none, as for a link), and not wait for a writer for ever; fails_when=regularFileOf reads the copy with a plain readFile after its look, which blocks on the FIFO until a writer opens it; why_new=Cycle 0048 task 199 (native adversarial); seam=the publisher copy over a file system that runs a swap right before the read of the copy (scripts/tests/utils/swappedFolderFileSystem.mjs, swapBeforeReading), a real FIFO made with mkfifo, a publish killed past finalize (publishWithACopyKilledPastFinalize), and the real recovery bounded in time; no_claim=a writer that opens the FIFO (the test lets none); what the recovery does with the FIFO afterwards; Windows, which has no FIFO in the file namespace
+test(
+  'a recovery whose stopped publish’s copy of the learner’s file is swapped for a FIFO after the recovery looked at it ends within 5 seconds and takes the FIFO for no copy of its own',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; just before the recovery reads the copy, a FIFO takes its place.
+    const { recoverWikiPublication: recoverWhoseCopyIsAFifo } =
+      await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+    const { wiki, killed } = await publishWithACopyKilledPastFinalize()
+    const copy = join(wiki.next, 'manual.txt')
+    let recovering
+    try {
+      swapBeforeReading(
+        (path) => path === copy,
+        () => putFifoAt(copy),
+      )
+
+      // Act
+      recovering = recoverWhoseCopyIsAFifo({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      })
+      const outcome = await outcomeWithin(recovering, FIFO_SWAP_WAIT_MS)
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          outcome,
+          lockKept: existsSync(`${wiki.output}.publish-lock.json`),
+          journalKept: existsSync(`${wiki.output}.publish-journal.json`),
+        },
+        {
+          killed: '',
+          outcome: 'published',
+          lockKept: false,
+          journalKept: false,
+        },
+      )
+    } finally {
+      // A recovery that blocked on the FIFO is let go and ended; the armed swap is cleared.
+      releaseReadersOf(copy)
+      if (recovering !== undefined)
+        await outcomeWithin(recovering, FIFO_SWAP_WAIT_MS)
+      swapBeforeReading(
+        () => false,
+        async () => undefined,
+      )
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
 
 // Value: protects=the learner whose script lies in the Wiki folder and whose file is swapped for a link (by a tool, a sync client or a hostile clone's hook) in the moment between the publisher's read of its bytes and its look at its mode: the copy keeps the mode of the file that was read, not 0777 of the link; fails_when=copyLearnerFiles reads the bytes by one look and the mode and times by a second look at the path, so a link there gives the copy the mode of the link; why_new=Cycle 0048 task 66 (Security, OCR A, native adversarial); seam=the publisher copy over a file system that runs a swap right after the learner's file is read (swapAfterReading), and the real publish; no_claim=a link that stays in the Wiki folder (the publish refuses it at its recheck); Windows, whose links keep no mode
 test(

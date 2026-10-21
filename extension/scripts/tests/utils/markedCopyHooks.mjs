@@ -1,7 +1,7 @@
 /**
  * The stand-in for `node:fs/promises` of each mark a test imports a skill module with, so the test gets a copy of the module of its own:
  * - `?wrong-look`: `wrongLookFileSystem.mjs`, whose `lstat` calls a link a directory, as Node.js does on Windows for a junction to a volume;
- * - `?swapped-folder`: `swappedFolderFileSystem.mjs`, which runs a test's swap of a folder just before a `mkdir` ({@link swapBeforeMaking}), a `writeFile` or an `open` to write ({@link swapBeforeWriting}), a `readFile` ({@link swapBeforeReading}), a `rename` ({@link swapBeforeRenaming}) or a hard `link` ({@link swapBeforeLinking}) of a path the test names, or halfway through the write of a file through its handle ({@link swapHalfwayThroughWriting});
+ * - `?swapped-folder`: `swappedFolderFileSystem.mjs`, which runs a test's swap of a folder just before a `mkdir` ({@link swapBeforeMaking}), a `writeFile` or an `open` to write ({@link swapBeforeWriting}), a `readFile` ({@link swapBeforeReading}), an `open` to read ({@link swapBeforeOpeningToRead}), a `rename` ({@link swapBeforeRenaming}) or a hard `link` ({@link swapBeforeLinking}) of a path the test names, or halfway through the write of a file through its handle ({@link swapHalfwayThroughWriting});
  * - `?unnamed-real-path`: `unnamedRealPathFileSystem.mjs`, whose `realpath` fails for the folder a test names;
  * - `?crlf-shell`: `crlfShellFileSystem.mjs`, which reads the reader shell with CRLF line endings;
  * - `?large-file-ids`: `largeFileIdsFileSystem.mjs`, which gives the folder a test names file ids above 2^53 that change in their low bits ({@link giveLargeFileIds});

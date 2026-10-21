@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import { link, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises';
 import { hostname, uptime } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep, win32 } from 'node:path';
@@ -24,6 +24,12 @@ const RENAME_TRIES = 10, RENAME_RETRY_STEP_MS = 50;
 const REFUSAL_MARKS = ['unreadRecordPath', 'isHoldRefusal', 'isCandidateReadFailure', 'isUnsyncedCandidate', 'isSupersededRestore'];
 /** The permission bits a copy of a learner's file takes from its original: read, write and execute for the owner, the group and others (octal 777), never a setuid, setgid or sticky bit. Read by {@link copyLearnerFiles}. */
 const COPIED_MODE_BITS = 0o777;
+/** The flags with which a file is opened to be read whole after a look at its path: read-only, never waiting (`O_NONBLOCK`: the open of a FIFO that no writer has open would wait for one for ever, with the publish lock held) and never through a link at the last name of the path (`O_NOFOLLOW`). Windows has neither flag and no FIFO in its file namespace, so only the read-only flag stays there. Read by {@link readRegularFile}. */
+const READ_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
+/** The flags with which a file or a folder is opened to be synced: read-only and never waiting on a FIFO put at the path since the look (`O_NONBLOCK`; none on Windows). A link is followed as before. Read by {@link syncFolder}. */
+const SYNC_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+/** The errors with which a system answers the open with `O_NOFOLLOW` of a link: `ELOOP` on Linux and macOS, `EMLINK` on FreeBSD. Read by {@link readRegularFile}. */
+const LINK_AT_OPEN_ERRORS = ['ELOOP', 'EMLINK'];
 
 /** Runs a move or a removal of a folder or file, and runs it again, a bounded number of times with a growing wait ({@link RENAME_TRIES}), while it fails with an error that passes once another process lets go of the entry ({@link PASSING_RENAME_ERRORS}); any other error, and the last passing one, is passed on at once. Called by {@link renameRetried} and {@link unlinkRetried}. @param call - The move or the removal. @returns What the call resolves with. @throws What its last try rejects with. @example await retriedWhilePassing(() => unlink('/repo/.codebook/wiki.publish-lock.json')) // resolves after a passing EBUSY */
 async function retriedWhilePassing(call) {
@@ -178,13 +184,29 @@ function parseManifest(bytes, projectRoot) {
   return { manifest, owned };
 }
 
-/** Reads publisher metadata and owned files without accepting a symlink or special file. @example await regularBytes('/wiki/codebook-wiki.json') */
+/** Reads publisher metadata and owned files without accepting a symlink or special file: the look at the path refuses them, and the read goes through a handle that cannot wait on a FIFO put at the path since the look and follows no link put there ({@link readRegularFile}). A regular file put at the path since the look is read as it was before: the metadata files are replaced by their writers, each whole. @example await regularBytes('/wiki/codebook-wiki.json') */
 async function regularBytes(path, optional = false) {
   let stat;
   try { stat = await lstat(path); } catch (error) { if (optional && isMissing(error)) return undefined; throw error; }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Wiki publication requires a regular file: ' + path);
+  const reading = readRegularFile(path, 'Wiki publication requires a regular file: ' + path).then(({ bytes }) => bytes);
   // A file that another process removed between the look and the read is a missing one, as it is when the look finds nothing.
-  return optional ? readFile(path).catch(error => { if (isMissing(error)) return undefined; throw error; }) : readFile(path);
+  return optional ? reading.catch(error => { if (isMissing(error)) return undefined; throw error; }) : reading;
+}
+
+/** Reads a file whole through one handle that was opened without waiting and without following a link ({@link READ_WITHOUT_WAITING}), and answers its bytes with the handle's status, read before the bytes: the handle must be a regular file, and, where `looked` is given, the file of that look (the same device and file id), so a FIFO, a link or another file put at the path between the look and the open is refused and never read. Called by {@link regularBytes}, {@link readLearnerFile} and {@link regularFileOf}. @param path - The file's path, which the caller looked at. @param refusal - The message of the refusal of an entry that is no regular file, or no longer the file the look found. @param looked - The look's status with bigint ids; none where only a regular file is required. @returns The bytes and the handle's status. @throws An error with `refusal` for a link at the path, a handle that is no regular file or another file than the look found; what the open, the status read or the read rejects with otherwise. @example await readRegularFile('/repo/.codebook/wiki/manual.sh', 'A manual Wiki file changed during publication: /repo/.codebook/wiki/manual.sh', await lstat('/repo/.codebook/wiki/manual.sh', { bigint: true })) // => { bytes: <Buffer …>, status: BigIntStats { … } } */
+async function readRegularFile(path, refusal, looked) {
+  let handle;
+  try { handle = await open(path, READ_WITHOUT_WAITING); }
+  catch (error) { throw LINK_AT_OPEN_ERRORS.includes(error.code) ? new Error(refusal, { cause: error }) : error; }
+  try {
+    const status = await handle.stat({ bigint: true });
+    // An entry that is no regular file, or not the file the look found, was put at the path since the look: its bytes are not read.
+    if (!status.isFile() || (looked !== undefined && !isSameFile(status, looked))) throw new Error(refusal);
+    return { bytes: await handle.readFile(), status };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 /** Inventories stage/output for the shared publisher; linked and special files remain untouched. @example await listFiles('/repo/.codebook/wiki') */
@@ -493,12 +515,17 @@ const setWhereAble = setting => setting.catch(error => { if (!UNSETTABLE_ATTRIBU
 /** Runs a sync of a file or a folder, and lets pass one that the system or the file system cannot make there ({@link UNSYNCABLE_ERRORS}); any other failure, such as a disk error, is passed on. Called by {@link writeOwnFile} for each file it writes, by {@link publishJournalWriterOf} for each line of the list of copies, and by {@link syncFolder}. @param sync - The sync, as `() => handle.sync()`. @throws What the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}. @example await syncWhereAble(() => handle.sync()) */
 const syncWhereAble = sync => sync().catch(error => { if (!UNSYNCABLE_ERRORS.includes(error.code)) throw error; });
 
-/** Syncs a folder's names to the disk: it is opened read-only and synced, where the platform allows ({@link UNSYNCABLE_ERRORS}; Windows cannot sync a folder), so the names of the files a publish wrote or moved into it survive a power cut after the step that relies on them. Called by {@link publishWiki} for the folder that holds the journal and the lock, once the journal has its name and again once the swap moved the Wiki, and for the files and folders of the candidate before the swap ({@link syncCandidate}; a file is opened read-only and synced as a folder is), by {@link restoreManifest} for the folders of a metadata recovery, and by {@link publishJournalWriterOf} once the list of copies has its name. @throws What the open or the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}. @example await syncFolder('/repo/.codebook') */
+/** Syncs a folder's names to the disk: it is opened read-only and synced, where the platform allows ({@link UNSYNCABLE_ERRORS}; Windows cannot sync a folder), so the names of the files a publish wrote or moved into it survive a power cut after the step that relies on them; the open does not wait ({@link SYNC_WITHOUT_WAITING}), so a FIFO put at the path of a file since it was listed ends the open at once, is refused ({@link syncUnlessFailed} words the refusal for a candidate) and holds no publish for a writer. Called by {@link publishWiki} for the folder that holds the journal and the lock, once the journal has its name and again once the swap moved the Wiki, and for the files and folders of the candidate before the swap ({@link syncCandidate}; a file is opened read-only and synced as a folder is), by {@link restoreManifest} for the folders of a metadata recovery, and by {@link publishJournalWriterOf} once the list of copies has its name. @throws What the open or the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}, and an error for an entry that is neither a file nor a folder. @example await syncFolder('/repo/.codebook') */
 async function syncFolder(folder) {
-  const handle = await open(folder, 'r').catch(error => { if (UNSYNCABLE_ERRORS.includes(error.code)) return undefined; throw error; });
+  const handle = await open(folder, SYNC_WITHOUT_WAITING).catch(error => { if (UNSYNCABLE_ERRORS.includes(error.code)) return undefined; throw error; });
   // A folder the system does not open, as Windows does not, is not synced.
   if (handle === undefined) return;
-  try { await syncWhereAble(() => handle.sync()); } finally { await handle.close().catch(() => undefined); }
+  try {
+    // A FIFO or another special entry put at the path since the look is no file or folder to sync: the system answers its sync as one it cannot make, which would pass, so it is refused here.
+    const status = await handle.stat();
+    if (!status.isFile() && !status.isDirectory()) throw new Error('it is no regular file or folder now');
+    await syncWhereAble(() => handle.sync());
+  } finally { await handle.close().catch(() => undefined); }
 }
 
 /** Removes a file the publisher made and no longer needs: the file a failed {@link writeOwnFile} made, which holds part of the bytes at most, the file beside a journal or a claim that {@link writeWholeRecord} gave the record's name, and the file a recovery read the file system's clock from. The path may lead to another file by now, so it is removed only while it is that file, by its device and file id ({@link isSameFileAt}), and no byte of another file is lost. Called by {@link writeOwnFile} once the write or the close failed, by {@link writeWholeRecord} once the record has its name or its write failed, by {@link fileSystemTimeBeside} for the file it read the file system's clock from, by {@link publishJournalWriterOf} for the list of copies and the side file of a journal it removes, and by {@link removeOrphan} for a list of copies a stopped run left. @param file - The record of the file the open made. @example await removeOwnFile({ path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131074n }) */
@@ -807,19 +834,12 @@ function finalizerOf(stage, id, finalized) {
 /** The learner's files of a Wiki: its files that its manifest does not list, other than its manifest and its record; none without a Wiki. Called by {@link publishWiki}, {@link requireLearnerFilesUnchanged} and {@link learnerCopiesIn}. @example learnerFilesOf(wiki) // => ['manual.txt'] */
 const learnerFilesOf = wiki => wiki ? wiki.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !wiki.owned.has(path)) : [];
 
-/** Reads a regular file of the prior Wiki through one handle and answers its bytes with the status of that same file, taken from the handle before the bytes are read: the look at the path refuses a link and a special file as {@link regularBytes} does, and the handle's status must be that look's file (the same device and file id), so a link or another file put at the path between the look and the open is refused and not read; the mode and the times come from the file whose bytes were read, never from a second look at the path, which a swap or a save in between would change. Called by {@link copyLearnerFiles}. @param path - The file's path in the Wiki folder. @returns The bytes and the handle's status (its mode and its access and modification times). @throws The refusal of an entry that is no regular file, or that is not the file the look found, and what the look or the read rejects with. @example await readLearnerFile('/repo/.codebook/wiki/manual.sh') // => { bytes: <Buffer …>, status: Stats { mode: 33256, … } } */
+/** Reads a regular file of the prior Wiki through one handle and answers its bytes with the status of that same file, taken from the handle before the bytes are read: the look at the path refuses a link and a special file as {@link regularBytes} does, and the handle's status must be that look's file (the same device and file id), so a link or another file put at the path between the look and the open is refused and not read, and a FIFO put there is refused too: the open does not wait for a writer ({@link readRegularFile}); the mode and the times come from the file whose bytes were read, never from a second look at the path, which a swap or a save in between would change. Called by {@link copyLearnerFiles}. @param path - The file's path in the Wiki folder. @returns The bytes and the handle's status (its mode and its access and modification times). @throws The refusal of an entry that is no regular file, or that is not the file the look found, and what the look or the read rejects with. @example await readLearnerFile('/repo/.codebook/wiki/manual.sh') // => { bytes: <Buffer …>, status: Stats { mode: 33256, … } } */
 async function readLearnerFile(path) {
   const looked = await lstat(path, { bigint: true });
   if (!looked.isFile()) throw new Error('Wiki publication requires a regular file: ' + path);
-  const handle = await open(path, 'r');
-  try {
-    const status = await handle.stat({ bigint: true });
-    // A file that is not the one the look found was put at the path since: its bytes are not read.
-    if (!status.isFile() || !isSameFile(status, looked)) throw new Error('A manual Wiki file changed during publication: ' + path);
-    return { bytes: await handle.readFile(), status };
-  } finally {
-    await handle.close().catch(() => undefined);
-  }
+  // A file that is not the one the look found was put at the path since: its bytes are not read.
+  return readRegularFile(path, 'A manual Wiki file changed during publication: ' + path, looked);
 }
 
 /** Builds the test of whether a learner's file stands where the update has an owned file or folder, with lookups in place of a scan of the owned paths for each file: the path itself is owned, a folder above the path is owned (an owned file where the learner's file needs a folder), or the path is a folder above an owned path (a learner's file where the update needs a folder). The folders above the owned paths are collected once. Called by {@link copyLearnerFiles}. @param owned - The paths the update owns. @returns The test, given a learner's path. @example conflictsWithOwnedOf(new Set(['pages/notes.html']))('pages') // => true */
@@ -1056,11 +1076,13 @@ async function learnerCopiesIn(stage, wiki, output, root, begun) {
   return copies;
 }
 
-/** Reads a regular file of a candidate without following a link, with the record of the file read: its path, the SHA-256 digest of its bytes, and its device and file id as bigints, the status read before the bytes, so a file put at the path in between is not the one recorded. Called by {@link learnerCopiesIn}. @returns The bytes and the record ({@link writeOwnFile} answers one of the same form). @throws The refusal of an entry that is no regular file, and what the look or the read rejects with. @example await regularFileOf('/repo/.codebook/next/manual.txt') // => { bytes: <Buffer …>, file: { path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131077n } } */
+/** Reads a regular file of a candidate without following a link and without waiting on a FIFO put at the path since the look ({@link readRegularFile}), with the record of the file read: its path, the SHA-256 digest of its bytes, and its device and file id as bigints, the status read before the bytes, so a file put at the path in between is not the one recorded. Called by {@link learnerCopiesIn}. @returns The bytes and the record ({@link writeOwnFile} answers one of the same form). @throws The refusal of an entry that is no regular file, and what the look or the read rejects with. @example await regularFileOf('/repo/.codebook/next/manual.txt') // => { bytes: <Buffer …>, file: { path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131077n } } */
 async function regularFileOf(path) {
-  const status = await lstat(path, { bigint: true });
-  if (!status.isFile()) throw new Error('Wiki publication requires a regular file: ' + path);
-  const bytes = await readFile(path);
+  const looked = await lstat(path, { bigint: true });
+  const refusal = 'Wiki publication requires a regular file: ' + path;
+  if (!looked.isFile()) throw new Error(refusal);
+  // The bytes and the record come from one handle, which must be the file of the look.
+  const { bytes, status } = await readRegularFile(path, refusal, looked);
   return { bytes, file: { path, hash: digest(bytes), dev: status.dev, ino: status.ino } };
 }
 

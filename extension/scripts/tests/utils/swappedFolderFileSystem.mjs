@@ -7,6 +7,7 @@ const pendingSwaps = {
   mkdir: undefined,
   writeFile: undefined,
   readFile: undefined,
+  openToRead: undefined,
   afterRead: undefined,
   rename: undefined,
   link: undefined,
@@ -97,7 +98,7 @@ function handleThatSwapsHalfway(handle, swap) {
 }
 
 /**
- * Asks the next `readFile` of a file that `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`. Called by the publisher's tests that swap a folder between two of its looks with no write between them.
+ * Asks the next `readFile` of a file that `isAwaited` names to run `swap` first, once, as {@link swapBeforeMaking} does for `mkdir`; the open of a file for a whole read after a look at it (numeric flags) counts as its `readFile`. Called by the publisher's tests that swap a folder between two of its looks with no write between them.
  * @param {(path: string) => boolean} isAwaited - Whether a file `readFile` is asked for is the one before which the swap runs.
  * @param {() => Promise<void>} swap - The swap.
  * @returns {void}
@@ -106,6 +107,18 @@ function handleThatSwapsHalfway(handle, swap) {
  */
 export function swapBeforeReading(isAwaited, swap) {
   pendingSwaps.readFile = { isAwaited, swap }
+}
+
+/**
+ * Asks the next `open` of a file for reading that `isAwaited` names to run `swap` first, once, whatever flags the publisher opens it with: as another process that puts a FIFO or a link at the path between the publisher's look at it and its open. Called by the publisher's tests of the reads that follow a look at the same path. `isAwaited` is asked once for each open for reading, and not again for the reads through its handle.
+ * @param {(path: string) => boolean} isAwaited - Whether a file `open` for reading is the one before which the swap runs.
+ * @param {() => Promise<void>} swap - The swap.
+ * @returns {void}
+ * @example
+ * swapBeforeOpeningToRead((path) => path.endsWith('/wiki/manual.sh'), () => replaceWithFifo(path))
+ */
+export function swapBeforeOpeningToRead(isAwaited, swap) {
+  pendingSwaps.openToRead = { isAwaited, swap }
 }
 
 /**
@@ -148,7 +161,7 @@ export function swapBeforeLinking(isAwaited, swap) {
 
 /**
  * Runs the swap waiting before a call of `kind` when the call's path is the one it waits for, once; called by {@link mkdir}, {@link writeFile}, {@link open}, {@link readFile}, {@link rename} and {@link link}.
- * @param {'mkdir' | 'writeFile' | 'readFile' | 'afterRead' | 'rename' | 'link'} kind - The call about to run.
+ * @param {'mkdir' | 'writeFile' | 'readFile' | 'openToRead' | 'afterRead' | 'rename' | 'link'} kind - The call about to run.
  * @param {string | URL} path - The call's path.
  * @returns {Promise<void>} Once the swap ran, or at once when none waits for this path.
  * @example
@@ -216,7 +229,7 @@ export async function writeFile(path, ...rest) {
 }
 
 /**
- * Opens a file as `open` does, after the swap of {@link swapBeforeWriting} when the file is opened to be written and is the file the swap waits for, as {@link writeFile} does; the handle of the file {@link swapHalfwayThroughWriting} waits for runs that swap halfway through its write, once.
+ * Opens a file as `open` does, after the swap of {@link swapBeforeWriting} when the file is opened to be written and is the file the swap waits for, as {@link writeFile} does, or after the swap of {@link swapBeforeOpeningToRead} when it is opened to be read; an open with numeric flags, which is how the publisher reads a file whole after a look at it, also runs the swap of {@link swapBeforeReading} first and tells the observer of {@link observeFileReads} the bytes its handle reads, as a `readFile` of the path does; the handle of the file {@link swapHalfwayThroughWriting} waits for runs that swap halfway through its write, once.
  * @param {string} path - The file to open.
  * @param {string | number} [flags] - How the file is opened, as `open` takes it.
  * @param {...unknown} rest - The caller's mode, handed on unchanged.
@@ -225,19 +238,47 @@ export async function writeFile(path, ...rest) {
  * await open('/repo/.codebook/next/manual.txt', 'wx') // => a handle, after the swap that waited for this file
  */
 export async function open(path, flags, ...rest) {
-  // Only an open to write is a write the swaps wait for; a numeric flag the publisher does not use is left alone.
+  // Only an open to write is a write the swaps wait for; a numeric flag is how the publisher opens a file to read it whole after a look at it (it cannot wait on a FIFO and follows no link).
   const isWrite = typeof flags === 'string' && /[wa+]/.test(flags)
+  const isWholeRead = typeof flags === 'number'
   if (isWrite) await swapIfAwaited('writeFile', path)
-  const handle = await fileSystem.open(path, flags, ...rest)
+  else await swapIfAwaited('openToRead', path)
+  // A whole read after a look stands in for the `readFile` the swap of {@link swapBeforeReading} waits for.
+  if (isWholeRead) await swapIfAwaited('readFile', path)
+  let handle = await fileSystem.open(path, flags, ...rest)
   // A handle opened to read answers its bytes first and then runs the swap of swapAfterReading, when it waits for this file; the predicate is asked here, once, and the handle carries the answer.
   const afterRead = pendingSwaps.afterRead
   if (!isWrite && afterRead?.isAwaited(String(path)))
-    return handleSwappedAfterReading(handle, afterRead)
+    handle = handleSwappedAfterReading(handle, afterRead)
+  if (isWholeRead) handle = handleObservingReads(handle, String(path))
   const halfway = pendingSwaps.halfwayWrite
   // Only the awaited file's handle runs its swap halfway through its write, once.
   if (!isWrite || !halfway?.isAwaited(String(path))) return handle
   pendingSwaps.halfwayWrite = undefined
   return handleThatSwapsHalfway(handle, halfway.swap)
+}
+
+/**
+ * Wraps an open handle so that its `readFile` tells the observer of {@link observeFileReads} the path and the bytes once they are read (after the swap of {@link swapAfterReading}, as a `readFile` of the path does); every other member is the handle's own. The publisher reads its files whole through such a handle.
+ * @param {import('node:fs/promises').FileHandle} handle - The handle `open` answered for a whole read.
+ * @param {string} path - The file's path.
+ * @returns {import('node:fs/promises').FileHandle} The wrapped handle.
+ * @example
+ * await handleObservingReads(await fileSystem.open(path, fs.constants.O_RDONLY), path).readFile() // tells the observer (path, bytes)
+ */
+function handleObservingReads(handle, path) {
+  return new Proxy(handle, {
+    get(target, property) {
+      if (property === 'readFile')
+        return async (...options) => {
+          const bytes = await target.readFile(...options)
+          readObserver?.(path, bytes)
+          return bytes
+        }
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
 }
 
 /**
