@@ -2717,21 +2717,10 @@ export class StudyService {
     status: ReturnType<typeof projectNodeTestOutcome>['recordingStatus'],
   ) {
     const sealed = status === 'finalized' || status === 'partial'
-    const reason =
-      status === 'failed'
-        ? record.nodeHistoryFailure
-        : status === 'partial'
-          ? record.nodeHistoryReason
-          : status === 'unavailable'
-            ? (historyExclusionReason(record.historyExcluded) ??
-              (record.stopped || record.error
-                ? 'The test run ended before its history began; nothing was recorded.'
-                : 'Preparing: the test history starts when preparation passes.'))
-            : undefined
     return {
       capture: undefined,
       status,
-      reason,
+      reason: this.nodeRecordingReason(record, status),
       endMs: undefined,
       contextStatus: sealed
         ? ('saved' as const)
@@ -2743,6 +2732,29 @@ export class StudyService {
       contextReason:
         status === 'failed' ? record.nodeHistoryFailure : undefined,
     }
+  }
+
+  /**
+   * Says why a test run's `recording` reads its status, for {@link nodeRecording}: the seal's failure, why a sealed history is partial, or why nothing was recorded yet.
+   * @param record - The test run.
+   * @param status - The recording status of the run's outcome ({@link projectNodeTestOutcome}).
+   * @returns The reason, or `undefined` for a history that records or sealed complete.
+   * @example this.nodeRecordingReason(record, 'unavailable') // => 'Preparing: the test history starts when preparation passes.'
+   */
+  private nodeRecordingReason(
+    record: StudyRecord,
+    status: ReturnType<typeof projectNodeTestOutcome>['recordingStatus'],
+  ): string | undefined {
+    if (status === 'failed') return record.nodeHistoryFailure
+    if (status === 'partial') return record.nodeHistoryReason
+    if (status !== 'unavailable') return undefined
+    // A run refused, failed or stopped before its history began recorded nothing; a run still preparing says so.
+    return (
+      historyExclusionReason(record.historyExcluded) ??
+      (record.stopped || record.error
+        ? 'The test run ended before its history began; nothing was recorded.'
+        : 'Preparing: the test history starts when preparation passes.')
+    )
   }
 
   /** Prevents late acquisitions escaping shutdown while preserving retryable cleanup failures. @example await service.shutdown() */

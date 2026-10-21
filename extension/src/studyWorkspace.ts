@@ -10329,6 +10329,29 @@ export class StudyWorkspace {
     this.currentSourceAvailable = false
   }
 
+  /**
+   * Says what a refresh does with the reader once its projections are current; read by {@link refresh} at the end of each attempt.
+   * A selected test replay owns its source, Application view and debugger, so the refresh only publishes its catalog and status (EN9). Playback owns recorded source presentation and the returned Wiki keeps its place, so background checkpoints render the selection only when neither does. Nothing else draws a test run's Save learning replay item while the reader shows nothing of the run (the Study pane never opened is the usual state of a chat-driven test run), so the refresh draws that item then.
+   * @returns `render` to render the selection, `publish` to publish the selected test replay's catalog and status, `save-item` to draw a test run's status bar item alone, `none` otherwise.
+   * @example this.refreshPresentation() // => 'save-item' during a test run whose Study pane is closed
+   */
+  private refreshPresentation(): 'render' | 'publish' | 'save-item' | 'none' {
+    if (this.opened && !this.closing) {
+      if (this.selectedNodeHistory !== undefined) return 'publish'
+      if (
+        !this.recordingActive &&
+        this.repositoryNavigation === undefined &&
+        !this.presentationTransition &&
+        // A saved study chosen with the editor area hidden is shown by showStudyAwaitingEditorArea once the area is back.
+        !this.studyAwaitsEditorArea()
+      )
+        return 'render'
+    }
+    return this.currentRecord()?.profile === NODE_TEST_PROFILE
+      ? 'save-item'
+      : 'none'
+  }
+
   /** Coalesces observation updates while keeping control operations independent of disk/render work. @example await this.refresh() */
   private async refresh(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
@@ -10365,22 +10388,11 @@ export class StudyWorkspace {
             )?.id ?? selected.itemId,
         })
       }
-      // A selected test replay owns its source, Application view and debugger: the refresh updates the catalog and the status only (EN9).
-      const testReplaySelected = this.selectedNodeHistory !== undefined
-      // Playback owns recorded source presentation; background checkpoints cannot reveal it over the returned Wiki.
-      if (
-        this.opened &&
-        !this.closing &&
-        !this.recordingActive &&
-        !testReplaySelected &&
-        this.repositoryNavigation === undefined &&
-        !this.presentationTransition &&
-        // A saved study chosen with the editor area hidden is shown by showStudyAwaitingEditorArea once the area is back.
-        !this.studyAwaitsEditorArea()
-      )
+      const presentation = this.refreshPresentation()
+      if (presentation === 'render')
         await this.renderSelection(true, false, signal)
-      else if (testReplaySelected && this.opened && !this.closing)
-        this.publish()
+      else if (presentation === 'publish') this.publish()
+      else if (presentation === 'save-item') this.publishLearningSave()
     })()
     this.refreshing = attempt
     try {
@@ -11122,51 +11134,19 @@ export class StudyWorkspace {
     this.publish()
     try {
       await this.replaceUnavailableReplayDebugger()
-      const history = await this.nodeHistoryStore!.read(studyId)
-      if (
-        request !== this.historyRequest ||
-        revision !== this.revision ||
-        this.closing
+      const opening = await this.readNodeHistoryOpening(
+        studyId,
+        request,
+        revision,
       )
-        return { status: 'superseded' }
-      let learningDecision: NodeTestHistoryLearningDecision | undefined
-      try {
-        learningDecision =
-          await this.nodeHistoryStore!.readLearningDecision(studyId)
-      } catch (error) {
-        this.report('progress', error)
-      }
-      if (
-        request !== this.historyRequest ||
-        revision !== this.revision ||
-        this.closing
-      )
-        return { status: 'superseded' }
-      let learningMaterial: NodeTestLearningMaterial | undefined
-      try {
-        learningMaterial =
-          await this.nodeHistoryStore!.readLearningMaterial(studyId)
-      } catch (error) {
-        this.report('history-learning', error)
-      }
-      if (
-        request !== this.historyRequest ||
-        revision !== this.revision ||
-        this.closing
-      )
-        return { status: 'superseded' }
-      let savedSequence: number | undefined, positionError: unknown
-      try {
-        savedSequence = await this.nodeHistoryStore!.readReaderPosition(studyId)
-      } catch (error) {
-        positionError = error
-      }
-      if (
-        request !== this.historyRequest ||
-        revision !== this.revision ||
-        this.closing
-      )
-        return { status: 'superseded' }
+      if (!opening) return { status: 'superseded' }
+      const {
+        history,
+        learningDecision,
+        learningMaterial,
+        savedSequence,
+        positionError,
+      } = opening
       this.nodeHistoryPlaybackController?.dispose()
       this.replayDebugger?.invalidate()
       this.selectedNodeHistoryRequest++
@@ -11200,20 +11180,19 @@ export class StudyWorkspace {
         changed: () => this.publish(),
         failed: (error) => this.report('control', error),
       })
+      // The saved reader position, else the first stop whose source verifies, else the first event (DS1).
+      const initialSequence =
+        savedSequence ??
+        firstVerifiedStopSequence(history) ??
+        history.entries[0]?.sequence
       this.nodeHistoryPlaybackController.open(
         history.entries.map((entry) => ({
           sequence: entry.sequence,
           elapsedMs: entry.elapsedMs,
         })),
-        savedSequence ??
-          firstVerifiedStopSequence(history) ??
-          history.entries[0]?.sequence,
+        initialSequence,
       )
       if (positionError) this.report('history-position', positionError)
-      const initialSequence =
-        savedSequence ??
-        firstVerifiedStopSequence(history) ??
-        history.entries[0]?.sequence
       if (initialSequence !== undefined)
         await this.selectNodeHistoryEvent(
           history,
@@ -11222,21 +11201,13 @@ export class StudyWorkspace {
           false,
           false,
         )
-      if (
-        request !== this.historyRequest ||
-        revision !== this.revision ||
-        this.closing
-      )
+      if (this.historyOpenSuperseded(request, revision))
         return { status: 'superseded' }
       this.loading = false
       this.publish()
       return { status: 'opened' }
     } catch (error) {
-      if (
-        request !== this.historyRequest ||
-        revision !== this.revision ||
-        this.closing
-      )
+      if (this.historyOpenSuperseded(request, revision))
         return { status: 'superseded' }
       this.loading = false
       this.report('archive', error)
@@ -11252,6 +11223,66 @@ export class StudyWorkspace {
         this.publish()
       }
     }
+  }
+
+  /**
+   * Reads what opening a test history shows besides its journal (the learner's decision, the learning material and the saved reader position), stopping as soon as a newer request, a newer reader revision or the reader's close supersedes the open; called by {@link openNodeHistory}.
+   * A decision or material that cannot be read is reported and left out, and a position that cannot be read is returned as its error, which the open reports once the replay is selected.
+   * @param studyId - The test history's study id.
+   * @param request - The open's request token.
+   * @param revision - The reader revision the open belongs to.
+   * @returns The history with what was read, or `undefined` once the open is superseded.
+   * @throws When the journal itself cannot be read or verified.
+   * @example await this.readNodeHistoryOpening(studyId, request, this.revision) // => { history, learningDecision, learningMaterial, savedSequence, positionError }
+   */
+  private async readNodeHistoryOpening(
+    studyId: string,
+    request: number,
+    revision: number,
+  ): Promise<
+    | {
+        history: NodeTestHistoryIndex
+        learningDecision?: NodeTestHistoryLearningDecision
+        learningMaterial?: NodeTestLearningMaterial
+        savedSequence?: number
+        positionError?: unknown
+      }
+    | undefined
+  > {
+    const store = this.nodeHistoryStore!
+    const history = await store.read(studyId)
+    if (this.historyOpenSuperseded(request, revision)) return undefined
+    const learningDecision = await store
+      .readLearningDecision(studyId)
+      .catch((error: unknown) => {
+        this.report('progress', error)
+        return undefined
+      })
+    if (this.historyOpenSuperseded(request, revision)) return undefined
+    const learningMaterial = await store
+      .readLearningMaterial(studyId)
+      .catch((error: unknown) => {
+        this.report('history-learning', error)
+        return undefined
+      })
+    if (this.historyOpenSuperseded(request, revision)) return undefined
+    const position = await store.readReaderPosition(studyId).then(
+      (savedSequence) => ({ savedSequence, positionError: undefined }),
+      (positionError: unknown) => ({ savedSequence: undefined, positionError }),
+    )
+    if (this.historyOpenSuperseded(request, revision)) return undefined
+    return { history, learningDecision, learningMaterial, ...position }
+  }
+
+  /**
+   * Says whether a test history's open lost its place: a newer history request took the reader, the reader's revision changed, or the reader is closing; read by {@link openNodeHistory} and {@link readNodeHistoryOpening} after each await.
+   * @param request - The open's request token.
+   * @param revision - The reader revision the open belongs to.
+   * @returns `true` when the open must leave the reader as it is.
+   * @example if (this.historyOpenSuperseded(request, revision)) return { status: 'superseded' }
+   */
+  private historyOpenSuperseded(request: number, revision: number): boolean {
+    return !this.isLatestHistoryRequest(request) || revision !== this.revision
   }
 
   /**

@@ -81,14 +81,13 @@ export class NodeLearningSave {
    * Gives what the status item shows for a test run: preparing before its first stop, the stops reached while it runs, finished after Stop, then the state of its Save; called by the Study workspace each time it publishes.
    * A saved or partially saved state counts for the material revision it read: a later revision returns the item to Save (a Save receipt never vouches for a later revision).
    * @param record - A node-test run of the service.
-   * @returns The item's text, tooltip and command; `undefined` for a run that recorded nothing (refused before its history).
+   * @returns The item's text, tooltip and command; `undefined` for a run that recorded nothing ({@link recordedNothing}: refused or stopped before its history, or sealed with no entry).
    * @example save.item(record)?.text // => '$(record) Recording explanation · stop 1 of 2 · Save learning replay'
    */
   item(record: StudyRecord): NodeLearningSaveItem | undefined {
     const service = this.host.service()
     if (!service || record.profile !== NODE_TEST_PROFILE) return undefined
-    // A run refused before its history began has nothing to save.
-    if (record.historyExcluded) return undefined
+    if (recordedNothing(record)) return undefined
     const studyId = `${service.instanceId}_${record.id}`
     const state = this.currentState(studyId, record)
     if (state) return this.itemOfState(studyId, state)
@@ -115,12 +114,17 @@ export class NodeLearningSave {
    * Saves a test run's learning replay for the status item's Save and the Retry of a failed stage; the command `codebook.saveLearningReplay` calls it through the Study workspace for a node-test run.
    * @param record - The node-test run the item shows.
    * @returns Once the Save ended in a state the item shows; a click while a Save runs returns that Save.
-   * @throws When another run's learning is being saved.
+   * @throws When another run's learning is being saved, or when the run recorded nothing ({@link recordedNothing}), which the Codebook: Save Learning Replay command can still name.
    * @example await save.save(record)
    */
   save(record: StudyRecord): Promise<void> {
     const service = this.host.service()
     if (!service) return Promise.resolve()
+    // The item is not shown for such a run; the command is refused as for a browser run without a recording.
+    if (recordedNothing(record))
+      throw new Error(
+        'No recorded Codebook session is available. Explain a real code path first.',
+      )
     const studyId = `${service.instanceId}_${record.id}`
     if (this.operation) {
       if (this.operation.studyId !== studyId)
@@ -351,6 +355,21 @@ export class NodeLearningSave {
       ...(command ? { command } : {}),
     }
   }
+}
+
+/**
+ * Says whether a test run recorded nothing a Save could keep or Open replay could show: a run refused before its history began, one stopped before it began (no history writer, as a stop during preparation leaves it), or one whose history sealed with no entry, which opens as no replay; read by {@link NodeLearningSave.item} and {@link NodeLearningSave.save}.
+ * @param record - The node-test run.
+ * @returns `true` when there is nothing to save or open.
+ * @example recordedNothing(record) // => true for a run stopped during its preparation
+ */
+function recordedNothing(record: StudyRecord): boolean {
+  return (
+    Boolean(record.historyExcluded) ||
+    !record.nodeHistoryWriter ||
+    // The seal sets the count; a sealed history without an entry has nothing to replay.
+    record.nodeHistoryEntryCount === 0
+  )
 }
 
 /**

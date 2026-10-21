@@ -183,19 +183,7 @@ function assertLearningCitations(
     const reference = step.reference
     if (!reference) continue
     const event = citable.get(reference.sequence)
-    const valid =
-      reference.type === 'stop'
-        ? event?.type === 'stop' && event.sourceHash === reference.sourceHash
-        : reference.type === 'output'
-          ? event?.type === 'output' && event.channel === reference.channel
-          : event?.type === 'result'
-    if (valid) continue
-    const claim =
-      reference.type === 'stop'
-        ? `a stop with sourceHash ${reference.sourceHash}`
-        : reference.type === 'output'
-          ? `an output on ${reference.channel}`
-          : 'the result'
+    if (citesEvent(reference, event)) continue
     // A stop cited with another hash is told the hash the journal holds.
     const expectedHash =
       reference.type === 'stop' && event?.type === 'stop'
@@ -203,9 +191,46 @@ function assertLearningCitations(
         : ''
     throw new StudyError(
       'INVALID_REFERENCE',
-      `codebook_explain_node_history refused step ${step.id}: sequence ${reference.sequence} is ${describeCitedEvent(event)} in the sealed history, but the step claims ${claim}${expectedHash}. Read the history's events again and cite each event by its sequence, type and source hash.`,
+      `codebook_explain_node_history refused step ${step.id}: sequence ${reference.sequence} is ${describeCitedEvent(event)} in the sealed history, but the step claims ${describeCitationClaim(reference)}${expectedHash}. Read the history's events again and cite each event by its sequence, type and source hash.`,
     )
   }
+}
+
+/** A learning step's reference to one journal event, as the learning material holds it. */
+type LearningReference = NonNullable<
+  NodeTestLearningMaterialContent['steps'][number]['reference']
+>
+
+/**
+ * Says whether a learning step's reference matches the event the sealed journal holds at its sequence: a stop with the same source hash, an output on the same channel, or the result; read by {@link assertLearningCitations}.
+ * @param reference - The step's reference.
+ * @param event - The journal's event at that sequence, or `undefined` when there is none.
+ * @returns `true` when the reference cites the event as the journal holds it.
+ * @example citesEvent({ type: 'result', sequence: 4 }, { type: 'result' }) // => true
+ */
+function citesEvent(
+  reference: LearningReference,
+  event: CitableEvent | undefined,
+): boolean {
+  if (reference.type === 'stop')
+    return event?.type === 'stop' && event.sourceHash === reference.sourceHash
+  if (reference.type === 'output')
+    return event?.type === 'output' && event.channel === reference.channel
+  return event?.type === 'result'
+}
+
+/**
+ * Words what a learning step's reference claims, for the step refusal of {@link assertLearningCitations}.
+ * @param reference - The step's reference.
+ * @returns The claim's words.
+ * @example describeCitationClaim({ type: 'output', sequence: 1, channel: 'stderr' }) // => 'an output on stderr'
+ */
+function describeCitationClaim(reference: LearningReference): string {
+  if (reference.type === 'stop')
+    return `a stop with sourceHash ${reference.sourceHash}`
+  return reference.type === 'output'
+    ? `an output on ${reference.channel}`
+    : 'the result'
 }
 
 /**

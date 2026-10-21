@@ -78,11 +78,6 @@ export function projectNodeTestOutcome(
   const failed =
     input.hasError || resultKind === 'failed' || resultKind === 'signal'
   const passed = !failed && input.completed && resultKind === 'passed'
-  const runtime: Outcome = failed
-    ? 'not-demonstrated'
-    : passed
-      ? 'demonstrated'
-      : 'pending'
   switch (input.history) {
     case 'none':
       // Refused at preparation, failed or stopped before its history existed: nothing was recorded.
@@ -92,20 +87,42 @@ export function projectNodeTestOutcome(
     case 'recording':
       // The study outcomes wait for the seal unless the run already failed.
       return row(
-        runtime,
+        runtimeOutcome(failed, passed),
         'recording',
         failed ? 'not-demonstrated' : 'pending',
         false,
       )
     case 'failed':
-      // The seal threw: the run's evidence stands, but nothing durable vouches for a replay.
-      return failed
-        ? row('not-demonstrated', 'failed', 'not-demonstrated', false)
-        : row(passed ? 'demonstrated' : 'partial', 'failed', 'partial', false)
+      return sealFailedRow(failed, passed)
     case 'complete':
     case 'partial':
       return sealedRow(input, failed, passed)
   }
+}
+
+/**
+ * Gives a test run's runtime outcome before its history is sealed, for the recording row of {@link projectNodeTestOutcome}.
+ * @param failed - Whether the run failed (an error, a non-zero exit or a signal).
+ * @param passed - Whether the test completed and passed.
+ * @returns `not-demonstrated` for a failed run, `demonstrated` for a passed one, `pending` otherwise.
+ * @example runtimeOutcome(false, true) // => 'demonstrated'
+ */
+function runtimeOutcome(failed: boolean, passed: boolean): Outcome {
+  if (failed) return 'not-demonstrated'
+  return passed ? 'demonstrated' : 'pending'
+}
+
+/**
+ * Projects the outcomes of a run whose history could not be sealed, the seal-failure rows of {@link projectNodeTestOutcome}: the run's evidence stands, but nothing durable vouches for a replay.
+ * @param failed - Whether the run failed (an error, a non-zero exit or a signal).
+ * @param passed - Whether the test completed and passed.
+ * @returns The seal-failure row of the run's result.
+ * @example sealFailedRow(false, true) // => { finalOutcome: 'demonstrated', recordingStatus: 'failed', studyOutcome: 'partial', recordedStudyOutcome: 'partial', replayAvailable: false }
+ */
+function sealFailedRow(failed: boolean, passed: boolean): NodeTestOutcome {
+  if (failed)
+    return row('not-demonstrated', 'failed', 'not-demonstrated', false)
+  return row(passed ? 'demonstrated' : 'partial', 'failed', 'partial', false)
 }
 
 /**

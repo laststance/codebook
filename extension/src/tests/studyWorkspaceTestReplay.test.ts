@@ -328,6 +328,70 @@ test('Open replay of a test replay during a browser replay tells the learner one
   }
 })
 
+// Value: protects=the status bar's Save learning replay item of a live test run while the Study pane was never opened, the usual state of a chat-driven test run; fails_when=the item is drawn only when the reader publishes, so it stays hidden until the learner opens the Study pane and Save learning replay cannot be clicked; why_new=the live Save test opens the reader first (Red Team, Step 9 of PR-A's ship); seam=none; no_claim=the host's status bar drawing (the harness's status item stands in)
+test('the Save item of a live test run is drawn in the status bar while the Study pane is closed', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const { service, configuration } = harness
+    const sourceText = await readFile(
+      join(harness.directory, configuration.source.path),
+      'utf8',
+    )
+    service.environment.build.sourceHash = 'f'.repeat(64)
+    service.environment.createNodeTestRun = async () =>
+      twoStopOwnedRun(configuration.source, sourceText)
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: 'closed-pane-save-item',
+      configuration: {
+        version: 1,
+        adapter: 'vitest-node',
+        book: configuration.book,
+        testFile: 'src/scheduler.test.ts',
+        testHash: 'a'.repeat(64),
+        testTitles: ['job scheduler', 'runs a delayed job after its timer'],
+        source: configuration.source,
+        inspections: configuration.inspections.slice(0, 1),
+        additionalStops: [
+          {
+            ...configuration.source,
+            anchorIndex: 0,
+            inspections: configuration.inspections.slice(0, 1),
+          },
+        ],
+      },
+    })
+    const record = service.record(receipt)
+    await record.preparation
+    const studyId = `${service.instanceId}_${record.id}`
+
+    // Act
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.equal(harness.reader.inspect().opened, false)
+    assert.deepEqual(
+      {
+        text: harness.saveStatus.text,
+        command: structuredClone(harness.saveStatus.command),
+      },
+      {
+        text: '$(record) Recording explanation · stop 1 of 2 · Save learning replay',
+        command: {
+          title: 'Save learning replay',
+          command: 'codebook.saveLearningReplay',
+          arguments: [studyId],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's answer Close browser replay to the one-replay-at-a-time notice: the browser replay closes and the test replay opens in its place; fails_when=the answer closes nothing, or the test replay stays unopened after the browser replay closed; why_new=the refusal test only dismisses the notice (DS10, AC4); seam=none; no_claim=the host's notification look (the learner's answer is scripted)
 test('choosing Close browser replay in the one-replay-at-a-time notice closes the browser replay and opens the test replay', async () => {
   // Arrange

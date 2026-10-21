@@ -473,3 +473,44 @@ test('a run refused before its history began shows no Save item', () => {
   // Assert
   assert.equal(item, undefined)
 })
+
+// Value: protects=a test run stopped before its history began (stopped during its preparation, with no history writer and no exclusion) and a history that sealed with no entry: no Save item, and a Save from the palette reads no history and writes no Output entry; fails_when=the item reads Recording finished · Save learning replay for a run that recorded nothing, or its Save ends at Learning save failed · Retry with an Output entry per click; why_new=the only test of a run that recorded nothing sets historyExcluded (Step 9 state-machines, wrong row; Issue #107 F8); seam=none; no_claim=the status bar's drawing (the workspace wires the item)
+test('a run that recorded nothing shows no Save item, and its Save reads no history', async () => {
+  // Arrange
+  const recorder = recordingHost()
+  const save = new NodeLearningSave(recorder.host)
+  const stoppedBeforeHistory = testRun({
+    stopped: true,
+    nodePhase: 'preparing',
+    nodeStops: [],
+    nodeHistoryWriter: undefined,
+    nodeHistoryStatus: undefined,
+  })
+  const sealedWithNoEntry = testRun({
+    stopped: true,
+    nodePhase: 'failed',
+    nodeStops: [],
+    nodeHistoryStatus: 'partial',
+    nodeHistoryEntryCount: 0,
+  })
+  recorder.use(stoppedBeforeHistory)
+
+  // Act
+  const items = [save.item(stoppedBeforeHistory), save.item(sealedWithNoEntry)]
+  const saved = await Promise.resolve()
+    .then(() => save.save(stoppedBeforeHistory))
+    .then(
+      () => 'saved',
+      (error: unknown) => (error instanceof Error ? error.message : 'refused'),
+    )
+
+  // Assert
+  assert.deepEqual(items, [undefined, undefined])
+  assert.equal(
+    saved,
+    'No recorded Codebook session is available. Explain a real code path first.',
+  )
+  assert.equal(recorder.stopCalls(), 0)
+  assert.equal(recorder.summaryCalls(), 0)
+  assert.deepEqual(recorder.logged, [])
+})
