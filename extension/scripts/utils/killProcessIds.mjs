@@ -14,9 +14,9 @@ import { readProcessTable } from './readProcessTable.mjs'
 export function killProcessIds(pids, { platform = process.platform } = {}) {
   if (pids.length === 0) return
   const protectedPids = new Set([process.pid, process.ppid])
-  // Walk up from this process: a parent of a parent is protected too.
+  // Walk up from the parent's parent: every process above this one is protected too, up to the first process of the system; a pid met again ends a table that loops.
   const table = readProcessTable({ platform })
-  for (let pid = table?.get(process.pid); pid > 1; pid = table.get(pid)) {
+  for (let pid = table?.get(process.ppid); pid > 0; pid = table.get(pid)) {
     if (protectedPids.has(pid)) break
     protectedPids.add(pid)
   }

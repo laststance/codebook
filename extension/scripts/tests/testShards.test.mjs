@@ -1834,6 +1834,50 @@ test(
   },
 )
 
+// Value: protects=every process above the script from the kill of a tree: ids a look found are ended with SIGKILL, but the process that kills, its parent and the parent's parent are never hit, whatever the list holds; fails_when=the walk up the process table stops at the first parent (already protected), so a list that holds the grandparent's pid ends the script that started the script that is ending a tree; why_new=Cycle 0048 task 169 (Step 7 of the third /ship: the guard test above names the caller's own pid and its parent's only, while the docstring promises "this process or one of its parents"; red at `fc442dce`, where the walk stopped at the parent, already protected); seam=killProcessIds in a helper process whose parent is a middle process and whose grandparent is an outer process, given the outer process's pid; no_claim=a pid that was reused by another program since the look, and ancestors above the grandparent
+test(
+  'ending process ids never ends the grandparent of the process that ends them',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange
+    const helperSource = [
+      `import { killProcessIds } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/killProcessIds.mjs')).href)}`,
+      'killProcessIds([Number(process.argv[1])])',
+      "console.log('alive')",
+    ].join('\n')
+    const middleSource = [
+      "const { spawnSync } = require('node:child_process')",
+      `const helper = spawnSync(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(helperSource)}, process.argv[1]], { encoding: 'utf8' })`,
+      'console.log(JSON.stringify({ status: helper.status, output: helper.stdout.trim() }))',
+    ].join('\n')
+    const outerSource = [
+      "const { spawnSync } = require('node:child_process')",
+      `const middle = spawnSync(process.execPath, ['-e', ${JSON.stringify(middleSource)}, String(process.pid)], { encoding: 'utf8' })`,
+      'console.log(middle.stdout.trim())',
+    ].join('\n')
+
+    // Act
+    const outer = spawnSync(process.execPath, ['-e', outerSource], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+
+    // Assert
+    assert.deepEqual(
+      {
+        outerSignal: outer.signal,
+        outerStatus: outer.status,
+        helper: outer.stdout.trim(),
+      },
+      {
+        outerSignal: null,
+        outerStatus: 0,
+        helper: '{"status":0,"output":"alive"}',
+      },
+    )
+  },
+)
+
 // Value: protects=the shard and pre-gate jobs from a test file that ignores SIGTERM and hangs: the call is ended with its whole process tree and no process of it is left, where the SIGTERM reached the runner and its file kept running; fails_when=the end of a silent call signals the runner alone (on POSIX the runner passes SIGTERM on and the file's process ignores it, and the forced SIGKILL reaches only the runner), so the file's process runs on after the call was reported as ended; why_new=Cycle 0048 task 148 (native adversarial: the call ended at its limit and the file's process was still running); seam=runTestInvocation with the real `node --test` runner and a test file that records its pid, ignores SIGTERM and hangs, a 4 s silence limit and a 1.5 s grace; no_claim=Windows (taskkill ends the tree there) and the default limits
 test(
   'a call ended for its silence leaves no process of a test file that ignores SIGTERM and hangs',
