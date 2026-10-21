@@ -2097,6 +2097,122 @@ test(
   },
 )
 
+/** How many listeners this process has for each signal that {@link endChildrenOnSignal} handles. @example signalHandlerCounts() // => [0, 0, 0] */
+function signalHandlerCounts() {
+  return ['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) =>
+    process.listenerCount(signal),
+  )
+}
+
+/**
+ * The ways a call of {@link runTestInvocation} ends, one per entry: `name` words the way, `run(context)` makes the call in this process and answers when it has ended (a rejected call counts as ended too).
+ * Called by the test below, which compares the signal handlers before and after each way.
+ */
+const CALL_ENDS = [
+  {
+    name: 'that exits by itself',
+    async run(context) {
+      const directory = await mkdtemp(join(tmpdir(), 'codebook-passing-file-'))
+      context.after(() => rm(directory, { recursive: true, force: true }))
+      await writeFile(
+        join(directory, 'passing.test.js'),
+        "require('node:test').test('passes', () => {})",
+      )
+      return await runTestInvocation({ files: ['passing.test.js'] }, directory)
+    },
+  },
+  {
+    name: 'whose runner exits at the silence SIGTERM',
+    async run(context) {
+      const { runnerPath } = await writeStandInRunner(
+        context,
+        'process.exit(0)',
+      )
+      return await runTestInvocation({ files: [] }, tmpdir(), {
+        silenceTimeoutMs: 2_500,
+        killGraceMs: 10_000,
+        runnerArguments: [runnerPath],
+      })
+    },
+  },
+  {
+    name: 'whose runner ignores the silence SIGTERM and is killed after the grace',
+    async run(context) {
+      const { runnerPath } = await writeStandInRunner(context, '')
+      return await runTestInvocation({ files: [] }, tmpdir(), {
+        silenceTimeoutMs: 2_500,
+        killGraceMs: 2_000,
+        runnerArguments: [runnerPath],
+      })
+    },
+  },
+  {
+    name: 'whose runner prints while it winds down after the silence SIGTERM',
+    async run(context) {
+      const { runnerPath } = await writeStandInRunner(
+        context,
+        'setTimeout(() => process.exit(0), 4_000)',
+      )
+      return await runTestInvocation({ files: [] }, tmpdir(), {
+        silenceTimeoutMs: 2_500,
+        killGraceMs: 10_000,
+        runnerArguments: [runnerPath],
+      })
+    },
+  },
+  {
+    name: 'whose runner starts a process after the first look at its tree',
+    async run(context) {
+      const { runnerPath } = await writeStubbornChildRunner(context, {
+        startsChildAt: 'sigterm',
+        exitsAtSigterm: false,
+      })
+      return await runTestInvocation({ files: [] }, tmpdir(), {
+        silenceTimeoutMs: 2_500,
+        killGraceMs: 2_000,
+        runnerArguments: [runnerPath],
+      })
+    },
+  },
+  {
+    name: 'whose runner cannot be started',
+    async run() {
+      const realExecPath = process.execPath
+      // The spawn of a path that is no program fails with ENOENT (as in the timer test above); the path is put back at once.
+      process.execPath = join(tmpdir(), 'codebook-no-such-node-program')
+      try {
+        return await runTestInvocation({ files: [] }, tmpdir(), {
+          silenceTimeoutMs: 30_000,
+        }).catch((error) => ({ rejectionCode: error.code }))
+      } finally {
+        process.execPath = realExecPath
+      }
+    },
+  },
+]
+
+for (const { name, run } of CALL_ENDS) {
+  // Value: protects=the signal handling of the shard script after a call has ended: a call leaves none of the SIGINT, SIGTERM and SIGHUP handlers of {@link endChildrenOnSignal} behind, so the next signal ends the script as Node does by default, and no ended call keeps its end registered; fails_when=`stop()` of the silence watch no longer releases the call's end (`releaseSignalEnd()` dropped), so one more handler of each signal stays after every call, or only after the ways of ending that skip it; why_new=Cycle 0048 task 188 (state machines: no test showed that a call leaves no signal handler once it ends, by itself, at its silence, in the forced step, while it winds down, with a process started after the first look, or when it cannot start); seam=runTestInvocation in this process, with the real runner and with stand-in runners (`runnerArguments`), comparing the listener counts of the three signals before and after each call; mutant=`releaseSignalEnd()` removed from `stop()` of watchCallSilence.mjs fails every one of these tests (the first call that leaves its end registered leaves the handlers, and every later way starts with them); no_claim=the Windows end by `taskkill` (`process.platform` decides it in watchCallSilence.mjs, and it is not reachable here): `stop()` releases the end on every platform, which this test shows on POSIX only
+  test(
+    `a call ${name} leaves no SIGINT, SIGTERM or SIGHUP handler behind`,
+    { skip: process.platform === 'win32' },
+    async (context) => {
+      // Arrange
+      const handlersBefore = signalHandlerCounts()
+
+      // Act
+      await run(context)
+
+      // Assert
+      // Both counts are zero: a call whose end stays registered leaves the handlers for every later call too, so the later ways fail as well.
+      assert.deepEqual(
+        { before: handlersBefore, after: signalHandlerCounts() },
+        { before: [0, 0, 0], after: [0, 0, 0] },
+      )
+    },
+  )
+}
+
 /** Starts the fixture's shard script and answers the child and a promise of how it ends, for a test that signals the script while it runs; the script is killed when the test ends. @example const { child, ended } = startShardScript(context, root, ['--record']) */
 function startShardScript(context, root, args) {
   const child = spawn(
