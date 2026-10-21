@@ -123,10 +123,10 @@ test('while the start of this process cannot be read its record carries no compu
       throw new Error('spawn powershell.exe ENOENT')
     },
   }
-  // Act: the window writes its record, the clock is set forward by 90 s, and the window judges that record.
-  const recorded = await currentStorageOwner(startInputs)
+  // Act: the window writes its record, the clock is set forward by 90 s, and the window judges that record; its boot is read as on Windows, whose boot has no id.
+  const recorded = await currentStorageOwner(startInputs, { platform: 'win32' })
   clockMs += 90_000
-  const judgedBy = await currentStorageOwner(startInputs)
+  const judgedBy = await currentStorageOwner(startInputs, { platform: 'win32' })
   const isOwnRecordStale = await isRecordedOwnerGone(
     { pid: process.pid, ...recorded },
     judgedBy,
@@ -200,10 +200,14 @@ test('on a system without a kernel boot id the boot time is computed again at ev
     readLink: () => 'pid:[4026531836]',
     readFile: async () => STAT_OF_THIS_PROCESS,
   }
-  // Act: the window names its boot, the clock is set forward by 90 s, and the window names its boot again.
-  const beforeTheCorrection = await currentStorageOwner(startInputs)
+  // Act: the window names its boot, the clock is set forward by 90 s, and the window names its boot again; its boot is read as on the Linux the start inputs name.
+  const beforeTheCorrection = await currentStorageOwner(startInputs, {
+    platform: 'linux',
+  })
   clockMs += 90_000
-  const afterTheCorrection = await currentStorageOwner(startInputs)
+  const afterTheCorrection = await currentStorageOwner(startInputs, {
+    platform: 'linux',
+  })
   // Assert
   assert.deepEqual(beforeTheCorrection.boot, { startedAtMs: 1_790_000_000_000 })
   assert.deepEqual(afterTheCorrection.boot, { startedAtMs: 1_790_000_090_000 })
