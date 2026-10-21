@@ -165,11 +165,20 @@ function reportFailedCall(invocation, result, tests, silenceSeconds) {
     )
 }
 
-/** Runs one planned call and prints its report with the planned duration beside the measured one, which shows when the timings file needs a new recording; a call that printed nothing for `silenceSeconds` is ended and named, and a call that counted no test fails. @example await runCall({ files: ['a.test.js'], ms: 300 }, 120) // => { tests: 4, failed: false } */
+/** Runs one planned call and prints its report with the planned duration beside the measured one, which shows when the timings file needs a new recording; a call that printed nothing for `silenceSeconds` is ended and named, a call that counted no test fails, and a call whose runner cannot start (the spawn's error) fails with one line that names the error. @example await runCall({ files: ['a.test.js'], ms: 300 }, 120) // => { tests: 4, failed: false } */
 async function runCall(invocation, silenceSeconds) {
-  const result = await runTestInvocation(invocation, testDirectory, {
-    silenceTimeoutMs: silenceSeconds * 1000,
-  })
+  let result
+  try {
+    result = await runTestInvocation(invocation, testDirectory, {
+      silenceTimeoutMs: silenceSeconds * 1000,
+    })
+  } catch (error) {
+    // A call whose runner cannot start (a spawn error: E2BIG for a long name pattern, EAGAIN, ENOMEM) fails as a call, in one line. Left to reject, it would reject the lanes' `Promise.all` and end the script with a stack trace while the other lanes' calls ran on.
+    console.error(
+      `✖ ${callFiles(invocation)} could not start: ${error.message}.`,
+    )
+    return { tests: 0, failed: true }
+  }
   const tests = countTests(result.output)
   process.stdout.write(
     `${result.output}▶ ${callLabel(invocation)}: ${tests} tests, ${(result.elapsedMs / 1000).toFixed(1)} s (planned ${(invocation.ms / 1000).toFixed(1)} s)\n`,

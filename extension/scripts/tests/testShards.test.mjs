@@ -1101,6 +1101,81 @@ test('the shard script exits 1 and reports the failed call when a test fails, an
   assert.match(passed.stdout, /0 failed calls\./)
 })
 
+// Value: protects=the shard job from a call whose runner cannot start (a spawn error: E2BIG for a long name pattern, EAGAIN, ENOMEM): it fails as a call in one line that names the error, counts among the failed calls, its lane goes on to its next call and the other lane finishes; fails_when=the rejection of runTestInvocation reaches the lanes' Promise.all, so the script ends with a stack trace and no last line while the other lane's call runs on with no end; why_new=Cycle 0048 task 204 (native adversarial: a spawn error rejected Promise.all); seam=test-shard.mjs started as a process on a fixture build of three files and two lanes (one lane: `tail.test.js`, then a part of the split file; the other: `other.test.js`, then the split file's other part), with a module loaded first (`--import` through NODE_OPTIONS, only in the script's process) that makes child_process.spawn start a program that does not exist (a real ENOENT error event) for the call that names `tail.test.js`; no_claim=which spawn error a machine under load raises (E2BIG, EAGAIN and ENOMEM reach the same error event as ENOENT)
+test('the shard script fails a call whose runner cannot start in one line, runs the next call of its lane and lets the other lane finish', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: {
+      'tail.test.js': loggingTestSource(['never runs']),
+      'other.test.js': loggingTestSource(['runs in the other lane']),
+      'split.test.js': loggingTestSource(['first part', 'second part']),
+    },
+    // The planner gives tail.test.js and then the part without 'second part' to one lane, other.test.js and then the part 'second part' to the other.
+    timings: {
+      files: {
+        'split.test.js': {
+          totalMs: 20_000,
+          tests: { 'first part': 10_000, 'second part': 10_000 },
+        },
+        'tail.test.js': { totalMs: 100 },
+        'other.test.js': { totalMs: 50 },
+      },
+    },
+  })
+  const spawnThatFailsOneCall = join(root, 'spawn-that-fails-one-call.mjs')
+  await writeFile(
+    spawnThatFailsOneCall,
+    [
+      "import { createRequire, syncBuiltinESMExports } from 'node:module'",
+      "const childProcess = createRequire(import.meta.url)('node:child_process')",
+      // Only the shard script's own process changes spawn; the runners it starts load this module too and must keep theirs.
+      "if (process.argv[1].endsWith('test-shard.mjs')) {",
+      '  const realSpawn = childProcess.spawn',
+      '  childProcess.spawn = (command, args, options) =>',
+      "    args.some((argument) => argument.endsWith('tail.test.js'))",
+      "      ? realSpawn('codebook-no-such-program', [], options)",
+      '      : realSpawn(command, args, options)',
+      // The runner's named import of spawn reads the synced export.
+      '  syncBuiltinESMExports()',
+      '}',
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runShardScript(
+    root,
+    ['--shard', '1/1', '--lanes', '2'],
+    60_000,
+    { NODE_OPTIONS: `--import=${pathToFileURL(spawnThatFailsOneCall).href}` },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      stderr: result.stderr,
+      lastLine: result.stdout
+        .trimEnd()
+        .split('\n')
+        .at(-1)
+        .replace(/ \d+ s,/, ' N s,'),
+      executed: await readExecuted(root),
+    },
+    {
+      code: 1,
+      stderr:
+        '✖ tail.test.js could not start: spawn codebook-no-such-program ENOENT.\n',
+      lastLine:
+        'Shard 1/1: 3 tests in 4 calls on 2 lanes, N s, 1 failed calls.',
+      executed: [
+        'other.test.js::runs in the other lane',
+        'split.test.js::first part',
+        'split.test.js::second part',
+      ],
+    },
+  )
+})
+
 // Value: protects=the claim that the shards together run the suite exactly once; fails_when=the planned patterns, sent through Node's own name selection, run a test twice or not at all (a name with regular-expression characters, a name that is the start of another, a quote, a backslash, non-ASCII text, or a test the timings do not know); why_new=Cycle 0048 tasks 26 and 27 (test guide, 2026-10-02: the planner's tests used their own regular expression, and nothing compared the shards' test names with the suite's); seam=planTestShards plus runTestInvocation on a fixture build, every shard of two layouts; no_claim=the 3,000 tests of the product suite, whose names are not enumerable without running them
 test('every test of a split file and of a whole file runs exactly once across all shards when the planned patterns go through the real runner', async (context) => {
   // Arrange
