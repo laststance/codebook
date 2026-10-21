@@ -1134,6 +1134,41 @@ test('an unsealed recording whose header calls its writer gone and whose folder 
   assert.deepEqual(writer, { kind: 'gone' })
 })
 
+// Value: protects=the recording of another computer (same host name, same storage folder) whose real folder of writer records stands while the real path of the learning directory that holds it cannot be read (permission denied, a disk error): Delete asks the learner and a vanished directory leaves the header's verdict; fails_when=the look reads only the folder's own real path and not its parent's, so a real folder whose parent cannot be named is called no record, the header's gone stands and Delete moves the study of the other computer without asking; why_new=recordingWriterOf.test.ts refuses the real path of the `recording-owners` folder only, so the parent's half of Cycle 0048 task 130 has no test; seam=none; no_claim=a real path that agrees or disagrees on a file system with links (the tests beside it); the refusal is mocked on the realpath of node:fs/promises, no file system denies it
+for (const [code, expected] of [
+  ['EACCES', { kind: 'unreadable' }],
+  ['EIO', { kind: 'unreadable' }],
+  ['ENOENT', { kind: 'gone' }],
+] as const)
+  test(`an unsealed recording whose header calls its writer gone and whose real folder of writer records has a parent whose real path is read with ${code} has the writer ${expected.kind}`, async (context) => {
+    // Arrange: the header names this host and a process id of no process; the real folder of records stands, and reading the real path of the learning directory is refused with the code.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    const realpathBefore = fsPromises.realpath
+    context.mock.method(
+      fsPromises,
+      'realpath',
+      async (...input: Parameters<typeof realpathBefore>) => {
+        if (input[0] === storage.directory)
+          throw Object.assign(new Error(`${code}: realpath`), { code })
+        return realpathBefore(...input)
+      },
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, expected)
+  })
+
 // Value: protects=the judgement of a recording's writer while a link (a junction on Windows) stands at the place of the folder of writer records and leads to a valid record that names the recording; fails_when=the record is read through that link and judges the recording (here as another machine's), so a file a link puts there decides whether a recording is listed and moved (TT37, CX14's read); why_new=Cycle 0046 third testing review TT37: the file behind the link in CX14's test never parsed as a record; seam=a link at `recording-owners` to a folder of the test with a valid record that names the recording and machine-b, and the header, which names this host and a process id of no process
 test('a valid writer record behind a link at the place of the folder of writer records is not read: the recording is judged by its header', async (context) => {
   // Arrange: the recording's header names this host and a process id of no process; its folder of records is a link to a folder with a valid record of machine-b that names it.

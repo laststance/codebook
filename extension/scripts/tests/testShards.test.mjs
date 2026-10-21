@@ -20,8 +20,10 @@ import { parseSilenceSeconds } from '../utils/parseSilenceSeconds.mjs'
 import { plainOutputEnvironment } from '../utils/plainOutputEnvironment.mjs'
 import { planCallEnd } from '../utils/planCallEnd.mjs'
 import { planTestShards } from '../utils/planTestShards.mjs'
+import { readRunSummary } from '../utils/readRunSummary.mjs'
 import { readTestTimings } from '../utils/readTestTimings.mjs'
 import { runTestInvocation } from '../utils/runTestInvocation.mjs'
+import { takeEndStep } from '../utils/takeEndStep.mjs'
 
 /** Tells whether `node --test` would run a test of this name in the given planned call, following its documented name and skip pattern rules. @example runsTest({ files: ['a.test.js'], skipPattern: '/^(?:x)$/' }, 'y') // => true */
 function runsTest(invocation, name) {
@@ -1436,6 +1438,72 @@ test(
     )
   },
 )
+
+// Value: protects=the Windows shard job from a `taskkill` that hangs on both of its starts: each start is stopped after half the grace, the program is started twice and no more, and then the runner is ended alone, so a call is never left running for want of a taskkill that answers; fails_when=a third start is made, or no fallback follows the second hang, or the second hang is waited for without a bound; why_new=the test above hangs the first start only, so the second start's own hang (the last attempt, which falls back) has no test; seam=none; no_claim=the real taskkill.exe on Windows; a stand-in program that never ends and a stand-in child that notes its kill stand in for them
+test(
+  'a taskkill that hangs on both starts is started twice and then the runner is ended alone',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const folder = await mkdtemp(join(tmpdir(), 'codebook-hanging-taskkill-'))
+    context.after(() => rm(folder, { recursive: true, force: true }))
+    const programPath = join(folder, 'taskkill.exe')
+    const logPath = join(folder, 'taskkill.log')
+    await writeFile(
+      programPath,
+      [
+        `#!${process.execPath}`,
+        "require('node:fs').appendFileSync(process.argv[2], 'started\\n')",
+        'setTimeout(() => {}, 60_000)',
+      ].join('\n'),
+      { mode: 0o755 },
+    )
+    const kills = []
+    const runner = {
+      exitCode: null,
+      signalCode: null,
+      kill: (...signal) => kills.push(signal),
+    }
+
+    // Act
+    takeEndStep(runner, { command: programPath, args: [logPath] }, 1_000)
+    const startedAt = Date.now()
+    while (kills.length === 0 && Date.now() - startedAt < 8_000)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    // A third start would come within one more half grace; wait for it.
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+
+    // Assert
+    const starts = (await readFile(logPath, 'utf8')).split('\n').filter(Boolean)
+    assert.deepEqual(
+      { starts, kills },
+      { starts: ['started', 'started'], kills: [[]] },
+    )
+  },
+)
+
+// Value: protects=the shard script's count of a call and the pre-gate's combined summary: only the last complete block of `ℹ tests`, `ℹ pass` and `ℹ fail` lines at column 0 is the runner's own; a block that a printed line breaks in the middle, a block without `ℹ tests` and a block the runner died in count nothing, and the lines that follow a complete block join it; fails_when=a line between two summary lines does not end the block, so a test that prints `ℹ tests 5`, `ℹ pass 5`, a line of its own and `ℹ fail 0` is counted as the runner's summary; why_new=testShards and pregateTests read the last block of a whole run, not these breaks inside one block; seam=none; no_claim=what Node prints for a real run; the outputs are hard-coded strings
+test('the last summary block is read only when it is whole, and a line a test printed between two summary lines ends the block', () => {
+  // Arrange
+  const brokenByPrintedLine = 'ℹ tests 5\nℹ pass 5\nprinted by a test\nℹ fail 0'
+  const withoutTests = 'ℹ pass 5\nℹ fail 0'
+  const died = 'ℹ tests 2\nℹ pass 2\nℹ fail 0\n✔ next\nℹ tests 99\nℹ pass 99'
+  const withDuration =
+    'ℹ tests 2\nℹ suites 1\nℹ pass 1\nℹ fail 1\nℹ duration_ms 12.5'
+
+  // Act
+  const answers = [brokenByPrintedLine, withoutTests, died, withDuration].map(
+    readRunSummary,
+  )
+
+  // Assert
+  assert.deepEqual(answers, [
+    undefined,
+    undefined,
+    { tests: 2, pass: 2, fail: 0 },
+    { tests: 2, suites: 1, pass: 1, fail: 1, duration_ms: 12.5 },
+  ])
+})
 
 /** Writes a script that prints text and then ends, into a fresh folder, for the tests that need a runner with a known amount of output. @example const path = await writeScript(context, "console.log('hello')") */
 async function writeScript(context, source) {

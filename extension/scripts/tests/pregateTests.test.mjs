@@ -1269,6 +1269,81 @@ test('the line forwarder writes a line that passes its limit in pieces without m
   ])
 })
 
+// Value: protects=the pre-gate runner from a signal handler that outlives its build: once the build has ended (by its own exit, by its limit, or because it could not start) the runner holds no SIGINT or SIGTERM handler for it, so a later Ctrl-C does not send SIGKILL to the process group of a process id the system may have given to another program; fails_when=the handlers are not removed when the build closes or fails to start, or a build that cannot start is not answered with its error; why_new=the tests of the build limit run the runner as a process and see its exit, never the handlers it leaves in a runner that goes on; seam=none; no_claim=the Windows path and a signal that arrives during the build (the tests beside it); a program name that does not exist stands in for a build that cannot start
+test('a build that has ended, been ended for its limit or could not start leaves no SIGINT or SIGTERM handler of the runner behind', async () => {
+  // Arrange
+  const handlersBefore = [
+    process.listenerCount('SIGINT'),
+    process.listenerCount('SIGTERM'),
+  ]
+  const build = (options) =>
+    runBuildWithLimit({
+      command: process.execPath,
+      cwd: tmpdir(),
+      timeoutMs: 10_000,
+      ...options,
+    })
+
+  // Act
+  const finished = await build({ args: ['-e', 'process.exit(3)'] })
+  const limited = await build({
+    args: ['-e', 'setInterval(() => {}, 1_000)'],
+    timeoutMs: 300,
+  })
+  const unstarted = await build({
+    command: join(tmpdir(), 'codebook-no-such-build-program'),
+    args: [],
+  })
+
+  // Assert
+  assert.deepEqual(
+    {
+      finished,
+      limited: { status: limited.status, timedOut: limited.timedOut },
+      unstarted: {
+        status: unstarted.status,
+        timedOut: unstarted.timedOut,
+        errorCode: unstarted.error?.code,
+      },
+      handlersAfter: [
+        process.listenerCount('SIGINT'),
+        process.listenerCount('SIGTERM'),
+      ],
+    },
+    {
+      finished: { status: 3, timedOut: false, error: undefined },
+      limited: { status: null, timedOut: true },
+      unstarted: { status: null, timedOut: false, errorCode: 'ENOENT' },
+      handlersAfter: handlersBefore,
+    },
+  )
+})
+
+// Value: protects=the memory of the output keeper for a line that never ends: a line longer than the bound has no line start to cut at, so it is cut where it stands and only its last characters stay, with a note of how many were left out; a cut that falls just after a line break leaves that line whole; fails_when=the keeper holds an unbroken line whole, drops it with its note, or moves a cut that already sits at a line start; why_new=the keeper's test above feeds lines and the 100 MB test below asserts the count of the summary, neither pins what an unbroken line leaves; seam=none; no_claim=the bound in memory (the 100 MB test below); characters stand for UTF-16 units, as the keeper counts them
+test('the output keeper cuts a line longer than its bound where it stands, and leaves a line whole when the cut falls just after a line break', () => {
+  // Arrange
+  const unbroken = createBoundedOutput(10)
+  const atLineStart = createBoundedOutput(10)
+
+  // Act
+  for (const chunk of ['aaaaaaaa', 'bbbbbbbb', 'cccccccc', 'dddddddd'])
+    unbroken.append(chunk)
+  // The first 6 characters are cut, and the cut falls right after the line break.
+  atLineStart.append('abcde\nab\ncdefgh')
+  atLineStart.append('i')
+
+  // Assert
+  assert.deepEqual(
+    { unbroken: unbroken.text(), atLineStart: atLineStart.text() },
+    {
+      unbroken:
+        '[… 22 characters of earlier output left out; at most the last 10 are kept]\nccdddddddd',
+      atLineStart:
+        '[… 6 characters of earlier output left out; at most the last 10 are kept]\nab\ncdefghi',
+    },
+  )
+})
+
 // Value: protects=the pre-gate runner's memory: a product test that prints about 100 MB, as lines and then as one line with no break, is run by a runner that may use 64 MB of heap, and the combined summary still counts the test; fails_when=the runner keeps every byte of a run's output (`output += chunk`) or holds a line without a break until it ends, so its heap passes the limit and it aborts; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial: the runner kept every byte, and a test that kept printing kept the silence watch alive); seam=run-pregate-tests.mjs started as a process with `--max-old-space-size=64` (the flag of the runner only, not of the `node --test` it starts) in a fixture repository with a stand-in build; no_claim=the memory of the `node --test` process the runner starts, and a consumer of the runner's output that reads more slowly than the test writes
 test('the pre-gate runner survives a test that prints about 100 MB, as lines and as one line, within 64 MB of heap, and still counts it', async (context) => {
   // Arrange
