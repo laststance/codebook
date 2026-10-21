@@ -460,7 +460,7 @@ async function writeOwnFile(path, bytes, attributes) {
     const { dev, ino } = await handle.stat({ bigint: true });
     file = { path, hash: digest(bytes), dev, ino };
     await handle.writeFile(bytes);
-    // The mode and the times of a file this write copies are set after the bytes, since a write changes the time; a file system that keeps neither (FAT, some shares) answers with an error of {@link UNSETTABLE_ATTRIBUTE_ERRORS}, and the copy then has the mode and the time of its write; any other failure, such as a disk error, fails the copy as a failed write does.
+    // The mode and the times of a file this write copies are set after the bytes, since a write changes the time; a file system that keeps no mode or no time either drops it with no error (Linux FAT and exFAT drop a mode they cannot keep) or answers with an error of {@link UNSETTABLE_ATTRIBUTE_ERRORS} (a volume mounted for another owner, a FUSE file system), and the copy then has the mode or the time of its write; any other failure, such as a disk error, fails the copy as a failed write does.
     if (attributes !== undefined) {
       await setWhereAble(handle.chmod(attributes.mode));
       await setWhereAble(handle.utimes(attributes.atime, attributes.mtime));

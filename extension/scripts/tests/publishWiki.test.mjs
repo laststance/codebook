@@ -21251,9 +21251,9 @@ for (const code of [
   // Value: protects=the learner whose Wiki folder lies on a volume that keeps no mode (FAT or exFAT mounted for another owner, a share, a FUSE file system) and who must still be able to publish: the copy of their file is published with the mode of its write and the times of the original; fails_when=writeOwnFile passes on the file system's answer to chmod, so a volume that keeps no mode refuses every publish that has a learner's file; why_new=Cycle 0048 task 181 (Codex adversarial: only such errors pass); seam=a copy of the shipped publisher whose `node:fs/promises` fails the chmod through the handle of the learner's file in the candidate with the row's code (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf); no_claim=the mode such a volume gives a file (the test reads it back from the volume the test runs on); Windows, which keeps only the read-only bit
   test(
     `a publish whose copy of the learner’s file gets ${code} from its chmod is published with the mode of the copy’s write and the times of the original`,
-    { skip: process.platform === 'win32' || process.umask() !== 0o022 },
+    { skip: process.platform === 'win32' },
     async () => {
-      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; the copy's chmod fails as the row says, so the copy keeps the mode its creation gave (666 less the umask 022).
+      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; the copy's chmod fails as the row says, so the copy keeps the mode its creation gave, which a file the test creates the same way in the candidate's folder shows (666 less the umask, and what the folder passes on).
       const { publishWiki: publishWhoseCopyKeepsNoMode } = await loadMarkedCopy(
         'publish-wiki.mjs',
         '?failing',
@@ -21269,6 +21269,11 @@ for (const code of [
         await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
         await chmod(learnerFile, 0o750)
         await utimes(learnerFile, changedAt, changedAt)
+        // The mode of a file made by the same exclusive open with the default mode, in the same folder, then removed so the candidate holds no stray file.
+        const referenceFile = join(wiki.next, 'mode-of-a-new-file.txt')
+        await writeFile(referenceFile, '', { flag: 'wx' })
+        const modeOfANewFile = (await lstat(referenceFile)).mode & 0o777
+        await rm(referenceFile)
 
         // Act
         const result = await publishWhoseCopyKeepsNoMode({
@@ -21285,12 +21290,12 @@ for (const code of [
         assert.deepEqual(
           {
             result,
-            mode: (copy.mode & 0o777).toString(8),
+            mode: copy.mode & 0o777,
             modifiedAt: copy.mtime.toISOString(),
           },
           {
             result: { preservedManualFiles: 1 },
-            mode: '644',
+            mode: modeOfANewFile,
             modifiedAt: '2021-03-04T05:06:07.000Z',
           },
         )
