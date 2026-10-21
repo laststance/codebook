@@ -54,7 +54,7 @@ export function watchCallSilence(child, { silenceTimeoutMs, killGraceMs }) {
     }
     takeEndStep(child, terminate, killGraceMs)
     killTimer = setTimeout(() => {
-      // The runner is stopped before its tree is read, so it starts nothing between the look and its kill; a runner that has exited gives its tree no more, and a plain look is all that is left.
+      // The runner is stopped before its tree is read, and the looks wait until it has reported its stop in the table (SIGSTOP is delivered asynchronously, and a runner in the middle of a fork starts its process before it stops), so it starts nothing between the looks and its kill; a runner that has exited gives its tree no more, and a plain look is all that is left.
       if (tree && childStillRuns(child)) tree.stopAndLook(child)
       else tree?.look()
       takeEndStep(child, force, killGraceMs)

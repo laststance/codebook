@@ -10,9 +10,9 @@ const WAIT_AFTER_FORCED_STEP_MS = 250
 /** Ends the child and everything under it with SIGKILL: the child is stopped first, so it starts nothing while its tree is read; every process found is stopped and read in turn, and then all get SIGKILL. @example endTreeWithSigkill(child, 'linux') */
 function endTreeWithSigkill(child, platform) {
   const tree = trackProcessTree(child.pid, { platform })
-  // The first look finds what the child started before it was stopped, the second confirms it; a killed child has no children left to find (they are given to `init`), so the tree is never read after the kill.
+  // The looks wait until the stopped child has reported its stop in the table (SIGSTOP is delivered asynchronously, and a child in the middle of a fork starts its process before it stops); then the first look finds what the child started before it was stopped and the second confirms it. A killed child has no children left to find (they are given to `init`), so the tree is never read after the kill.
   tree.stopAndLook(child)
-  // Each process found is stopped, the tree under it read, and then they are killed with the processes that tree held: what a process found started before its own end is found there.
+  // Each process found is stopped, the tree under it read once every stopped process has reported its stop, and then they are killed with the processes that tree held: what a process found started before its own end is found there. The looks are bounded (`MAX_STOP_LOOKS`), and what they did not reach is not ended.
   tree.killRemaining()
   child.kill('SIGKILL')
 }

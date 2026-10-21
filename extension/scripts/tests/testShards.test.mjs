@@ -26,6 +26,7 @@ import { parseSilenceSeconds } from '../utils/parseSilenceSeconds.mjs'
 import { plainOutputEnvironment } from '../utils/plainOutputEnvironment.mjs'
 import { planCallEnd } from '../utils/planCallEnd.mjs'
 import { planTestShards } from '../utils/planTestShards.mjs'
+import { readProcessStates } from '../utils/readProcessStates.mjs'
 import { readProcessTable } from '../utils/readProcessTable.mjs'
 import { readRunSummary } from '../utils/readRunSummary.mjs'
 import { readTestTimings } from '../utils/readTestTimings.mjs'
@@ -1926,6 +1927,354 @@ test(
   },
 )
 
+/** Reads the state letter of one process from the system's own `ps` (`S` sleeping, `T` stopped, `Z` zombie), or `undefined` when no such process is listed. @example stateOfProcess(4242) // => 'T' */
+function stateOfProcess(pid) {
+  const answer = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+    encoding: 'utf8',
+  })
+  return answer.stdout.trim()[0]
+}
+
+/** Waits until a process shows the wanted state letter in the system's `ps` or the wait is over, and answers the last state read. @example await waitForStateOfProcess(4242, 'T', 5_000) // => 'T' */
+async function waitForStateOfProcess(pid, wantedState, waitMs) {
+  const until = Date.now() + waitMs
+  while (stateOfProcess(pid) !== wantedState && Date.now() < until)
+    await delay(25)
+  return stateOfProcess(pid)
+}
+
+// Value: protects=the wait for a stop: the scripts that end a tree ask the table whether a process that got SIGSTOP has stopped (a process inside a fork when the signal comes finishes the fork first, and the child of that fork is made after the signal was sent), so the state reader tells a sleeping process from a stopped one and from one that is gone, on the native path and through `ps`, and answers nothing where there is no table; fails_when=the reader answers a stopped process as sleeping (a look never confirms), a process that ended and was reaped as still listed (the stop of a dead process is waited for), or the `ps` path reads another column; why_new=Cycle 0048 task 200 (Codex adversarial: killProcessIds.mjs:35 and trackProcessTree.mjs:31, SIGSTOP is delivered asynchronously); seam=readProcessStates on a real `sleep` started by the test, with the platform of the host, `darwin` (the `ps` path, which exists on Linux too) and `win32`; no_claim=the state letters of systems other than Linux and macOS
+test(
+  'a process reads as sleeping, then as stopped after SIGSTOP, then as gone once it ended, natively and through ps, and Windows has no states to read',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const readings = {}
+
+    // Act
+    for (const [path, platform] of [
+      ['native', process.platform],
+      ['viaPs', 'darwin'],
+    ]) {
+      const child = spawn('sleep', ['300.0455'], { stdio: 'ignore' })
+      context.after(() => child.kill('SIGKILL'))
+      const closed = new Promise((resolve) => child.once('close', resolve))
+      await waitForStateOfProcess(child.pid, 'S', 10_000)
+      const sleeping = readProcessStates([child.pid], { platform }).get(
+        child.pid,
+      )
+      child.kill('SIGSTOP')
+      await waitForStateOfProcess(child.pid, 'T', 10_000)
+      const stopped = readProcessStates([child.pid], { platform }).get(
+        child.pid,
+      )
+      child.kill('SIGKILL')
+      await closed
+      const stillListed = readProcessStates([child.pid], { platform }).has(
+        child.pid,
+      )
+      readings[path] = { sleeping, stopped, stillListed }
+    }
+    readings.windows = readProcessStates([process.pid], { platform: 'win32' })
+
+    // Assert
+    const expected = { sleeping: 'S', stopped: 'T', stillListed: false }
+    assert.deepEqual(readings, {
+      native: expected,
+      viaPs: expected,
+      windows: undefined,
+    })
+  },
+)
+
+/**
+ * Runs a helper process in which the modules of the scripts can be given stand-ins for the modules they import, through a resolve hook (`registerHooks` of `node:module`), never through a seam in the code; answers the helper's last line of output as JSON. The helper's source has `standInModules` (the loaded stand-ins, in the order given), `utils(name)` (imports a module of `scripts/utils`) and `process.argv[2..]` (the `args`). The helper is bound by a time limit.
+ * @param context - The running test, whose end removes the helper's folder.
+ * @param options.standIns - `{ specifier, parentFile, source }` for each stand-in: the module whose import of `specifier` (a file named `parentFile`) is answered by a module with this source.
+ * @param options.main - The helper's source after the set-up.
+ * @param options.args - Arguments for `process.argv`.
+ * @param options.env - The helper's environment.
+ * @returns `{ status, output }`: the exit code and the last line of output, parsed.
+ * @example
+ * const { output } = await runHelperModule(context, { main: "console.log(JSON.stringify({ ok: true }))" })
+ */
+async function runHelperModule(
+  context,
+  { standIns = [], main, args = [], env = process.env },
+) {
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-helper-'))
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  const hooks = []
+  for (const [index, standIn] of standIns.entries()) {
+    const path = join(folder, `stand-in-${index}.mjs`)
+    await writeFile(path, standIn.source)
+    hooks.push({
+      specifier: standIn.specifier,
+      parentFile: standIn.parentFile,
+      url: pathToFileURL(path).href,
+    })
+  }
+  const helperPath = join(folder, 'helper.mjs')
+  await writeFile(
+    helperPath,
+    [
+      "import { registerHooks } from 'node:module'",
+      `const hooks = ${JSON.stringify(hooks)}`,
+      'registerHooks({',
+      '  resolve(specifier, context, nextResolve) {',
+      '    const hook = hooks.find((candidate) => candidate.specifier === specifier && context.parentURL?.endsWith(candidate.parentFile))',
+      '    return hook ? { url: hook.url, shortCircuit: true } : nextResolve(specifier, context)',
+      '  },',
+      '})',
+      'const standInModules = await Promise.all(hooks.map((hook) => import(hook.url)))',
+      `const utils = (name) => import(${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/')).href)} + name)`,
+      main,
+    ].join('\n'),
+  )
+  const helper = spawn(process.execPath, [helperPath, ...args], {
+    env,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    timeout: 60_000,
+  })
+  let output = ''
+  helper.stdout.on('data', (chunk) => (output += chunk))
+  const status = await new Promise((resolve) => helper.once('close', resolve))
+  return { status, output: JSON.parse(output.trim().split('\n').at(-1)) }
+}
+
+// Value: protects=the end of a tree on a system whose `ps` has no state column: where the table can be read and a state cannot, a look counts as it did before the states were read (the end is not held for a stop it cannot see); fails_when=an unreadable state counts as running (every look fails to confirm and the end makes all its looks) or the reader throws; why_new=Cycle 0048 task 200 (Codex adversarial: killProcessIds.mjs:35 and trackProcessTree.mjs:31); seam=readProcessStates and haveProcessesStopped in a helper process whose PATH starts with a stand-in `ps` that fails as a `ps` without the column does, on the platform `darwin`; no_claim=the message of a real `ps` of another system
+test(
+  'where ps has no state column the states cannot be read and the stop counts as it did before the states were read',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const folder = await mkdtemp(join(tmpdir(), 'codebook-fake-ps-'))
+    context.after(() => rm(folder, { recursive: true, force: true }))
+    const fakePs = join(folder, 'ps')
+    await writeFile(
+      fakePs,
+      '#!/bin/sh\necho "ps: stat: keyword not found" >&2\nexit 1\n',
+      { mode: 0o755 },
+    )
+
+    // Act
+    const { output } = await runHelperModule(context, {
+      env: { ...process.env, PATH: `${folder}:${process.env.PATH}` },
+      main: [
+        "const { readProcessStates } = await utils('readProcessStates.mjs')",
+        "const { haveProcessesStopped } = await utils('haveProcessesStopped.mjs')",
+        "const states = readProcessStates([process.pid], { platform: 'darwin' })",
+        "console.log(JSON.stringify({ unreadable: states === undefined, counted: haveProcessesStopped([process.pid], { platform: 'darwin' }) }))",
+      ].join('\n'),
+    })
+
+    // Assert
+    assert.deepEqual(output, { unreadable: true, counted: true })
+  },
+)
+
+/** Starts a `sleep` of the given duration, which ends with the test, and answers its id. @example const pid = startSleep(context, '300.0456') */
+function startSleep(context, seconds) {
+  const sleeper = spawn('sleep', [seconds], { stdio: 'ignore' })
+  context.after(() => sleeper.kill('SIGKILL'))
+  return sleeper.pid
+}
+
+/** The stand-in state reader of the tests of the wait for a stop: a process reads as running for the first three reads, as stopped from the fourth on, and the reads are counted. */
+const SLOW_TO_STOP_READER_SOURCE = [
+  'let reads = 0',
+  'export function readProcessStates(pids) {',
+  '  reads += 1',
+  "  return new Map(pids.map((pid) => [pid, reads <= 3 ? 'R' : 'T']))",
+  '}',
+  'export const readsMade = () => reads',
+].join('\n')
+
+/** The hook that gives {@link SLOW_TO_STOP_READER_SOURCE} to the check that reads the states. */
+const SLOW_TO_STOP_READER = {
+  specifier: './readProcessStates.mjs',
+  parentFile: 'haveProcessesStopped.mjs',
+  source: SLOW_TO_STOP_READER_SOURCE,
+}
+
+// Value: protects=the end of the processes found under a tree against a process that has been sent SIGSTOP and is still on its way to the stop (it finishes a fork it is making, and the child of that fork is made after the signal was sent): the end looks again until the stopped process reports its stop, two looks after that confirm the tree, and only then the processes are killed; fails_when=the look is counted as confirming without the process reporting its stop (the mutant that drops the check of `haveProcessesStopped` in `stopTreesUnder` makes no read; the mutant that reads and ignores the answer makes two), so the child of a fork that finishes late is in no look and outlives the end; why_new=Cycle 0048 task 200 (Codex adversarial: killProcessIds.mjs:35, SIGSTOP is delivered asynchronously); seam=killProcessIds in a helper process whose state reader (a resolve hook) answers `R` for its first three reads and `T` after, ending a `sleep` of the test; no_claim=a real fork that finishes late (the kernel does not let a test hold one in the middle), the table of another system
+test(
+  'the end of a process keeps looking until the stopped process reports its stop, then confirms with two looks and kills it',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const sleeperPid = startSleep(context, '300.0457')
+
+    // Act
+    const { output } = await runHelperModule(context, {
+      standIns: [SLOW_TO_STOP_READER],
+      args: [String(sleeperPid)],
+      main: [
+        "const { killProcessIds } = await utils('killProcessIds.mjs')",
+        'killProcessIds([Number(process.argv[2])])',
+        'console.log(JSON.stringify({ reads: standInModules[0].readsMade() }))',
+      ].join('\n'),
+    })
+    const left = await waitUntilNoneExists([sleeperPid], 10_000)
+
+    // Assert
+    // Three reads of a process that has not stopped, then the two reads of the looks that confirm.
+    assert.deepEqual({ ...output, left }, { reads: 5, left: [] })
+  },
+)
+
+// Value: protects=the stop of a root before its tree is read (the end of a child, the forced step of a silent call): the root has been sent SIGSTOP and may still be on its way to the stop, so the looks wait for it to report the stop and two looks after that confirm the tree; fails_when=`stopAndLook` looks twice at once, without the root reporting its stop (the mutant that drops the check makes no read), so the child of a fork the root finishes late is in no look and outlives the end; why_new=Cycle 0048 task 200 (Codex adversarial: trackProcessTree.mjs:31, SIGSTOP is delivered asynchronously); seam=endProcessTree in a helper process whose state reader (a resolve hook) answers `R` for its first three reads and `T` after, ending a real Node child that waits; no_claim=a real fork that finishes late (the kernel does not let a test hold one in the middle)
+test(
+  'the end of a child keeps looking until the stopped child reports its stop, then confirms with two looks and kills it',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    killNotedProcessesAfter(context)
+
+    // Act
+    const { output } = await runHelperModule(context, {
+      standIns: [SLOW_TO_STOP_READER],
+      main: [
+        "const { spawn } = await import('node:child_process')",
+        "const { endProcessTree } = await utils('endProcessTree.mjs')",
+        "const root = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], { stdio: 'ignore' })",
+        'await endProcessTree(root)',
+        "await new Promise((resolve) => root.once('close', resolve))",
+        'console.log(JSON.stringify({ reads: standInModules[0].readsMade(), signal: root.signalCode }))',
+      ].join('\n'),
+    })
+
+    // Assert
+    assert.deepEqual(output, { reads: 5, signal: 'SIGKILL' })
+  },
+)
+
+// Value: protects=the end of a tree against a process that refused the stop (a process of another user, or one that ended just now): a stop that was not delivered will never be reported, so it is not waited for and the looks are the two they were before the states were read; fails_when=a process the stop did not reach is waited for, so each of the twenty looks is made and the end holds the event loop for them; why_new=Cycle 0048 task 200 (the branch of the new wait where `kill` refuses the signal); seam=killProcessIds and trackProcessTree.stopAndLook in a helper process whose `process.kill` refuses SIGSTOP with EPERM and whose state reader (a resolve hook) counts its reads; no_claim=which processes a system refuses a signal to
+test(
+  'a process that refused the stop is not waited for, in the end of a process and in the stop of a root',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const sleeperPid = startSleep(context, '300.0458')
+
+    // Act
+    const { output } = await runHelperModule(context, {
+      standIns: [SLOW_TO_STOP_READER],
+      args: [String(sleeperPid)],
+      main: [
+        'const realKill = process.kill',
+        "process.kill = (pid, signal) => { if (signal === 'SIGSTOP') throw Object.assign(new Error('not permitted'), { code: 'EPERM' }); return realKill.call(process, pid, signal) }",
+        "const { killProcessIds } = await utils('killProcessIds.mjs')",
+        "const { trackProcessTree } = await utils('trackProcessTree.mjs')",
+        'killProcessIds([Number(process.argv[2])])',
+        'trackProcessTree(Number(process.argv[2])).stopAndLook({ pid: Number(process.argv[2]), kill: () => false })',
+        'console.log(JSON.stringify({ reads: standInModules[0].readsMade() }))',
+      ].join('\n'),
+    })
+    const left = await waitUntilNoneExists([sleeperPid], 10_000)
+
+    // Assert
+    assert.deepEqual({ ...output, left }, { reads: 0, left: [] })
+  },
+)
+
+/** The duration of the `sleep`s of the tests of the bound of looks. */
+const BOUNDED_LOOKS_SLEEP_SECONDS = '300.0459'
+
+/** The stand-in `listProcessIdsUnder` of the test of the bound of looks: the n-th look finds the first n of the sleeps after the first (the pids are the helper's first argument as JSON), so every look finds one more process and a tree never settles; the looks are counted. */
+const ALWAYS_ONE_MORE_LISTER_SOURCE = [
+  'const pids = JSON.parse(process.argv[2])',
+  'let looks = 0',
+  'export function listProcessIdsUnder() {',
+  '  looks += 1',
+  '  return pids.slice(1, looks + 1)',
+  '}',
+  'export const looksMade = () => looks',
+].join('\n')
+
+// Value: protects=the bound of the looks of an end: a tree that grows faster than it is stopped must not hold the end (the looks are synchronous and block the event loop), so after twenty looks the end kills what it found, though the tree never settled, and what the twenty looks did not reach is not ended; fails_when=the bound is dropped or raised (the end makes 21 or more looks), a process found is not stopped or not killed, or a process never found is touched; why_new=Cycle 0048 task 201 (testing, state machines, Codex adversarial: the bound of twenty looks had no test and no sentence said what it leaves); seam=killProcessIds in a helper process whose `listProcessIdsUnder` (a resolve hook) finds one more of 25 `sleep`s of the test at each look; the test ends the ones the end never found by their ids; no_claim=the number twenty itself (it is MAX_STOP_LOOKS; a change of the bound changes this expected value with it)
+test(
+  'the end of a tree that never settles makes exactly twenty looks, kills what it found and leaves the rest running',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const sleeperPids = Array.from({ length: 25 }, () =>
+      startSleep(context, BOUNDED_LOOKS_SLEEP_SECONDS),
+    )
+
+    // Act
+    const { output } = await runHelperModule(context, {
+      standIns: [
+        {
+          specifier: './listProcessIdsUnder.mjs',
+          parentFile: 'killProcessIds.mjs',
+          source: ALWAYS_ONE_MORE_LISTER_SOURCE,
+        },
+      ],
+      args: [JSON.stringify(sleeperPids)],
+      main: [
+        "const { killProcessIds } = await utils('killProcessIds.mjs')",
+        'killProcessIds([JSON.parse(process.argv[2])[0]])',
+        'console.log(JSON.stringify({ looks: standInModules[0].looksMade() }))',
+      ].join('\n'),
+    })
+    // The first 21 (the one given and the twenty the looks found) are killed; a killed child is seen gone a moment after the kill.
+    await waitUntilNoneExists(sleeperPids.slice(0, 21), 10_000)
+    const leftOver = sleeperPids.filter(
+      (pid) => stateOfProcess(pid) !== undefined && stateOfProcess(pid) !== 'Z',
+    )
+    const stoppedLeftOver = leftOver.filter(
+      (pid) => stateOfProcess(pid) === 'T',
+    )
+
+    // Assert
+    assert.deepEqual(
+      { ...output, notFound: leftOver, stoppedAmongThem: stoppedLeftOver },
+      { looks: 20, notFound: sleeperPids.slice(21), stoppedAmongThem: [] },
+    )
+  },
+)
+
+// Value: protects=the end of process ids on a system whose process table cannot be read (Windows, no `/proc` and no `ps`): the pids are killed as they are, and nothing else is signalled: a stop is one more signal to a pid that may belong to another program, and a walk without a table has no tree to read; fails_when=the end stops the ids or walks a tree without a table (any signal other than the kill, or the child's own child ended or stopped); why_new=Cycle 0048 task 201 (testing, state machines: the branch with no process table had no test); seam=killProcessIds with the platform `win32` in a helper process that records every signal it sends, ending a Node child that has a child of its own; no_claim=what Windows does with the ids (taskkill /T /F ends the trees there)
+test(
+  'ending process ids where no process table can be read kills the child alone and sends nothing to its own child',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { childPid, grandchildPid } = await startTwoProcesses(context)
+
+    // Act
+    const { output } = await runHelperModule(context, {
+      args: [String(childPid)],
+      main: [
+        'const signals = []',
+        'const realKill = process.kill',
+        'process.kill = (pid, signal) => { signals.push({ pid, signal }); return realKill.call(process, pid, signal) }',
+        "const { killProcessIds } = await utils('killProcessIds.mjs')",
+        "killProcessIds([Number(process.argv[2])], { platform: 'win32' })",
+        'console.log(JSON.stringify({ signals }))',
+      ].join('\n'),
+    })
+    const childLeft = await waitUntilNoneExists([childPid], 10_000)
+
+    // Assert
+    assert.deepEqual(
+      {
+        ...output,
+        childLeft,
+        grandchildRuns: processExists(grandchildPid),
+        grandchildState: stateOfProcess(grandchildPid),
+      },
+      {
+        signals: [{ pid: childPid, signal: 'SIGKILL' }],
+        childLeft: [],
+        grandchildRuns: true,
+        grandchildState: 'S',
+      },
+    )
+  },
+)
+
 // Value: protects=every process above the script from the kill of a tree: ids a look found are ended with SIGKILL, but the process that kills, its parent and the parent's parent are never hit, whatever the list holds; fails_when=the walk up the process table stops at the first parent (already protected), so a list that holds the grandparent's pid ends the script that started the script that is ending a tree; why_new=Cycle 0048 task 169 (Step 7 of the third /ship: the guard test above names the caller's own pid and its parent's only, while the docstring promises "this process or one of its parents"; red at `fc442dce`, where the walk stopped at the parent, already protected); seam=killProcessIds in a helper process whose parent is a middle process and whose grandparent is an outer process, given the outer process's pid; no_claim=a pid that was reused by another program since the look, and ancestors above the grandparent
 test(
   'ending process ids never ends the grandparent of the process that ends them',
@@ -1973,15 +2322,24 @@ test(
 /** The duration the busy stand-in root gives every `sleep` it starts: no other program of the machine runs `sleep` with it, so every such process in the table is one the test started. */
 const MARKED_SLEEP_SECONDS = '300.0123'
 
-/** Lists the ids of the processes whose command is the marked `sleep`, from the system's own `ps`; a zombie shows as `[sleep] <defunct>` and is not listed. @example markedSleepPids() // => [4301, 4302] */
-function markedSleepPids() {
+/** Lists the processes (`{ pid, stat }`) whose command is a `sleep` of the given duration, from the system's own `ps`; a zombie shows as `[sleep] <defunct>` and is not listed. @example markedSleepProcesses('300.0123') // => [{ pid: 4301, stat: 'S' }] */
+function markedSleepProcesses(seconds) {
   const marked = new RegExp(
-    `^\\s*(\\d+)\\s+sleep ${MARKED_SLEEP_SECONDS.replace('.', '\\.')}$`,
+    `^\\s*(\\d+)\\s+(\\S+)\\s+sleep ${seconds.replace('.', '\\.')}$`,
   )
-  return execFileSync('ps', ['-A', '-o', 'pid=,args='], { encoding: 'utf8' })
+  return execFileSync('ps', ['-A', '-o', 'pid=,stat=,args='], {
+    encoding: 'utf8',
+  })
     .split('\n')
-    .flatMap((line) => marked.exec(line)?.[1] ?? [])
-    .map(Number)
+    .flatMap((line) => {
+      const match = marked.exec(line)
+      return match ? [{ pid: Number(match[1]), stat: match[2] }] : []
+    })
+}
+
+/** Lists the ids of the processes whose command is a `sleep` of the given duration (the busy stand-in root's by default). @example markedSleepPids() // => [4301, 4302] */
+function markedSleepPids(seconds = MARKED_SLEEP_SECONDS) {
+  return markedSleepProcesses(seconds).map(({ pid }) => pid)
 }
 
 /** Waits until no marked `sleep` runs or the wait is over, and answers the ids that still run. @example await waitUntilNoMarkedSleepRuns(5_000) // => [] */
@@ -2025,6 +2383,66 @@ test(
     await new Promise((resolve) => child.once('close', resolve))
     // A killed process is seen gone a moment after the kill.
     const left = await waitUntilNoMarkedSleepRuns(5_000)
+
+    // Assert
+    assert.deepEqual(left, [])
+  },
+)
+
+/** The duration the busy middle process of the test of a tree under a running root gives every `sleep` it starts. */
+const UNDER_ROOT_SLEEP_SECONDS = '300.0789'
+
+// Value: protects=the recording's end of what runs under the script (the root is not stopped first: only the ids listed under it are ended): a process under the root that keeps starting processes while the end runs leaves none of them running or stopped, because {@link killProcessIds} stops each process, reads what it started and stops that too before any kill; fails_when=the listed ids are killed without the loop of stops and looks (the mutant that kills the listed pids at once leaves the sleeps the middle process started between the listing and its kill); why_new=Cycle 0048 task 202 (state machines: task 189's tests stop a root that starts the processes itself, so a `killProcessIds` without its loop of looks passed them); seam=killProcessIds(listProcessIdsUnder(root.pid)) with a root that started a middle process, which starts four `sleep`s of a marked duration at each millisecond, up to 600 (the mutant that kills the listed pids at once left two to four of them in six runs); the clean-up ends the root and every marked process by its id; no_claim=Windows (taskkill /T /F ends trees there), and a middle process that starts processes faster than the stops and the looks can follow (the bound of looks)
+test(
+  'ending the ids listed under a root leaves none of the sleeps its busy middle process kept starting, running or stopped',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    context.after(() =>
+      killProcessIds(markedSleepPids(UNDER_ROOT_SLEEP_SECONDS)),
+    )
+    const middleSource = [
+      "const { spawn } = require('node:child_process')",
+      'let started = 0',
+      'const timer = setInterval(() => {',
+      // Four at each beat, so that more are made in the moment between the listing and the kill of a mutant.
+      '  for (let burst = 0; burst < 4; burst += 1)',
+      `    spawn('sleep', [${JSON.stringify(UNDER_ROOT_SLEEP_SECONDS)}], { stdio: 'ignore' })`,
+      '  started += 4',
+      '  if (started >= 600) clearInterval(timer)',
+      '}, 1)',
+    ].join('\n')
+    const root = spawn(
+      process.execPath,
+      [
+        '-e',
+        [
+          "const { spawn } = require('node:child_process')",
+          `spawn(process.execPath, ['-e', ${JSON.stringify(middleSource)}], { stdio: 'ignore' })`,
+          'setInterval(() => {}, 1_000)',
+        ].join('\n'),
+      ],
+      { stdio: 'ignore' },
+    )
+    context.after(() => root.kill('SIGKILL'))
+    killNotedProcessesAfter(context)
+    const until = Date.now() + 20_000
+    while (
+      markedSleepProcesses(UNDER_ROOT_SLEEP_SECONDS).length < 5 &&
+      Date.now() < until
+    )
+      await delay(5)
+
+    // Act
+    killProcessIds(listProcessIdsUnder(root.pid))
+    // A killed process is seen gone a moment after the kill.
+    const untilGone = Date.now() + 5_000
+    while (
+      markedSleepProcesses(UNDER_ROOT_SLEEP_SECONDS).length > 0 &&
+      Date.now() < untilGone
+    )
+      await delay(50)
+    const left = markedSleepProcesses(UNDER_ROOT_SLEEP_SECONDS)
 
     // Assert
     assert.deepEqual(left, [])
