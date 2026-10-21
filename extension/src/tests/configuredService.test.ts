@@ -4540,7 +4540,7 @@ test('a reveal whose pause the learner resumes in the debugger meanwhile answers
   })
 })
 
-test('API 1.7 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
+test('API 1.8 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
   // Arrange
   const { service, runtimes } = await configuredServiceHarness(context)
   // Act
