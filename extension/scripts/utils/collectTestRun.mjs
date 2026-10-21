@@ -57,7 +57,7 @@ function endProcessesUnderThisOne() {
 /**
  * Runs test files with Node's `run()` and collects every finished top-level test. The run is aborted, and its file processes ended, as soon as a test does not end within `testTimeoutMs` (the runner fails it with its timeout), a hook does not end within it (the runner fails the hook's tests as `hookFailed` for its time), or the run sends no event for the limit (plus {@link RECORD_STALL_MARGIN_MS}, so the runner's own timeout event comes first), as a file whose process does not exit after its tests ends.
  *
- * An abort makes the runner send SIGTERM to its file processes, which a test file may ignore; the recording therefore waits for them within `killGraceMs` and then ends every process that still runs under this one with SIGKILL (it starts nothing else), so nothing of the run outlives it. A SIGINT, SIGTERM or SIGHUP to this process ends them the same way ({@link endChildrenOnSignal}).
+ * An abort makes the runner send SIGTERM to its file processes, which a test file may ignore; the recording therefore waits for them within `killGraceMs` and then ends every process that still runs under this one with SIGKILL (it starts nothing else), so nothing of the run outlives it. A SIGINT, SIGTERM or SIGHUP to this process, from the start of the run until its file processes have ended (that wait included), ends them the same way ({@link endChildrenOnSignal}).
  *
  * Called by `scripts/test-shard.mjs --record`, which gives the recording the same bound as the shard calls.
  * @param options.files - Absolute paths of the test files.
@@ -103,29 +103,33 @@ export async function collectTestRun({
     signal: abort.signal,
   })
   try {
-    for await (const event of events) {
-      stallTimer.reset()
-      followFile(event, runningFiles)
-      const finished = finishedTest(event)
-      if (!finished) continue
-      results.push(finished)
-      const named = { file: finished.file, name: finished.name }
-      if (finished.timedOut) timedOutTests.push(named)
-      if (finished.hookTimedOut) hookTimedOutTests.push(named)
-      // A recording with a failed test writes nothing, so nothing is gained by waiting for the other files.
-      if (finished.timedOut || finished.hookTimedOut) abortRun()
+    try {
+      for await (const event of events) {
+        stallTimer.reset()
+        followFile(event, runningFiles)
+        const finished = finishedTest(event)
+        if (!finished) continue
+        results.push(finished)
+        const named = { file: finished.file, name: finished.name }
+        if (finished.timedOut) timedOutTests.push(named)
+        if (finished.hookTimedOut) hookTimedOutTests.push(named)
+        // A recording with a failed test writes nothing, so nothing is gained by waiting for the other files.
+        if (finished.timedOut || finished.hookTimedOut) abortRun()
+      }
+    } catch (error) {
+      // A run that failed in an unexpected way leaves no file process behind either.
+      endProcessesUnderThisOne()
+      throw error
+    } finally {
+      stallTimer.stop()
     }
-  } catch (error) {
-    // A run that failed in an unexpected way leaves no file process behind either.
-    endProcessesUnderThisOne()
-    throw error
+    // The signal handlers stay through this wait: a signal while the file processes of an aborted run get their grace ends them too.
+    if (abort.signal.aborted)
+      await endFileProcessesAfterAbort(abortedAt, killGraceMs)
   } finally {
-    stallTimer.stop()
+    clearTimeout(forceTimer)
     releaseSignalEnd()
   }
-  if (abort.signal.aborted)
-    await endFileProcessesAfterAbort(abortedAt, killGraceMs)
-  clearTimeout(forceTimer)
   return { results, timedOutTests, hookTimedOutTests, stall }
 }
 

@@ -2140,6 +2140,82 @@ test(
   },
 )
 
+// Value: protects=the timings recording from a signal that comes while it waits for the file processes of an aborted run: the file that ignored the abort's SIGTERM is ended with the rest, and the script exits with 128 plus the signal's number; fails_when=the recording's handlers are gone before that wait, so the signal ends the script by Node's default and the file's process keeps running after it; why_new=Cycle 0048 task 167 (Step 8 of the third /ship: the handlers were removed in the `finally`, before the wait of up to 5 s); seam=collectTestRun in a helper process with a 1 s test limit and a 30 s grace, on a fixture file whose test hangs and which notes the abort's SIGTERM, sent SIGTERM to the helper alone one second after that note; no_claim=SIGINT and SIGHUP in that wait (the same handlers), and Windows, where a Node process ends the processes it started when it exits
+test(
+  'the timings recording that gets SIGTERM while it waits for the file processes of an aborted run ends them and exits with 143',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const directory = await mkdtemp(join(tmpdir(), 'codebook-recording-wait-'))
+    context.after(() => rm(directory, { recursive: true, force: true }))
+    const pidsPath = join(directory, 'pids.log')
+    const sigtermPath = join(directory, 'sigterm.log')
+    killNotedProcessesAfter(context, pidsPath)
+    await writeFile(
+      join(directory, 'stubborn.test.js'),
+      [
+        "const { appendFileSync } = require('node:fs')",
+        "const { join } = require('node:path')",
+        "const { test } = require('node:test')",
+        "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+        "process.on('SIGTERM', () => appendFileSync(join(__dirname, 'sigterm.log'), `${process.pid}\\n`))",
+        "test('never ends', () => new Promise(() => setInterval(() => {}, 1_000)))",
+      ].join('\n'),
+    )
+    // The recording runs as a script file: run() starts the test files with the flags of its own process, and `--input-type` would make them fail.
+    const helperPath = join(directory, 'record.mjs')
+    await writeFile(
+      helperPath,
+      [
+        `import { collectTestRun } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/collectTestRun.mjs')).href)}`,
+        `await collectTestRun({ files: [${JSON.stringify(join(directory, 'stubborn.test.js'))}], concurrency: 1, testTimeoutMs: 1_000, killGraceMs: 30_000 })`,
+        "console.log('the recording ended by itself')",
+      ].join('\n'),
+    )
+    const helper = spawn(process.execPath, [helperPath], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([name]) => name !== 'NODE_TEST_CONTEXT',
+        ),
+      ),
+    })
+    context.after(() => helper.kill('SIGKILL'))
+    let output = ''
+    helper.stdout.on('data', (chunk) => (output += chunk))
+    const ended = new Promise((resolve) =>
+      helper.on('close', (code, signal) => resolve({ code, signal })),
+    )
+    const [filePid] = await waitForPids(pidsPath, 1, 30_000)
+    const [abortSeenBy] = await waitForPids(sigtermPath, 1, 30_000)
+    // gstack-timing-ok: the abort's SIGTERM has reached the file, so the run's events end at once; one second lets the recording reach its wait for the file processes, which lasts the 30 s grace, so the signal lands inside that wait under any load short of a stall of half a minute.
+    await delay(1_000)
+
+    // Act
+    helper.kill('SIGTERM')
+    const result = await ended
+    const left = await waitUntilNoneExists([filePid], 10_000)
+
+    // Assert
+    assert.deepEqual(
+      {
+        abortReachedTheFile: filePid !== undefined && abortSeenBy === filePid,
+        code: result.code,
+        signal: result.signal,
+        endedByItself: output.includes('the recording ended by itself'),
+        processesLeft: left,
+      },
+      {
+        abortReachedTheFile: true,
+        code: 143,
+        signal: null,
+        endedByItself: false,
+        processesLeft: [],
+      },
+    )
+  },
+)
+
 /** Runs the recording on a fixture build of one test file and answers what it printed and which of the file's processes still ran after it ended; the file notes its pid in `pids.log`. @example const { result, left } = await recordFixtureFile(context, 'a.test.js', source) */
 async function recordFixtureFile(context, file, source) {
   const root = await createFixtureExtension(context, {
