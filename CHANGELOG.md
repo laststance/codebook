@@ -2,7 +2,7 @@
 
 ## [0.2.32.0] - 2026-10-21 (development candidate)
 
-Cycle 0048 is a bug-fix cycle with no increment ([Issue #105](https://github.com/laststance/codebook/issues/105)). It holds the 24 defects that the adversarial review of Cycle 0047's final candidate found, 5 that the archived test guide carried, and the 188 found while it ran: 217 tasks, and its delivery closes every one. It is the fifth cycle under the rule that every defect a cycle leaves is fixed in the next one, and the first whose Issue holds its tasks and state. Most changes are in the skill's Wiki publisher, the Wiki reader and the test runners.
+Cycle 0048 is a bug-fix cycle with no increment ([Issue #105](https://github.com/laststance/codebook/issues/105)). It holds the 24 defects that the adversarial review of Cycle 0047's final candidate found, 5 that the archived test guide carried, and the 189 found while it ran: 218 tasks, and its delivery closes every one. It is the fifth cycle under the rule that every defect a cycle leaves is fixed in the next one, and the first whose Issue holds its tasks and state. Most changes are in the skill's Wiki publisher, the Wiki reader and the test runners.
 
 **Saved studies and recordings.**
 
