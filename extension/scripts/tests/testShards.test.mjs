@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
   cp,
   copyFile,
@@ -19,6 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { buildTestTimings } from '../utils/buildTestTimings.mjs'
 import { describeUnendedRecording } from '../utils/describeUnendedRecording.mjs'
+import { endProcessTree } from '../utils/endProcessTree.mjs'
 import { killProcessIds } from '../utils/killProcessIds.mjs'
 import { listProcessIdsUnder } from '../utils/listProcessIdsUnder.mjs'
 import { parseSilenceSeconds } from '../utils/parseSilenceSeconds.mjs'
@@ -1943,6 +1944,109 @@ test(
         outerStatus: 0,
         helper: '{"status":0,"output":"alive"}',
       },
+    )
+  },
+)
+
+/** The duration the busy stand-in root gives every `sleep` it starts: no other program of the machine runs `sleep` with it, so every such process in the table is one the test started. */
+const MARKED_SLEEP_SECONDS = '300.0123'
+
+/** Lists the ids of the processes whose command is the marked `sleep`, from the system's own `ps`; a zombie shows as `[sleep] <defunct>` and is not listed. @example markedSleepPids() // => [4301, 4302] */
+function markedSleepPids() {
+  const marked = new RegExp(
+    `^\\s*(\\d+)\\s+sleep ${MARKED_SLEEP_SECONDS.replace('.', '\\.')}$`,
+  )
+  return execFileSync('ps', ['-A', '-o', 'pid=,args='], { encoding: 'utf8' })
+    .split('\n')
+    .flatMap((line) => marked.exec(line)?.[1] ?? [])
+    .map(Number)
+}
+
+/** Waits until no marked `sleep` runs or the wait is over, and answers the ids that still run. @example await waitUntilNoMarkedSleepRuns(5_000) // => [] */
+async function waitUntilNoMarkedSleepRuns(waitMs) {
+  const until = Date.now() + waitMs
+  while (markedSleepPids().length > 0 && Date.now() < until) await delay(50)
+  return markedSleepPids()
+}
+
+// Value: protects=the end of a child's tree on POSIX against a child that keeps starting processes while it is ended (the runner starts test files all the time): none of the processes it started in that moment outlives the end; fails_when=the tree is read, the child is killed and the tree is read again, so a process the child started between the first look and its end is found by neither look (a killed child has no children: they are given to `init`) and runs on with no parent; why_new=Cycle 0048 task 189 (Red Team: endProcessTree.mjs read the tree, killed the child and read again, and its comment said the second look finds what the child started in between); seam=endProcessTree with a stand-in root that starts a `sleep` of the marked duration every millisecond, up to 400, and is ended once it has started 5; the clean-up ends every marked process by its id; no_claim=Windows (taskkill /T /F ends the tree there), and a child that starts processes faster than the stop and the looks can follow (the loop of looks has a bound)
+test(
+  'the end of a child that keeps starting processes leaves none of them running',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    context.after(() => killProcessIds(markedSleepPids()))
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        [
+          "const { spawn } = require('node:child_process')",
+          'let started = 0',
+          'const timer = setInterval(() => {',
+          `  spawn('sleep', [${JSON.stringify(MARKED_SLEEP_SECONDS)}], { stdio: 'ignore' })`,
+          '  started += 1',
+          "  if (started === 5) console.log('started 5')",
+          '  if (started === 400) clearInterval(timer)',
+          '}, 1)',
+        ].join('\n'),
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    )
+    context.after(() => child.kill('SIGKILL'))
+    let output = ''
+    child.stdout.on('data', (chunk) => (output += chunk))
+    assert.equal(await waitForOutput(() => output, 'started 5', 20_000), true)
+
+    // Act
+    await endProcessTree(child)
+    await new Promise((resolve) => child.once('close', resolve))
+    // A killed process is seen gone a moment after the kill.
+    const left = await waitUntilNoMarkedSleepRuns(5_000)
+
+    // Assert
+    assert.deepEqual(left, [])
+  },
+)
+
+// Value: protects=the forced step of a silent call on POSIX against a runner that keeps starting processes (the real runner starts a test file after another) and ignores SIGTERM: none of the processes it started in the moment of the forced step outlives the call; fails_when=the runner's tree is read and the runner is killed with nothing stopped, so a process it starts between the last look and its kill is found by no look (a killed runner has no children: they are given to `init`) and runs on with no parent; why_new=Cycle 0048 task 189 (Red Team: watchCallSilence's forced step reads the tree and kills the runner in the same order as endProcessTree did); seam=runTestInvocation with a stand-in runner that ignores SIGTERM and starts a `sleep` of the marked duration every millisecond, a 2.5 s silence limit and a 1.5 s grace; the clean-up ends every marked process by its id; no_claim=Windows (taskkill /T /F ends the tree there)
+test(
+  'a call ended for its silence leaves none of the processes its runner kept starting until the forced step',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    context.after(() => killProcessIds(markedSleepPids()))
+    const directory = await mkdtemp(join(tmpdir(), 'codebook-busy-runner-'))
+    context.after(() => rm(directory, { recursive: true, force: true }))
+    const runnerPath = join(directory, 'runner.cjs')
+    await writeFile(
+      runnerPath,
+      [
+        "const { spawn } = require('node:child_process')",
+        "process.on('SIGTERM', () => {})",
+        "console.log('started')",
+        'let started = 0',
+        'const timer = setInterval(() => {',
+        `  spawn('sleep', [${JSON.stringify(MARKED_SLEEP_SECONDS)}], { stdio: 'ignore' })`,
+        '  started += 1',
+        '  if (started === 5_000) clearInterval(timer)',
+        '}, 1)',
+      ].join('\n'),
+    )
+
+    // Act
+    // gstack-timing-ok: the 2.5 s limit is the contract that ends the call (it also leaves the stand-in time to start), and the 1.5 s grace follows it; the stand-in starts a process every millisecond for much longer than that.
+    const result = await runTestInvocation({ files: [] }, tmpdir(), {
+      silenceTimeoutMs: 2_500,
+      killGraceMs: 1_500,
+      runnerArguments: [runnerPath],
+    })
+    const left = await waitUntilNoMarkedSleepRuns(5_000)
+
+    // Assert
+    assert.deepEqual(
+      { timedOut: result.timedOut, signal: result.signal, processesLeft: left },
+      { timedOut: true, signal: 'SIGKILL', processesLeft: [] },
     )
   },
 )
