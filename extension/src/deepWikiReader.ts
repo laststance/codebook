@@ -272,7 +272,7 @@ export async function readDeepWikiManifest(
   return { files: new Set(paths), sources, revision, excludedPaths }
 }
 
-/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entries for the forwarded address and for reported file changes, and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
+/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entries for each forwarded address and for reported file changes, and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
 export async function startDeepWikiReader(
   outputDirectory: string,
   projectRoot: string,
@@ -561,7 +561,7 @@ export async function startDeepWikiReader(
    */
   function isQuestionOfOwnPage(request: IncomingMessage): boolean {
     const askedFrom = request.headers.origin
-    // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
+    // The reader's own page asks from the reader's address, or from an address the editor forwarded it to (every accepted forward stays accepted); a request without an origin is no page of this reader.
     const isOwnPage =
       askedFrom !== undefined &&
       (askedFrom === origin || forwardedOrigins.has(askedFrom))
