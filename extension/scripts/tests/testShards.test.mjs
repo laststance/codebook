@@ -3449,6 +3449,32 @@ test('a call that prints more than the output bound keeps the end of its output 
   assert.equal(lines.at(-5), 'printed line 20000')
 })
 
+// Value: protects=the shard script's count of a call whose stderr writes in the middle of a summary line of stdout (a pipe cuts lines anywhere): the call that passed still counts its tests; fails_when=the output keeper holds one unfinished line for both streams, so the chunk of stderr splices the summary line and the script fails a passing call as one that ran no test; why_new=Cycle 0048 task 205 (native adversarial: one unfinished line for stdout and stderr together); seam=runTestInvocation with a stand-in runner script that writes `ℹ tests 2\nℹ pa` to stdout, a line to stderr and `ss 2\nℹ fail 0` to stdout, 150 ms apart so that each is a chunk of its own; no_claim=the chunk sizes of a real runner
+test('a call whose stderr writes in the middle of a summary line of stdout still counts the tests of its summary', async (context) => {
+  // Arrange
+  const runnerPath = await writeScript(
+    context,
+    [
+      "process.stdout.write('ℹ tests 2\\nℹ pa')",
+      "setTimeout(() => process.stderr.write('warning: a test wrote to stderr\\n'), 150)",
+      "setTimeout(() => process.stdout.write('ss 2\\nℹ fail 0\\n'), 300)",
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runTestInvocation({ files: [] }, tmpdir(), {
+    runnerArguments: [runnerPath],
+  })
+
+  // Assert
+  assert.equal(result.code, 0)
+  assert.deepEqual(readRunSummary(result.output), {
+    tests: 2,
+    pass: 2,
+    fail: 0,
+  })
+})
+
 // Value: protects=the timings recording from a test that never ends: the recording ends with that test named and failed, and writes no timings file; fails_when=`--record` runs with no limit, so one hung test holds the recording until the job is cancelled; why_new=Cycle 0048 task 57 (Red Team: task 25's limit covered one entry point of three); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; seam=test-shard.mjs --record started as a process on a fixture build with a 3 s limit; no_claim=the default limit (120 s) and the timings of a recording that passes
 test('the timings recording ends a test that never ends, names it and writes no timings file', async (context) => {
   // Arrange

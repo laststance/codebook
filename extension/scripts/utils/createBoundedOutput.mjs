@@ -6,6 +6,9 @@ import {
 } from './readRunSummary.mjs'
 import { TEST_OUTPUT_KEEP_CHARS } from './testShardConstants.mjs'
 
+/** The streams of a call that a chunk can come from. */
+const STREAMS = ['stdout', 'stderr']
+
 /** A line this long cannot be a summary line (they hold at most about 50 characters), so the keeper stops holding the beginning of a line at this length. */
 const LONGEST_SUMMARY_LINE_CHARS = 100
 
@@ -27,10 +30,10 @@ function sameCounts(left, right) {
  * Why: a runner needs two things from a call's output, the summary lines and the report of the failing tests. Node 24 prints the summary block first and the failing tests' report after it (`ℹ tests 2` … `ℹ duration_ms …`, then `✖ failing tests:`), so a report longer than the bound pushes the summary out of the kept end. The keeper therefore reads every line as it arrives ({@link foldSummaryLine}) and holds the last summary block of the whole output; when the kept end does not read as that block ({@link readRunSummary}), the block is repeated after the kept end under a note. The kept end starts at a line start, so a half of a summary line is never read as a summary, and a note says how much was left out.
  * Called by {@link runTestInvocation} (the shard script's calls) and by `scripts/run-pregate-tests.mjs` (the pre-gate's runs).
  * @param keepChars - How many characters of the end to keep ({@link TEST_OUTPUT_KEEP_CHARS} by default). The keeper holds at most twice that many, so it cuts once for each `keepChars` of new output and not for each chunk.
- * @returns `{ append, text }`: `append(chunk)` adds a chunk of text; `text()` answers the kept end, with a first line `[… N characters of earlier output left out; at most the last M are kept]` when anything was left out, and the whole output otherwise. When the kept end does not read as the output's last summary block, the answer ends with the repeated block (a note line and the block's lines), and an output with no summary block gets none.
+ * @returns `{ append, text }`: `append(chunk, stream)` adds a chunk of text that came from `stream` (`'stdout'` or `'stderr'`; anything else throws a `TypeError`) and keeps it in the order the chunks came. The summary reading follows stdout alone, which holds the one unfinished line: a chunk of stderr between two chunks of a summary line of stdout neither splices that line nor, as a complete line, breaks the block, and a line of stderr in the form of a summary line counts nothing. The kept text can still read spliced (stderr text inside a summary line), and the repeated block below then answers the counts; `text()` answers the kept end, with a first line `[… N characters of earlier output left out; at most the last M are kept]` when anything was left out, and the whole output otherwise. When the kept end does not read as the output's last summary block, the answer ends with the repeated block (a note line and the block's lines), and an output with no summary block gets none.
  * @example
  * const output = createBoundedOutput(50)
- * output.append('first\n')
+ * output.append('first\n', 'stdout')
  * output.text() // => 'first\n'
  */
 export function createBoundedOutput(keepChars = TEST_OUTPUT_KEEP_CHARS) {
@@ -88,8 +91,13 @@ export function createBoundedOutput(keepChars = TEST_OUTPUT_KEEP_CHARS) {
   }
 
   return {
-    append(chunk) {
-      readSummaryLines(chunk)
+    append(chunk, stream) {
+      if (!STREAMS.includes(stream))
+        throw new TypeError(
+          `createBoundedOutput: the stream of a chunk is 'stdout' or 'stderr', not ${String(stream)}.`,
+        )
+      // The runner prints its summary on stdout. A chunk of stderr is a line of its own: read into the one unfinished line, it would splice a summary line of stdout that is split across two chunks (and a complete line of stderr between two lines of the block would break it), so it is kept in the text and not read.
+      if (stream === 'stdout') readSummaryLines(chunk)
       kept += chunk
       if (kept.length > 2 * keepChars) cutToBound()
     },

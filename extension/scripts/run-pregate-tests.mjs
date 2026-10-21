@@ -129,7 +129,7 @@ function runTests({ files, args }) {
     child.stdout.on('data', (chunk) => {
       // Output on either stream shows that the run is alive.
       watch.keepAlive()
-      output.append(chunk)
+      output.append(chunk, 'stdout')
       forwarder.push(chunk)
     })
     child.stderr.on('data', (chunk) => {

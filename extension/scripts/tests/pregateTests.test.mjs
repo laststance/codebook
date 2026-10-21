@@ -1424,9 +1424,9 @@ test('the output keeper keeps the end of an output longer than its bound from a 
   const lines = Array.from({ length: 30 }, (_, index) => `line number ${index}`)
 
   // Act
-  for (const line of lines) long.append(`${line}\n`)
-  short.append('one\n')
-  short.append('two\n')
+  for (const line of lines) long.append(`${line}\n`, 'stdout')
+  short.append('one\n', 'stdout')
+  short.append('two\n', 'stdout')
 
   // Assert
   const longText = long.text()
@@ -1519,10 +1519,10 @@ test('the output keeper cuts a line longer than its bound where it stands, and l
 
   // Act
   for (const chunk of ['aaaaaaaa', 'bbbbbbbb', 'cccccccc', 'dddddddd'])
-    unbroken.append(chunk)
+    unbroken.append(chunk, 'stdout')
   // The first 6 characters are cut, and the cut falls right after the line break.
-  atLineStart.append('abcde\nab\ncdefgh')
-  atLineStart.append('i')
+  atLineStart.append('abcde\nab\ncdefgh', 'stdout')
+  atLineStart.append('i', 'stdout')
 
   // Assert
   assert.deepEqual(
@@ -1563,9 +1563,9 @@ test('the output keeper still reads the counts of a call whose failure report af
   const output = createBoundedOutput(300)
 
   // Act
-  output.append('✔ ok (0.9ms)\n✖ bad (0.5ms)\n')
-  output.append(TWO_TESTS_SUMMARY_BLOCK)
-  output.append(failureReportOfNode24())
+  output.append('✔ ok (0.9ms)\n✖ bad (0.5ms)\n', 'stdout')
+  output.append(TWO_TESTS_SUMMARY_BLOCK, 'stdout')
+  output.append(failureReportOfNode24(), 'stdout')
 
   // Assert
   const text = output.text()
@@ -1590,11 +1590,11 @@ test('the output keeper repeats the runner’s own last summary block, never a b
   const indentedInReport = '  ℹ tests 77\n  ℹ pass 77\n  ℹ fail 0\n'
 
   // Act
-  output.append(printedByTest)
-  output.append(TWO_TESTS_SUMMARY_BLOCK)
-  output.append(failureReportOfNode24())
-  output.append(indentedInReport)
-  output.append(failureReportOfNode24())
+  output.append(printedByTest, 'stdout')
+  output.append(TWO_TESTS_SUMMARY_BLOCK, 'stdout')
+  output.append(failureReportOfNode24(), 'stdout')
+  output.append(indentedInReport, 'stdout')
+  output.append(failureReportOfNode24(), 'stdout')
 
   // Assert
   assert.deepEqual(readRunSummary(output.text()), TWO_TESTS_SUMMARY_COUNTS)
@@ -1609,12 +1609,13 @@ test('the output keeper reads a summary block that arrives split across chunks, 
 
   // Act
   for (let start = 0; start < wholeOutput.length; start += 7)
-    output.append(wholeOutput.slice(start, start + 7))
+    output.append(wholeOutput.slice(start, start + 7), 'stdout')
   const endsWithBlock = createBoundedOutput(20)
   endsWithBlock.append(
     `${'a line of output\n'.repeat(60)}ℹ tests 3\nℹ pass 3\nℹ f`,
+    'stdout',
   )
-  endsWithBlock.append('ail 0')
+  endsWithBlock.append('ail 0', 'stdout')
 
   // Assert
   assert.deepEqual(readRunSummary(output.text()), TWO_TESTS_SUMMARY_COUNTS)
@@ -1632,6 +1633,76 @@ test('the output keeper reads a summary block that arrives split across chunks, 
   )
 })
 
+// Value: protects=the count of a call whose stderr writes between the chunks of a summary line of stdout: the chunk of stderr is a line of its own, so the summary still counts, and the kept text keeps the chunks in the order they came; fails_when=the keeper holds one unfinished line for both streams, so the chunk of stderr splices the summary line (`ℹ pa` + `warning…` + `ss 2`) and a call that passed counts no test; why_new=Cycle 0048 task 205 (native adversarial: one unfinished line for stdout and stderr together); seam=createBoundedOutput with readRunSummary; no_claim=the sizes of the chunks a pipe delivers (the test of the shard script's call is in testShards.test.mjs)
+test('the output keeper counts a summary line of stdout that a chunk of stderr falls in the middle of, and keeps the text in the order the chunks came', () => {
+  // Arrange
+  const output = createBoundedOutput(300)
+
+  // Act
+  output.append('ℹ tests 2\nℹ pa', 'stdout')
+  output.append('warning: a test wrote to stderr\n', 'stderr')
+  output.append('ss 2\nℹ fail 0\n', 'stdout')
+
+  // Assert
+  assert.deepEqual(readRunSummary(output.text()), {
+    tests: 2,
+    pass: 2,
+    fail: 0,
+  })
+  assert.ok(
+    output
+      .text()
+      .startsWith('ℹ tests 2\nℹ pawarning: a test wrote to stderr\nss 2\n'),
+  )
+})
+
+// Value: protects=the count of a call against a summary-shaped line of stderr: a block a test wrote to stderr after the runner's own summary on stdout counts nothing, and a complete line of stderr between two lines of the runner's block does not break the block; fails_when=the keeper reads stderr as summary text, so the last block is the test's and not the runner's, or a line of stderr ends the block of stdout; why_new=Cycle 0048 task 205 (native adversarial: one unfinished line for stdout and stderr together); seam=createBoundedOutput with readRunSummary; no_claim=a runner that prints its summary on stderr (Node's spec reporter prints it on stdout)
+test('the output keeper reads the summary from stdout only: a summary-shaped block on stderr counts nothing and a line of stderr inside the runner’s block does not break it', () => {
+  // Arrange
+  const afterTheRunnersBlock = createBoundedOutput(300)
+  const insideTheRunnersBlock = createBoundedOutput(300)
+
+  // Act
+  afterTheRunnersBlock.append('ℹ tests 2\nℹ pass 2\nℹ fail 0\n', 'stdout')
+  afterTheRunnersBlock.append('ℹ tests 99\nℹ pass 99\nℹ fail 0\n', 'stderr')
+  insideTheRunnersBlock.append('ℹ tests 3\n', 'stdout')
+  insideTheRunnersBlock.append('a whole line of stderr\n', 'stderr')
+  insideTheRunnersBlock.append('ℹ pass 3\nℹ fail 0\n', 'stdout')
+
+  // Assert
+  assert.deepEqual(readRunSummary(afterTheRunnersBlock.text()), {
+    tests: 2,
+    pass: 2,
+    fail: 0,
+  })
+  assert.deepEqual(readRunSummary(insideTheRunnersBlock.text()), {
+    tests: 3,
+    pass: 3,
+    fail: 0,
+  })
+})
+
+// Value: protects=the keeper's contract that a chunk names its stream: a chunk with no stream, or a stream that is neither stdout nor stderr, is refused, so a caller that forgets it cannot silently read stderr as stdout; fails_when=the stream is optional and a missing one reads as stdout; why_new=Cycle 0048 task 205 (the keeper's `append` takes the stream a chunk came from); seam=createBoundedOutput alone; no_claim=the callers (runTestInvocation and the pre-gate runner pass 'stdout' or 'stderr')
+test('the output keeper refuses a chunk that does not name stdout or stderr', () => {
+  // Arrange
+  const output = createBoundedOutput(300)
+
+  // Act
+  const refuse = (stream) => () => output.append('text\n', stream)
+
+  // Assert
+  assert.throws(refuse(undefined), {
+    name: 'TypeError',
+    message:
+      "createBoundedOutput: the stream of a chunk is 'stdout' or 'stderr', not undefined.",
+  })
+  assert.throws(refuse('stdin'), {
+    message:
+      "createBoundedOutput: the stream of a chunk is 'stdout' or 'stderr', not stdin.",
+  })
+  assert.equal(output.text(), '')
+})
+
 // Value: protects=the count of a runner that died: an output with no complete summary block still counts none, however long, and the keeper adds no block of its own; a line longer than any summary line ends a block and is not held; fails_when=the keeper repeats a lone summary line or an incomplete block as a summary, or a long line between two summary lines does not break the block; why_new=Cycle 0048 task 153 (output that holds no summary); seam=createBoundedOutput with readRunSummary; no_claim=the note of the left out characters (the keeper tests above)
 test('the output keeper counts no test for an output with no complete summary block, even when a long line breaks a block in two', () => {
   // Arrange
@@ -1639,12 +1710,12 @@ test('the output keeper counts no test for an output with no complete summary bl
   const brokenByLongLine = createBoundedOutput(300)
 
   // Act
-  died.append('ℹ tests 99\nℹ pass 99\n')
-  died.append('a line of output that goes on\n'.repeat(60))
-  brokenByLongLine.append('ℹ tests 5\nℹ pass 5\n')
+  died.append('ℹ tests 99\nℹ pass 99\n', 'stdout')
+  died.append('a line of output that goes on\n'.repeat(60), 'stdout')
+  brokenByLongLine.append('ℹ tests 5\nℹ pass 5\n', 'stdout')
   for (let part = 0; part < 10; part += 1)
-    brokenByLongLine.append('x'.repeat(100))
-  brokenByLongLine.append('\nℹ fail 0\n')
+    brokenByLongLine.append('x'.repeat(100), 'stdout')
+  brokenByLongLine.append('\nℹ fail 0\n', 'stdout')
 
   // Assert
   assert.equal(readRunSummary(died.text()), undefined)
@@ -1681,7 +1752,7 @@ test('the output keeper keeps the counts of a real node --test call whose failur
   )
   const output = createBoundedOutput(500)
   for (let start = 0; start < run.stdout.length; start += 4096)
-    output.append(run.stdout.slice(start, start + 4096))
+    output.append(run.stdout.slice(start, start + 4096), 'stdout')
 
   // Assert
   const pickCounts = ({ tests, pass, fail } = {}) => ({ tests, pass, fail })
