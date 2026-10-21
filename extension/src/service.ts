@@ -374,8 +374,8 @@ export class StudyService {
   }>
   /** Receives one entry per unexpected failure on a test replay's path for the Output › Codebook channel; the extension sets it at activation. */
   diagnostics?: (entry: CodebookDiagnostic) => void
-  /** The extension's own storage folders beside {@link storageRoot}, which the extension adds at activation; no shown cause names them. */
-  readonly extraStorageRoots: string[] = []
+  /** The extension's own storage folders beside {@link storageRoot}, which the extension sets when it creates the service; no shown cause names them. */
+  extraStorageRoots: readonly string[] = []
   private readonly repositoryRetirement = new AbortController()
   private readonly repositoryOpens = new Set<Promise<unknown>>()
   private readonly startKeys = new Map<string, StudyRecord>()

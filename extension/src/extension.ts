@@ -188,8 +188,10 @@ export function activate(
     handler: Parameters<typeof registerPlainCommand>[2],
   ): vscode.Disposable =>
     registerPlainCommand(vscode.commands, command, handler)
-  // Unexpected failures on a test replay's paths, which the learner can read and copy (X5): one LogOutputChannel for the window.
-  const output = vscode.window.createOutputChannel?.('Codebook', { log: true })
+  // Unexpected failures on a test replay's paths, which the learner can read and copy (X5): one LogOutputChannel for the window. A host without a window API (a test's stand-in) gets none, as for the URI handler below.
+  const output = vscode.window?.createOutputChannel?.('Codebook', {
+    log: true,
+  })
   if (output) context.subscriptions.push(output)
   const diagnostics = {
     log: (entry: CodebookDiagnostic): void => {
@@ -464,7 +466,7 @@ export function activate(
         service = new StudyService(environment, storageRoot)
         service.diagnostics = diagnostics.log
         // Every storage folder of the extension stays out of the causes the learner and the agent read (EN12).
-        service.extraStorageRoots.push(context.globalStorageUri.fsPath)
+        service.extraStorageRoots = [context.globalStorageUri.fsPath]
         await workspace().attach(service)
         service.repository = await repository().storage()
         service.repositoryReader = (input, signal) =>
