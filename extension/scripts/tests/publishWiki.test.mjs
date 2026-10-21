@@ -16487,7 +16487,7 @@ test('a --recover whose stopped ancestor claim is removed meanwhile completes, e
 })
 
 /**
- * A module loaded before the publisher (`--import`) that records the publisher's calls of the file system that the order of its syncs depends on, one JSON line each, in `log`: each write, sync and close through a handle (`write`, `sync`, `close`, with the handle's path: a file's, or a folder's that is opened to sync it), each hard link (`link`, with the new name), each move (`rename`, with its source and its target) and each removal (`unlink`).
+ * A module loaded before the publisher (`--import`) that records the publisher's calls of the file system that the order of its syncs depends on, one JSON line each, in `log`: each write, sync and close through a handle (`write`, `sync`, `close`, with the handle's path: a file's, or a folder's that is opened to sync it; the close of a handle that was neither written nor synced, such as one a file is read through, is not recorded), each hard link (`link`, with the new name), each move (`rename`, with its source and its target) and each removal (`unlink`).
  * @param {string} log - The file the calls are appended to.
  * @returns {string} The module as a `data:` URL.
  * @example
@@ -16495,7 +16495,7 @@ test('a --recover whose stopped ancestor claim is removed meanwhile completes, e
  */
 const fileSystemCallsRecordedIn = (log) =>
   `data:text/javascript,${encodeURIComponent(
-    `import fileSystem from 'node:fs/promises'; import { appendFileSync } from 'node:fs'; import { syncBuiltinESMExports } from 'node:module'; const record = (...call) => appendFileSync(${JSON.stringify(log)}, JSON.stringify(call) + '\\n'); const { open, link, rename, unlink } = fileSystem; fileSystem.open = async (path, ...rest) => { const handle = await open(path, ...rest), name = String(path), { writeFile, sync, close } = handle; handle.writeFile = (...data) => { record('write', name); return writeFile.apply(handle, data) }; handle.sync = () => { record('sync', name); return sync.call(handle) }; handle.close = () => { record('close', name); return close.call(handle) }; return handle }; fileSystem.link = (from, to) => { record('link', String(to)); return link(from, to) }; fileSystem.rename = (from, to) => { record('rename', String(from), String(to)); return rename(from, to) }; fileSystem.unlink = (path) => { record('unlink', String(path)); return unlink(path) }; syncBuiltinESMExports();`,
+    `import fileSystem from 'node:fs/promises'; import { appendFileSync } from 'node:fs'; import { syncBuiltinESMExports } from 'node:module'; const record = (...call) => appendFileSync(${JSON.stringify(log)}, JSON.stringify(call) + '\\n'); const { open, link, rename, unlink } = fileSystem; fileSystem.open = async (path, ...rest) => { const handle = await open(path, ...rest), name = String(path), { writeFile, sync, close } = handle; let isWrittenOrSynced = false; handle.writeFile = (...data) => { isWrittenOrSynced = true; record('write', name); return writeFile.apply(handle, data) }; handle.sync = () => { isWrittenOrSynced = true; record('sync', name); return sync.call(handle) }; handle.close = () => { if (isWrittenOrSynced) record('close', name); return close.call(handle) }; return handle }; fileSystem.link = (from, to) => { record('link', String(to)); return link(from, to) }; fileSystem.rename = (from, to) => { record('rename', String(from), String(to)); return rename(from, to) }; fileSystem.unlink = (path) => { record('unlink', String(path)); return unlink(path) }; syncBuiltinESMExports();`,
   )}`
 
 // Value: protects=the learner's Wiki and the learner's own files on a power cut during or right after a publish, where the file system may keep the moves of the swap and lose the bytes or the names they rely on (ext4 can keep a journal empty, NTFS of NUL bytes); fails_when=the publish closes a file it wrote, links its journal, writes a copy of a learner's file, moves the Wiki or removes its journal before it synced the bytes and the names the next step relies on, so a power cut can leave an empty journal beside a missing Wiki folder, or a published Wiki without the learner's files; why_new=Cycle 0047 row 265 (P3CLA-4); seam=a publisher process whose file system calls a module loaded first records in their order (`--import`); no_claim=that a real power cut keeps what the syncs promise, which only the file system and the disk can keep and no test here can cut the power to show
@@ -16571,8 +16571,6 @@ test('a publish syncs each file it writes before its close, the journal’s fold
           // The folder that holds the journal and the lock, once the journal has its name.
           'sync .',
           'close .',
-          // The learner's file is read through one handle (Cycle 0048 task 66), which is closed after the read; nothing is written through it.
-          'close wiki/manual.txt',
           // The list of copies: its name, then its line, synced before the copy it names begins.
           'sync .',
           'close .',

@@ -74,7 +74,25 @@ export const realpath = throughOtherName(fileSystem.realpath)
 export const readdir = throughOtherName(fileSystem.readdir)
 export const readFile = throughOtherName(fileSystem.readFile)
 export const readlink = throughOtherName(fileSystem.readlink)
-export const open = throughOtherName(fileSystem.open)
+/**
+ * Opens a file as `open` does, through the path of {@link pathOf}; the status read through its handle answers as `lstat` does ({@link statusAsAnswered}), since a volume without file ids answers 0 for a handle's status too.
+ * @param {string | URL} path - The file to open.
+ * @param {...unknown} rest - The caller's flags and mode, handed on unchanged.
+ * @returns {Promise<import('node:fs/promises').FileHandle>} The handle, whose `stat` answers as this volume does.
+ * @example
+ * (await (await open('/repo/.codebook/WIKI/manual.txt', 'r')).stat({ bigint: true })).ino // => 0n after nameFolderAlso(…, { hasNoFileIds: true })
+ */
+export async function open(path, ...rest) {
+  const handle = await throughOtherName(fileSystem.open)(path, ...rest)
+  return new Proxy(handle, {
+    get(target, property) {
+      if (property === 'stat')
+        return (...options) => target.stat(...options).then(statusAsAnswered)
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
 export const writeFile = throughOtherName(fileSystem.writeFile)
 export const unlink = throughOtherName(fileSystem.unlink)
 export const mkdir = throughOtherName(fileSystem.mkdir)
