@@ -60,6 +60,8 @@ async function nodeRunHarness({
   reportFailure,
   reportStatus = 'passed',
   exitCode = 0,
+  exitSignal = null,
+  reportRead,
   firstPause,
   neverReachStop,
   budgetMs,
@@ -81,7 +83,11 @@ async function nodeRunHarness({
   exitAfterEntry?: boolean
   reportFailure?: Error
   reportStatus?: 'passed' | 'failed'
-  exitCode?: number
+  exitCode?: number | null
+  /** The signal that ended the test process, as the process's exit reports it. */
+  exitSignal?: NodeJS.Signals | null
+  /** Holds the check of Vitest's report until it settles, as a slow read of a large report would. */
+  reportRead?: Promise<void>
   firstPause?: {
     line: number
     file?: string
@@ -577,7 +583,7 @@ async function nodeRunHarness({
             calls.push('result')
             return {
               exitCode,
-              signal: null,
+              signal: exitSignal,
               output:
                 reportStatus === 'failed' ? 'Tests 1 failed' : 'Tests 1 passed',
             }
@@ -599,6 +605,7 @@ async function nodeRunHarness({
         verifyVitestTestResult: async (...request: unknown[]) => {
           calls.push('verify')
           verified.push(request)
+          await reportRead
           if (reportFailure) throw reportFailure
           return reportStatus
         },
@@ -1145,6 +1152,136 @@ test('a failed cited assertion with a failing process exit preserves its observe
       true,
     )
   } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the result of a test that a signal ended after its last stop, kept although Vitest wrote no report, with the report's problem beside it; fails_when=complete() throws before it returns the exit facts, so the run records no result and no verdict; why_new=verifyVitestTestResult throws on a missing report and complete() threw with it (EN5, AC19); seam=the owned launch and the report check are fakes; no_claim=how real Vitest behaves under each signal
+test('a test that a signal ended after its last stop keeps its result and names the missing report beside it', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    exitCode: null,
+    exitSignal: 'SIGTERM',
+    reportFailure: new Error(
+      'Vitest wrote no test report, so Codebook cannot confirm that the cited test ran.',
+    ),
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const result = await harness.run.complete()
+
+    // Assert
+    assert.equal(result.exitCode, null)
+    assert.equal(result.signal, 'SIGTERM')
+    assert.equal(
+      result.reportFailure,
+      'Vitest wrote no test report, so Codebook cannot confirm that the cited test ran.',
+    )
+    assert.equal(
+      harness.events.some((event) => event.type === 'node-test.result'),
+      true,
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a failing exit kept with its report's problem; fails_when=a non-zero exit whose report is missing loses its exit code; why_new=the same branch as the signal, for an exit code (EN5); seam=the owned launch and the report check are fakes; no_claim=none beyond protects
+test('a test that exited with a failing code keeps its result when its report is missing', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    exitCode: 1,
+    reportFailure: new Error('Vitest wrote an unreadable test report.'),
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const result = await harness.run.complete()
+
+    // Assert
+    assert.equal(result.exitCode, 1)
+    assert.equal(
+      result.reportFailure,
+      'Vitest wrote an unreadable test report.',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=that an exit 0 without a report confirming the cited test returns no result; fails_when=a passing-shaped result reaches the history although nothing confirmed that the cited test ran; why_new=the exit-facts branch must not cover a passing exit (EN5); seam=the owned launch and the report check are fakes; no_claim=none beyond protects
+test('an exit 0 whose report is missing returns no result', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    reportFailure: new Error(
+      'Vitest wrote no test report, so Codebook cannot confirm that the cited test ran.',
+    ),
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const completing = harness.run.complete()
+
+    // Assert
+    await assert.rejects(completing, /Vitest wrote no test report/)
+    assert.equal(
+      harness.events.some((event) => event.type === 'node-test.result'),
+      false,
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the private Vitest report while the result check reads it; fails_when=a stop removes the report folder during the check, so the check reports a missing report for a test that passed; why_new=releaseOwned removed the report at once (ownedNodeTestRun.ts:907, EN5, AC19); seam=the report check is held by the test; no_claim=the service's seal (service tests)
+test('a stop while the report is being checked removes the report only after the check read it', async () => {
+  // Arrange
+  let finishRead!: () => void
+  const reportRead = new Promise<void>((resolve) => {
+    finishRead = resolve
+  })
+  const harness = await nodeRunHarness({ reportRead })
+  try {
+    await harness.run.prepare()
+    await writeFile(harness.launch.report.file, '{}')
+    const completing = harness.run.complete()
+    await waitUntil(
+      () => harness.calls.includes('verify'),
+      'the report check',
+      1_000,
+    )
+
+    // Act
+    const stopping = harness.run.stop()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const reportKeptDuringCheck = await stat(harness.launch.report.file).then(
+      () => true,
+      () => false,
+    )
+    finishRead()
+    const result = await completing
+    await stopping
+
+    // Assert
+    assert.equal(reportKeptDuringCheck, true)
+    assert.equal(result.exitCode, 0)
+    assert.equal(
+      await stat(harness.launch.report.file).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    )
+  } finally {
+    finishRead()
     await harness.run.stop()
     await harness.cleanup()
   }

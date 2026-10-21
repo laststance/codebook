@@ -21,6 +21,7 @@ import {
   OwnedRepositoryBreakpoint,
 } from './ownedRepositoryBreakpoint'
 import type { ReplayDebugSnapshot } from './replayDebugSchemas'
+import type { NodeTestRuntime } from './runtime'
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import { RESUME_COMMANDS } from './runtimeSupport/constants'
 import { sha256 } from './runtimeSupport/utils/sha256'
@@ -38,6 +39,7 @@ import { listVitestTestFiles } from './utils/listVitestTestFiles'
 import { prepareNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import type { PreparedNodeTestLaunch } from './utils/prepareNodeTestLaunch'
 import { selectCheckedNodeFrame } from './utils/selectCheckedNodeFrame'
+import { thrownMessage } from './utils/thrownMessage'
 import { verifyVitestTestResult } from './utils/verifyVitestTestResult'
 
 /** One DAP `stopped` event observed on an owned session, in arrival order; `hitBreakpointIds` names the breakpoints the adapter says caused it. */
@@ -88,6 +90,8 @@ export class OwnedNodeTestRun {
   /** The native pause event behind {@link acceptedStop}; a client resume or a different later pause revokes its continuation authority, while a same-frame stack refresh inherits it. */
   private acceptedPause?: NativePause
   private launch?: PreparedNodeTestLaunch
+  /** The final continuation while it waits for the process and reads Vitest's report; the release removes the report only once it settled (EN5). */
+  private completing?: Promise<unknown>
   /** The adapter's id for the breakpoint of the stop being awaited, from its registration receipt. */
   private ownedBreakpointId?: number
   private advancing = false
@@ -686,13 +690,25 @@ export class OwnedNodeTestRun {
     return stop
   }
 
-  /** Continues only the accepted paused session and waits for the real test command outcome. @example const result = await run.complete() */
-  async complete(): Promise<{
-    exitCode: number | null
-    signal: NodeJS.Signals | null
-    output: string
-    elapsedMs: number
-  }> {
+  /**
+   * Continues only the accepted paused session and waits for the real test command outcome; the last continuation {@link StudyService.continue} makes.
+   * The process's exit facts are kept when Vitest's report cannot confirm the cited test (EN5): a non-zero exit or a signal already says the test did not pass, so it is returned with the report's problem beside it; an exit 0 rejects, so nothing claims a pass the report did not confirm.
+   * @returns The exit code or signal, the bounded output, the elapsed time, and `reportFailure` for a failing exit whose report could not confirm the cited test.
+   * @throws When there is no final accepted pause, the pause was resumed, the run was cancelled, or an exit 0 has no report that shows the cited test passed.
+   * @example const result = await run.complete() // => { exitCode: 0, signal: null, output: '…', elapsedMs: 3120 }
+   */
+  complete(): ReturnType<NodeTestRuntime['complete']> {
+    const completing = this.completeOwned()
+    this.completing = completing.catch(() => undefined)
+    return completing
+  }
+
+  /**
+   * Does the work of {@link complete}, which keeps it while it runs so a release waits for it before it removes the report.
+   * @returns What {@link complete} returns.
+   * @example await this.completeOwned()
+   */
+  private async completeOwned(): ReturnType<NodeTestRuntime['complete']> {
     const stop = this.acceptedStop,
       bound = this.bound,
       owned = this.owned,
@@ -720,22 +736,28 @@ export class OwnedNodeTestRun {
     await bound.session.customRequest('continue', { threadId: stop.threadId })
     // The attach timeout bounds only the retirement above; the remaining tests may run until cancellation or the run deadline.
     const result = await owned.result(this.abort.signal)
+    const elapsedMs = owned.elapsedMs()
     // A stop and an exit code cannot show which test ran: module loading can reach the stop while Vitest skips the cited test.
-    const reportedStatus = await verifyVitestTestResult(
+    const report = await verifyVitestTestResult(
       launch.report.file,
       launch.testFile,
       launch.testTitles,
+    ).then(
+      (status) => ({ status, failure: undefined }),
+      (error: unknown) => ({
+        status: undefined,
+        failure: thrownMessage(error),
+      }),
     )
+    const exitPassed = result.exitCode === 0 && result.signal === null
+    // An exit 0 passes only with a report that shows the cited test passed; nothing else confirms it.
+    if (exitPassed && report.failure !== undefined)
+      throw new Error(report.failure)
     // A plugin can reset process.exitCode after failed assertions; a successful exit cannot override the report.
-    if (
-      reportedStatus === 'failed' &&
-      result.exitCode === 0 &&
-      result.signal === null
-    )
+    if (exitPassed && report.status === 'failed')
       throw new Error(
         'Vitest reported that the cited test failed despite process exit code 0; the run cannot be marked successful.',
       )
-    const elapsedMs = owned.elapsedMs()
     this.record('node-test.result', {
       exitCode: result.exitCode,
       signal: result.signal,
@@ -743,7 +765,10 @@ export class OwnedNodeTestRun {
       output: result.output,
     })
     this.outputTerminal?.reveal()
-    return { ...result, elapsedMs }
+    // A failing exit is a fact of its own; the report's problem goes beside it.
+    return report.failure === undefined
+      ? { ...result, elapsedMs }
+      : { ...result, elapsedMs, reportFailure: report.failure }
   }
 
   /** Cancels the run and releases only its tracked native sessions, breakpoint and process group. @example await run.stop() */
@@ -902,7 +927,8 @@ export class OwnedNodeTestRun {
     } catch (error) {
       processFailure = error
     }
-    // The private Vitest report is evidence only until the result check; nothing else reads it.
+    // The private Vitest report is evidence only until the result check; nothing else reads it. A check under way finishes reading first (EN5).
+    await this.completing
     if (this.launch)
       await rm(this.launch.report.directory, {
         recursive: true,
