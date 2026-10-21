@@ -17,6 +17,7 @@ import { parseArgs } from 'node:util'
 
 import { createBoundedOutput } from './utils/createBoundedOutput.mjs'
 import { createRunLineForwarder } from './utils/createRunLineForwarder.mjs'
+import { isEndingForSignal } from './utils/endChildrenOnSignal.mjs'
 import { mapPregateTests } from './utils/mapPregateTests.mjs'
 import { parseSecondsOption } from './utils/parseSecondsOption.mjs'
 import { parseSilenceSeconds } from './utils/parseSilenceSeconds.mjs'
@@ -145,6 +146,8 @@ function runTests({ files, args }) {
     })
     child.on('close', (code, signal) => {
       watch.stop()
+      // A run that closes while a signal ends this runner answers nothing, as the build does: on Windows it closes with its exit while the signal's handler still waits for its `taskkill`, and an answer would start the next run, which nothing would end before the exit ({@link isEndingForSignal}).
+      if (isEndingForSignal()) return
       forwarder.end()
       if (watch.timedOut)
         console.error(

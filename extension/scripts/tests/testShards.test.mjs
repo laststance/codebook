@@ -3022,3 +3022,329 @@ test(
     )
   },
 )
+
+/**
+ * Starts a helper process that runs the given module source with {@link endChildrenOnSignal} imported, and answers what it prints, what it writes to stderr and a promise of how it ends; the helper is killed when the test ends. A test of the module runs it in a process of its own, because the module holds its state for the whole process and the signal it handles ends that process.
+ * Called by the tests of {@link endChildrenOnSignal}'s releases and late children.
+ * @param context - The running test.
+ * @param source - The helper's source, after its imports: `endChildrenOnSignal`, `endProcessTree`, `spawn` and `setTimeout as delay` are imported.
+ * @returns `{ child, readOutput, readErrors, ended }`: the process, functions that read what it printed so far, and a promise of `{ code, signal }`.
+ * @example
+ * const { child, readOutput, ended } = startSignalHelper(context, "console.log('ready')")
+ */
+function startSignalHelper(context, source) {
+  const moduleUrl = (name) =>
+    JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils', name)).href)
+  const child = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      [
+        `import { endChildrenOnSignal } from ${moduleUrl('endChildrenOnSignal.mjs')}`,
+        `import { endProcessTree } from ${moduleUrl('endProcessTree.mjs')}`,
+        "import { spawn } from 'node:child_process'",
+        "import { setTimeout as delay } from 'node:timers/promises'",
+        source,
+      ].join('\n'),
+    ],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  )
+  context.after(() => child.kill('SIGKILL'))
+  let output = ''
+  let errors = ''
+  child.stdout.on('data', (chunk) => (output += chunk))
+  child.stderr.on('data', (chunk) => (errors += chunk))
+  const ended = new Promise((resolve) =>
+    child.on('close', (code, signal) => resolve({ code, signal })),
+  )
+  return {
+    child,
+    readOutput: () => output,
+    readErrors: () => errors,
+    ended,
+  }
+}
+
+/** The signal handlers a helper counts: `[SIGINT, SIGTERM, SIGHUP]` listener counts, as source that a helper defines as `counts()`. */
+const HANDLER_COUNTS_SOURCE =
+  "const counts = () => ['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) => process.listenerCount(signal))"
+
+// Value: protects=the handler counts of a script after a child is released twice (a `close` and an `error` of one child both release it): the second release changes nothing, throws nothing, and leaves the handlers as the first one left them, so a child registered afterwards gets the module's handlers once and is ended by a SIGTERM; fails_when=a release counts instead of removing its own end (the second release drops a count that belongs to no child, so the next registration finds the count already at zero and installs no handler, or twice), or a second release throws; why_new=Cycle 0048 task 186 (state machines: no test for a release called twice); seam=endChildrenOnSignal in a helper process of its own that releases its only child twice, counts the listeners, registers a new child and gets a SIGTERM; mutant=a release that does `registered -= 1` and installs the handlers only when `registered === 0` fails this test; no_claim=what the ends do to real children (the shard and pre-gate signal tests)
+test(
+  'a child released twice leaves no handler behind, and a child registered afterwards is ended by SIGTERM with exit 143',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { child, readOutput, readErrors, ended } = startSignalHelper(
+      context,
+      [
+        HANDLER_COUNTS_SOURCE,
+        'const none = counts()',
+        'const release = endChildrenOnSignal(() => {})',
+        'release()',
+        'let secondReleaseThrew = false',
+        'try { release() } catch { secondReleaseThrew = true }',
+        'const afterTwice = counts()',
+        "endChildrenOnSignal(() => { console.log('later child ended') })",
+        'console.log(JSON.stringify({ none, afterTwice, secondReleaseThrew, withLaterChild: counts() }))',
+        'setInterval(() => {}, 1_000)',
+      ].join('\n'),
+    )
+    assert.equal(
+      await waitForOutput(readOutput, 'withLaterChild', 20_000),
+      true,
+    )
+
+    // Act
+    child.kill('SIGTERM')
+    const result = await ended
+
+    // Assert
+    assert.deepEqual(
+      {
+        counts: JSON.parse(readOutput().split('\n')[0]),
+        laterChildEnded: readOutput().includes('later child ended'),
+        code: result.code,
+        signal: result.signal,
+        errors: readErrors(),
+      },
+      {
+        counts: {
+          none: [0, 0, 0],
+          afterTwice: [0, 0, 0],
+          secondReleaseThrew: false,
+          withLaterChild: [1, 1, 1],
+        },
+        laterChildEnded: true,
+        code: 143,
+        signal: null,
+        errors: '',
+      },
+    )
+  },
+)
+
+// Value: protects=a script with two children when one closes: the handlers stay for the other, and a SIGTERM that comes later ends the other child and exits with 143; fails_when=a release removes the handlers while a child is still registered (`liveEnds.size === 0` read as `<= 1`), so the other child is no longer ended and the script is ended by Node's default, with no exit code; why_new=Cycle 0048 task 186 (state machines: no test for releasing one of several children); seam=endChildrenOnSignal in a helper process of its own with two ends, one released, then a SIGTERM; mutant=`liveEnds.size === 0` changed to `liveEnds.size <= 1` in the release fails this test; no_claim=the order the ends run in
+test(
+  'a script whose first child has closed still ends its second child on SIGTERM and exits with 143',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { child, readOutput, readErrors, ended } = startSignalHelper(
+      context,
+      [
+        HANDLER_COUNTS_SOURCE,
+        "const releaseFirst = endChildrenOnSignal(() => { console.log('first child ended') })",
+        "endChildrenOnSignal(() => { console.log('second child ended') })",
+        'releaseFirst()',
+        'console.log(JSON.stringify({ afterFirstRelease: counts() }))',
+        'setInterval(() => {}, 1_000)',
+      ].join('\n'),
+    )
+    assert.equal(
+      await waitForOutput(readOutput, 'afterFirstRelease', 20_000),
+      true,
+    )
+
+    // Act
+    child.kill('SIGTERM')
+    const result = await ended
+
+    // Assert
+    assert.deepEqual(
+      {
+        output: readOutput().split('\n').filter(Boolean),
+        code: result.code,
+        signal: result.signal,
+        errors: readErrors(),
+      },
+      {
+        output: ['{"afterFirstRelease":[1,1,1]}', 'second child ended'],
+        code: 143,
+        signal: null,
+        errors: '',
+      },
+    )
+  },
+)
+
+// Value: protects=the exit code of a script whose last child closes while a signal is handled (the end resolves, the child closes, the caller releases): the handlers stay until the exit, so a second signal after that release is still taken by the handler and the exit keeps the first signal's code; fails_when=a release with no child left removes the handlers although a signal is being handled (`&& !isEnding` dropped), so the second signal ends the script by Node's default with no code, or the exit code follows the second signal; why_new=Cycle 0048 task 186 (state machines: no test for a release while a signal is handled); seam=endChildrenOnSignal in a helper process of its own whose only end waits for a line on stdin, a SIGTERM, the release of that child, a SIGINT and then the end's release; mutant=`&& !isEnding` removed from the release fails this test; no_claim=Windows, where a child closes together with its exit
+test(
+  'a child released while a signal is handled keeps the handlers, so a second signal still exits with the first signal’s code',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { child, readOutput, readErrors, ended } = startSignalHelper(
+      context,
+      [
+        HANDLER_COUNTS_SOURCE,
+        'let finishEnd',
+        "const release = endChildrenOnSignal(() => new Promise((resolve) => { finishEnd = resolve; console.log('end started') }))",
+        "process.stdin.on('data', (chunk) => {",
+        "  if (String(chunk).includes('release')) { release(); console.log(JSON.stringify({ afterRelease: counts() })) }",
+        "  if (String(chunk).includes('finish')) finishEnd()",
+        '})',
+        "console.log('ready')",
+        'setInterval(() => {}, 1_000)',
+      ].join('\n'),
+    )
+    assert.equal(await waitForOutput(readOutput, 'ready', 20_000), true)
+    child.kill('SIGTERM')
+    assert.equal(await waitForOutput(readOutput, 'end started', 20_000), true)
+
+    // Act
+    child.stdin.write('release\n')
+    assert.equal(await waitForOutput(readOutput, 'afterRelease', 20_000), true)
+    child.kill('SIGINT')
+    // gstack-timing-ok: a signal that no handler takes ends the helper within milliseconds; the wait only gives the SIGINT time to arrive before the end is finished, and a helper that is already gone is seen in `ended`.
+    await delay(500)
+    child.stdin.write('finish\n')
+    const result = await ended
+
+    // Assert
+    assert.deepEqual(
+      {
+        afterRelease: JSON.parse(
+          readOutput()
+            .split('\n')
+            .find((line) => line.includes('afterRelease')),
+        ),
+        code: result.code,
+        signal: result.signal,
+        errors: readErrors(),
+      },
+      {
+        afterRelease: { afterRelease: [1, 1, 1] },
+        code: 143,
+        signal: null,
+        errors: '',
+      },
+    )
+  },
+)
+
+// Value: protects=a script that registers a child after a signal began to end it (a lane that starts its next call, a build that closes into the next step while the handler still waits): that child is ended at once and the exit waits for its end, so no process outlives the script; fails_when=a child registered while the first ends run is added to the set but never ended (the handler took its list once), so the child runs on after the script exited with 143; why_new=Cycle 0048 task 176 (state machines: the state matrix's cell "child registered after the first signal"); seam=endChildrenOnSignal and endProcessTree in a helper process of its own with a slow first end (it waits for a line on stdin), a SIGTERM, then a real child (a Node process that hangs) registered from a second SIGTERM listener whose end waits 0.7 s more after the child's end; no_claim=Windows, where the end is `taskkill`
+test(
+  'a child registered after SIGTERM began to end the script is ended at once and waited for before the exit',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { child, readOutput, readErrors, ended } = startSignalHelper(
+      context,
+      [
+        'let finishFirstEnd',
+        'endChildrenOnSignal(() => new Promise((resolve) => { finishFirstEnd = resolve }))',
+        "process.stdin.on('data', () => finishFirstEnd())",
+        "process.on('SIGTERM', () => {",
+        "  const late = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], { stdio: 'ignore' })",
+        "  const release = endChildrenOnSignal(async () => { await endProcessTree(late); await delay(700); console.log('late end done') })",
+        '  console.log(JSON.stringify({ latePid: late.pid, releaseReturns: typeof release }))',
+        '})',
+        "console.log('ready')",
+        'setInterval(() => {}, 1_000)',
+      ].join('\n'),
+    )
+    assert.equal(await waitForOutput(readOutput, 'ready', 20_000), true)
+    child.kill('SIGTERM')
+    assert.equal(await waitForOutput(readOutput, 'latePid', 20_000), true)
+    const { latePid } = JSON.parse(
+      readOutput()
+        .split('\n')
+        .find((line) => line.includes('latePid')),
+    )
+    killProcessIdsAfter(context, latePid)
+    const goneWhileFirstEndWaits = await waitUntilNoneExists([latePid], 10_000)
+
+    // Act
+    child.stdin.write('finish\n')
+    const result = await ended
+
+    // Assert
+    assert.deepEqual(
+      {
+        lateChildGoneWhileTheFirstEndWaited: goneWhileFirstEndWaits,
+        lateEndDoneBeforeTheExit: readOutput().includes('late end done'),
+        code: result.code,
+        signal: result.signal,
+        errors: readErrors(),
+      },
+      {
+        lateChildGoneWhileTheFirstEndWaited: [],
+        lateEndDoneBeforeTheExit: true,
+        code: 143,
+        signal: null,
+        errors: '',
+      },
+    )
+  },
+)
+
+/** Ends a process by its id when the test ends, if it still runs. @example killProcessIdsAfter(context, 4242) */
+function killProcessIdsAfter(context, pid) {
+  context.after(() => killProcessIds([pid]))
+}
+
+// Value: protects=the shard script from a lane that starts its next call after a signal began to end the script: a call that closes while the handler still waits for another end (on Windows a call closes with its exit while the handler waits for its `taskkill`) answers nothing, so no lane goes on to start a call that nothing would end before the exit; fails_when=the close handler of the call answers whatever the state, so the caller goes on while the script is being ended; why_new=Cycle 0048 task 176 (OCR C, state machines: task 171's guard was read by the build only); seam=runTestInvocation in a helper process of its own with an extra end that resolves 1.5 s later (it keeps the handler waiting, as `taskkill` does on Windows), a call of a test file that notes its pid and hangs, and a SIGTERM to itself once the pid is noted; no_claim=Windows (the race is made on POSIX by the slow extra end)
+test(
+  'a call that closes while a signal ends the script answers nothing, and the script exits with 143 with no process of the call left',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const directory = await mkdtemp(join(tmpdir(), 'codebook-closing-call-'))
+    context.after(() => rm(directory, { recursive: true, force: true }))
+    const pidsPath = join(directory, 'pids.log')
+    killNotedProcessesAfter(context, pidsPath)
+    await writeFile(
+      join(directory, 'hanging.test.js'),
+      hangingFileNotingItsPid({ ignoresSigterm: false }),
+    )
+    const { readOutput, readErrors, ended } = startSignalHelper(
+      context,
+      [
+        `import { existsSync } from 'node:fs'`,
+        `import { listProcessIdsUnder } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/listProcessIdsUnder.mjs')).href)}`,
+        `import { runTestInvocation } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/runTestInvocation.mjs')).href)}`,
+        // The extra end keeps the handler waiting after the call's own end is done.
+        'endChildrenOnSignal(() => delay(1_500))',
+        `const call = runTestInvocation({ files: ['hanging.test.js'] }, ${JSON.stringify(directory)}, { silenceTimeoutMs: 60_000 })`,
+        "call.then(() => console.log('the call answered'), () => console.log('the call answered'))",
+        'const poll = setInterval(() => {',
+        `  if (!existsSync(${JSON.stringify(pidsPath)})) return`,
+        '  clearInterval(poll)',
+        '  console.log(JSON.stringify({ tree: listProcessIdsUnder(process.pid) }))',
+        "  process.kill(process.pid, 'SIGTERM')",
+        '}, 50)',
+      ].join('\n'),
+    )
+
+    // Act
+    const result = await ended
+    const { tree } = JSON.parse(
+      readOutput()
+        .split('\n')
+        .find((line) => line.startsWith('{"tree"')),
+    )
+    const left = await waitUntilNoneExists(tree, 10_000)
+
+    // Assert
+    assert.deepEqual(
+      {
+        callAnswered: readOutput().includes('the call answered'),
+        treeHeldRunnerAndFile: tree.length >= 2,
+        processesLeft: left,
+        code: result.code,
+        signal: result.signal,
+        errors: readErrors(),
+      },
+      {
+        callAnswered: false,
+        treeHeldRunnerAndFile: true,
+        processesLeft: [],
+        code: 143,
+        signal: null,
+        errors: '',
+      },
+    )
+  },
+)

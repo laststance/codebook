@@ -2020,6 +2020,79 @@ test(
   },
 )
 
+// Value: protects=the pre-gate from a run that closes while a signal ends the runner: it answers nothing, so the loop does not start the next run, which nothing would end before the exit (on Windows a run closes with its exit while the handler still waits for its `taskkill`); fails_when=the close handler of a run answers whatever the state, so the script test starts after the SIGTERM (its start is noted in the order log, or, when the handler ends a child registered late, reported as a run ended by a signal) and runs on after the runner exited with 143; why_new=Cycle 0048 task 176 (OCR C, state machines: task 171's guard was read by the build only); seam=run-pregate-tests.mjs started as a process in a fixture repository with a product test that notes its pid and hangs and a script test, and a module loaded first (`NODE_OPTIONS=--import`, only in the runner's own process) that registers an end through the fixture's endChildrenOnSignal.mjs which resolves 1.5 s later, so the handler waits as it does on Windows; no_claim=Windows (the race is made on POSIX by the slow extra end)
+test(
+  'the pre-gate runner that gets SIGTERM during the product run starts no later run and exits with 143',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureRepository(context, {
+      'product.test.js': hangingTestNotingItsPid(),
+    })
+    await writeFile(
+      join(root, 'extension/scripts/tests/script.test.mjs'),
+      notingTest('script', true),
+    )
+    const preloadPath = join(root, 'slow-end.mjs')
+    await writeFile(
+      preloadPath,
+      [
+        // The `node --test` processes and the test files load this module too; only the runner registers the slow end.
+        "if (process.argv[1]?.endsWith('run-pregate-tests.mjs')) {",
+        `  const { endChildrenOnSignal } = await import(${JSON.stringify(pathToFileURL(join(root, 'extension/scripts/utils/endChildrenOnSignal.mjs')).href)})`,
+        '  endChildrenOnSignal(() => new Promise((resolve) => setTimeout(resolve, 1_500)))',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const pidFile = join(root, 'file.pid')
+    const { runner, ended } = startPregateRunner(
+      context,
+      root,
+      [
+        'extension/scripts/tests/script.test.mjs',
+        'extension/src/tests/product.test.ts',
+      ],
+      { GRANDCHILD_PID_FILE: pidFile, NODE_OPTIONS: `--import=${preloadPath}` },
+    )
+    const filePid = await waitForProcessId(pidFile, 30_000)
+    killAfter(context, filePid)
+    const runTree = listProcessIdsUnder(runner.pid)
+    for (const pid of runTree) killAfter(context, pid)
+
+    // Act
+    runner.kill('SIGTERM')
+    const { code, signal, stderr } = await ended
+    const order = (
+      await readFile(join(root, 'order.log'), 'utf8').catch(() => '')
+    )
+      .split('\n')
+      .filter(Boolean)
+
+    // Assert
+    assert.deepEqual(
+      {
+        filePidSeen: filePid !== undefined,
+        treeHadRunnerAndFile: runTree.length >= 2,
+        order,
+        runsReported: stderr.split('\n').filter((line) => line.startsWith('✖')),
+        left: runTree.filter((pid) => processRuns(pid)),
+        code,
+        signal,
+      },
+      {
+        filePidSeen: true,
+        treeHadRunnerAndFile: true,
+        order: ['build'],
+        runsReported: [],
+        left: [],
+        code: 143,
+        signal: null,
+      },
+    )
+  },
+)
+
 /** The source of a fixture product test that notes its process id in the file `GRANDCHILD_PID_FILE` names, ignores SIGTERM and hangs. @example 'product.test.js': hangingTestNotingItsPid() */
 function hangingTestNotingItsPid() {
   return [

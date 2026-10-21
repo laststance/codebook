@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 
 import { createBoundedOutput } from './createBoundedOutput.mjs'
+import { isEndingForSignal } from './endChildrenOnSignal.mjs'
 import { plainOutputEnvironment } from './plainOutputEnvironment.mjs'
 import {
   CALL_KILL_GRACE_MS,
@@ -18,7 +19,7 @@ import { watchCallSilence } from './watchCallSilence.mjs'
  * @param options.killGraceMs - How long a call ended for silence may take to stop on SIGTERM before it is killed; {@link CALL_KILL_GRACE_MS} by default, so a test of the kill does not wait 5 s.
  * @param options.runnerArguments - The arguments that start the runner, before the call's own flags; `['--test']` (Node's test runner) by default. A test passes the path of a stand-in script, because the real runner exits within milliseconds of SIGTERM and cannot show how a slow or stubborn runner is treated.
  * @param options.outputKeepChars - How much of the end of the call's output to keep ({@link TEST_OUTPUT_KEEP_CHARS} by default); a call that prints more keeps its last lines, which hold the failing tests' report, with a first line that says how much was left out; the summary block is kept apart by {@link createBoundedOutput} and repeated after the kept end when the cut takes it.
- * @returns `{ code, signal, output, elapsedMs, timedOut }` once the process and its streams have closed. `code` is the runner's exit code when it exits by itself and `null` when a signal ended it (`signal` then names it); a runner that winds down after the SIGTERM of a silence end exits with its own code, 0 or not, so a caller reads `timedOut`, never `code`, to know that the call was ended for its silence. Coverage is collected through the inherited `NODE_V8_COVERAGE`.
+ * @returns `{ code, signal, output, elapsedMs, timedOut }` once the process and its streams have closed, never while a SIGINT, SIGTERM or SIGHUP ends this process ({@link isEndingForSignal}: the call then answers nothing and the process exits with 128 plus the signal's number). `code` is the runner's exit code when it exits by itself and `null` when a signal ended it (`signal` then names it); a runner that winds down after the SIGTERM of a silence end exits with its own code, 0 or not, so a caller reads `timedOut`, never `code`, to know that the call was ended for its silence. Coverage is collected through the inherited `NODE_V8_COVERAGE`.
  * @example
  * await runTestInvocation({ files: ['service.test.js'] }, 'dist/tests')
  * // => { code: 0, signal: null, output: '✔ …', elapsedMs: 412, timedOut: false }
@@ -93,6 +94,8 @@ export function runTestInvocation(
     })
     child.on('close', (code, signal) => {
       watch.stop()
+      // A call that closes while a signal ends this process answers nothing: on Windows it closes with its exit while the signal's handler still waits for its `taskkill`, and an answer would let the lane start its next call, which nothing would end before the exit ({@link isEndingForSignal}).
+      if (isEndingForSignal()) return
       resolve({
         code,
         signal,
