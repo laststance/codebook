@@ -3502,7 +3502,9 @@ async function collectInHelper(directory, file) {
     [
       `import { collectTestRun } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/collectTestRun.mjs')).href)}`,
       `import { listProcessIdsUnder } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/listProcessIdsUnder.mjs')).href)}`,
-      `const run = await collectTestRun({ files: [${JSON.stringify(join(directory, file))}], concurrency: 1, testTimeoutMs: 1_000, stallMarginMs: 500, killGraceMs: 2_000 })`,
+      // gstack-timing-ok: the limit of a test (and of a hook) is the contract of the hung cases: they must end by it, 1 s after their start, and well before the silence bound below (6 s later), which a loaded runner needs for the events that follow the start.
+      // gstack-timing-ok: the silence bound is 1 s + 6 s = 7 s: far above the 2 s a loaded runner needs to start a file (the fixtures busy-wait 2 s at their start) and send its first event, so only the silent case, whose file sends nothing after its tests, ends by it.
+      `const run = await collectTestRun({ files: [${JSON.stringify(join(directory, file))}], concurrency: 1, testTimeoutMs: 1_000, stallMarginMs: 6_000, killGraceMs: 2_000 })`,
       "const outcome = run.stall ? 'silent' : run.hookTimedOutTests.length > 0 ? 'hook-hung' : run.timedOutTests.length > 0 ? 'test-hung' : 'passed'",
       "console.log(JSON.stringify({ outcome, SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM'), SIGHUP: process.listenerCount('SIGHUP'), under: listProcessIdsUnder(process.pid) }))",
     ].join('\n'),
@@ -3517,8 +3519,8 @@ async function collectInHelper(directory, file) {
   })
   let output = ''
   helper.stdout.on('data', (chunk) => (output += chunk))
-  // A call that never returns (its file ignores SIGTERM and nothing kills it) is answered as such after 30 s, and the helper is ended.
-  const deadline = setTimeout(() => helper.kill('SIGKILL'), 30_000)
+  // A call that never returns (its file ignores SIGTERM and nothing kills it) is answered as such after 60 s, and the helper is ended; the longest honest call (a start-up stall, the 7 s silence bound, the 2 s grace) takes about a fifth of that.
+  const deadline = setTimeout(() => helper.kill('SIGKILL'), 60_000)
   await new Promise((resolve) => helper.on('close', resolve))
   clearTimeout(deadline)
   const lastLine = output.trim().split('\n').at(-1)
@@ -3527,7 +3529,7 @@ async function collectInHelper(directory, file) {
     : { outcome: 'the call did not return' }
 }
 
-// Value: protects=the process that runs the timings recording from a signal handler or a file process that outlives the call: once {@link collectTestRun} returns, no SIGINT, SIGTERM or SIGHUP handler is left (a handler would keep a later signal from ending the script by Node's default) and no process runs under it, for a passing run, a test that did not end, a `before` hook that did not end and a silent run (a file that passed its tests and keeps its process), the three ended runs with a file that ignores SIGTERM; fails_when=the outer `finally` drops `releaseSignalEnd()` (three handlers are left), or the SIGKILL after the grace is dropped (the file that ignores SIGTERM is still running); why_new=Cycle 0048 task 187 (State machines: no test showed the end state of the call, only the signal during its wait); seam=collectTestRun in a helper process per fixture file, with a 1 s limit, 0.5 s of margin and a 2 s grace, the helper printing its listener counts and listProcessIdsUnder(process.pid) after the call returned; no_claim=a signal during the call (the two recording tests of signals), Windows, where the table answers nothing
+// Value: protects=the process that runs the timings recording from a signal handler or a file process that outlives the call: once {@link collectTestRun} returns, no SIGINT, SIGTERM or SIGHUP handler is left (a handler would keep a later signal from ending the script by Node's default) and no process runs under it, for a passing run, a test that did not end, a `before` hook that did not end and a silent run (a file that passed its tests and keeps its process), the three ended runs with a file that ignores SIGTERM; fails_when=the outer `finally` drops `releaseSignalEnd()` (three handlers are left), or the SIGKILL after the grace is dropped (the file that ignores SIGTERM is still running); why_new=Cycle 0048 task 187 (State machines: no test showed the end state of the call, only the signal during its wait); seam=collectTestRun in a helper process per fixture file, with a 1 s limit, 6 s of margin (a silence bound of 7 s, far above the 2 s busy-wait at the start of every fixture file that stands for a loaded runner) and a 2 s grace, the helper printing its listener counts and listProcessIdsUnder(process.pid) after the call returned; no_claim=a signal during the call (the two recording tests of signals), Windows, where the table answers nothing
 test(
   'the timings recording leaves no signal handler and no file process once it returns, for a passing run, a test or a hook that did not end, and a silent run',
   { skip: process.platform === 'win32' },
@@ -3541,6 +3543,8 @@ test(
       "const { join } = require('node:path')",
       "const { before, test } = require('node:test')",
       "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+      // gstack-timing-ok: a busy-wait of 2 s at the start of every file stands for a loaded runner that needs seconds to start a file and send its first event; the silence bound must not read it as a silent run.
+      'for (const until = Date.now() + 2_000; Date.now() < until; );',
     ]
     const ignoresSigterm = "process.on('SIGTERM', () => {})"
     const sources = {
@@ -3620,7 +3624,7 @@ async function collectWithStandInRun(context, standInSource) {
       '})',
       `const { collectTestRun } = await import(${JSON.stringify(collectUrl)})`,
       'let error',
-      "await collectTestRun({ files: ['/fixture/stand-in.test.js'], concurrency: 1, testTimeoutMs: 1_000, stallMarginMs: 500, killGraceMs: 2_000 }).catch((rejection) => { error = rejection.message })",
+      "await collectTestRun({ files: ['/fixture/stand-in.test.js'], concurrency: 1, testTimeoutMs: 1_000, killGraceMs: 2_000 }).catch((rejection) => { error = rejection.message })",
       // A killed child is reaped by this process a moment after the kill; the timers are counted after this wait, so a stall timer (1.5 s) that was left is still there.
       'await delay(300)',
       'const exists = (pid) => { try { process.kill(pid, 0); return true } catch { return false } }',
