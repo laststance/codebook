@@ -1830,7 +1830,7 @@ export class LearningLibrary {
   /**
    * Serializes this owner and excludes other windows; stale locks remain an explicit recoverable storage error.
    * @param operation - The write to run under the lock.
-   * @param onReleaseFailure - Told what removing the lock threw after the write ended; only {@link removeStudy} asks, to name the lock in its answer ({@link removalAfterLockFailure}). Every other write returns its result whole.
+   * @param onReleaseFailure - Told what removing the lock threw after the write ended, or that the release left the lock in place; only {@link removeStudy} asks, to name the lock in its answer ({@link removalAfterLockFailure}). Every other write returns its result whole.
    * @example this.locked(() => save())
    */
   private locked<Value>(

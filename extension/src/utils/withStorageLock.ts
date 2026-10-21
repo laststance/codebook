@@ -148,7 +148,7 @@ async function releaseOwnLock(
  * The write was made when the release runs: its result (a recording's writer, a published catalog) or its own error is what the caller needs. A release that fails, and one that leaves the lock in place because its owner could not be read at any attempt ({@link describeKeptStorageLock}), is handed to `onReleaseFailure`, for a caller that names the lock in its answer (a study removal, {@link removalAfterLockFailure}); the lock is taken back all the same ({@link releaseOwnLock}).
  * @param path - The `writer.lock` file.
  * @param holder - The owner record this process placed.
- * @param onReleaseFailure - Told what removing the lock threw; a caller that does not ask never learns of it.
+ * @param onReleaseFailure - Told what removing the lock threw, or that the release left the lock in place ({@link describeKeptStorageLock}); a caller that does not ask never learns of either.
  * @example
  * await releaseAfterWrite('/storage/learning/writer.lock', holder, (error) => reportLock(error))
  */
@@ -296,7 +296,7 @@ async function makeStorageFolder(directory: string): Promise<void> {
  * @param identity - The machine and the boot this process records in the lock and judges a present lock by; {@link currentStorageOwner} unless a test names its own.
  * @param holderStarts - The process starts a caller that asks for the lock again keeps for all its tries of one write, by process id ({@link withCatalogLock}), so that a present lock's live writer is read once for them, not at every try, also one whose start cannot be read; a kept answer only keeps that writer running ({@link removeStaleStorageLock}). A new one for each hold when left out.
  * @param keptTakeBacks - The lock paths whose take-back of this process's own leftover such a caller's earlier try found kept, which it keeps for all its tries of one write as it keeps `holderStarts` ({@link takeBackOwnLeftover}). Every hold tries the take-back when left out.
- * @param onReleaseFailure - Told what removing this process's own lock threw, when the release fails after `operation` ended; a caller that names the lock in its answer passes it (a study removal). Without it the failure is not reported: the write's result or error reaches the caller whole, and the lock is taken back ({@link takeBackWithoutWrite}).
+ * @param onReleaseFailure - Told what removing this process's own lock threw, or that the release left it in place ({@link describeKeptStorageLock}), when the release fails after `operation` ended; a caller that names the lock in its answer passes it (a study removal). Without it the failure is not reported: the write's result or error reaches the caller whole, and the lock is taken back ({@link takeBackWithoutWrite}).
  * @returns What `operation` returned, after the lock is released; also when the release fails (Cycle 0048 task 21).
  * @throws
  * - "Learning storage is not a regular directory: <path>. …" when the directory's path holds a link or something that is no folder ({@link makeStorageFolder}); nothing was written
