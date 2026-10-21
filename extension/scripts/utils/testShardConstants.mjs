@@ -10,6 +10,10 @@ export const TEST_PART_TARGET_MS = 8_000
 export const TEST_INVOCATION_OVERHEAD_MS = 500
 /** Process start, module loading and coverage writing of one whole test file, measured on the CI runner. */
 export const TEST_FILE_OVERHEAD_MS = 400
+/** The largest shard total `test-shard.mjs --shard i/total` accepts. CI uses 14; the planner makes `total` times `lanes` bins, so a total in the billions would allocate that many bins and run out of memory, and no real use gets near 1,000. */
+export const MAX_SHARD_TOTAL = 1_000
+/** The largest lane count `test-shard.mjs --lanes` accepts. CI uses 2 and a machine's default is its core count; the planner makes `total` times `lanes` bins, and no real use gets near 1,000 lanes. */
+export const MAX_LANES = 1_000
 /** Number of test files a recording run executes at the same time; low enough that durations stay close to an uncontended run. */
 export const TIMING_RECORD_CONCURRENCY = 4
 /** How much longer than the test limit the timings recording waits for any event of its run before it ends the run as stalled: a test that does not end is failed by the runner at the limit, and that event comes first. */

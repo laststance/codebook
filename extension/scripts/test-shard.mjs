@@ -25,6 +25,8 @@ import { readTestTimings } from './utils/readTestTimings.mjs'
 import { runTestInvocation } from './utils/runTestInvocation.mjs'
 import {
   CALL_SILENCE_TIMEOUT_MS,
+  MAX_LANES,
+  MAX_SHARD_TOTAL,
   TEST_TIMINGS_FILE,
   TIMING_RECORD_CONCURRENCY,
 } from './utils/testShardConstants.mjs'
@@ -40,6 +42,9 @@ function parseShard(text) {
     shards = Number(total)
   if (!(shard >= 1 && shard <= shards))
     throw new Error('--shard must be index/total with 1 <= index <= total.')
+  // The planner makes one bin per shard and lane: a total in the billions would run it out of memory, so it is refused in one line.
+  if (shards > MAX_SHARD_TOTAL)
+    throw new Error(`--shard total must be at most ${MAX_SHARD_TOTAL}.`)
   return { shard, shards }
 }
 
@@ -76,6 +81,8 @@ function readOptions() {
   const lanes = Number(values.lanes ?? availableParallelism())
   if (!(Number.isInteger(lanes) && lanes >= 1))
     throw new Error('--lanes must be a positive integer.')
+  if (lanes > MAX_LANES)
+    throw new Error(`--lanes must be at most ${MAX_LANES}.`)
   return {
     ...parseShard(values.shard ?? '1/1'),
     lanes,

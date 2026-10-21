@@ -747,6 +747,69 @@ test('a missing, unreadable-as-JSON or wrongly shaped timings file is refused wi
   }
 })
 
+// Value: protects=the reader and the memory of the shard script from a shard total or a lane count the planner cannot make bins for: one line `✖ …` with exit code 1 before any plan, where `--shard 1/100000000000000000000` ended in `RangeError: Invalid array length` and a count in the billions would run the planner out of memory; fails_when=the total or the count is accepted at any size (CI uses 14 shards and 2 lanes, and no real use reaches 1,000); why_new=Cycle 0048 task 165 (fixer S, task 156: the parent's probe printed the RangeError at planTestShards.mjs:12); seam=test-shard.mjs --list started as a process on a fixture build, once per refused option and once for the largest accepted ones; no_claim=the plan itself (planTestShards' tests)
+test('the shard script refuses a shard total or a lane count above 1000 in one line before any plan, and accepts 1000', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'a.test.js': loggingTestSource(['opens']) },
+    timings: { files: { 'a.test.js': { totalMs: 10 } } },
+  })
+
+  // Act
+  const hugeTotal = await runShardScript(root, [
+    '--shard',
+    '1/100000000000000000000',
+    '--list',
+  ])
+  const totalAboveBound = await runShardScript(root, [
+    '--shard',
+    '1/1001',
+    '--list',
+  ])
+  const hugeLanes = await runShardScript(root, [
+    '--lanes',
+    '100000000000000000000',
+    '--list',
+  ])
+  const lanesAboveBound = await runShardScript(root, [
+    '--lanes',
+    '1001',
+    '--list',
+  ])
+  const atTheBound = await runShardScript(root, [
+    '--shard',
+    '1/1000',
+    '--lanes',
+    '1',
+    '--list',
+  ])
+
+  // Assert
+  assert.deepEqual(
+    [hugeTotal, totalAboveBound, hugeLanes, lanesAboveBound].map(
+      ({ code, stdout, stderr }) => ({ code, stdout, stderr }),
+    ),
+    [
+      {
+        code: 1,
+        stdout: '',
+        stderr: '✖ --shard total must be at most 1000.\n',
+      },
+      {
+        code: 1,
+        stdout: '',
+        stderr: '✖ --shard total must be at most 1000.\n',
+      },
+      { code: 1, stdout: '', stderr: '✖ --lanes must be at most 1000.\n' },
+      { code: 1, stdout: '', stderr: '✖ --lanes must be at most 1000.\n' },
+    ],
+  )
+  assert.deepEqual(
+    { code: atTheBound.code, stderr: atTheBound.stderr },
+    { code: 0, stderr: '' },
+  )
+})
+
 // Value: protects=the shard job from a silence limit that is no number above 0 and from a whole-split-files run that names a shard; fails_when=the checks are dropped, so `--silence-seconds soon` or `0` ends every call at once as hung (a timer of NaN or 0 ms fires first) and the job fails with no reason, or `--whole-split-files --shard 2/3` runs the split files on a runner that was meant to run a share of the suite; why_new=the tests of this file cover the timings refusal and the silent call, not the refusals of these two options; seam=test-shard.mjs started as a process on a fixture build; no_claim=the options in a workflow, which workflowPins.test.mjs reads
 test('the shard script refuses a silence limit that is no number above 0 and a whole-split-files run that names a shard, and runs no test', async (context) => {
   // Arrange
