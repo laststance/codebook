@@ -810,6 +810,46 @@ test('the shard script refuses a shard total or a lane count above 1000 in one l
   )
 })
 
+// Value: protects=the reader of a shard job whose build is missing: the refusal "No compiled test files in <dir>; build first." is one line `✖ …` with exit code 1 and no stack frame, in every mode of the script, like its option and timings refusals; fails_when=the refusal is thrown uncaught, so stderr holds the source line, `Error: …`, `at …` frames and the Node version, in any mode; why_new=Cycle 0048 task 166 (the parent: the same class as the recording's refusals, task 108's rule); seam=test-shard.mjs started as a process on a fixture whose dist/tests is empty, and on one whose dist/tests is missing, once per mode; no_claim=a build that exists but holds no test of the plan
+test('the shard script refuses a missing build in one line, with exit code 1, in every mode', async (context) => {
+  // Arrange
+  const emptyBuild = await createFixtureExtension(context, {
+    tests: {},
+    timings: { files: {} },
+  })
+  const missingBuild = await createFixtureExtension(context, {
+    tests: {},
+    timings: { files: {} },
+  })
+  await rm(join(missingBuild, 'dist'), { recursive: true, force: true })
+  const modes = [
+    ['--shard', '1/1', '--lanes', '1'],
+    ['--whole-split-files'],
+    ['--list'],
+    ['--record'],
+  ]
+
+  // Act
+  const refusals = []
+  for (const root of [emptyBuild, missingBuild])
+    for (const args of modes) refusals.push(await runShardScript(root, args))
+
+  // Assert
+  assert.deepEqual(
+    refusals.map(({ code, stdout, stderr }) => ({
+      code,
+      stdout,
+      stderr:
+        /^✖ No compiled test files in .*dist[/\\]tests; build first\.\n$/.test(
+          stderr,
+        )
+          ? 'one line'
+          : stderr,
+    })),
+    Array(8).fill({ code: 1, stdout: '', stderr: 'one line' }),
+  )
+})
+
 // Value: protects=the shard job from a silence limit that is no number above 0 and from a whole-split-files run that names a shard; fails_when=the checks are dropped, so `--silence-seconds soon` or `0` ends every call at once as hung (a timer of NaN or 0 ms fires first) and the job fails with no reason, or `--whole-split-files --shard 2/3` runs the split files on a runner that was meant to run a share of the suite; why_new=the tests of this file cover the timings refusal and the silent call, not the refusals of these two options; seam=test-shard.mjs started as a process on a fixture build; no_claim=the options in a workflow, which workflowPins.test.mjs reads
 test('the shard script refuses a silence limit that is no number above 0 and a whole-split-files run that names a shard, and runs no test', async (context) => {
   // Arrange

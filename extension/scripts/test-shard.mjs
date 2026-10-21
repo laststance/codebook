@@ -226,7 +226,11 @@ function readCheckedOptions() {
 }
 
 const options = readCheckedOptions()
-const files = await readTestFiles()
+// A missing build is a refusal with a way out: one line for the reader, not a stack trace of this script.
+const files = await readTestFiles().catch((error) => {
+  console.error(`✖ ${error.message}`)
+  process.exit(1)
+})
 if (options.record) {
   // A refusal is one line for the reader, not a stack trace of this script; any other error keeps its stack.
   await recordTimings(files, options.silenceSeconds).catch((error) => {
