@@ -2787,6 +2787,38 @@ test('a timings file with an entry that is no { totalMs, tests? } of finite dura
   assert.equal(accepted, undefined)
 })
 
+// Value: protects=the shard jobs of CI from a committed `extension/test-timings.json` that the reader refuses (a hand edit, a merge that broke the JSON, a duration that is no finite number): every shard reads that file first and ends at its refusal, and no other test read it; fails_when=the committed file is not `{ files: { [file]: { totalMs, tests? } } }` of finite durations (the reader refuses it), or the reader accepts a copy of it with one duration changed into text; why_new=Cycle 0048 task 191 (Red Team: .gstack/pregate.json gave the file no lane, and each test of the reader and of the plan used a fixture); seam=readTestTimings on the repository's own file by its path from this test file, and on a copy in a temporary folder whose first duration is made text; no_claim=the durations (a recording's scale), and that the entries match the current test files: the planner runs a file the timings do not know (UNKNOWN_TEST_FILE_MS) and plans nothing for an entry of a removed file
+test('the committed extension/test-timings.json is accepted by the timings reader, and the same file with a duration made text is refused', async (context) => {
+  // Arrange
+  const committedPath = join(scriptsDirectory, '../test-timings.json')
+  const committed = JSON.parse(await readFile(committedPath, 'utf8'))
+  const [firstFile] = Object.keys(committed.files)
+  const damaged = {
+    files: {
+      ...committed.files,
+      [firstFile]: { ...committed.files[firstFile], totalMs: 'slow' },
+    },
+  }
+
+  // Act
+  const committedRefusal = await readTestTimings(committedPath).then(
+    () => undefined,
+    (error) => error.message,
+  )
+  const damagedRefusal = await refusalOf(context, JSON.stringify(damaged))
+
+  // Assert
+  assert.deepEqual(
+    {
+      committedRefusal,
+      damagedRefusal: damagedRefusal?.startsWith(
+        `<file> has an entry for ${JSON.stringify(firstFile)} that is not { totalMs, tests? }`,
+      ),
+    },
+    { committedRefusal: undefined, damagedRefusal: true },
+  )
+})
+
 // Value: protects=the reader of a recording that fails for a reason that is no refusal (here the timings file cannot be written because a folder stands at its path): the failure keeps its error name and its stack, so a defect of the script or of the checkout is not worded as a refusal of the caller; fails_when=the recording's catch turns every error into the one line `✖ <message>`, so a bug in the recording looks like a sentence of the script and its frames are lost; why_new=Cycle 0048 task 166 (a failure that is no refusal keeps its stack) pinned the refusal's one line only, not this other half of the same catch; seam=test-shard.mjs --record started as a process on a fixture build whose test passes and whose `test-timings.json` is a folder; no_claim=which errors other than a write error can reach the catch
 test('the timings recording keeps the error name and the stack of a failure that is no refusal, and does not word it as a one-line refusal', async (context) => {
   // Arrange
