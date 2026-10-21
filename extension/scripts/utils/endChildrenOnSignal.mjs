@@ -8,9 +8,12 @@ const liveEnds = new Set()
 const startedEnds = []
 let isEnding = false
 
-/** Starts one end in a microtask, so an end that throws or fails settles as a rejection that the exit does not mind, and remembers it for the exit to wait for. @example startEnd(() => endProcessTree(child)) */
+/** Starts one end in a microtask, so an end that throws or fails settles as a rejection that the exit does not mind, and remembers it for the exit to wait for. The rejection is handled at once: an end started while the exit still waits for an earlier batch is waited for only after that batch, and an unhandled rejection in between would end this process with code 1 instead of the signal's. @example startEnd(() => endProcessTree(child)) */
 function startEnd(end) {
-  startedEnds.push(Promise.resolve().then(end))
+  const ending = Promise.resolve().then(end)
+  // Handled now, so a late end that throws cannot end the process before the exit with the signal's code.
+  ending.catch(() => {})
+  startedEnds.push(ending)
 }
 
 /** Waits for every end started so far, and for the ones started while it waited (a child registered after the first signal), then exits with 128 plus the signal's number. @example await exitAfterEnds('SIGTERM') // exits with 143 */

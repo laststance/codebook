@@ -3621,6 +3621,59 @@ test(
     )
   },
 )
+
+// Value: protects=the exit code of a script that a signal ends while a child registered late cannot be ended: an end that throws, started after the first signal while the handler waits for the first ends, settles as a rejection the exit does not mind, and the script exits with 128 plus the signal's number; fails_when=the late end's rejection has no handler until the first ends settle, so Node treats it as unhandled and ends the script with code 1 and a stack on stderr; why_new=Cycle 0048 task 196 (Step 8 of the third /ship: the tests above throw in an end of the first batch only); seam=endChildrenOnSignal in a process of its own: a first end that waits for a line on stdin, SIGTERM, then an end registered that throws; no_claim=which end of the scripts could throw (none does today: endProcessTree catches the signals it sends)
+test(
+  'an end registered after the first signal that throws does not end the script before its exit with the signal’s code',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const moduleUrl = pathToFileURL(
+      join(scriptsDirectory, 'utils/endChildrenOnSignal.mjs'),
+    ).href
+    const source = [
+      `import { endChildrenOnSignal } from ${JSON.stringify(moduleUrl)}`,
+      'let release',
+      "endChildrenOnSignal(() => new Promise((resolve) => { release = resolve; console.log('first end waits') }))",
+      "process.on('SIGTERM', () => { endChildrenOnSignal(() => { throw new Error('this late child cannot be ended') }); console.log('late end registered') })",
+      "process.stdin.on('data', () => release())",
+      "console.log('ready')",
+    ].join('\n')
+    const child = spawn(
+      process.execPath,
+      ['--input-type=module', '-e', source],
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    )
+    context.after(() => child.kill('SIGKILL'))
+    let output = ''
+    let errors = ''
+    child.stdout.on('data', (chunk) => (output += chunk))
+    child.stderr.on('data', (chunk) => (errors += chunk))
+    const ended = new Promise((resolve) =>
+      child.on('close', (code, signal) => resolve({ code, signal })),
+    )
+    assert.equal(await waitForOutput(() => output, 'ready', 20_000), true)
+
+    // Act
+    child.kill('SIGTERM')
+    assert.equal(
+      await waitForOutput(() => output, 'late end registered', 20_000),
+      true,
+    )
+    // gstack-timing-ok: the late end's rejection, if nothing handled it, would end the script within a few event-loop turns; a quarter of a second lets that be seen before the first end is released.
+    await delay(250)
+    child.stdin.write('release\n')
+    const result = await ended
+
+    // Assert
+    assert.deepEqual(
+      { code: result.code, signal: result.signal, errors },
+      { code: 143, signal: null, errors: '' },
+    )
+  },
+)
 /** Ends a process by its id when the test ends, if it still runs. @example killProcessIdsAfter(context, 4242) */
 function killProcessIdsAfter(context, pid) {
   context.after(() => killProcessIds([pid]))
