@@ -180,6 +180,8 @@ async function nodeRunHarness({
   let closeRequests = 0
   // How many times the run asked the editor to stop a debug session, and the sessions the editor still lists, as VS Code's debug model does.
   let stopRequests = 0
+  // The id of the session each of those requests asks the editor to stop, in order.
+  const stoppedSessionIds: string[] = []
   const listedSessions = new Set<string>()
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
@@ -467,7 +469,12 @@ async function nodeRunHarness({
         factory: vscode.DebugAdapterTrackerFactory,
       ) {
         trackerFactory = factory
-        return { dispose(): void {} }
+        // A disposed factory is asked for no tracker of a session that starts later.
+        return {
+          dispose(): void {
+            if (trackerFactory === factory) trackerFactory = undefined
+          },
+        }
       },
       onDidTerminateDebugSession: (
         listener: (session: vscode.DebugSession) => void,
@@ -503,6 +510,7 @@ async function nodeRunHarness({
       async stopDebugging(stopped?: vscode.DebugSession): Promise<void> {
         calls.push('stop-debugging')
         stopRequests += 1
+        stoppedSessionIds.push(stopped?.id ?? 'no session named')
         // As VS Code 1.120 to 1.142 answer for a session their debug model no longer lists; an ended session it still lists is stopped again without a refusal.
         if (stopped && !listedSessions.has(stopped.id))
           throw new Error('debug session not found')
@@ -643,10 +651,22 @@ async function nodeRunHarness({
     launchPreparations: (): number => launchPreparations,
     closeRequests: (): number => closeRequests,
     stopRequests: (): number => stopRequests,
+    /** The ids of the sessions the run asked the editor to stop, one entry for each request, in order. */
+    stoppedSessionIds: (): string[] => [...stoppedSessionIds],
     /** The owned debug session ends, and the editor drops it from its list, as VS Code does when a newer session of the same name starts: a listener still registered hears of the end, and a later stop of the session is refused with "debug session not found". */
     endSessionAndDropIt: (): void => {
       terminate?.(session)
       listedSessions.delete(session.id)
+    },
+    /** A child debug session of the owned one starts (js-debug starts one for each worker or child process), and the editor lists it; only a factory still registered hears of it. */
+    startChildSession: async (): Promise<void> => {
+      const child = {
+        ...session,
+        id: 'owned-node-child-session',
+        parentSession: session,
+      }
+      listedSessions.add(child.id)
+      await trackerFactory?.createDebugAdapterTracker(child)
     },
     typeIntoCitedSource,
     launch,
@@ -1379,6 +1399,48 @@ test('a Node test run whose debug session could not be stopped at the first rele
         secondStop: 'released',
         stopRequests: 1,
         closeRequests: 2,
+      },
+    )
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the release of a Node test run whose first release failed at the owned test process while that process still ran and started a child debug session afterwards (js-debug starts one for each child process); fails_when=the run stops hearing of new debug sessions at its first failed release, so the retry cannot stop the child session, which keeps running under the debugger after the run is reported released; why_new=Cycle 0048 task 23 (S11-N17c); seam=the editor's debug adapter tracker factory, which hears of a new session only while it is registered, and the owned test process's close, which fails the first time; no_claim=a real js-debug child session
+test('a Node test run whose release failed at its test process stops a child debug session that started after the failure at the next stop', async () => {
+  // Arrange: the first release fails at the owned test process; the process then starts a child debug session.
+  const harness = await nodeRunHarness({ closeFailures: 1 })
+  try {
+    await harness.run.prepare()
+    const firstStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+    await harness.startChildSession()
+
+    // Act
+    const secondStop = await harness.run.stop().then(
+      () => 'released',
+      (error: unknown) => String(error),
+    )
+
+    // Assert: the first stop asked for the owned session; the second asked for the owned one again (its release failed) and for the child session that started later, by its id.
+    assert.deepEqual(
+      {
+        firstStop,
+        secondStop,
+        stopRequests: harness.stopRequests(),
+        stoppedSessionIds: harness.stoppedSessionIds(),
+      },
+      {
+        firstStop: 'Error: process group still running (close 1)',
+        secondStop: 'released',
+        stopRequests: 3,
+        stoppedSessionIds: [
+          'owned-node-session',
+          'owned-node-session',
+          'owned-node-child-session',
+        ],
       },
     )
   } finally {

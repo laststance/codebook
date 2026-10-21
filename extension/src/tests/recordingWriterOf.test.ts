@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import {
+import fsPromises, {
   lstat,
   mkdir,
   mkdtemp,
@@ -35,6 +35,7 @@ import type { ProcessStartsOfList } from '../utils/isRecordingWriterLive'
 import type * as lookModule from '../utils/lookAtRecording'
 import { openWithoutFollowing } from '../utils/openWithoutFollowing'
 import { readProcessStart } from '../utils/readProcessStart'
+import * as regularFileReader from '../utils/readWikiRegularFile'
 import type * as regularFileModule from '../utils/readWikiRegularFile'
 import { recordingOwnerRecordPath } from '../utils/recordingOwnerRecordPath'
 import type * as writerModule from '../utils/recordingWriterOf'
@@ -551,6 +552,31 @@ test('a sealed recording has no writer any more, whatever its header names, and 
   })
 })
 
+// Value: protects=the finished recording of a run on another computer (same host name, same storage folder) whose writer record stands and cannot be read now, so that Delete asks the learner instead of moving the study; fails_when=a sealed recording whose record stands and gives nothing is judged by its header alone, whose process id no process of this computer has, so the writer is called gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 1); why_new=Cycle 0048 task 1 (S11-XC1): the header's gone answered for a record that stands unread; seam=the sealed recording's header, which names this host and a process id of no process, and its writer record, which stands as a file that is no JSON; no_claim=what Delete does with an unreadable writer (the removal's own tests), and a record that is valid JSON but no owner record (task 75's test)
+test('a sealed recording whose writer record stands and cannot be read is unreadable, although its header names a process id that no process of this computer has', async (context) => {
+  // Arrange: the other computer's header names this host and a process id of no process here; its writer record stands but gives nothing.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await recording.writer.finish(1)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+  })
+  await writeFile(
+    recordingOwnerRecordPath(storage.directory, recording.studyId),
+    'no JSON',
+  )
+
+  // Act
+  const writer = await writerOf(recording.folder, 'ignored')
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'unreadable' })
+})
+
 // Value: protects=this window's own live run whose recording has only its header (its writer's record could not be written) while this computer's host name changed during the run (macOS takes it from the network); fails_when=the host name is compared before the process id, so this window's own reservation counts as a recording of another computer: Saved studies lists it as what is left of a removed study, and a removal offers to move it; why_new=Cycle 0046 security review SX1; seam=the recording's header, which names this test process under another host name, without a record of its writer
 test('a recording whose header names this window’s own process under another host name is this window’s: it may run, it is left to this window when asked, and it is not listed', async (context) => {
   // Arrange: this window's run, recording under the host name it had when it began.
@@ -841,6 +867,307 @@ test('a valid writer record padded past a record’s bound is no record: the rec
   // Assert
   assert.deepEqual(writer, { kind: 'gone' })
 })
+
+// Value: protects=the recording of another computer (same host name, same storage folder) that is still being written, whose writer record stands as a regular file and cannot be read now (a scanner holds it, or it is damaged): Delete asks the learner; fails_when=an unsealed recording whose record stands unread is judged by its header alone, whose process id no process of this computer has, so the writer is called gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 30); why_new=Cycle 0048 task 30 (found while fixing task 1): the header's gone answered for an unsealed recording whose record stands unread; seam=the header, which names this host and a process id of no process, and the writer record, which stands as a file that is no JSON; no_claim=a record too large for the bound or behind a link, which is none (the tests beside it)
+test('an unsealed recording whose writer record stands as a regular file and cannot be read is unreadable, although its header names a process id that no process of this computer has', async (context) => {
+  // Arrange: the other computer's header names this host and a process id of no process here; its writer record stands but gives nothing.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+  })
+  await writeFile(
+    recordingOwnerRecordPath(storage.directory, recording.studyId),
+    'no JSON',
+  )
+
+  // Act
+  const writer = await writerOf(recording.folder, 'ignored')
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'unreadable' })
+})
+
+/**
+ * Makes the second read of one recording's writer record give nothing, as a read does while a scanner on Windows holds the file for a moment, and lets every other read through: the first read is the look's ({@link lookAtRecording}), the second is the judgement's, and the third, which a header's `gone` asks for, finds the scanner gone.
+ * @param context - The test, at whose end the reader is restored.
+ * @param learningDirectory - The learning directory of the test's recording store.
+ * @param studyId - The recording's study id.
+ * @returns How many reads of the record were asked.
+ * @example const reads = failSecondReadOfWriterRecord(context, storage.directory, recording.studyId)
+ */
+function failSecondReadOfWriterRecord(
+  context: TestContext,
+  learningDirectory: string,
+  studyId: string,
+): () => number {
+  const recordPath = recordingOwnerRecordPath(learningDirectory, studyId)
+  const readBefore = regularFileReader.readWikiRegularFile
+  let reads = 0
+  context.mock.method(
+    regularFileReader,
+    'readWikiRegularFile',
+    async (...input: Parameters<typeof readBefore>) => {
+      if (input[0] !== recordPath) return readBefore(...input)
+      reads += 1
+      return reads === 2 ? undefined : readBefore(...input)
+    },
+  )
+  return () => reads
+}
+
+// Value: protects=the recording of another computer (same host name, same storage folder) that is still being written, whose writer record a scanner held at the first read and let go before the next look: Delete asks the learner; fails_when=the look that follows a header's gone only asks whether the record is unreadable, finds a valid record, answers no, and the header's gone (no process of this computer has its id) stands, so the record that names another computer is never read and Delete moves its study without asking (data loss, Cycle 0048 task 124, the path of tasks 1 and 30); why_new=Cycle 0048 task 124 (CodeRabbit: two reads of one record judged from two looks); seam=the file reader, which gives nothing at the second read of the record, a header that names this host and a process id of no process, and a record that names another machine; no_claim=a real scanner on Windows
+for (const sealing of ['an unsealed', 'a sealed'] as const)
+  test(`${sealing} recording whose writer record failed one read and is valid at the next look, naming another computer with this host name, has a writer on another host`, async (context) => {
+    // Arrange: the header calls the writer gone; the record names another machine; the second read of the record fails, the third succeeds.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    if (sealing === 'a sealed') await recording.writer.finish(1)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    await rewriteWriterRecord(storage.directory, recording.studyId, {
+      pid: ID_OF_NO_PROCESS,
+      machineId: 'machine-b',
+    })
+    const readsOfRecord = failSecondReadOfWriterRecord(
+      context,
+      storage.directory,
+      recording.studyId,
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(
+      { writer, readsOfRecord: readsOfRecord() },
+      {
+        writer: { kind: 'on-another-host', host: hostname() },
+        readsOfRecord: 3,
+      },
+    )
+  })
+
+// Value: protects=the recording of a crashed window of this machine, whose writer record failed one read and is valid at the next look, naming a process that is gone: it is gone, by the record; fails_when=the record the look reads is not used for the verdict but turned into an unreadable record, so the study of a crashed window is asked about for good; why_new=Cycle 0048 task 124 (the record the second look read decides); seam=the file reader, which gives nothing at the second read of the record, and a header and a record that name this host and a process id of no process; no_claim=a record that names another computer (the test above)
+for (const sealing of ['an unsealed', 'a sealed'] as const)
+  test(`${sealing} recording whose writer record failed one read and is valid at the next look, naming a process of this machine that is gone, has a gone writer`, async (context) => {
+    // Arrange
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    if (sealing === 'a sealed') await recording.writer.finish(1)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    await rewriteWriterRecord(storage.directory, recording.studyId, {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      processStart: undefined,
+    })
+    failSecondReadOfWriterRecord(context, storage.directory, recording.studyId)
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, { kind: 'gone' })
+  })
+
+// Value: protects=the finished recording of this very window, whose writer record failed one read and is valid at the next look; fails_when=the header's gone stands for a record that names this window, so the window's own sealed recording is judged as a gone writer's; why_new=Cycle 0048 task 124 (the sealed path tells its own window by the record it read, whichever read it was); seam=the file reader, which gives nothing at the second read of the record, and a header that names a process id of no process while the record names this process; no_claim=an unsealed recording of this window, and a record that fails at the next look too (the unreadable tests)
+test('a sealed recording whose writer record failed one read and is valid at the next look, naming this very window, is this window’s: no other window holds it', async (context) => {
+  // Arrange
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await recording.writer.finish(1)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+  })
+  failSecondReadOfWriterRecord(context, storage.directory, recording.studyId)
+
+  // Act
+  const writer = await writerOf(recording.folder, 'ignored')
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'finished' })
+})
+
+// Value: protects=the recording of another computer (same host name, same storage folder) that is still being written, whose writer record stands as a regular file that is valid JSON but no owner record (a damaged or half-written record): Delete asks the learner; fails_when=only a record that is no JSON is called unreadable, so a record that parses but names no process leaves the header's gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 75); why_new=Cycle 0048 task 75 (native adversarial review: the unreadable answer stopped at JSON.parse); seam=the header, which names this host and a process id of no process, and the writer record, which holds a JSON value that fails the owner schema; no_claim=a record that is an owner record naming no recording or another one, which the header judges (the AF10 test above)
+for (const [shape, text] of [
+  ['an object without a process id', '{"machineId":"machine-b"}'],
+  ['an object whose process id is a string', '{"pid":"4242"}'],
+  ['an array', '[4242]'],
+  ['null', 'null'],
+] as const)
+  test(`an unsealed recording whose writer record is valid JSON but ${shape} is unreadable, although its header names a process id that no process of this computer has`, async (context) => {
+    // Arrange: the other computer's header names this host and a process id of no process here; its writer record stands and parses, but names no writer.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    await writeFile(
+      recordingOwnerRecordPath(storage.directory, recording.studyId),
+      text,
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, { kind: 'unreadable' })
+  })
+
+// Value: protects=the recording of another computer (same host name, same storage folder) whose folder of writer records this computer cannot look at now (permission denied, a disk error, a folder a scanner holds): Delete asks the learner, and a folder that is missing or no folder leaves the header's verdict; fails_when=a look at the folder of records that fails for another reason than ENOENT or ENOTDIR is read as no folder, so the header's gone (no process of this computer has its id) stands and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 60); why_new=Cycle 0048 task 60 (no test made the look at the folder of records fail); seam=the lstat of node:fs/promises, refused for the path of the `recording-owners` folder only, and a header that names this host and a process id of no process; no_claim=a record that stands and cannot be read (the test above), a link at the folder (the test below)
+for (const [code, expected] of [
+  ['EACCES', { kind: 'unreadable' }],
+  ['EBUSY', { kind: 'unreadable' }],
+  ['ENOENT', { kind: 'gone' }],
+  ['ENOTDIR', { kind: 'gone' }],
+] as const)
+  test(`an unsealed recording whose header calls its writer gone and whose folder of writer records is looked at with ${code} has the writer ${expected.kind}`, async (context) => {
+    // Arrange: the header names this host and a process id of no process; the look at the folder of writer records is refused with the code.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    const foldersOfRecords = join(storage.directory, 'recording-owners')
+    const lstatBefore = fsPromises.lstat
+    context.mock.method(
+      fsPromises,
+      'lstat',
+      async (...input: Parameters<typeof lstatBefore>) => {
+        if (input[0] === foldersOfRecords)
+          throw Object.assign(new Error(`${code}: lstat`), { code })
+        return lstatBefore(...input)
+      },
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, expected)
+  })
+
+// Value: protects=the recording of another computer (same host name, same storage folder) whose real folder of writer records stands and whose real path this computer cannot read now (permission denied, a disk error, a network share): Delete asks the learner, and a folder that vanished leaves the header's verdict; fails_when=a real folder that fails the check of its real path is taken as no folder (none), so the header's gone (no process of this computer has its id) stands and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 130, the path of tasks 1 and 30); why_new=Cycle 0048 task 130 (native adversarial: the look at the place stopped at lstat and called a folder whose realpath fails no record); seam=the realpath of node:fs/promises, refused for the path of the `recording-owners` folder only, a real folder there, and a header that names this host and a process id of no process; no_claim=a link or a file at the place (the tests beside it), a look that fails with lstat (the test above)
+for (const [code, expected] of [
+  ['EACCES', { kind: 'unreadable' }],
+  ['EPERM', { kind: 'unreadable' }],
+  ['EIO', { kind: 'unreadable' }],
+  ['ENOENT', { kind: 'gone' }],
+] as const)
+  test(`an unsealed recording whose header calls its writer gone and whose real folder of writer records has a real path that is read with ${code} has the writer ${expected.kind}`, async (context) => {
+    // Arrange: the header names this host and a process id of no process; the real folder of records stands, and reading its real path is refused with the code.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    const foldersOfRecords = join(storage.directory, 'recording-owners')
+    const realpathBefore = fsPromises.realpath
+    context.mock.method(
+      fsPromises,
+      'realpath',
+      async (...input: Parameters<typeof realpathBefore>) => {
+        if (input[0] === foldersOfRecords)
+          throw Object.assign(new Error(`${code}: realpath`), { code })
+        return realpathBefore(...input)
+      },
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, expected)
+  })
+
+// Value: protects=the header's verdict for a file at the place of the folder of writer records, which holds no record by design; fails_when=the fix of task 130 takes every entry that fails the check of a real folder for an unreadable folder, so a plain file at the place makes Delete ask for good; why_new=Cycle 0048 task 130 (keeps none for a file); seam=a regular file at `recording-owners`, and a header that names this host and a process id of no process; no_claim=what Delete does with a gone writer (the removal's own tests), and a file that stands at that place for a moment only
+test('an unsealed recording whose header calls its writer gone and whose folder of writer records is a file has a gone writer', async (context) => {
+  // Arrange: the header names this host and a process id of no process; a file stands where the folder of records would be.
+  const storage = await recordingStorage(context)
+  const recording = await startRecording(storage)
+  await rewriteHeader(recording.folder, {
+    owner: {
+      pid: ID_OF_NO_PROCESS,
+      hostname: hostname(),
+      sessionId: randomUUID(),
+    },
+  })
+  const foldersOfRecords = join(storage.directory, 'recording-owners')
+  await rm(foldersOfRecords, { recursive: true })
+  await writeFile(foldersOfRecords, 'not a folder')
+
+  // Act
+  const writer = await writerOf(recording.folder, 'ignored')
+
+  // Assert
+  assert.deepEqual(writer, { kind: 'gone' })
+})
+
+// Value: protects=the recording of another computer (same host name, same storage folder) whose real folder of writer records stands while the real path of the learning directory that holds it cannot be read (permission denied, a disk error): Delete asks the learner and a vanished directory leaves the header's verdict; fails_when=the look reads only the folder's own real path and not its parent's, so a real folder whose parent cannot be named is called no record, the header's gone stands and Delete moves the study of the other computer without asking; why_new=recordingWriterOf.test.ts refuses the real path of the `recording-owners` folder only, so the parent's half of Cycle 0048 task 130 has no test; seam=none; no_claim=a real path that agrees or disagrees on a file system with links (the tests beside it); the refusal is mocked on the realpath of node:fs/promises, no file system denies it
+for (const [code, expected] of [
+  ['EACCES', { kind: 'unreadable' }],
+  ['EIO', { kind: 'unreadable' }],
+  ['ENOENT', { kind: 'gone' }],
+] as const)
+  test(`an unsealed recording whose header calls its writer gone and whose real folder of writer records has a parent whose real path is read with ${code} has the writer ${expected.kind}`, async (context) => {
+    // Arrange: the header names this host and a process id of no process; the real folder of records stands, and reading the real path of the learning directory is refused with the code.
+    const storage = await recordingStorage(context)
+    const recording = await startRecording(storage)
+    await rewriteHeader(recording.folder, {
+      owner: {
+        pid: ID_OF_NO_PROCESS,
+        hostname: hostname(),
+        sessionId: randomUUID(),
+      },
+    })
+    const realpathBefore = fsPromises.realpath
+    context.mock.method(
+      fsPromises,
+      'realpath',
+      async (...input: Parameters<typeof realpathBefore>) => {
+        if (input[0] === storage.directory)
+          throw Object.assign(new Error(`${code}: realpath`), { code })
+        return realpathBefore(...input)
+      },
+    )
+
+    // Act
+    const writer = await writerOf(recording.folder, 'ignored')
+
+    // Assert
+    assert.deepEqual(writer, expected)
+  })
 
 // Value: protects=the judgement of a recording's writer while a link (a junction on Windows) stands at the place of the folder of writer records and leads to a valid record that names the recording; fails_when=the record is read through that link and judges the recording (here as another machine's), so a file a link puts there decides whether a recording is listed and moved (TT37, CX14's read); why_new=Cycle 0046 third testing review TT37: the file behind the link in CX14's test never parsed as a record; seam=a link at `recording-owners` to a folder of the test with a valid record that names the recording and machine-b, and the header, which names this host and a process id of no process
 test('a valid writer record behind a link at the place of the folder of writer records is not read: the recording is judged by its header', async (context) => {

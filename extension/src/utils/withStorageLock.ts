@@ -1,17 +1,21 @@
 import type { Stats } from 'node:fs'
 import { lstat, mkdir, realpath, unlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   PRIVATE_DIRECTORY_MODE,
   STORAGE_LOCK_RELEASE_ATTEMPTS,
   STORAGE_LOCK_RELEASE_RETRY_DELAY_MS,
+  STORAGE_LOCK_TAKE_BACK_ATTEMPTS,
+  STORAGE_LOCK_TAKE_BACK_DELAY_MS,
   WIKI_METADATA_FILE_LIMIT_BYTES,
 } from '../constants'
 
 import { currentStorageOwner } from './currentStorageOwner'
+import { describeKeptStorageLock } from './describeKeptStorageLock'
 import { describeNoStorageFolder } from './describeNoStorageFolder'
+import { describeRefusedStorageLock } from './describeRefusedStorageLock'
 import { isSameStorageMachine } from './isSameStorageMachine'
 import { placeStorageLock } from './placeStorageLock'
 import {
@@ -29,6 +33,10 @@ const pendingWriters = new Map<string, Promise<void>>()
 const sweptDirectories = new Set<string>()
 /** The lock files of this process whose release did not finish ({@link releaseOwnLock}: the owner could not be read, or the removal failed), by their canonical path: such a lock may still name this process, and this process's next hold of that directory takes it back ({@link takeBackOwnLeftover}). */
 const unreleasedOwnLocks = new Set<string>()
+/** The lock paths for which a take-back without a further write is planned and not yet run ({@link planTakeBackWithoutWrite}). */
+const plannedTakeBacks = new Set<string>()
+/** How many such take-backs each lock path has had since its release left the lock, so that a lock that stays unreadable is given up on after {@link STORAGE_LOCK_TAKE_BACK_ATTEMPTS} of them. */
+const takeBacksMade = new Map<string, number>()
 
 /** What a release of the storage lock found: `released` when the lock is gone (removed now, or already), `not-own` when the path holds a lock of another writer, and `kept` when the lock may still name this process because its owner could not be read or its removal failed. */
 type LockRelease = 'released' | 'not-own' | 'kept'
@@ -107,29 +115,128 @@ async function releaseStorageLock(
 }
 
 /**
- * Releases this process's lock when a write under it has ended, and notes a lock that may still name this process for the next hold of the directory; called by {@link withStorageLock} in its `finally`.
+ * Releases this process's lock when a write under it has ended, and notes a lock that may still name this process so that it is taken back; called by {@link releaseAfterWrite}.
  * @param path - The `writer.lock` file.
  * @param holder - The owner record this process placed.
- * @throws What removing the lock threw ({@link releaseStorageLock}): the write was made, and the caller learns that the lock stayed (a study removal names it, {@link removalAfterLockFailure}); the lock is noted all the same.
+ * @returns What the release found ({@link LockRelease}); `kept` when the lock may still name this process, so that {@link releaseAfterWrite} reports it like a failed release.
+ * @throws What removing the lock threw ({@link releaseStorageLock}): the write was made, and {@link releaseAfterWrite} hands the failure on; the lock is noted all the same.
  * @example
- * await releaseOwnLock('/storage/learning/writer.lock', { pid: process.pid, hostname: 'workstation' })
+ * await releaseOwnLock('/storage/learning/writer.lock', { pid: process.pid, hostname: 'workstation' }) // => 'released'
  */
 async function releaseOwnLock(
   path: string,
   holder: RecordedOwner & StorageOwnerIdentity,
-): Promise<void> {
+): Promise<LockRelease> {
   let release: LockRelease = 'kept'
   try {
     release = await releaseStorageLock(path, holder)
   } finally {
-    // A lock that may still name this process is taken back by this process's next hold of the directory.
-    if (release === 'kept') unreleasedOwnLocks.add(path)
-    else unreleasedOwnLocks.delete(path)
+    // A lock that may still name this process is taken back by this process's next hold of the directory, and, without waiting for one, a few seconds later.
+    if (release === 'kept') {
+      unreleasedOwnLocks.add(path)
+      planTakeBackWithoutWrite(path, holder)
+    } else {
+      unreleasedOwnLocks.delete(path)
+      takeBacksMade.delete(path)
+    }
+  }
+  return release
+}
+
+/**
+ * Releases this process's lock after a write under it, without letting a failed release replace what the write did; called by {@link withStorageLock} in its `finally`.
+ * The write was made when the release runs: its result (a recording's writer, a published catalog) or its own error is what the caller needs. A release that fails, and one that leaves the lock in place because its owner could not be read at any attempt ({@link describeKeptStorageLock}), is handed to `onReleaseFailure`, for a caller that names the lock in its answer (a study removal, {@link removalAfterLockFailure}); the lock is taken back all the same ({@link releaseOwnLock}).
+ * @param path - The `writer.lock` file.
+ * @param holder - The owner record this process placed.
+ * @param onReleaseFailure - Told what removing the lock threw, or that the release left the lock in place ({@link describeKeptStorageLock}); a caller that does not ask never learns of either.
+ * @example
+ * await releaseAfterWrite('/storage/learning/writer.lock', holder, (error) => reportLock(error))
+ */
+async function releaseAfterWrite(
+  path: string,
+  holder: RecordedOwner & StorageOwnerIdentity,
+  onReleaseFailure?: (error: unknown) => void,
+): Promise<void> {
+  try {
+    // A release that kept the lock throws nothing, but it leaves a lock that blocks other windows: the caller is told as for a thrown failure.
+    if ((await releaseOwnLock(path, holder)) === 'kept')
+      onReleaseFailure?.(new Error(describeKeptStorageLock(path)))
+  } catch (error) {
+    onReleaseFailure?.(error)
   }
 }
 
 /**
- * Removes this process's own lock that its last release of the directory left, so that its next hold can place the lock again; called by {@link withStorageLock} when the lock file already exists.
+ * Plans that this process takes back its own lock {@link STORAGE_LOCK_TAKE_BACK_DELAY_MS} from now, when its release left the lock in place, without waiting for this process's next hold of that folder; called by {@link releaseOwnLock}.
+ * Why: the next hold may never come (the Cursor catalog is written a few times in a window's life), and until it comes, or this editor exits, every other window is refused by a lock that only this window can remove. A plan that fails plans the next, up to {@link STORAGE_LOCK_TAKE_BACK_ATTEMPTS} times; the timer does not keep the process alive.
+ * @param path - The `writer.lock` file whose release left it in place.
+ * @param holder - The owner record this process placed.
+ * @example planTakeBackWithoutWrite('/storage/learning/writer.lock', holder)
+ */
+function planTakeBackWithoutWrite(
+  path: string,
+  holder: RecordedOwner & StorageOwnerIdentity,
+): void {
+  const made = takeBacksMade.get(path) ?? 0
+  if (plannedTakeBacks.has(path) || made >= STORAGE_LOCK_TAKE_BACK_ATTEMPTS)
+    return
+  takeBacksMade.set(path, made + 1)
+  plannedTakeBacks.add(path)
+  setTimeout(() => {
+    plannedTakeBacks.delete(path)
+    void takeBackWithoutWrite(path, holder)
+  }, STORAGE_LOCK_TAKE_BACK_DELAY_MS).unref()
+}
+
+/**
+ * Takes back this process's own lock that a release left in place, in the queue of the folder's holds so that no hold of this process has the lock meanwhile; run by the timer {@link planTakeBackWithoutWrite} sets.
+ * Plans the next try when the lock is still kept, and forgets the count once it is not.
+ * @param path - The `writer.lock` file.
+ * @param holder - The owner record this process placed.
+ * @example await takeBackWithoutWrite('/storage/learning/writer.lock', holder)
+ */
+async function takeBackWithoutWrite(
+  path: string,
+  holder: RecordedOwner & StorageOwnerIdentity,
+): Promise<void> {
+  await runAfterHeldWrites(dirname(path), async () => {
+    await takeBackOwnLeftover(path, holder)
+  }).catch(() => undefined)
+  if (unreleasedOwnLocks.has(path)) planTakeBackWithoutWrite(path, holder)
+  else takeBacksMade.delete(path)
+}
+
+/**
+ * Runs a step in the queue of this process's holds of one storage folder, after the holds before it have ended; called by {@link withStorageLock} for each hold and by {@link takeBackWithoutWrite} for a take-back.
+ * @param canonical - The canonical storage directory, which names the queue.
+ * @param step - The step to run once the holds before it have ended.
+ * @returns What `step` returned.
+ * @throws What `step` threw.
+ * @example await runAfterHeldWrites('/storage/learning', async () => takeBackOwnLeftover(path, holder))
+ */
+async function runAfterHeldWrites<Value>(
+  canonical: string,
+  step: () => Promise<Value>,
+): Promise<Value> {
+  // Reserve shared process ownership before awaiting the prior writer; path aliases join the same queue.
+  const pending = (pendingWriters.get(canonical) ?? Promise.resolve()).then(
+    step,
+  )
+  const settled = pending.then(
+    () => undefined,
+    () => undefined,
+  )
+  pendingWriters.set(canonical, settled)
+  try {
+    return await pending
+  } finally {
+    if (pendingWriters.get(canonical) === settled)
+      pendingWriters.delete(canonical)
+  }
+}
+
+/**
+ * Removes this process's own lock that its last release of the directory left, so that the lock can be placed again: by this process's next hold, when {@link withStorageLock} calls this with a write about to follow and finds the lock file already there, and by this process's own timer, when {@link takeBackWithoutWrite} calls this at the fire of the timer that {@link planTakeBackWithoutWrite} set, with no write in progress (via {@link runAfterHeldWrites}, so no hold of this process has the lock meanwhile). It touches only this process's own locks ({@link unreleasedOwnLocks}); a lock of another window is never taken back here.
  * Why: a lock that names this process is not stale while this process runs ({@link removeStaleStorageLock}), so every later write of this window would be refused until it closed. Only a path whose release this process could not finish is taken back, and only while the lock still names this process ({@link releaseStorageLock}): the holds of one directory in this process wait for each other, so no hold of this process holds that lock now.
  * A take-back that finds the lock still kept has spent the release's attempts, about half a second; a caller that asks for the lock again for one write keeps that answer for its later tries ({@link withCatalogLock}), so a leftover that stays unreadable costs one take-back per call, not one per try (Cycle 0047 row 199). The next call tries again.
  * @param path - The `writer.lock` file that is present.
@@ -149,8 +256,10 @@ async function takeBackOwnLeftover(
     (): LockRelease => 'kept',
   )
   // A lock that is gone or names another writer is no longer this process's to take back; one still kept is not tried again by the same call.
-  if (release !== 'kept') unreleasedOwnLocks.delete(path)
-  else keptTakeBacks?.add(path)
+  if (release !== 'kept') {
+    unreleasedOwnLocks.delete(path)
+    takeBacksMade.delete(path)
+  } else keptTakeBacks?.add(path)
   return release === 'released'
 }
 
@@ -181,17 +290,18 @@ async function makeStorageFolder(directory: string): Promise<void> {
 
 /**
  * Queues this process's library/recorder writes and excludes other windows with the file `writer.lock` in the storage directory; called by every writer of private storage ({@link LearningLibrary}, {@link RecordingStore}, {@link RepositoryBookStore}, the Cursor skill and catalog).
- * The lock names its owner from the moment it exists ({@link placeStorageLock}). A lock that is present stays explicit, except one whose writer is gone from this machine, which is taken over by one window at a time ({@link removeStaleStorageLock}). What killed windows left beside the lock is removed by {@link removeStaleStorageClaims} on two paths: the holder sweeps at this process's first hold of the directory, and every takeover sweeps through its claim before it removes the stale lock ({@link claimStorageLockTakeover}). A later hold of this process sweeps nothing itself, so that an ordinary write does not list the whole storage directory, and a hold that took a stale lock over lists it once, for its claim. The release removes the lock only while it still names this process; whatever else is in its place by then belongs to another window and stays. A release whose read or removal of the lock fails tries again for about half a second ({@link releaseStorageLock}); a lock still left then is taken back by this process's next hold of the directory ({@link takeBackOwnLeftover}), and until then, or until this process ends and they take it over as stale, other windows are refused by it.
+ * The lock names its owner from the moment it exists ({@link placeStorageLock}). A lock that is present stays explicit, except one whose writer is gone from this machine, which is taken over by one window at a time ({@link removeStaleStorageLock}). What killed windows left beside the lock is removed by {@link removeStaleStorageClaims} on two paths: the holder sweeps at this process's first hold of the directory, and every takeover sweeps through its claim before it removes the stale lock ({@link claimStorageLockTakeover}). A later hold of this process sweeps nothing itself, so that an ordinary write does not list the whole storage directory, and a hold that took a stale lock over lists it once, for its claim. The release removes the lock only while it still names this process; whatever else is in its place by then belongs to another window and stays. A release whose read or removal of the lock fails tries again for about half a second ({@link releaseStorageLock}); a lock still left then is taken back {@link STORAGE_LOCK_TAKE_BACK_DELAY_MS} later without a further write ({@link planTakeBackWithoutWrite}), or at this process's next hold of the directory ({@link takeBackOwnLeftover}); until then other windows are refused by it.
  * @param directory - The private storage directory; it is created when absent.
  * @param operation - The write to run while the lock is held.
  * @param identity - The machine and the boot this process records in the lock and judges a present lock by; {@link currentStorageOwner} unless a test names its own.
  * @param holderStarts - The process starts a caller that asks for the lock again keeps for all its tries of one write, by process id ({@link withCatalogLock}), so that a present lock's live writer is read once for them, not at every try, also one whose start cannot be read; a kept answer only keeps that writer running ({@link removeStaleStorageLock}). A new one for each hold when left out.
  * @param keptTakeBacks - The lock paths whose take-back of this process's own leftover such a caller's earlier try found kept, which it keeps for all its tries of one write as it keeps `holderStarts` ({@link takeBackOwnLeftover}). Every hold tries the take-back when left out.
- * @returns What `operation` returned, after the lock is released.
+ * @param onReleaseFailure - Told what removing this process's own lock threw, or that the release left it in place ({@link describeKeptStorageLock}), when the release fails after `operation` ended; a caller that names the lock in its answer passes it (a study removal). Without it the failure is not reported: the write's result or error reaches the caller whole, and the lock is taken back ({@link takeBackWithoutWrite}).
+ * @returns What `operation` returned, after the lock is released; also when the release fails (Cycle 0048 task 21).
  * @throws
  * - "Learning storage is not a regular directory: <path>. …" when the directory's path holds a link or something that is no folder ({@link makeStorageFolder}); nothing was written
  * - {@link StorageLockHeldError} "Learning storage is locked …", naming the lock file, with the `EEXIST` system error as `cause`, while another writer holds the lock or a lock stays that cannot be judged; nothing was written
- * - What `operation` throws, and what removing this process's own lock still throws after its attempts for another reason than a lock that is already gone (the write was made; the lock is taken back by this process's next hold)
+ * - What `operation` throws; a release that fails is never thrown, it goes to `onReleaseFailure` ({@link releaseAfterWrite})
  * @example
  * await withStorageLock('/storage/learning', () => save())
  */
@@ -201,64 +311,51 @@ export async function withStorageLock<Value>(
   identity?: StorageOwnerIdentity,
   holderStarts?: Map<number, Promise<string | undefined>>,
   keptTakeBacks?: Set<string>,
+  onReleaseFailure?: (error: unknown) => void,
 ): Promise<Value> {
   await makeStorageFolder(directory)
   const canonical = await realpath(directory),
     path = join(canonical, 'writer.lock')
-  // Reserve shared process ownership before awaiting the prior writer; path aliases join the same queue.
-  const pending = (pendingWriters.get(canonical) ?? Promise.resolve()).then(
-    async () => {
-      const holder = {
-        pid: process.pid,
-        ...(identity ?? (await currentStorageOwner())),
-      }
-      const acquire = (): Promise<void> => placeStorageLock(path, holder)
-      await acquire()
-        .catch(async (error) => {
-          // This process's own lock that its last release left is taken back, and a lock left by a killed editor on this machine is taken over, once; a live or foreign one, one another window is taking over right now and one whose takeover fails stay explicit.
-          if (
-            error.code === 'EEXIST' &&
-            ((await takeBackOwnLeftover(path, holder, keptTakeBacks)) ||
-              (await removeStaleStorageLock(
-                path,
-                holder,
-                undefined,
-                holderStarts,
-              ).catch(() => false)))
+  return runAfterHeldWrites(canonical, async () => {
+    const holder = {
+      pid: process.pid,
+      ...(identity ?? (await currentStorageOwner())),
+    }
+    const acquire = (): Promise<void> => placeStorageLock(path, holder)
+    await acquire()
+      .catch(async (error) => {
+        // This process's own lock that its last release left is taken back, and a lock left by a killed editor on this machine is taken over, once; a live or foreign one, one another window is taking over right now and one whose takeover fails stay explicit.
+        if (
+          error.code === 'EEXIST' &&
+          ((await takeBackOwnLeftover(path, holder, keptTakeBacks)) ||
+            (await removeStaleStorageLock(
+              path,
+              holder,
+              undefined,
+              holderStarts,
+            ).catch(() => false)))
+        )
+          return acquire()
+        throw error
+      })
+      .catch(async (error) => {
+        // Only the lock's own refusal gets its type: a caller waits for it and for nothing else.
+        if (error.code === 'EEXIST')
+          throw new StorageLockHeldError(
+            `Learning storage is locked by another writer or an interrupted session (lock file: ${path}). No data changed; retry after resolving the lock.${await describeRefusedStorageLock(path, unreleasedOwnLocks.has(path))}`,
+            { cause: error },
           )
-            return acquire()
-          throw error
-        })
-        .catch((error) => {
-          // Only the lock's own refusal gets its type: a caller waits for it and for nothing else.
-          if (error.code === 'EEXIST')
-            throw new StorageLockHeldError(
-              `Learning storage is locked by another writer or an interrupted session (lock file: ${path}). No data changed; retry after resolving the lock.`,
-              { cause: error },
-            )
-          throw error
-        })
-      try {
-        // The lock is held: what a window that was killed while it prepared a lock or a takeover left beside it is nobody's and goes, swept at this process's first hold of the directory. A takeover has swept through its claim already.
-        if (!sweptDirectories.has(canonical)) {
-          sweptDirectories.add(canonical)
-          await removeStaleStorageClaims(path, holder).catch(() => undefined)
-        }
-        return await operation()
-      } finally {
-        await releaseOwnLock(path, holder)
+        throw error
+      })
+    try {
+      // The lock is held: what a window that was killed while it prepared a lock or a takeover left beside it is nobody's and goes, swept at this process's first hold of the directory. A takeover has swept through its claim already.
+      if (!sweptDirectories.has(canonical)) {
+        sweptDirectories.add(canonical)
+        await removeStaleStorageClaims(path, holder).catch(() => undefined)
       }
-    },
-  )
-  const settled = pending.then(
-    () => undefined,
-    () => undefined,
-  )
-  pendingWriters.set(canonical, settled)
-  try {
-    return await pending
-  } finally {
-    if (pendingWriters.get(canonical) === settled)
-      pendingWriters.delete(canonical)
-  }
+      return await operation()
+    } finally {
+      await releaseAfterWrite(path, holder, onReleaseFailure)
+    }
+  })
 }

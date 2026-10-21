@@ -16,8 +16,9 @@ import fsPromises, {
   writeFile,
 } from 'node:fs/promises'
 import os, { hostname, tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { before, test, type TestContext } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 
 import { WIKI_METADATA_FILE_LIMIT_BYTES } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
@@ -378,6 +379,152 @@ test('an empty lock file created a moment ago stays in place, and this window’
   )
   assert.equal(writes, 0)
   assert.equal(await readFile(lockPath, 'utf8'), '')
+  assert.deepEqual(await readdir(directory), ['writer.lock'])
+})
+
+// Value: protects=a live window's lock, empty for the instant between its creation and its write, on a network home whose clock runs behind this window's: a second window must not take the lock from it, or both write; fails_when=the empty lock's age is taken from this window's clock alone, so a window whose clock runs ten minutes ahead of the file system's finds a lock created this instant abandoned and takes it over (Cycle 0048 task 40); why_new=Cycle 0048 task 40 (S11-N17e); seam=this window's clock (Date), set ten minutes ahead of the file system's, and the real files; no_claim=a real network home
+test('an empty lock file created this instant stays in place, and this window’s write is refused, while this window’s clock runs ten minutes ahead of the file system’s', async (context) => {
+  // Arrange: a lock file of zero bytes created just now; then this window's clock is set ten minutes ahead.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.equal(writes, 0)
+  assert.equal(await readFile(lockPath, 'utf8'), '')
+  assert.deepEqual(await readdir(directory), ['writer.lock'])
+})
+
+// Value: protects=a killed writer's empty lock is still taken over when this window's clock runs ahead of the file system's, once the file system dates it a minute old; fails_when=the file system's clock is asked in a way that keeps every empty lock, so a killed writer's lock refuses every write; why_new=Cycle 0048 task 40 (S11-N17e): the test of a clock ahead had only a lock of this instant; seam=this window's clock (Date), ten minutes ahead, and the lock's modification time; no_claim=a real network home
+test('an empty lock file the file system dates a minute ago is taken over while this window’s clock runs ten minutes ahead of the file system’s, and the clock probe leaves no file', async (context) => {
+  // Arrange: a lock file of zero bytes that nothing has touched for a minute; then this window's clock is set ten minutes ahead.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  await leaveUntouchedFor(lockPath, 60_000)
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=the claim folders of live windows while another window's sweep reads the file system's clock for their empty owner files: a probe inside `<lock>.takeover` is listed as a claim and can make a release's removal of that folder fail, and a probe inside a prepared claim folder moves with it when its window renames it into place; fails_when=the clock probe is created in the folder of the entry it judges, so it stands inside a claim folder; why_new=Cycle 0048 task 40 (S11-N17e), review of the probe's place; seam=open of node:fs/promises, whose exclusive creations the test records, this window's clock (Date) ten minutes ahead, and the real files; no_claim=a real network home
+test('the clock probe for an empty owner file of a placed claim and of a prepared claim stands beside the lock under the name of a prepared lock, never inside a claim folder, and leaves nothing', async (context) => {
+  // Arrange: an empty owner file in the placed claim folder and one in a prepared claim folder, both created this instant; this window's clock is set ten minutes ahead, so both look old by it.
+  const directory = await storageDirectory(context)
+  const placedClaimFolder = join(directory, 'writer.lock.takeover')
+  const preparedClaimFolder = join(directory, 'writer.lock.takeover-prepared')
+  await mkdir(placedClaimFolder)
+  await writeFile(join(placedClaimFolder, 'placed'), '')
+  await mkdir(preparedClaimFolder)
+  await writeFile(join(preparedClaimFolder, 'prepared'), '')
+  const open = fsPromises.open.bind(fsPromises)
+  const probeFolders: string[] = []
+  const probeNames: string[] = []
+  context.mock.method(
+    fsPromises,
+    'open',
+    (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
+      if (rest[0] === 'wx') {
+        probeFolders.push(dirname(String(path)))
+        probeNames.push(
+          basename(String(path)).slice(0, 'writer.lock.pending-'.length),
+        )
+      }
+      return Reflect.apply(open, fsPromises, [path, ...rest])
+    },
+  )
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+
+  // Assert: one probe for each judged owner file, beside the lock; both owner files stay, and no probe is left.
+  assert.deepEqual(
+    {
+      outcome,
+      probeFolders,
+      probeNames,
+      entries: (await readdir(directory)).sort(),
+      placedClaimFolder: await readdir(placedClaimFolder),
+      preparedClaimFolder: await readdir(preparedClaimFolder),
+    },
+    {
+      outcome: 'written',
+      probeFolders: [directory, directory],
+      probeNames: ['writer.lock.pending-', 'writer.lock.pending-'],
+      entries: ['writer.lock.takeover', 'writer.lock.takeover-prepared'],
+      placedClaimFolder: ['placed'],
+      preparedClaimFolder: ['prepared'],
+    },
+  )
+})
+
+// Value: protects=the storage folder from a pile of clock probes: the empty probe file that a window killed in the instant of its clock read left is removed by the next sweep like any prepared lock, and one of this instant stays; fails_when=the probe is named so that no sweep finds it, so every kill in that instant leaves a file for good; why_new=Cycle 0048 task 40 (S11-N17e), review of the probe's place; seam=this window's clock (Date) ten minutes ahead and the files' modification time; no_claim=a real kill
+test('an empty clock probe a killed window left beside the lock is removed by the next write, and one of this instant stays, while this window’s clock runs ten minutes ahead of the file system’s', async (context) => {
+  // Arrange: two empty files named like prepared locks, one untouched for a minute and one created this instant; then this window's clock is set ten minutes ahead.
+  const directory = await storageDirectory(context)
+  const oldProbe = join(directory, 'writer.lock.pending-killed-probe')
+  await writeFile(oldProbe, '')
+  await leaveUntouchedFor(oldProbe, 60_000)
+  await writeFile(join(directory, 'writer.lock.pending-live-probe'), '')
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+
+  // Assert
+  assert.deepEqual(
+    { outcome, entries: await readdir(directory) },
+    { outcome: 'written', entries: ['writer.lock.pending-live-probe'] },
+  )
+})
+
+// Value: protects=a lock that may belong to a live window stays when the file system's clock cannot be read; fails_when=an empty lock old by this window's clock is taken over although no file can be created in the folder to read the file system's clock; why_new=Cycle 0048 task 40 (S11-N17e), its refusal sentence extended by task 132 (native adversarial); seam=open of node:fs/promises, which refuses the clock probe's file (a prepared-lock name beside the lock); no_claim=a full disk or a read-only network home
+test('an empty lock file that is old by this window’s clock stays in place while no file can be created to read the file system’s clock', async (context) => {
+  // Arrange: a lock file of zero bytes untouched for a minute, and a folder that refuses the clock probe's file (named like a prepared lock beside the lock).
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  await leaveUntouchedFor(lockPath, 60_000)
+  const open = fsPromises.open.bind(fsPromises)
+  context.mock.method(
+    fsPromises,
+    'open',
+    (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
+      if (String(path).startsWith(`${lockPath}.pending-`))
+        return Promise.reject(
+          Object.assign(new Error('EACCES'), { code: 'EACCES' }),
+        )
+      return Reflect.apply(open, fsPromises, [path, ...rest])
+    },
+  )
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. The lock file is empty and older than 10 seconds, but the folder takes no new file now (a full disk, a read-only folder or a quota), so Codebook cannot read the clock of the file system to tell whether a writer left it. Make room or write access in the folder, then retry; if the lock stays, move the file away.`,
+  )
+  assert.equal(writes, 0)
   assert.deepEqual(await readdir(directory), ['writer.lock'])
 })
 
@@ -1037,40 +1184,84 @@ test('a link that leads nowhere where a private storage folder should be is refu
 /**
  * Loads {@link withStorageLock} as one window that has its own queue, whose read of its lock's owner and whose removal of its lock fail while a test says so, as on Windows while a scanner or an indexer holds the file (`EBUSY`) or the system refuses the removal (`EPERM`).
  * @param lockPath - The `writer.lock` file whose read and removal may be refused.
- * @returns The loaded write and the switches: `readsToRefuse` counts the reads of the lock's owner that answer nothing, `isRemovalRefused` refuses every removal of the lock while it is set.
+ * @param isRetryWaitSkipped - Whether the pauses between the release's attempts end at once, for a test that fakes the timers; the default keeps the real pauses.
+ * @returns The loaded write and the switches: `readsToRefuse` counts the reads of the lock's owner that answer nothing, `isRemovalRefused` refuses every removal of the lock while it is set; `refusedRemovals` counts the removals of the lock that were refused, `ownerReads` the reads of the lock's owner that began and `ownerReadsEnded` those that ended, so that a test can see whether a take-back ran and when its read is over. `timersPending` counts the timers the module armed that have not fired, and `timersFired` those that fired: the take-back timer is the module's only one, so these say whether a take-back is planned, and how many ran at a tick (Cycle 0048 task 58).
  * @example const window = await windowWithRefusedRelease(lockPath); window.readsToRefuse = 1
  */
-async function windowWithRefusedRelease(lockPath: string): Promise<{
+async function windowWithRefusedRelease(
+  lockPath: string,
+  isRetryWaitSkipped = false,
+): Promise<{
   withStorageLock: typeof withStorageLock
   readsToRefuse: number
   isRemovalRefused: boolean
+  refusedRemovals: number
+  ownerReads: number
+  ownerReadsEnded: number
+  timersPending: number
+  timersFired: number
 }> {
   const switches = {
     readsToRefuse: 0,
     isRemovalRefused: false,
+    refusedRemovals: 0,
+    ownerReads: 0,
+    ownerReadsEnded: 0,
+    timersPending: 0,
+    timersFired: 0,
   }
   const loaded = await loadModule<typeof lockModule>(
     resolve(__dirname, '../utils/withStorageLock.js'),
     {
       './readRecordedOwner': {
         readRecordedOwner: async (path: string) => {
-          if (path === lockPath && switches.readsToRefuse > 0) {
-            switches.readsToRefuse -= 1
-            return undefined
+          if (path === lockPath) switches.ownerReads += 1
+          try {
+            if (path === lockPath && switches.readsToRefuse > 0) {
+              switches.readsToRefuse -= 1
+              return undefined
+            }
+            return await readRecordedOwner(path)
+          } finally {
+            if (path === lockPath) switches.ownerReadsEnded += 1
           }
-          return readRecordedOwner(path)
         },
       },
+      // The pauses between the release's attempts end at once for a test that fakes the timers.
+      ...(isRetryWaitSkipped && {
+        'node:timers/promises': { setTimeout: async () => undefined },
+      }),
       'node:fs/promises': {
         ...fsPromises,
         unlink: async (path: string) => {
-          if (path === lockPath && switches.isRemovalRefused)
+          if (path === lockPath && switches.isRemovalRefused) {
+            switches.refusedRemovals += 1
             throw Object.assign(
               new Error('EPERM: operation not permitted, unlink'),
               { code: 'EPERM' },
             )
+          }
           return fsPromises.unlink(path)
         },
+      },
+    },
+    {
+      // The take-back timer is counted when it is armed and when it fires, resolved at call time so that a test's faked clock drives it.
+      setTimeout: (
+        handler: (...values: unknown[]) => void,
+        delayMs?: number,
+        ...values: unknown[]
+      ) => {
+        switches.timersPending += 1
+        return globalThis.setTimeout(
+          (...fired: unknown[]) => {
+            switches.timersPending -= 1
+            switches.timersFired += 1
+            handler(...fired)
+          },
+          delayMs,
+          ...values,
+        )
       },
     },
   )
@@ -1136,19 +1327,29 @@ test('a lock this window could not read while it released it is taken back by th
   )
 })
 
-// Value: protects=the learner's later writes in a window whose lock the system refused to remove after a write (on Windows EPERM or EBUSY while another program holds the file); fails_when=the lock that names this window stays, and this window refuses its own next write with "Learning storage is locked …" until it closes; why_new=Cycle 0047 row 31 (P3RT9); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=the refusal of the first release is still reported to its caller, as a study removal names it (studyRemoval.test.ts)
-test('a write whose lock the system refuses to remove is made and reports the refusal, and this window’s next write takes the lock back, goes ahead and leaves no lock', async (context) => {
+// Value: protects=the learner's later writes in a window whose lock the system refused to remove after a write (on Windows EPERM or EBUSY while another program holds the file); fails_when=the lock that names this window stays, and this window refuses its own next write with "Learning storage is locked …" until it closes; why_new=Cycle 0047 row 31 (P3RT9); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=the refusal of the first release is reported to a caller that passes onReleaseFailure, as a study removal does (studyRemoval.test.ts); Cycle 0048 task 21 changed the first outcome from the refusal's error to the write's result
+test('a write whose lock the system refuses to remove is made and returned, and reports the refusal to a caller that asks for it; this window’s next write takes the lock back, goes ahead and leaves no lock', async (context) => {
   // Arrange: a window that may not remove its lock during its first release.
   const directory = await storageDirectory(context)
   const lockPath = join(directory, 'writer.lock')
   const window = await windowWithRefusedRelease(lockPath)
   let writesMade = 0
+  let reportedRefusal = 'none'
   const firstOutcome = await window
-    .withStorageLock(directory, async () => {
-      writesMade += 1
-      window.isRemovalRefused = true
-      return 'written'
-    })
+    .withStorageLock(
+      directory,
+      async () => {
+        writesMade += 1
+        window.isRemovalRefused = true
+        return 'written'
+      },
+      undefined,
+      undefined,
+      undefined,
+      (error) => {
+        reportedRefusal = String(error)
+      },
+    )
     .catch((error: unknown) => String(error))
   const entriesAfterTheFirstWrite = await readdir(directory)
   window.isRemovalRefused = false
@@ -1165,18 +1366,460 @@ test('a write whose lock the system refuses to remove is made and reports the re
   assert.deepEqual(
     {
       firstOutcome,
+      reportedRefusal,
       entriesAfterTheFirstWrite,
       nextOutcome,
       writesMade,
       entriesAfterTheNextWrite: await readdir(directory),
     },
     {
-      firstOutcome: 'Error: EPERM: operation not permitted, unlink',
+      firstOutcome: 'written',
+      reportedRefusal: 'Error: EPERM: operation not permitted, unlink',
       entriesAfterTheFirstWrite: ['writer.lock'],
       nextOutcome: 'written',
       writesMade: 2,
       entriesAfterTheNextWrite: [],
     },
+  )
+})
+
+// Value: protects=a write that was made and whose result its caller needs (a recording's writer, a published catalog), when the system then refuses to remove the lock; fails_when=the release's failure replaces the write's result, so the caller takes a write that was made for a failure and loses what it returned (a recording started and not handed on, a config published and not recorded); why_new=Cycle 0048 task 21 (S11-N17a); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=the report of that refusal to a caller that asks for it
+test('a write whose lock the system refuses to remove still returns what the write returned', async (context) => {
+  // Arrange: a window that may not remove its lock during its first release.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+
+  // Act
+  const outcome = await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+      return { recordingWriter: 'started' }
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(outcome, { recordingWriter: 'started' })
+})
+
+// Value: protects=a write that threw and whose lock the system then refuses to remove: the caller learns why the write failed; fails_when=the release's failure replaces the write's own error, so a removal that was refused for another window's recording says that the lock could not be released; why_new=Cycle 0048 task 21 (S11-N17a); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=a write that succeeds before a refused release, and the lock the refusal leaves, which the tests beside it cover
+test('a write that throws keeps its own error when the system also refuses to remove the lock', async (context) => {
+  // Arrange: a window that may not remove its lock during its first release.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+
+  // Act
+  const outcome = await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+      throw new Error('Another editor window has not finished recording.')
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.equal(
+    outcome,
+    'Error: Another editor window has not finished recording.',
+  )
+})
+
+// Value: protects=the other windows of the learner (the Cursor catalog's writers above all) after this window's write left its lock because the system refused to remove it, when this window makes no further write to that folder; fails_when=the lock is taken back only at this window's next hold of the folder, so every other window is refused by it until this editor exits; why_new=Cycle 0048 task 22 (S11-N17b); seam=the removal of the lock in a loaded withStorageLock, refused for the first release only, and the timer, which the test fakes; no_claim=a real scanner on Windows
+test('a lock the system refused to remove after a write is taken back a few seconds later, with no further write of this window', async (context) => {
+  // Arrange: a window whose first release was refused and whose lock stands; the system allows the removal afterwards.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  const entriesAfterTheWrite = await readdir(directory)
+  window.isRemovalRefused = false
+
+  // Act
+  context.mock.timers.tick(5_000)
+  for (let look = 0; look < 200 && (await readdir(directory)).length; look++)
+    await setImmediate()
+
+  // Assert
+  assert.deepEqual(
+    { entriesAfterTheWrite, entriesAfterTheTimer: await readdir(directory) },
+    { entriesAfterTheWrite: ['writer.lock'], entriesAfterTheTimer: [] },
+  )
+})
+
+// Value: protects=a left storage lock is taken back at a later wait after an earlier take-back was refused; fails_when=the first refused take-back ends the tries and the lock stays until exit; why_new=the task 22 test lets the first take-back succeed, so the retry had no test; seam=none; no_claim=a real scanner (a faked unlink and a faked timer stand in for it)
+test('a lock whose take-back is refused again after the first wait is taken back at the next wait, with no further write of this window', async (context) => {
+  // Arrange: a window whose first release was refused and whose take-back at the first wait is refused too.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  const refusedBeforeTheFirstWait = window.refusedRemovals
+  context.mock.timers.tick(5_000)
+  // The first take-back ends with its 20th refused removal, however long its 20 real file reads take; no count of event-loop turns bounds that.
+  await untilReached(
+    () => window.refusedRemovals >= refusedBeforeTheFirstWait + 20,
+    'the end of the first take-back (20 refused removals)',
+  )
+  const entriesAfterTheRefusedTry = await readdir(directory)
+  window.isRemovalRefused = false
+
+  // Act
+  for (let look = 0; look < 200 && (await readdir(directory)).length; look++) {
+    context.mock.timers.tick(5_000)
+    await setImmediate()
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      entriesAfterTheRefusedTry,
+      entriesAfterTheNextTry: await readdir(directory),
+    },
+    { entriesAfterTheRefusedTry: ['writer.lock'], entriesAfterTheNextTry: [] },
+  )
+})
+
+/** How long a test of the timer take-back waits for an instrumented call before it fails, in milliseconds; a loaded runner or the Windows job may take seconds for 20 real file reads, and a run that does not come at all fails with a message and not with a later, unrelated assertion. */
+const INSTRUMENTED_CALL_WAIT_LIMIT_MS = 60_000
+
+/**
+ * Waits until an instrumented call of a loaded {@link withStorageLock} has happened, within a time bound; for the tests of the timer take-back, whose steps are real file reads of a time no count of event-loop turns can know.
+ * The signals the tests wait on come from the work itself: the 20th refused removal, the end of the owner read, the timer the take-back arms when it ends. The work that follows such a signal is a chain of promise steps with no further file operation, which ends before the next turn of the event loop, so one look after the signal is the end of that work.
+ * @param hasReached - Reads a counter of {@link windowWithRefusedRelease}.
+ * @param description - What is awaited, in words, for the failure message.
+ * @throws An error naming `description` when the bound passes first.
+ * @example await untilReached(() => window.refusedRemovals >= 60, 'the 20th refused removal of the take-back')
+ */
+async function untilReached(
+  hasReached: () => boolean,
+  description: string,
+): Promise<void> {
+  const deadline = Date.now() + INSTRUMENTED_CALL_WAIT_LIMIT_MS
+  while (!hasReached()) {
+    if (Date.now() > deadline)
+      throw new Error(
+        `Timed out after ${INSTRUMENTED_CALL_WAIT_LIMIT_MS} ms waiting for ${description}`,
+      )
+    await setImmediate()
+  }
+  // One more turn: the promise steps that follow the signal have ended when it returns.
+  await setImmediate()
+}
+
+// Value: protects=another window's lock when this window's timer takes back its leftover lock without a write: the learner removed the leftover by hand and another live window placed its own lock before the timer fires; fails_when=the timer removes whatever stands at the noted path without the check of takeBackOwnLeftover (the lock must still name this process), so the other window's lock is gone and both write; why_new=Cycle 0048 task 39 (S11-N17b follow-up): the task 22 tests left the lock to this window's timer only when it still named this window; seam=the removal of the lock in a loaded withStorageLock, refused for the first release only, the real files, and the timer, which the test fakes; no_claim=a real scanner on Windows
+test('a lock that another live window has placed in the place of this window’s leftover before the timer fires stays byte for byte after the timer', async (context) => {
+  // Arrange: this window's first release was refused, so its lock stands and a take-back is planned; then the learner removes the leftover and another live window of this machine places its own lock.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  window.isRemovalRefused = false
+  const otherWindow = await idleChild(context)
+  const lockOfTheOtherWindow = JSON.stringify({
+    pid: otherWindow.pid,
+    hostname: hostname(),
+    processStart: await realProcessStart(otherWindow.pid!),
+  })
+  await unlink(lockPath)
+  await writeFile(lockPath, lockOfTheOtherWindow)
+  const readsBeforeTheTimer = window.ownerReads,
+    readsEndedBeforeTheTimer = window.ownerReadsEnded
+
+  // Act
+  context.mock.timers.tick(5_000)
+  // The take-back's own work ends with its read of the lock: it finds another window's lock and plans nothing.
+  await untilReached(
+    () => window.ownerReadsEnded > readsEndedBeforeTheTimer,
+    'the end of the timer’s read of the lock’s owner',
+  )
+  const readsAfterTheTimer = window.ownerReads,
+    timersPlannedAfterTheTimer = window.timersPending
+  // Later waits fire only a timer that is pending: with none planned they start no work.
+  for (let wait = 0; wait < 3; wait++) context.mock.timers.tick(5_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      timerLookedAtTheLock: readsAfterTheTimer > readsBeforeTheTimer,
+      timersPlannedAfterTheTimer,
+      readsAfterTheNextWaits: window.ownerReads - readsAfterTheTimer,
+      lockAfterTheTimer: await readFile(lockPath, 'utf8').catch(
+        () => 'no lock file',
+      ),
+      entries: await readdir(directory),
+    },
+    {
+      timerLookedAtTheLock: true,
+      timersPlannedAfterTheTimer: 0,
+      readsAfterTheNextWaits: 0,
+      lockAfterTheTimer: lockOfTheOtherWindow,
+      entries: ['writer.lock'],
+    },
+  )
+})
+
+// Value: protects=the learner's editor from a timer that never ends when the system refuses to remove this window's lock for good; fails_when=a refused take-back plans the next one without the bound STORAGE_LOCK_TAKE_BACK_ATTEMPTS, so a refused lock is retried every five seconds until the editor exits; why_new=Cycle 0048 task 39 (S11-N17b follow-up): the task 22 tests had a take-back that succeeds at the first or the second wait only; seam=the removal of the lock in a loaded withStorageLock, refused every time, and the timer, which the test fakes; no_claim=a real scanner on Windows
+test('a lock the system refuses to remove every time is taken back twelve times, five seconds apart, and then left without a further try', async (context) => {
+  // Arrange: a window whose first release was refused and whose every take-back is refused too. Each release or take-back tries the removal 20 times, so the first release and twelve take-backs make 13 * 20 = 260 refused removals.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+
+  // Act
+  for (let wait = 1; wait <= 12; wait++) {
+    const refusedBefore = window.refusedRemovals
+    context.mock.timers.tick(5_000)
+    // A take-back ends with its 20th refused removal and plans the next one; the twelfth is the last, and what it plans is counted below.
+    await untilReached(
+      () =>
+        window.refusedRemovals >= refusedBefore + 20 &&
+        (wait === 12 || window.timersPending === 1),
+      `the end of take-back ${wait} of 12 (20 refused removals, then the next take-back planned)`,
+    )
+  }
+  const refusedAfterTwelveWaits = window.refusedRemovals,
+    timersPlannedAfterTwelveWaits = window.timersPending
+  // Later waits fire only a timer that is pending: with none planned they start no work.
+  for (let wait = 0; wait < 5; wait++) context.mock.timers.tick(5_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusedAfterTwelveWaits,
+      timersPlannedAfterTwelveWaits,
+      refusedAfterFiveMoreWaits: window.refusedRemovals,
+      timersFiredInAll: window.timersFired,
+      entries: await readdir(directory),
+    },
+    {
+      refusedAfterTwelveWaits: 260,
+      timersPlannedAfterTwelveWaits: 0,
+      refusedAfterFiveMoreWaits: 260,
+      timersFiredInAll: 12,
+      entries: ['writer.lock'],
+    },
+  )
+})
+
+// Value: protects=a later lock the system refuses to remove, in a window that had earlier refusals which ended well: it is taken back the full twelve times again, so a learner whose scanner holds the file twice in a day is not left with a lock for the rest of the session after a few tries; fails_when=a clean release does not clear the count of take-backs (takeBacksMade.delete in releaseOwnLock), so the earlier take-backs are charged to the later refusal and it gets fewer than twelve; why_new=Cycle 0048 task 128 (Step 7 gap): the cap and the single timer were tested from a count of zero only; seam=the removal of the lock in a loaded withStorageLock, refused every time but for one clean write, and the timer, which the test fakes; no_claim=the reset by a take-back that succeeds (the test after this one)
+test('a lock refused again after a write released cleanly gets its twelve take-backs again, not the few that were left before', async (context) => {
+  // Arrange: a window whose first release and five take-backs were refused (6 of its 12 tries are charged); the learner removes the leftover by hand, and the next write releases its lock cleanly while the sixth take-back's timer still waits.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  for (let wait = 1; wait <= 5; wait++) {
+    const refusedBefore = window.refusedRemovals
+    context.mock.timers.tick(5_000)
+    await untilReached(
+      () =>
+        window.refusedRemovals >= refusedBefore + 20 &&
+        window.timersPending === 1,
+      `the end of take-back ${wait} of 5 (20 refused removals, then the next take-back planned)`,
+    )
+  }
+  await unlink(lockPath)
+  window.isRemovalRefused = false
+  await window.withStorageLock(directory, async () => {
+    window.isRemovalRefused = false
+  })
+  const entriesAfterTheCleanWrite = await readdir(directory)
+  // This write's release is refused again: 20 refused removals; the timer that waited is the first of its tries.
+  await window.withStorageLock(directory, async () => {
+    window.isRemovalRefused = true
+  })
+  const refusedBeforeTheNextWaits = window.refusedRemovals,
+    timersFiredBeforeTheNextWaits = window.timersFired
+
+  // Act
+  for (let wait = 1; wait <= 13; wait++) {
+    // A missing reset ends the tries early: no timer is planned for this wait, which fails here at once and not after a long wait.
+    assert.equal(
+      window.timersPending,
+      1,
+      `expected a planned take-back before wait ${wait} of 13`,
+    )
+    const refusedBefore = window.refusedRemovals
+    context.mock.timers.tick(5_000)
+    // The timer that waited and twelve planned ones make thirteen waits; the last plans nothing, which is counted below.
+    // The take-back ends with its 20th refused removal; the plan of the next one is asserted before the next tick.
+    await untilReached(
+      () => window.refusedRemovals >= refusedBefore + 20,
+      `the end of take-back ${wait} of 13 (20 refused removals)`,
+    )
+  }
+  const timersPlannedAfterTheWaits = window.timersPending
+  // Later waits fire only a timer that is pending: with none planned they start no work.
+  for (let wait = 0; wait < 5; wait++) context.mock.timers.tick(5_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      entriesAfterTheCleanWrite,
+      refusedBeforeTheNextWaits,
+      timersFiredByTheNextWaits:
+        window.timersFired - timersFiredBeforeTheNextWaits,
+      refusedByTheNextWaits: window.refusedRemovals - refusedBeforeTheNextWaits,
+      timersPlannedAfterTheWaits,
+      refusedAfterFiveMoreWaits: window.refusedRemovals,
+      entries: await readdir(directory),
+    },
+    {
+      entriesAfterTheCleanWrite: [],
+      refusedBeforeTheNextWaits: 140,
+      timersFiredByTheNextWaits: 13,
+      refusedByTheNextWaits: 260,
+      timersPlannedAfterTheWaits: 0,
+      refusedAfterFiveMoreWaits: 400,
+      entries: ['writer.lock'],
+    },
+  )
+})
+
+// Value: protects=a later lock the system refuses to remove, in a window whose earlier leftover was taken back at last by its timer: it too gets twelve take-backs, five seconds apart; fails_when=a take-back that succeeds does not clear the count (takeBacksMade.delete in takeBackOwnLeftover and takeBackWithoutWrite), so the tries spent on the earlier leftover are charged to the later one; why_new=Cycle 0048 task 128 (Step 7 gap): the cap and the single timer were tested from a count of zero only; seam=the removal of the lock in a loaded withStorageLock, refused for the first release and five take-backs, then allowed, and the timer, which the test fakes; no_claim=the reset by a clean release of a write (the test before this one)
+test('a lock refused again after a take-back that succeeded gets its twelve take-backs again, not the few that were left before', async (context) => {
+  // Arrange: a window whose first release and five take-backs were refused (6 of its 12 tries are charged); the system then allows the removal and the sixth take-back removes the lock.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  for (let wait = 1; wait <= 5; wait++) {
+    const refusedBefore = window.refusedRemovals
+    context.mock.timers.tick(5_000)
+    await untilReached(
+      () =>
+        window.refusedRemovals >= refusedBefore + 20 &&
+        window.timersPending === 1,
+      `the end of take-back ${wait} of 5 (20 refused removals, then the next take-back planned)`,
+    )
+  }
+  window.isRemovalRefused = false
+  context.mock.timers.tick(5_000)
+  for (let look = 0; look < 200 && (await readdir(directory)).length; look++)
+    await setImmediate()
+  const entriesAfterTheSixthTakeBack = await readdir(directory)
+  // This write's release is refused: 20 refused removals and the first of its twelve tries.
+  await window.withStorageLock(directory, async () => {
+    window.isRemovalRefused = true
+  })
+  const refusedBeforeTheNextWaits = window.refusedRemovals,
+    timersFiredBeforeTheNextWaits = window.timersFired
+
+  // Act
+  for (let wait = 1; wait <= 12; wait++) {
+    // A missing reset ends the tries early: no timer is planned for this wait, which fails here at once and not after a long wait.
+    assert.equal(
+      window.timersPending,
+      1,
+      `expected a planned take-back before wait ${wait} of 12`,
+    )
+    const refusedBefore = window.refusedRemovals
+    context.mock.timers.tick(5_000)
+    // The take-back ends with its 20th refused removal; the plan of the next one is asserted before the next tick.
+    await untilReached(
+      () => window.refusedRemovals >= refusedBefore + 20,
+      `the end of take-back ${wait} of 12 (20 refused removals)`,
+    )
+  }
+  const timersPlannedAfterTheWaits = window.timersPending
+  // Later waits fire only a timer that is pending: with none planned they start no work.
+  for (let wait = 0; wait < 5; wait++) context.mock.timers.tick(5_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      entriesAfterTheSixthTakeBack,
+      refusedBeforeTheNextWaits,
+      timersFiredByTheNextWaits:
+        window.timersFired - timersFiredBeforeTheNextWaits,
+      refusedByTheNextWaits: window.refusedRemovals - refusedBeforeTheNextWaits,
+      timersPlannedAfterTheWaits,
+      refusedAfterFiveMoreWaits: window.refusedRemovals,
+      entries: await readdir(directory),
+    },
+    {
+      entriesAfterTheSixthTakeBack: [],
+      refusedBeforeTheNextWaits: 140,
+      timersFiredByTheNextWaits: 12,
+      refusedByTheNextWaits: 240,
+      timersPlannedAfterTheWaits: 0,
+      refusedAfterFiveMoreWaits: 380,
+      entries: ['writer.lock'],
+    },
+  )
+})
+
+// Value: protects=the learner's editor from a pile of timers when two writes in a row leave the lock of one path; fails_when=each kept release sets its own timer (the plan does not see the one already waiting), so two take-backs run at one wait; why_new=Cycle 0048 task 39 (S11-N17b follow-up); seam=the removal of the lock in a loaded withStorageLock, refused for both releases, and the timer, which the test fakes; no_claim=a real scanner on Windows
+test('two writes in a row whose lock the system refused to remove make one take-back at the next wait, not two', async (context) => {
+  // Arrange: the first write's release is refused (20 refused removals); the system allows the removal for the second write's take-back at its hold; the second write's release is refused again (20 more).
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  window.isRemovalRefused = false
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  const refusedBeforeTheWait = window.refusedRemovals,
+    timersFiredBeforeTheWait = window.timersFired
+
+  // Act
+  context.mock.timers.tick(5_000)
+  // The timers due at this wait have fired when the tick returns; the take-back they start ends with its 20th refused removal and the next plan.
+  const timersFiredByTheWait = window.timersFired - timersFiredBeforeTheWait
+  await untilReached(
+    () =>
+      window.refusedRemovals >= refusedBeforeTheWait + 20 &&
+      window.timersPending === 1,
+    'the end of the take-back (20 refused removals, then the next take-back planned)',
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusedBeforeTheWait,
+      timersFiredByTheWait,
+      refusedByTheWait: window.refusedRemovals - refusedBeforeTheWait,
+    },
+    { refusedBeforeTheWait: 40, timersFiredByTheWait: 1, refusedByTheWait: 20 },
   )
 })
 
@@ -1224,7 +1867,7 @@ test('a window whose leftover lock another live window has replaced by its own r
       entriesAfterTheNextWrite: await readdir(directory),
     },
     {
-      firstOutcome: 'Error: EPERM: operation not permitted, unlink',
+      firstOutcome: 'written',
       nextOutcome: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
       writesMade: 1,
       lockAfterTheNextWrite: lockOfTheOtherWindow,
@@ -1450,7 +2093,7 @@ test('a Cursor setup whose own leftover catalog lock stays unreadable takes it b
       ownerReadsOfTheSetup: window.ownerReads,
     },
     {
-      setup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+      setup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. This window itself left the lock: the system would not let it read or remove the file, and its tries to take the lock back have not removed it. Close the program that holds the file (a virus scanner or an indexer can), then retry; if the lock stays, move the file away.`,
       ownerReadsOfTheSetup: 20,
     },
   )
@@ -1500,9 +2143,128 @@ test('a Cursor setup refused for its own unreadable leftover catalog lock leaves
         .catch(() => 'missing'),
     },
     {
-      refusedSetup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+      refusedSetup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. This window itself left the lock: the system would not let it read or remove the file, and its tries to take the lock back have not removed it. Close the program that holds the file (a virus scanner or an indexer can), then retry; if the lock stays, move the file away.`,
       nextSetup: 'answered',
       config: 'written',
+    },
+  )
+})
+
+// Value: protects=a caller that names a lock its release left in place (a study removal says "the storage lock could not be released" and why) also when the release did not throw but could not read the lock's owner at any attempt, as on Windows while a scanner holds the file; fails_when=a release that answers kept calls no onReleaseFailure, so a removal answers moved without a word while the lock still refuses every other window; why_new=Cycle 0048 task 131 (Codex adversarial, Codex structured, native adversarial): only a thrown release reached onReleaseFailure; seam=the read of the lock's owner in a loaded withStorageLock, which answers nothing for the whole first release; no_claim=a real scanner on Windows
+test('a write whose lock this window could not read at any attempt of its release reports the lock it left in place to a caller that asks for it', async (context) => {
+  // Arrange: a window whose reads of its lock's owner answer nothing for the whole first release, so the release ends kept and throws nothing.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+  const reportedFailures: string[] = []
+
+  // Act
+  const outcome = await window
+    .withStorageLock(
+      directory,
+      async () => {
+        window.readsToRefuse = 1_000
+        return 'written'
+      },
+      undefined,
+      undefined,
+      undefined,
+      (error) => {
+        reportedFailures.push(String(error))
+      },
+    )
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    { outcome, reportedFailures, entries: await readdir(directory) },
+    {
+      outcome: 'written',
+      reportedFailures: [
+        `Error: The storage lock file ${lockPath} was left in place: the system would not let this window read its owner to remove it. This window tries to take it back; until then other windows are refused.`,
+      ],
+      entries: ['writer.lock'],
+    },
+  )
+})
+
+// Value: protects=the learner whose window left a lock that its twelve take-backs could not remove (a scanner holds the file): the next write's refusal names that the window itself left the lock and the way out, instead of saying another writer or an interrupted session holds it; fails_when=a refusal for this window's own kept leftover reads like one for another window's lock, so the learner looks for a second window that does not exist; why_new=Cycle 0048 task 131 (Codex adversarial, Codex structured, native adversarial): after the last take-back the lock stayed with no word to the learner; seam=the removal of the lock in a loaded withStorageLock, refused every time, and the timer, which the test fakes; no_claim=a real scanner on Windows
+test('a write refused after the twelve take-backs of this window’s own leftover lock failed says that this window left the lock and what to do', async (context) => {
+  // Arrange: a window whose first release and twelve take-backs are all refused: 13 * 20 = 260 refused removals, and no further take-back is planned.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  for (let wait = 1; wait <= 12; wait++) {
+    const refusedBefore = window.refusedRemovals
+    context.mock.timers.tick(5_000)
+    await untilReached(
+      () =>
+        window.refusedRemovals >= refusedBefore + 20 &&
+        (wait === 12 || window.timersPending === 1),
+      `the end of take-back ${wait} of 12 (20 refused removals, then the next take-back planned)`,
+    )
+  }
+  let writes = 0
+
+  // Act
+  const outcome = await window
+    .withStorageLock(directory, async () => {
+      writes += 1
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    { outcome, writes, entries: await readdir(directory) },
+    {
+      outcome: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. This window itself left the lock: the system would not let it read or remove the file, and its tries to take the lock back have not removed it. Close the program that holds the file (a virus scanner or an indexer can), then retry; if the lock stays, move the file away.`,
+      writes: 0,
+      entries: ['writer.lock'],
+    },
+  )
+})
+
+// Value: protects=the learner whose storage folder takes no new file (a full disk, a read-only mount, a quota) and holds an empty lock that a killed writer left: the refusal names the unknown clock and the way out, so the learner does not wait for "an interrupted session" to end; fails_when=the refusal for such a lock is the plain "another writer or an interrupted session" sentence, which names no cause the learner can act on (task 40 keeps such a lock on purpose, and still does); why_new=Cycle 0048 task 132 (native adversarial): isLeftEmpty answers false for an unreadable clock and the refusal could not tell it from a live writer; seam=the open of the clock probe in the lock's folder, which the system refuses; no_claim=a real full disk
+test('an empty lock file older than the grace stays and the refusal names the clock of the file system that could not be read, while the folder takes no new file', async (context) => {
+  // Arrange: a lock file of zero bytes that nothing has touched for a minute, in a folder whose clock probe (a new file) is refused with ENOSPC.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  await leaveUntouchedFor(lockPath, 60_000)
+  const open = fsPromises.open.bind(fsPromises)
+  context.mock.method(
+    fsPromises,
+    'open',
+    (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
+      if (rest[0] === 'wx')
+        return Promise.reject(
+          Object.assign(new Error('ENOSPC: no space left on device, open'), {
+            code: 'ENOSPC',
+          }),
+        )
+      return Reflect.apply(open, fsPromises, [path, ...rest])
+    },
+  )
+  let writes = 0
+
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+
+  // Assert
+  assert.deepEqual(
+    { outcome, writes, entries: await readdir(directory) },
+    {
+      outcome: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. The lock file is empty and older than 10 seconds, but the folder takes no new file now (a full disk, a read-only folder or a quota), so Codebook cannot read the clock of the file system to tell whether a writer left it. Make room or write access in the folder, then retry; if the lock stays, move the file away.`,
+      writes: 0,
+      entries: ['writer.lock'],
     },
   )
 })

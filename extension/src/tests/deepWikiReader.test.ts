@@ -476,6 +476,40 @@ test('a question from the address the editor forwarded the reader to is answered
   }
 })
 
+// Value: protects=a learner whose editor forwards the reader's port to a second loopback address after a first (a second window, a port that was taken again, a second open of the reader): the page at the first address still asks its questions and is still served; fails_when=the reader keeps only the last forwarded address, so a question from the first one and a request with the first one's Host header get 403; why_new=Cycle 0048 task 140 (native adversarial); seam=none (the reader's real answers to a POST with a chosen Origin and to a raw request with a chosen Host); no_claim=that an editor forwards twice, only that the reader answers both addresses it was told
+test('a reader told two forwarded loopback addresses answers questions and requests from both, and still refuses a third address it was not told', async () => {
+  // Arrange: the editor forwarded the reader's port to localhost:54321, and later to localhost:54322.
+  const wiki = await serveWikiThatAnswers()
+  try {
+    const pathname = new URL(wiki.reader.url).pathname
+    wiki.reader.acceptForwardedOrigin(`http://localhost:54321${pathname}`)
+    wiki.reader.acceptForwardedOrigin(`http://localhost:54322${pathname}`)
+
+    // Act
+    const questionStatuses = [
+      await wiki.ask('http://localhost:54321'),
+      await wiki.ask('http://localhost:54322'),
+      await wiki.ask('http://localhost:54323'),
+    ]
+    const pageStatuses = [
+      (await askAndReadSlowly(wiki.reader.url, { Host: 'localhost:54321' }, 0))
+        .status,
+      (await askAndReadSlowly(wiki.reader.url, { Host: 'localhost:54322' }, 0))
+        .status,
+      (await askAndReadSlowly(wiki.reader.url, { Host: 'localhost:54323' }, 0))
+        .status,
+    ]
+
+    // Assert
+    assert.deepEqual(
+      { questionStatuses, pageStatuses },
+      { questionStatuses: [200, 200, 403], pageStatuses: [200, 200, 403] },
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a question from any other origin is refused', async () => {
   // Arrange: one forwarded address on this machine was accepted, and one that is not on this machine was offered.
   const wiki = await serveWikiThatAnswers()
@@ -521,6 +555,85 @@ test('in a local window only the reader’s own origin is accepted', async () =>
     assert.deepEqual(statuses, [403, 200, 403, 403, 403])
   } finally {
     await wiki.close()
+  }
+})
+
+// Value: protects=the reader's private path token against DNS rebinding, where a page that leaked the reader's address (see the referrer filter) lets a host name of the attacker resolve to the loopback address and read the Wiki; fails_when=the reader answers a request whose Host header is neither its own loopback host and port nor the forwarded address's host, or accepts a request without a Host header, or refuses its own host or the forwarded one; why_new=Cycle 0048 task 6 (S11-N3); seam=none (the reader's real answer to raw requests with a chosen Host header); no_claim=that a browser resolves a rebound name to the reader or that the leak of the address is closed (the filter's test holds that)
+test('a request whose Host header is neither the reader’s own nor the forwarded address’s is refused with 403 and no page, while the reader’s own host and the forwarded one are served', async () => {
+  // Arrange: a remote window forwarded the reader's port to localhost:54321.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-host-')),
+  )
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => {
+      throw new Error('No model request expected.')
+    },
+  )
+  try {
+    const ownHost = new URL(reader.url).host
+    reader.acceptForwardedOrigin(
+      `http://localhost:54321${new URL(reader.url).pathname}`,
+    )
+    const pageAddress = reader.url
+
+    // Act
+    const answers = {
+      own: await askAndReadSlowly(pageAddress, { Host: ownHost }, 0),
+      forwarded: await askAndReadSlowly(
+        pageAddress,
+        { Host: 'localhost:54321' },
+        0,
+      ),
+      rebound: await askAndReadSlowly(
+        pageAddress,
+        { Host: `rebound.example:${new URL(reader.url).port}` },
+        0,
+      ),
+      otherPort: await askAndReadSlowly(
+        pageAddress,
+        { Host: 'localhost:54322' },
+        0,
+      ),
+      sameNameOtherPort: await askAndReadSlowly(
+        pageAddress,
+        { Host: '127.0.0.1:1' },
+        0,
+      ),
+    }
+    // An HTTP/1.0 request may carry no Host header at all.
+    const withoutHost = await new Promise<string>((resolveAnswer) => {
+      const connection = connect(Number(new URL(pageAddress).port), '127.0.0.1')
+      let received = ''
+      connection.on('data', (part: Buffer) => {
+        received += part.toString('utf8')
+      })
+      connection.on('error', () => undefined)
+      connection.once('close', () => resolveAnswer(received))
+      connection.write(`GET ${new URL(pageAddress).pathname} HTTP/1.0\r\n\r\n`)
+    })
+
+    // Assert
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(answers).map(([name, answer]) => [name, answer.status]),
+      ),
+      {
+        own: 200,
+        forwarded: 200,
+        rebound: 403,
+        otherPort: 403,
+        sameNameOtherPort: 403,
+      },
+    )
+    assert.match(withoutHost, /^HTTP\/1\.[01] 403 /)
+    assert.doesNotMatch(withoutHost, /<body>Wiki<\/body>/)
+    assert.doesNotMatch(String(answers.rebound.body), /<body>Wiki<\/body>/)
+  } finally {
+    await reader.close()
+    await rm(projectRoot, { recursive: true, force: true })
   }
 })
 
@@ -1975,30 +2088,21 @@ test('while six pages are in hand, a further page request is refused at once wit
   letPagesGo()
   await Promise.all(heldPages)
 
-  // Assert: the reader's start read the manifest, the six held pages read the manifest and the publication identity once each, in any order between them, and the further page neither.
+  // Assert: the reader's start read the manifest, the six held pages read the publication identity once each and the manifest at least once (pages that come while a read is in flight join it, so how many reads they make between them depends on timing; Cycle 0048 task 18 pins that), and the further page neither.
   assert.deepEqual(
     {
       readAtTheStart,
-      readForTheHeldPages: readForTheHeldPages.sort(),
+      heldPagesReadTheManifest: readForTheHeldPages.includes('the manifest'),
+      publicationIdentityReadsForTheHeldPages: readForTheHeldPages.filter(
+        (read) => read === 'the publication identity',
+      ).length,
       further,
       readForTheFurtherPage,
     },
     {
       readAtTheStart: ['the manifest'],
-      readForTheHeldPages: [
-        'the manifest',
-        'the manifest',
-        'the manifest',
-        'the manifest',
-        'the manifest',
-        'the manifest',
-        'the publication identity',
-        'the publication identity',
-        'the publication identity',
-        'the publication identity',
-        'the publication identity',
-        'the publication identity',
-      ],
+      heldPagesReadTheManifest: true,
+      publicationIdentityReadsForTheHeldPages: 6,
       further: {
         status: 503,
         body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page not shown</title></head><body><p>Codebook is preparing as many pages as it can at once, so it did not prepare this one. Reload the page in a moment.</p><p><a href="OVERVIEW">Open the Wiki’s overview</a></p></body></html>',
@@ -2006,6 +2110,44 @@ test('while six pages are in hand, a further page request is refused at once wit
       readForTheFurtherPage: [],
     },
   )
+})
+
+// Value: protects=the learner of a window whose forward goes to another host (a tunnel, a browser-based editor): the reader refuses that Host, never serves its page there, and the refusal says in a sentence that the reader answers only on this computer; fails_when=the reader accepts a forward that is not loopback as its Host, or answers it with a refusal that does not say the reader answers only on this computer; why_new=Cycle 0048 task 42 (Red Team); seam=none (the reader's real answer to a raw request with a chosen Host header); no_claim=that the editor or a tunnel can serve such a page by another route
+test('a window whose forward goes to another host gets a 403 that says the reader answers only on this computer', async () => {
+  // Arrange: a tunnel forwards the reader's port to tunnel.example, and the editor offers that address to the reader.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-tunnel-')),
+  )
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => {
+      throw new Error('No model request expected.')
+    },
+  )
+  try {
+    reader.acceptForwardedOrigin(
+      `https://tunnel.example${new URL(reader.url).pathname}`,
+    )
+
+    // Act
+    const answer = await askAndReadSlowly(
+      reader.url,
+      { Host: 'tunnel.example' },
+      0,
+    )
+
+    // Assert
+    assert.equal(answer.status, 403)
+    assert.deepEqual(JSON.parse(String(answer.body)), {
+      error:
+        'The Wiki reader answers only on this computer, at its own loopback address or at the loopback address the editor forwards it to. This address is neither, so the reader shows no page.',
+    })
+  } finally {
+    await reader.close()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
 })
 
 /**
@@ -4138,6 +4280,74 @@ test('a style sheet, an image and a font asked for at once cost one manifest rea
       pageAsAnImage: 403,
       filesTakenIn: 'handed',
       fileStatuses: [200, 200, 200],
+      manifestReadsAfterTheStart: 1,
+    },
+  )
+})
+
+// Value: protects=the editor's extension host against pages opened at once (tabs restored, or a page and the pages it names): each page read and parsed the whole manifest (up to 64 MiB) on the host's thread on its own, so six pages at once stalled the host six times over (a probe with a manifest of 53 MiB: 1.4 s of stall for six pages, 0.4 s for one); fails_when=a page asked for while another manifest read is in flight reads the manifest again instead of joining that read; why_new=Cycle 0048 task 18 (S11-N14); seam=the reader loaded with loadModule, a manifest reader that notes each read after the reader's start and holds it until the test lets it go, and a node:http whose server notes each request it hands the reader; no_claim=the time and the memory a read takes (the reads are counted)
+test('six pages asked for at once cost one manifest read between them and are all served', async (context) => {
+  // Arrange: the one-page Wiki, a manifest reader that notes each read after the reader's start and holds it until the test lets it go, and a server that notes each request it hands the reader.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-shared-pages-')),
+  )
+  context.after(() => rm(projectRoot, { recursive: true, force: true }))
+  const { outputDirectory } = await writeMinimalWiki(projectRoot)
+  let isReaderStarted = false
+  let manifestReadsAfterTheStart = 0
+  let letReadsGoOn = (): void => {}
+  const readsMayGoOn = new Promise<void>((resolveGoOn) => {
+    letReadsGoOn = resolveGoOn
+  })
+  const holdingManifestReader: typeof readWikiFileToOpenModule = {
+    readWikiFileToOpen: async (...parameters) => {
+      // The reader's start reads the manifest as always; every later read is noted and held.
+      if (parameters[1] === 'manifest' && isReaderStarted) {
+        manifestReadsAfterTheStart += 1
+        await readsMayGoOn
+      }
+      return readWikiFileToOpen(...parameters)
+    },
+  }
+  const server = httpNotingTheReadersRequests()
+  const { startDeepWikiReader: startReaderHoldingManifestReads } =
+    await loadModule<typeof deepWikiReaderModule>(
+      join(__dirname, '..', 'deepWikiReader.js'),
+      {
+        'node:http': server.http,
+        './utils/readWikiFileToOpen': holdingManifestReader,
+      },
+      { URL },
+    )
+  const reader = await startReaderHoldingManifestReads(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'not asked' }),
+  )
+  context.after(() => reader.close())
+  // A held read is let go also when the test fails, so its requests end.
+  context.after(() => letReadsGoOn())
+  isReaderStarted = true
+
+  // Act: six pages at once, until the reader has taken all six in; then the held read goes on.
+  const pages = Array.from({ length: 6 }, () =>
+    fetch(reader.url, { headers: { 'Sec-Fetch-Dest': 'document' } }).then(
+      async (response) => {
+        await response.arrayBuffer()
+        return response.status
+      },
+    ),
+  )
+  const pagesTakenIn = await within(server.requestsHanded(6), 2_000)
+  letReadsGoOn()
+  const pageStatuses = await within(Promise.all(pages), 10_000)
+
+  // Assert
+  assert.deepEqual(
+    { pagesTakenIn, pageStatuses, manifestReadsAfterTheStart },
+    {
+      pagesTakenIn: 'handed',
+      pageStatuses: [200, 200, 200, 200, 200, 200],
       manifestReadsAfterTheStart: 1,
     },
   )

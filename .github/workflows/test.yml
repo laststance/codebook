@@ -10,8 +10,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: true
+  # Supersede old pull request runs only. A push to main keeps its own run, because a later push that cancelled it would take
+  # its `split-files` job with it, and that commit's split files would never run whole. The group of a push is its commit.
+  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -42,7 +44,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: extension/node_modules
-          key: extension-node-modules-${{ runner.os }}-${{ hashFiles('.node-version', 'extension/pnpm-lock.yaml', 'extension/pnpm-workspace.yaml', 'extension/patches/**') }}
+          key: extension-node-modules-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.node-version', 'extension/package.json', 'extension/pnpm-lock.yaml', 'extension/pnpm-workspace.yaml', 'extension/patches/**') }}
 
       - name: Install dependencies after a cache miss
         if: steps.dependencies.outputs.cache-hit != 'true'
@@ -93,3 +95,45 @@ jobs:
       - name: Report a failed coverage upload
         if: steps.upload.outcome == 'failure'
         run: echo "::warning title=Coverage upload failed::The tests passed, the upload to Codecov did not. Read the log of the upload step."
+
+  # The shards end each part of a split file with its last selected test (--test-force-exit), so an error raised after that
+  # test (a late rejection, a leaked handle) goes unreported there. This job runs the split files whole, with Node's default
+  # exit, after a push to main whose shards passed; a pull request does not pay for its four minutes of two processors.
+  split-files:
+    name: Split files without forced exit
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      # Restoring the installed dependencies is faster than installing pnpm and linking them in every shard.
+      # The steps below call node directly, so a restored shard needs no pnpm.
+      - name: Restore installed dependencies
+        id: dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: extension/node_modules
+          key: extension-node-modules-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.node-version', 'extension/package.json', 'extension/pnpm-lock.yaml', 'extension/pnpm-workspace.yaml', 'extension/patches/**') }}
+
+      - name: Install dependencies after a cache miss
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        uses: ./.github/actions/prepare
+
+      # The command of `pnpm build:fast`; it writes the build metadata itself. Type errors are reported by the TypeCheck
+      # and Build workflows; package.yml proves that this emit equals the compiler's output.
+      - name: Emit the compiled tests without type checking
+        working-directory: extension
+        run: node scripts/build-fast.mjs
+
+      - name: Run the split files whole
+        working-directory: extension
+        run: node scripts/test-shard.mjs --whole-split-files --lanes 2

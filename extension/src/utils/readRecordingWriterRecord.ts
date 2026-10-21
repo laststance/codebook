@@ -57,14 +57,33 @@ export async function readRecordingWriterRecord(
     MAX_RECORDING_HEADER_BYTES,
   )
   if (!read) return undefined
-  let parsed: z.infer<typeof writerRecordSchema>
+  let json: unknown
   try {
-    parsed = writerRecordSchema.parse(JSON.parse(read.bytes.toString('utf8')))
+    json = JSON.parse(read.bytes.toString('utf8'))
   } catch {
-    // A record that does not parse, or names no recording, is none.
+    // A record that does not parse is none.
     return undefined
   }
-  const { recording, ...owner } = parsed
+  return recordedOwnerNamedBy(json, directory, createdAt)
+}
+
+/**
+ * Takes the writer out of the parsed JSON of a writer record when the record was written for one recording; called by {@link readRecordingWriterRecord} and by {@link lookAtWriterRecord}, so that both read a record by the same rule.
+ * @param json - The parsed JSON of the record's file.
+ * @param directory - The directory of one recording, `<learning directory>/recordings.vN/<study id>`.
+ * @param createdAt - When the recording was created, as its header says.
+ * @returns The writer the record names; `undefined` when the JSON is no record of this build, when it names no recording, and when it names another one (another format's folder, or another creation time).
+ * @example recordedOwnerNamedBy({ pid: 4242, recording: { folder: 'recordings.v2', createdAt } }, '/storage/learning/recordings.v2/<id>', createdAt) // => { pid: 4242 }
+ */
+export function recordedOwnerNamedBy(
+  json: unknown,
+  directory: string,
+  createdAt: string,
+): RecordedOwner | undefined {
+  const parsed = writerRecordSchema.safeParse(json)
+  // A record that does not parse, or names no recording, is none.
+  if (!parsed.success) return undefined
+  const { recording, ...owner } = parsed.data
   const named = recordingOfDirectory(directory, createdAt)
   // Only the recording the record was written for is judged by it.
   return recording.folder === named.folder &&

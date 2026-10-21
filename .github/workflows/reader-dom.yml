@@ -39,7 +39,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: extension/node_modules
-          key: extension-node-modules-${{ runner.os }}-${{ hashFiles('.node-version', 'extension/pnpm-lock.yaml', 'extension/pnpm-workspace.yaml', 'extension/patches/**') }}
+          key: extension-node-modules-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.node-version', 'extension/package.json', 'extension/pnpm-lock.yaml', 'extension/pnpm-workspace.yaml', 'extension/patches/**') }}
 
       - name: Install dependencies after a cache miss
         if: steps.dependencies.outputs.cache-hit != 'true'

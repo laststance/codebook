@@ -88,6 +88,12 @@ const STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE =
   'Another editor window has not finished recording and saving this study. Save its learning replay in that window, then delete the study again.'
 
 /**
+ * Why {@link LearningLibrary.removeStudy} moved nothing of a study when a read of a recording's header or writer record failed at the look before the lock and not at the look under it, and the looks agree in all else (a scanner on Windows held a file for a moment): no other window's run is known to write it, so the sentence names the read and not a window (Cycle 0048 task 20). The removal's outcome line puts it after "Nothing was deleted."
+ */
+const STUDY_RECORDING_READ_CHANGED_MESSAGE =
+  'Codebook could not read a recording of this study just now. Delete the study again.'
+
+/**
  * What a removal changed on disk.
  * - `moved`: every file of the study is in the system Trash; `unreleasedLock` names the failure when the storage lock could not be released afterwards.
  * - `nothing-moved`: the removal failed and no path went to the Trash; a ledger it had rewritten is back to its bytes, or the cause says that it could not be written back. With `unconfirmedWriter` (and `otherUnconfirmedWriters`) when recordings of the study have writers this computer cannot confirm, each named by its host, its start and its place ({@link UnconfirmedWriter}).
@@ -279,6 +285,31 @@ function isSameRecordingLook(
     before.header?.owner.pid === now.header?.owner.pid &&
     before.header?.createdAt === now.header?.createdAt &&
     before.mayHaveFailedRead === now.mayHaveFailedRead
+  )
+}
+
+/**
+ * Says whether two looks at one recording differ only because a read that failed in the look before the lock does not fail in the look under it; for {@link LearningLibrary.verdictUnderLock}, which then words the refusal as a read that changed and not as another window's start.
+ * What a failed read hid from the first look is left out of the comparison: the header and the record's presence when the header's read failed (the look has neither), the record's presence when the record's read failed. The seal and what the first look did see (the header's writer and creation time) are still compared, so a header that changed, or a file that appeared where none stood, is another window's.
+ * @param before - The look before the storage lock.
+ * @param now - The look under it.
+ * @returns `true` when `before` may have failed a read, `now` may not, and nothing the first look saw differs; `false` otherwise, also when no read failed before the lock or one fails only under it.
+ * @example isSameApartFromFailedRead({ isSealed: false, hasWriterRecord: false, mayHaveFailedRead: true }, { isSealed: false, header, hasWriterRecord: true, mayHaveFailedRead: false }) // => true: the header's read failed before the lock and passes under it
+ */
+function isSameApartFromFailedRead(
+  before: RecordingLook,
+  now: RecordingLook,
+): boolean {
+  if (!before.mayHaveFailedRead || now.mayHaveFailedRead) return false
+  // A seal that came between the looks keeps them the same, as in {@link isSameRecordingLook}.
+  const isSealSame = before.isSealed === now.isSealed || now.isSealed
+  // The header's read failed: the first look has no header and no record to compare.
+  if (before.header === undefined) return isSealSame
+  // The record's read failed: only the header the first look read is compared.
+  return (
+    isSealSame &&
+    before.header.owner.pid === now.header?.owner.pid &&
+    before.header.createdAt === now.header?.createdAt
   )
 }
 
@@ -606,7 +637,9 @@ export class LearningLibrary {
    * @param recording - The recording directory.
    * @param verdicts - What {@link writerVerdictsOf} found before the lock.
    * @returns `sealed` for a sealed recording its run has released; the verdict found before the lock while the look is the same, or only a seal came since.
-   * @throws "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then.
+   * @throws
+   * - "Another editor window has not finished recording and saving this study. …" ({@link STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE}) for a recording that appeared, or whose header or writer record changed, since the judgement; nothing has moved then
+   * - "Codebook could not read a recording of this study just now. …" ({@link STUDY_RECORDING_READ_CHANGED_MESSAGE}) when the two looks differ only because a read that may have failed in the look before the lock does not under it, also where that read hid the header or the writer record from the first look ({@link isSameApartFromFailedRead})
    * @example await this.verdictUnderLock('/…/recordings.v2/<id>', verdicts) // => 'sealed' once that recording is sealed and its study saved
    */
   private async verdictUnderLock(
@@ -617,10 +650,15 @@ export class LearningLibrary {
     // A sealed recording that a run of another window still holds for the save of a checkpoint of its study taken after the seal keeps that writer's verdict.
     if (now.isSealed && isSealedRecordingReleased(now)) return 'sealed'
     const before = verdicts.get(recording)
-    // A start under way between the two looks gives a recording another window may have just begun to write.
-    if (!before || !isSameRecordingLook(before.look, now))
-      throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
-    return before
+    // A recording that appeared since the judgement may have just been begun by another window.
+    if (!before) throw new Error(STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE)
+    if (isSameRecordingLook(before.look, now)) return before
+    // Looks that differ only because a read that failed before no longer fails name no other window's run: the read is what changed, also where it hid the header or the record from the first look. A file that appeared since (a read failing now that did not before), and a header that changed, may be another window's start.
+    throw new Error(
+      isSameApartFromFailedRead(before.look, now)
+        ? STUDY_RECORDING_READ_CHANGED_MESSAGE
+        : STUDY_RECORDED_BY_ANOTHER_WINDOW_MESSAGE,
+    )
   }
 
   /**
@@ -698,16 +736,13 @@ export class LearningLibrary {
   }
 
   /**
-   * Gives the outcome of a removal that threw, for {@link removeStudy}: a recording whose writer this computer cannot confirm is answered with its host, its start and its place, so the caller can ask the learner ({@link StudyWriterUnconfirmedError}); any other failure as {@link removalAfterLockFailure} words it.
-   * @param error - What the removal threw.
-   * @param settled - What the removal's steps settled before it threw, if they ran.
-   * @returns `nothing-moved` with `unconfirmedWriter` for such a recording; else the outcome {@link removalAfterLockFailure} gives.
-   * @example this.outcomeOfFailedRemoval(new Error('Study archive is unavailable.'), undefined) // => { outcome: 'nothing-moved', cause: 'Study archive is unavailable.' }
+   * Gives the outcome of a removal whose lock call rejected, for {@link removeStudy}: a recording whose writer this computer cannot confirm is answered with its host, its start and its place, so the caller can ask the learner ({@link StudyWriterUnconfirmedError}); any other failure as {@link removalAfterLockFailure} words it.
+   * The lock call rejects only before or in the steps (a lock held by another writer, a refusal, a failed read before the first move), because a failed release goes to `onReleaseFailure` and not to the rejection; so the steps never settled, and the answer is `nothing-moved`.
+   * @param error - What the lock call rejected with.
+   * @returns `nothing-moved` with `unconfirmedWriter` for such a recording; else `nothing-moved` with the failure as the cause.
+   * @example this.outcomeOfFailedRemoval(new Error('Study archive is unavailable.')) // => { outcome: 'nothing-moved', cause: 'Study archive is unavailable.' }
    */
-  private outcomeOfFailedRemoval(
-    error: unknown,
-    settled: StudyRemoval | undefined,
-  ): StudyRemoval {
+  private outcomeOfFailedRemoval(error: unknown): StudyRemoval {
     if (error instanceof StudyWriterUnconfirmedError) {
       const [lead, ...others] = error.writers
       return {
@@ -717,7 +752,7 @@ export class LearningLibrary {
         ...(others.length ? { otherUnconfirmedWriters: others } : {}),
       }
     }
-    return removalAfterLockFailure(settled, thrownMessage(error))
+    return removalAfterLockFailure(undefined, thrownMessage(error))
   }
 
   /**
@@ -1226,75 +1261,87 @@ export class LearningLibrary {
     unconfirmedWriterRule: UnconfirmedWriterRule = 'refuse',
   ): Promise<StudyRemoval> {
     const identity = studyIdSchema.parse(id)
-    // The lock call also rejects when its release fails after the steps ran; what they settled then decides the outcome.
-    let settled: StudyRemoval | undefined
+    // The lock call hands a failed release here instead of rejecting, so a rejection comes only from before or in the steps; the steps' own outcome then stands.
+    let releaseFailure: unknown
     // The writers of the study's recordings are judged before the storage lock is taken; under it they are only looked at again.
-    return this.writerVerdictsOf(identity)
-      .then((verdicts) =>
-        this.locked(async (): Promise<StudyRemoval> => {
-          const paths = await this.studyPaths(
-            identity,
-            await this.newerFormatOf(identity),
-          )
-          await this.refuseUnlessRemovable(
-            paths,
-            verdicts,
-            unconfirmedWriterRule,
-          )
-          // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
-          const progress = await this.readProgress().catch(() => undefined),
-            ledger = progress && withoutStudyReferences(progress, identity)
-          const changes: StudyRemovalChanges = { movedPathCount: 0 }
-          const trash = (path: string) => async (): Promise<void> => {
-            // The look right before the move tells the entry that stays from one made again at the path after the move.
-            const before = await lstat(path, { bigint: true }).catch(
-              () => undefined,
-            )
-            try {
-              await moveToTrash(path)
-            } catch (error) {
-              const after = await entryAfterRejectedMove(path, before)
-              // Only the same entry still in place is the Trash's own refusal; a mover that rejects after the entry left the library still moved it.
-              if (after.kind === 'still-there') {
-                changes.trashRefused = true
-                throw error
-              }
-              // A path that cannot be looked at may or may not have moved: the removal stops there and says so.
-              if (after.kind === 'unknown') {
-                changes.moveUnknown = true
-                throw new Error(
-                  `${thrownMessage(error)}; whether ${path} left the library could not be checked: ${after.cause}`,
+    return (
+      this.writerVerdictsOf(identity)
+        .then((verdicts) =>
+          this.locked(
+            async (): Promise<StudyRemoval> => {
+              const paths = await this.studyPaths(
+                identity,
+                await this.newerFormatOf(identity),
+              )
+              await this.refuseUnlessRemovable(
+                paths,
+                verdicts,
+                unconfirmedWriterRule,
+              )
+              // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
+              const progress = await this.readProgress().catch(() => undefined),
+                ledger = progress && withoutStudyReferences(progress, identity)
+              const changes: StudyRemovalChanges = { movedPathCount: 0 }
+              const trash = (path: string) => async (): Promise<void> => {
+                // The look right before the move tells the entry that stays from one made again at the path after the move.
+                const before = await lstat(path, { bigint: true }).catch(
+                  () => undefined,
                 )
+                try {
+                  await moveToTrash(path)
+                } catch (error) {
+                  const after = await entryAfterRejectedMove(path, before)
+                  // Only the same entry still in place is the Trash's own refusal; a mover that rejects after the entry left the library still moved it.
+                  if (after.kind === 'still-there') {
+                    changes.trashRefused = true
+                    throw error
+                  }
+                  // A path that cannot be looked at may or may not have moved: the removal stops there and says so.
+                  if (after.kind === 'unknown') {
+                    changes.moveUnknown = true
+                    throw new Error(
+                      `${thrownMessage(error)}; whether ${path} left the library could not be checked: ${after.cause}`,
+                    )
+                  }
+                }
+                changes.movedPathCount += 1
               }
-            }
-            changes.movedPathCount += 1
-          }
-          const steps: (() => Promise<void>)[] = [
-            ...paths.recordings.map(trash),
-            // The record of the recordings' writer is Codebook's own note and is deleted, not moved; one a failure leaves is swept at a later start of a recording.
-            (): Promise<void> => removeWriterRecord(this.directory, identity),
-            // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
-            ...(evidenceDirectory
-              ? [
-                  (): Promise<void> =>
-                    this.trashEvidence(evidenceDirectory, trash),
-                ]
-              : []),
-            ...paths.playback.map(trash),
-            // Learner decisions name no study; only the two navigation references to the removed study are dropped.
-            ...(ledger
-              ? [(): Promise<void> => this.rewriteLedger(ledger, changes)]
-              : []),
-            ...paths.sidecars.map(trash),
-            ...paths.archives.map(trash),
-          ]
-          settled = await this.runRemovalSteps(steps, changes)
-          return settled
-        }),
-      )
-      .catch((error): StudyRemoval =>
-        this.outcomeOfFailedRemoval(error, settled),
-      )
+              const steps: (() => Promise<void>)[] = [
+                ...paths.recordings.map(trash),
+                // The record of the recordings' writer is Codebook's own note and is deleted, not moved; one a failure leaves is swept at a later start of a recording.
+                (): Promise<void> =>
+                  removeWriterRecord(this.directory, identity),
+                // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
+                ...(evidenceDirectory
+                  ? [
+                      (): Promise<void> =>
+                        this.trashEvidence(evidenceDirectory, trash),
+                    ]
+                  : []),
+                ...paths.playback.map(trash),
+                // Learner decisions name no study; only the two navigation references to the removed study are dropped.
+                ...(ledger
+                  ? [(): Promise<void> => this.rewriteLedger(ledger, changes)]
+                  : []),
+                ...paths.sidecars.map(trash),
+                ...paths.archives.map(trash),
+              ]
+              return this.runRemovalSteps(steps, changes)
+            },
+            (error) => {
+              releaseFailure = error
+            },
+          ),
+        )
+        // A rejection means the steps never settled: the lock was not taken, or something failed before or in them.
+        .catch((error): StudyRemoval => this.outcomeOfFailedRemoval(error))
+        // A lock that could not be released afterwards is named in the answer, whatever the steps settled.
+        .then((outcome) =>
+          releaseFailure === undefined
+            ? outcome
+            : removalAfterLockFailure(outcome, thrownMessage(releaseFailure)),
+        )
+    )
   }
 
   /**
@@ -1780,11 +1827,26 @@ export class LearningLibrary {
     )
   }
 
-  /** Serializes this owner and excludes other windows; stale locks remain an explicit recoverable storage error. @example this.locked(() => save()) */
-  private locked<Value>(operation: () => Promise<Value>): Promise<Value> {
+  /**
+   * Serializes this owner and excludes other windows; stale locks remain an explicit recoverable storage error.
+   * @param operation - The write to run under the lock.
+   * @param onReleaseFailure - Told what removing the lock threw after the write ended, or that the release left the lock in place; only {@link removeStudy} asks, to name the lock in its answer ({@link removalAfterLockFailure}). Every other write returns its result whole.
+   * @example this.locked(() => save())
+   */
+  private locked<Value>(
+    operation: () => Promise<Value>,
+    onReleaseFailure?: (error: unknown) => void,
+  ): Promise<Value> {
     const pending = this.writes.then(async () => {
       await this.initialize()
-      return withStorageLock(this.directory, operation)
+      return withStorageLock(
+        this.directory,
+        operation,
+        undefined,
+        undefined,
+        undefined,
+        onReleaseFailure,
+      )
     })
     this.writes = pending.catch(() => undefined)
     return pending

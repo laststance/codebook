@@ -87,7 +87,7 @@ export class NodeTestHistoryStore {
    * @param input - The history's header without its version; its study id names the history's folder.
    * @returns The writer of the reserved history.
    * @throws When the header belongs to another workspace or exceeds its storage limit, when the saved studies and the histories together reach the saved study limit, when the study id already has a history, and when the history's first files cannot be written; "Learning storage is locked …", naming the lock file, while another window holds the storage lock or a lock stays that cannot be judged: nothing was written then. Only a history the list shows counts ({@link listedHistoryCount}): a stray entry of the history directory and a folder without a readable header take no place of the limit. A start that fails leaves no folder behind: the header's size is checked before the folder is made, and a folder whose first files could not be written is removed again.
-   * A start whose history was reserved under the lock stands also when the release of the lock fails at each of its attempts ({@link withStorageLock}): a failed start would leave the history's folder and its active entry, unsealed, until the editor closes (Cycle 0047 row 254, as row 240 holds for a recording's start). The lock left is this process's, which its next hold of the storage takes back (Cycle 0047 row 199); until then other windows are refused by it.
+   * A start whose history was reserved under the lock stands also when the release of the lock fails at each of its attempts: {@link withStorageLock} never throws a failed release, it returns the write's result, so the history's folder and its active entry, made under the lock, are the start's answer and are not left unsealed until the editor closes (Cycle 0047 row 254, as row 240 holds for a recording's start; Cycle 0048 tasks 21 and 97). The lock left is this process's: its timer takes it back some seconds later (Cycle 0048 task 22) and so does its next hold of the storage (Cycle 0047 row 199); until then other windows are refused by it.
    * @example const writer = await store.start(header)
    */
   async start(
@@ -96,15 +96,7 @@ export class NodeTestHistoryStore {
     const header = nodeTestHistoryHeaderSchema.parse({ ...input, version: 1 })
     if (header.workspaceKey !== this.workspaceKey)
       throw new Error('Node history belongs to another workspace.')
-    let started: NodeTestHistoryWriter | undefined
-    return withStorageLock(this.learningDirectory, async () => {
-      started = await this.reserve(header)
-      return started
-    }).catch((error: unknown) => {
-      // Only the lock's release can fail once the history is reserved: the history stands, and the lock is taken back by this process's next hold.
-      if (started) return started
-      throw error
-    })
+    return withStorageLock(this.learningDirectory, () => this.reserve(header))
   }
 
   /**

@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  constants,
+  existsSync,
+  openSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs'
 import {
   access,
+  chmod,
   cp,
   link,
   lstat,
@@ -36,11 +44,13 @@ import {
   nameFolderAlso,
 } from './utils/aliasedFolderFileSystem.mjs'
 import {
+  failChmodOf,
   failCloseOf,
   failLinkOf,
   failLookOf,
   failRenameOf,
   failStatOf,
+  failUtimesOf,
   failWriteOf,
   observeCloses,
   observeRemovals,
@@ -51,8 +61,11 @@ import { giveLargeFileIds } from './utils/largeFileIdsFileSystem.mjs'
 import {
   observeFileReads,
   open as openThroughSwappedFolderFileSystem,
+  readFile as readThroughSwappedFolderFileSystem,
   swapBeforeLinking,
   swapBeforeMaking,
+  swapAfterReading,
+  swapBeforeOpeningToRead,
   swapBeforeReading,
   swapBeforeRenaming,
   swapBeforeWriting,
@@ -2352,7 +2365,7 @@ const markedCopies = new Map()
  * - `?unnamed-real-path`: `realpath` fails for the folder a test names with {@link failRealPathOf} (`unnamedRealPathFileSystem.mjs`).
  * - `?crlf-shell`: the reader shell is read with CRLF line endings (`crlfShellFileSystem.mjs`).
  * - `?large-file-ids`: the folder a test names with {@link giveLargeFileIds} has file ids above 2^53 that change in their low bits (`largeFileIdsFileSystem.mjs`).
- * - `?failing`: the write of the file a test names with {@link failWriteOf} through a handle stops partway with a system error, its close ({@link failCloseOf}) or its status read ({@link failStatOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write through a handle tells the observer of {@link observeWrites} its path and byte count first, each close of a handle tells the observer of {@link observeCloses} its path once the file is closed, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
+ * - `?failing`: the write of the file a test names with {@link failWriteOf} through a handle stops partway with a system error, its close ({@link failCloseOf}), its status read ({@link failStatOf}), its `chmod` ({@link failChmodOf}) or its `utimes` ({@link failUtimesOf}) fails with one, a rename of a path it names with {@link failRenameOf} fails with the system errors it names, a hard link to a name it names with {@link failLinkOf} fails with one, a look at a path it names with {@link failLookOf} fails with one, each write through a handle tells the observer of {@link observeWrites} its path and byte count first, each close of a handle tells the observer of {@link observeCloses} its path once the file is closed, and each `unlink` tells the observer of {@link observeRemovals} its path first (`failingFileSystem.mjs`).
  * - `?aliased-folder`: the folder a test names with {@link nameFolderAlso} answers to another name beside it too, as one folder does to names of another case on macOS and Windows (`aliasedFolderFileSystem.mjs`).
  * @param {string} module - The skill module's file, as `publish-wiki.mjs`.
  * @param {'?wrong-look' | '?swapped-folder' | '?unnamed-real-path' | '?crlf-shell' | '?large-file-ids' | '?failing' | '?aliased-folder'} mark - The mark of its stand-in.
@@ -3891,7 +3904,7 @@ for (const atTheName of [
           },
           fileAtTheCopysName: atTheName.bytes,
           nextPublish:
-            "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+            'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
           manualFile: 'The learner’s own notes',
         },
       )
@@ -8063,7 +8076,7 @@ for (const otherBytes of [
           recovery: 'published-or-restored',
           fileInTheCandidate: otherBytes.text,
           nextPublish:
-            "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+            'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
         },
       )
     } finally {
@@ -8137,7 +8150,7 @@ for (const learnerBytes of [
           recovery: 'published-or-restored',
           fileInTheCandidate: learnerBytes.text,
           nextPublish:
-            "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+            'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
         },
       )
     } finally {
@@ -8258,7 +8271,7 @@ for (const atTheCopysPlace of [
     learnerPuts: 'The learner kept',
     fileInTheCandidate: 'The learner kept',
     nextPublish:
-      "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+      'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
   },
 ]) {
   // Value: protects=the next publish of a candidate after a publish killed while it appended the line of its list of copies that names the copy of the learner's file, before that copy began, and a file the learner then put at the copy's place; fails_when=the recovery reads the list's cut line as a whole one, or the list as none and the bytes alone, or refuses the list for it, so it takes the learner's file at the copy's place for a copy and removes it, or leaves the journal, or the list is no list of lines and the recovery reads none of it; why_new=Cycle 0047 row 175 (S2PERF-1 = S2CLA-4: the list of copies is appended to, one line for each copy, in place of row 135's list written again whole through a file in the candidate before each copy, which this test's kill before that move pinned), and row 226 (P2OCR1b-3: the file at the copy's place, which the kill alone never leaves); seam=a publisher process killed halfway through that line (scripts/tests/utils/killedPublisherProbe.mjs), then the learner's file written by the test; no_claim=a kill after the line and before the copy's file is made, which leaves no file in the candidate
@@ -9247,6 +9260,10 @@ const PUBLISHER_COMMAND = fileURLToPath(
   new URL('../../skills/codebook/publish-wiki.mjs', import.meta.url),
 )
 
+/** What the shipped publisher prints to stderr, whole, when its command line is refused with the usage: the three forms of the command and a line end. Written out here, not read from the publisher, so a changed or lost option of the usage fails the tests that expect it. */
+const PUBLISHER_USAGE_STDERR =
+  'Usage: node publish-wiki.mjs --prepare --project ROOT --output WIKI [--stage NEW_STAGE] [--adopt-existing]\n       node publish-wiki.mjs --project ROOT --output WIKI --stage STAGE [--render-only]\n       node publish-wiki.mjs --recover --project ROOT --output WIKI [--stage PREPARED_STAGE] [--gone-host HOST --gone-space SPACE]...\n'
+
 for (const { when, rewrite, named, outcome, ended } of [
   {
     when: 'name the host name and the space of the journal’s owner, which ran in a space of process ids that cannot come back',
@@ -9381,9 +9398,7 @@ test('a --recover with --gone-host and --gone-space where no publication journal
         withBoth: { code: withBoth.status, stderr: withBoth.stderr.trim() },
         withHostAlone: {
           code: withHostAlone.status,
-          usage: withHostAlone.stderr.startsWith(
-            'Usage: node publish-wiki.mjs',
-          ),
+          usage: withHostAlone.stderr,
         },
         wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
       },
@@ -9393,7 +9408,7 @@ test('a --recover with --gone-host and --gone-space where no publication journal
           stderr:
             'Error: --gone-host and --gone-space name "rebuilt-container" (linux@0), but no Wiki publication journal with an owner stands. Nothing was moved. Run --recover without them.',
         },
-        withHostAlone: { code: 2, usage: true },
+        withHostAlone: { code: 2, usage: PUBLISHER_USAGE_STDERR },
         wikiPage: wiki.wikiPage,
       },
     )
@@ -9890,13 +9905,13 @@ test('a --recover with two --gone-host options and one --gone-space is refused w
       {
         killed,
         code: result.status,
-        usage: result.stderr.startsWith('Usage: node publish-wiki.mjs'),
+        usage: result.stderr,
         journal: await access(`${wiki.output}.publish-journal.json`).then(
           () => 'kept',
           () => 'gone',
         ),
       },
-      { killed: '', code: 2, usage: true, journal: 'kept' },
+      { killed: '', code: 2, usage: PUBLISHER_USAGE_STDERR, journal: 'kept' },
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
@@ -14068,7 +14083,7 @@ test('a recovery that puts a stopped publish’s candidate back keeps the copy o
         fileInTheCandidate:
           'The learner kept these notes, and saved them again',
         nextPublish:
-          "The staged Wiki contains a file outside its published manifest: manual.txt. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+          'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
       },
     )
   } finally {
@@ -16472,7 +16487,7 @@ test('a --recover whose stopped ancestor claim is removed meanwhile completes, e
 })
 
 /**
- * A module loaded before the publisher (`--import`) that records the publisher's calls of the file system that the order of its syncs depends on, one JSON line each, in `log`: each write, sync and close through a handle (`write`, `sync`, `close`, with the handle's path: a file's, or a folder's that is opened to sync it), each hard link (`link`, with the new name), each move (`rename`, with its source and its target) and each removal (`unlink`).
+ * A module loaded before the publisher (`--import`) that records the publisher's calls of the file system that the order of its syncs depends on, one JSON line each, in `log`: each write, sync and close through a handle (`write`, `sync`, `close`, with the handle's path: a file's, or a folder's that is opened to sync it; the close of a handle that was neither written nor synced, such as one a file is read through, is not recorded), each hard link (`link`, with the new name), each move (`rename`, with its source and its target) and each removal (`unlink`).
  * @param {string} log - The file the calls are appended to.
  * @returns {string} The module as a `data:` URL.
  * @example
@@ -16480,11 +16495,11 @@ test('a --recover whose stopped ancestor claim is removed meanwhile completes, e
  */
 const fileSystemCallsRecordedIn = (log) =>
   `data:text/javascript,${encodeURIComponent(
-    `import fileSystem from 'node:fs/promises'; import { appendFileSync } from 'node:fs'; import { syncBuiltinESMExports } from 'node:module'; const record = (...call) => appendFileSync(${JSON.stringify(log)}, JSON.stringify(call) + '\\n'); const { open, link, rename, unlink } = fileSystem; fileSystem.open = async (path, ...rest) => { const handle = await open(path, ...rest), name = String(path), { writeFile, sync, close } = handle; handle.writeFile = (...data) => { record('write', name); return writeFile.apply(handle, data) }; handle.sync = () => { record('sync', name); return sync.call(handle) }; handle.close = () => { record('close', name); return close.call(handle) }; return handle }; fileSystem.link = (from, to) => { record('link', String(to)); return link(from, to) }; fileSystem.rename = (from, to) => { record('rename', String(from), String(to)); return rename(from, to) }; fileSystem.unlink = (path) => { record('unlink', String(path)); return unlink(path) }; syncBuiltinESMExports();`,
+    `import fileSystem from 'node:fs/promises'; import { appendFileSync } from 'node:fs'; import { syncBuiltinESMExports } from 'node:module'; const record = (...call) => appendFileSync(${JSON.stringify(log)}, JSON.stringify(call) + '\\n'); const { open, link, rename, unlink } = fileSystem; fileSystem.open = async (path, ...rest) => { const handle = await open(path, ...rest), name = String(path), { writeFile, sync, close } = handle; let isWrittenOrSynced = false; handle.writeFile = (...data) => { isWrittenOrSynced = true; record('write', name); return writeFile.apply(handle, data) }; handle.sync = () => { isWrittenOrSynced = true; record('sync', name); return sync.call(handle) }; handle.close = () => { if (isWrittenOrSynced) record('close', name); return close.call(handle) }; return handle }; fileSystem.link = (from, to) => { record('link', String(to)); return link(from, to) }; fileSystem.rename = (from, to) => { record('rename', String(from), String(to)); return rename(from, to) }; fileSystem.unlink = (path) => { record('unlink', String(path)); return unlink(path) }; syncBuiltinESMExports();`,
   )}`
 
 // Value: protects=the learner's Wiki and the learner's own files on a power cut during or right after a publish, where the file system may keep the moves of the swap and lose the bytes or the names they rely on (ext4 can keep a journal empty, NTFS of NUL bytes); fails_when=the publish closes a file it wrote, links its journal, writes a copy of a learner's file, moves the Wiki or removes its journal before it synced the bytes and the names the next step relies on, so a power cut can leave an empty journal beside a missing Wiki folder, or a published Wiki without the learner's files; why_new=Cycle 0047 row 265 (P3CLA-4); seam=a publisher process whose file system calls a module loaded first records in their order (`--import`); no_claim=that a real power cut keeps what the syncs promise, which only the file system and the disk can keep and no test here can cut the power to show
-test('a publish syncs each file it writes before its close, the journal’s folder once the journal has its name, each line of its list of copies before the copy it names, the candidate’s folders before the swap and the Wiki’s folder before the journal goes', async () => {
+test('a publish syncs each file it writes before its close, the journal’s folder once the journal has its name, each line of its list of copies before the copy it names, every file and folder of the candidate before the swap and the Wiki’s folder before the journal goes', async () => {
   // Arrange: a Wiki with a learner's file and a candidate with a page in a folder of its own; the calls of its publish are recorded.
   const wiki = await publishedWikiWithACandidate('guide.html')
   const log = join(wiki.directory, 'calls.jsonl'),
@@ -16575,11 +16590,21 @@ test('a publish syncs each file it writes before its close, the journal’s fold
           'sync next/.codebook-publish-<id>-codebook-publication.json',
           'close next/.codebook-publish-<id>-codebook-publication.json',
           'rename next/.codebook-publish-<id>-codebook-publication.json next/codebook-publication.json',
-          // The candidate's folders, before the swap.
-          'sync next',
-          'close next',
+          // Every file and folder of the candidate, each folder after what it holds, before the swap (Cycle 0048 task 3).
+          'sync next/codebook-publication.json',
+          'close next/codebook-publication.json',
+          'sync next/codebook-wiki.json',
+          'close next/codebook-wiki.json',
+          'sync next/index.html',
+          'close next/index.html',
+          'sync next/manual.txt',
+          'close next/manual.txt',
+          'sync next/pages/guide.html',
+          'close next/pages/guide.html',
           'sync next/pages',
           'close next/pages',
+          'sync next',
+          'close next',
           // The swap.
           'rename wiki wiki.previous-<id>',
           'rename next wiki',
@@ -20313,13 +20338,2143 @@ for (const { refused, argumentsOf } of [
         {
           code: result.status,
           stdout: result.stdout,
-          usage: result.stderr.startsWith('Usage: node publish-wiki.mjs'),
+          usage: result.stderr,
           wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
         },
-        { code: 2, stdout: '', usage: true, wikiPage: wiki.wikiPage },
+        {
+          code: 2,
+          stdout: '',
+          usage: PUBLISHER_USAGE_STDERR,
+          wikiPage: wiki.wikiPage,
+        },
       )
     } finally {
       await rm(wiki.directory, { recursive: true, force: true })
     }
   })
 }
+
+// Cycle 0048, fixer P1 (Issue #105 tasks 2, 3, 4, 5, 7 and 13): the durability of the publish and of the manifest recovery, the learner's files saved at the swap, the owner judgement of this host, the lock a recovery cannot read, and the lock's name.
+
+/**
+ * Reads the calls that {@link fileSystemCallsRecordedIn} recorded, those in or beside one folder, each as one line with its paths relative to that folder, each run's id and each digest hidden.
+ * @param {string} log - The file the calls were recorded in.
+ * @param {string} folder - The folder that holds the Wiki folder.
+ * @returns {Promise<string[]>} One line per call, as `sync wiki.publish-lock.json` or `rename next wiki`.
+ * @example
+ * await recordedCallsBeside(join(directory, 'calls.jsonl'), join(root, '.codebook')) // => ['sync .', 'close .']
+ */
+async function recordedCallsBeside(log, folder) {
+  return (await readFile(log, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .filter(([, path]) => path === folder || path.startsWith(`${folder}/`))
+    .map((call) =>
+      call
+        .map((part, index) =>
+          index === 0
+            ? part
+            : (relative(folder, part) || '.')
+                .replace(
+                  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+                  '<id>',
+                )
+                .replace(/[0-9a-f]{64}/g, '<digest>'),
+        )
+        .join(' '),
+    )
+}
+
+// Value: protects=the learner's edited manifest, which a recovery of the Wiki's metadata keeps beside the Wiki before the generated manifest takes its place, on a power cut right after the recovery (ext4 can keep the rename and lose the name of the kept copy); fails_when=the recovery renames the generated manifest over the edit, or removes its journal, before the folder of the kept copy and the Wiki folder have their names on the disk; why_new=Cycle 0048 task 2 (S11-XA1); seam=a publisher process whose file system calls a module loaded first records in their order (`--import`); no_claim=that a real power cut keeps what the syncs promise
+test('a recovery of an edited manifest syncs the folder of the kept copy and the Wiki folder before the rename that replaces the edit, and the Wiki folder again before its journal goes', async () => {
+  // Arrange: a published Wiki whose manifest the learner edited, and the calls of the recovery are recorded.
+  const wiki = await publishedWikiWithACandidate()
+  const log = join(wiki.directory, 'calls.jsonl'),
+    folder = dirname(wiki.output)
+  await writeFile(join(wiki.output, 'codebook-wiki.json'), '{accidental edit')
+  try {
+    // Act
+    const { code } = runPublisherWith(fileSystemCallsRecordedIn(log), [
+      '--recover',
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+    ])
+
+    // Assert: from the write of the staging file to the removal of the journal.
+    const calls = await recordedCallsBeside(log, folder)
+    const fromStaging = calls.slice(
+      calls.findIndex((call) =>
+        call.startsWith('write wiki/.codebook-restore-'),
+      ),
+    )
+    assert.deepEqual(
+      {
+        code,
+        calls: fromStaging.filter(
+          (call) => !call.startsWith('unlink wiki.publish-journal.json.'),
+        ),
+      },
+      {
+        code: 0,
+        calls: [
+          'write wiki/.codebook-restore-<id>.json',
+          'sync wiki/.codebook-restore-<id>.json',
+          'close wiki/.codebook-restore-<id>.json',
+          // The folder of the kept copy and the Wiki folder, before the rename.
+          'sync .',
+          'close .',
+          'sync wiki',
+          'close wiki',
+          'rename wiki/.codebook-restore-<id>.json wiki/codebook-wiki.json',
+          // The Wiki folder again, before the journal goes.
+          'sync wiki',
+          'close wiki',
+          'unlink wiki.publish-journal.json',
+        ],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+/**
+ * A module loaded before the publisher (`--import`) that changes the sync of the files whose path matches `pattern`: the sync fails with `EIO` (a disk error), or, with `saveToFile`, it first appends a line to that file, as a learner's save during it.
+ * @param {string} pattern - The source of the regular expression the path of the file or folder must match.
+ * @param {{ saveToFile?: string }} [action] - The learner's save that runs instead of the failure.
+ * @returns {string} The module as a `data:` URL.
+ * @example
+ * runPublisherWith(syncChangedFor('/assets/flow\\.png$'), ['--project', root, '--output', output, '--stage', next])
+ */
+const syncChangedFor = (pattern, { saveToFile } = {}) =>
+  `data:text/javascript,${encodeURIComponent(
+    `import fileSystem from 'node:fs/promises'; import { appendFileSync } from 'node:fs'; import { syncBuiltinESMExports } from 'node:module'; const { open } = fileSystem; fileSystem.open = async (path, ...rest) => { const handle = await open(path, ...rest); if (new RegExp(${JSON.stringify(pattern)}).test(String(path))) { const { sync } = handle; handle.sync = ${saveToFile === undefined ? "() => Promise.reject(Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' }))" : `() => { appendFileSync(${JSON.stringify(saveToFile)}, ' and saved during the syncs'); return sync.call(handle) }`} } return handle }; syncBuiltinESMExports();`,
+  )}`
+
+/**
+ * Gives the candidate of {@link publishedWikiWithACandidate} an asset the agent wrote while it prepared the candidate, in a folder of its own, and lists it in the candidate's manifest.
+ * @param {{ next: string }} wiki - The wiki of {@link publishedWikiWithACandidate}.
+ * @returns {Promise<void>}
+ * @example
+ * await addPreparedAsset(wiki) // writes `next/assets/flow.png`
+ */
+async function addPreparedAsset(wiki) {
+  const manifestPath = join(wiki.next, 'codebook-wiki.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  manifest.assets = ['assets/flow.png']
+  await mkdir(join(wiki.next, 'assets'))
+  await writeFile(join(wiki.next, 'assets/flow.png'), PNG_ASSET_BYTES)
+  await writeFile(manifestPath, JSON.stringify(manifest))
+}
+
+// Value: protects=the assets an agent wrote while it prepared a candidate (images of a diagram), which a power cut right after the swap could leave empty or without their names in a Wiki that lists them; fails_when=the publish syncs only the folders and files it wrote itself, so an asset the agent wrote, and the folder it stands in, are not synced before the candidate becomes the Wiki; why_new=Cycle 0048 task 3 (S11-XA2); seam=a publisher process whose file system calls a module loaded first records in their order (`--import`); no_claim=that a real power cut keeps what the syncs promise
+test('a publish syncs an asset the agent wrote while it prepared the candidate and the folder of that asset before the swap', async () => {
+  // Arrange: a published Wiki and a candidate whose manifest lists an asset in a folder the agent made.
+  const wiki = await publishedWikiWithACandidate()
+  await addPreparedAsset(wiki)
+  const log = join(wiki.directory, 'calls.jsonl')
+  try {
+    // Act
+    const { code } = runPublisherWith(fileSystemCallsRecordedIn(log), [
+      '--project',
+      wiki.root,
+      '--output',
+      wiki.output,
+      '--stage',
+      wiki.next,
+    ])
+
+    // Assert: what the publish synced between the move of the finalized record and the swap.
+    const calls = await recordedCallsBeside(log, dirname(wiki.output))
+    const beforeTheSwap = calls.slice(
+      calls.findIndex(
+        (call) =>
+          call.startsWith('rename next/.codebook-publish-') &&
+          call.endsWith('next/codebook-publication.json'),
+      ) + 1,
+      calls.indexOf('rename wiki wiki.previous-<id>'),
+    )
+    assert.deepEqual(
+      { code, beforeTheSwap },
+      {
+        code: 0,
+        beforeTheSwap: [
+          'sync next/assets/flow.png',
+          'close next/assets/flow.png',
+          'sync next/assets',
+          'close next/assets',
+          'sync next/codebook-publication.json',
+          'close next/codebook-publication.json',
+          'sync next/codebook-wiki.json',
+          'close next/codebook-wiki.json',
+          'sync next/index.html',
+          'close next/index.html',
+          'sync next',
+          'close next',
+        ],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner whose disk fails a sync of the candidate before the swap, after which the file system may have dropped bytes it reported written; fails_when=the publish answers the failed sync as a plain refusal and removes its journal, so the next publish trusts the same candidate and swaps it in; why_new=Cycle 0048 task 3 (S11-XA2); seam=a publisher process whose sync of an asset fails with EIO (`--import`); no_claim=what a real disk does after a failed sync
+test('a publish whose sync of the candidate fails moves nothing, keeps its journal and tells the agent to run --recover', async () => {
+  // Arrange: a published Wiki and a candidate with an asset whose sync will fail.
+  const wiki = await publishedWikiWithACandidate()
+  await addPreparedAsset(wiki)
+  try {
+    // Act
+    const { code, answer } = runPublisherWith(
+      syncChangedFor('/next/assets/flow\\.png$'),
+      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+    )
+
+    const besideAfterTheFailure = (await publisherFilesBeside(wiki.output)).map(
+      withIdsHidden,
+    )
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        code,
+        answer,
+        recovery,
+        besideTheWikiAfterTheRecovery: await publisherFilesBeside(wiki.output),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+        besideTheWiki: besideAfterTheFailure,
+      },
+      {
+        code: 1,
+        answer: `Error: The candidate could not be synced to the disk before the swap: ${join(wiki.next, 'assets/flow.png')} (EIO: i/o error, fsync). Nothing was moved and the Wiki is as it was, and the publication journal was kept. Run --recover, then prepare a candidate and publish again.`,
+        wikiPage: wiki.wikiPage,
+        besideTheWiki: [
+          'wiki.publish-journal.json',
+          'wiki.publish-journal.json.prepared-<id>-<digest>',
+        ],
+        recovery: 'published-or-restored',
+        besideTheWikiAfterTheRecovery: [],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who saves a file of the Wiki while the publish syncs the candidate, which a save after the publish's last check would send only into the hidden prior Wiki while the answer counts the file preserved; fails_when=the syncs run between the last check of the learner's files and the swap, so a save during them is not seen and the publish goes on; why_new=Cycle 0048 task 4 (S11-N1); seam=a publisher process whose sync of the candidate's folder appends to the learner's file (`--import`); no_claim=a save in the few instructions between the last check and the swap, which the answer names after the swap (next test)
+test('a publish refuses a learner’s file saved while it syncs the candidate, and the Wiki keeps the saved bytes', async () => {
+  // Arrange: a Wiki with a learner's file, and a save made when the publish syncs the candidate's folder.
+  const wiki = await publishedWikiWithACandidate()
+  const manual = join(wiki.output, 'manual.txt')
+  await writeFile(manual, 'The learner kept these notes')
+  try {
+    // Act
+    const { code, answer } = runPublisherWith(
+      syncChangedFor('/next$', { saveToFile: manual }),
+      ['--project', wiki.root, '--output', wiki.output, '--stage', wiki.next],
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        code,
+        answer,
+        manualInTheWiki: await readFile(manual, 'utf8'),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        code: 1,
+        answer:
+          'Error: A manual Wiki file changed during publication: manual.txt',
+        manualInTheWiki:
+          'The learner kept these notes and saved during the syncs',
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner who saves a file between the publish's last check and the swap, whose save goes only into the prior Wiki that the swap moved aside, while a second file that did not change is still counted preserved; fails_when=the answer counts such a file preserved and names nothing, so the agent says the learner's notes are in the new Wiki, or the count drops every file once one was saved late; why_new=Cycle 0048 task 4 (S11-N1); seam=a swap run just before the rename that moves the Wiki aside (`swapBeforeRenaming`); no_claim=that the saved bytes reach the new Wiki, which they do not: the answer names the file and the folder that keeps it
+test('a publish names a learner’s file saved after its last check, which went into the prior Wiki, instead of counting it preserved', async () => {
+  // Arrange: a Wiki with a learner's file, saved again just before the publish moves the Wiki aside.
+  const { publishWiki: publishWhileTheLearnerSaves } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?swapped-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const manual = join(wiki.output, 'manual.txt')
+  await writeFile(manual, 'The learner kept these notes')
+  // A second file of the learner that no save touches: only the late save is named, and this file stays counted.
+  await writeFile(
+    join(wiki.output, 'untouched.txt'),
+    'The learner never edits this file',
+  )
+  swapBeforeRenaming(
+    (path) => path === wiki.output,
+    () => writeFile(manual, 'The learner saved these notes again'),
+  )
+  try {
+    // Act
+    const answer = await publishWhileTheLearnerSaves({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    })
+
+    // Assert
+    assert.deepEqual(
+      {
+        preservedManualFiles: answer.preservedManualFiles,
+        manualFilesSavedAfterCheck: answer.manualFilesSavedAfterCheck,
+        savedBytesAreInThePriorWiki: await readFile(
+          join(answer.previousOutput, 'manual.txt'),
+          'utf8',
+        ),
+        copyInTheNewWiki: await readFile(manual, 'utf8'),
+      },
+      {
+        preservedManualFiles: 1,
+        manualFilesSavedAfterCheck: ['manual.txt'],
+        savedBytesAreInThePriorWiki: 'The learner saved these notes again',
+        copyInTheNewWiki: 'The learner kept these notes',
+      },
+    )
+  } finally {
+    swapBeforeRenaming(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+for (const { names, liveStartText, outcome, recovery, journal } of [
+  {
+    names: 'began at the recorded start',
+    liveStartText: 'Mon Oct  5 09:12:33 2026',
+    outcome:
+      'is refused as one that may still be running, and the journal is kept',
+    recovery: `The prior Wiki publisher process ${process.pid} may still be running; inspect it before recovery.`,
+    journal: 'kept',
+  },
+  {
+    names: 'began at another time than the recorded start',
+    liveStartText: 'Tue Oct  6 10:00:00 2026',
+    outcome: 'is recovered: the process id is another process’s now',
+    recovery: 'published-or-restored',
+    journal: 'gone',
+  },
+]) {
+  // Value: protects=the learner whose publish still runs on this computer, where no boot id is compared and no digest of the computer's id is named on both sides (reg.exe or ioreg blocked), and who passes the pair that the refusal names for this computer's own place; fails_when=the pair takes such an owner for gone without a probe of its process id, so the recovery moves the Wiki under a live publish, or it refuses an owner whose process id another process has now; why_new=Cycle 0048 task 5 (S11-N2); seam=a recovery on a stand-in macOS whose sysctl and ioreg answer nothing, run by the test process whose id the journal names, and whose ps prints the start the row names; no_claim=a real second computer with this host name, or a real macOS
+  test(`a recovery with the pair of this computer’s own place beside a journal of this host name and space, without a boot id or a digest of the computer’s id, whose process id a live process has that ${names} ${outcome}`, async () => {
+    // Arrange: the journal names the test process, this host, the stand-in's space, this boot's time, a recorded start and no digest; the stand-in's ps prints the row's start for the process.
+    const { wiki, killed, record } = await publishKilledAfterItsJournal(
+      (record) => {
+        record.pid = process.pid
+        record.owner = {
+          host: record.owner.host,
+          space: 'darwin',
+          boot: { atMs: Date.now() - Math.round(uptime() * 1000) },
+          start: 'ps:Mon Oct  5 09:12:33 2026',
+        }
+      },
+    )
+    const run = async (program) =>
+      program === '/bin/ps' ? liveStartText : undefined
+    try {
+      // Act
+      const answer = await recoverWikiPublication({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        goneOwners: [{ host: record.owner.host, space: 'darwin' }],
+        system: { platform: 'darwin', environment: {}, run },
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          recovery: answer,
+          journal: existsSync(`${wiki.output}.publish-journal.json`)
+            ? 'kept'
+            : 'gone',
+        },
+        { killed: '', recovery, journal },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=the editor agent whose --recover ended a stopped publish's journal and then could not read the publish lock of that run (a permission or a disk error), which it must be told stands, so it runs --recover again instead of finding the next publish refused for a lock it never heard of; fails_when=the recovery takes a lock it cannot read for no lock, so its answer names neither `publishLockRemoved` nor `publishLockKept`; why_new=Cycle 0048 task 7 (S11-XA3); seam=a look at the lock (`lstat`) that fails with EACCES once the journal is removed (scripts/tests/utils/failingFileSystem.mjs); no_claim=a lock that is no regular file or holds no record of the publisher, whose answer names nothing
+test('a recovery that cannot read the publish lock of the run whose journal it ended answers publishLockKept with the system’s code', async () => {
+  // Arrange: a publish killed after its journal, whose process is gone; the look at the lock fails once the journal is removed.
+  const { recoverWikiPublication: recoverWhoseLockLookFails } =
+    await loadMarkedCopy('publish-wiki.mjs', '?failing')
+  const { wiki, killed } = await publishKilledAfterItsJournal((record) => {
+    record.pid = 99999999
+  })
+  const journal = `${wiki.output}.publish-journal.json`,
+    lock = `${wiki.output}.publish-lock.json`
+  failLookOf((path) => path === lock && !existsSync(journal), 'EACCES')
+  try {
+    // Act
+    const answer = await recoverWhoseLockLookFails({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({
+        status,
+        publishLockRemoved,
+        publishLockKept,
+        publishLockKeptCode,
+      }) => ({
+        status,
+        publishLockRemoved,
+        publishLockKept: publishLockKept && basename(publishLockKept),
+        publishLockKeptCode,
+      }),
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, answer, lockStands: existsSync(lock) },
+      {
+        killed: '',
+        answer: {
+          status: 'published-or-restored',
+          publishLockRemoved: undefined,
+          publishLockKept: 'wiki.publish-lock.json',
+          publishLockKeptCode: 'EACCES',
+        },
+        lockStands: true,
+      },
+    )
+  } finally {
+    failLookOf(() => false, 'EACCES')
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner whose Wiki folder has two names on one file system (the short and the long name on NTFS, names of another case on macOS and Windows) and whose publish stopped, leaving its lock and its journal beside the Wiki folder; fails_when=the lock and the journal are named after the name the command line gave the folder, so a publish through the other name finds neither, takes a lock of its own and swaps the Wiki under the stopped publish; why_new=Cycle 0048 task 13 (S11-N9); seam=the Wiki folder answers to a second name beside it (scripts/tests/utils/aliasedFolderFileSystem.mjs, `?aliased-folder`), as NTFS does for a short name; no_claim=a real NTFS volume, whose realpath this stands in for
+test('a publish through the other name of the Wiki folder is refused beside the lock of a publish that stopped, because the lock is named after the folder’s real name', async () => {
+  // Arrange: a publish killed after its journal; the Wiki folder then answers to a second name.
+  const { publishWiki: publishThroughTheOtherName } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?aliased-folder',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'writing', folder: wiki.next, name: 'codebook-wiki\\.json$' },
+      ],
+    })
+    const otherName = join(wiki.root, '.codebook/WIKI~1')
+    nameFolderAlso(otherName, wiki.output)
+
+    // Act
+    const refusal = await publishThroughTheOtherName({
+      projectRoot: wiki.root,
+      outputDirectory: otherName,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert: the refusal names the lock of the real name, and the Wiki still holds the page it held.
+    assert.deepEqual(
+      {
+        killed,
+        refusalNamesTheLock: refusal.includes(
+          `${wiki.output}.publish-lock.json`,
+        ),
+        besideTheWikiNamedByTheOtherName: (await readdir(dirname(wiki.output)))
+          .filter((name) => name.startsWith('WIKI'))
+          .sort(),
+        wikiPage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+      },
+      {
+        killed: '',
+        refusalNamesTheLock: true,
+        besideTheWikiNamedByTheOtherName: [],
+        wikiPage: wiki.wikiPage,
+      },
+    )
+  } finally {
+    nameFolderAlso(undefined)
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+// Cycle 0048 task 8 (S11-N4): a published page whose text held CRLF line ends.
+
+// Value: protects=the learner whose agent wrote CRLF line ends into a page's text and who commits the Wiki folder and checks it out with core.autocrlf: the refusal names the CRLF line ends and its way out restores the page; fails_when=the publisher writes the CR of the page's text as it is, so the CRLF-to-LF read of the checked-out page differs from the recorded digest and the step is refused with the sentence of a page changed by hand, which has no way out; why_new=Cycle 0048 task 8 (S11-N4); seam=the published files written again with CRLF line ends, as Git's conversion writes each LF that no CR precedes; no_claim=Git's own conversion and the git commands the refusal names
+test('a publish of a candidate after a Wiki with CRLF line ends in a page’s text was checked out with CRLF line ends is refused with the sentence that names the CRLF line ends and the way out', async () => {
+  // Arrange: a Wiki published from a page whose text holds CRLF line ends, then checked out as Git with core.autocrlf writes it.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-crlf-text-')),
+  )
+  const root = join(directory, 'project')
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  try {
+    await mkdir(root)
+    await writeStage(
+      first,
+      root,
+      '<h1>Notes</h1><pre>one\r\ntwo\r\n</pre>',
+      undefined,
+      output,
+    )
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+    const pagePath = join(output, 'index.html')
+    const published = await readFile(pagePath)
+    // Git writes each LF that no CR precedes as CRLF, and leaves a CRLF as it is.
+    await writeFile(
+      pagePath,
+      Buffer.from(
+        published.toString('latin1').replace(/(?<!\r)\n/g, '\r\n'),
+        'latin1',
+      ),
+    )
+
+    // Act
+    const outcome = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      () => 'not refused',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { publishedHasCarriageReturn: published.includes('\r'), outcome },
+      {
+        publishedHasCarriageReturn: false,
+        outcome: `A file of the published Wiki has CRLF line ends where the publisher wrote LF: read with LF line ends, it matches the publication record, so Git’s line-end conversion (core.autocrlf, or a text attribute) changed it when it checked the Wiki folder out. Nothing was changed. Mark the Wiki folder -text: add the line ".codebook/wiki/**" -text to the .gitattributes file in ${root} and commit that file; then, in that folder, run git rm -r --cached --quiet -- ".codebook/wiki" and git checkout HEAD -- ".codebook/wiki", which write the folder’s committed files again with LF line ends (a change of them that is not committed is lost), and run this command again.`,
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0048 task 11 (S11-N7): the staging file of a metadata recovery that returns early.
+for (const staged of [
+  {
+    names: 'holds the retained manifest',
+    bytes: 'RETAINED',
+    remains: [],
+  },
+  {
+    names: 'holds other bytes',
+    bytes: '{half a manifest',
+    remains: ['.codebook-restore-12345678-1234-1234-1234-123456789abc.json'],
+  },
+]) {
+  // Value: protects=the learner whose metadata recovery was stopped after it wrote its staging file and whose manifest was then put back as the retained one, and the next publish that would carry a leftover staging file over as the learner's own file; fails_when=the recovery returns at once for a manifest that is the retained one and leaves its staging file in the Wiki folder, where it counts as a learner's file, or removes a staging file whose bytes are not the retained manifest's; why_new=Cycle 0048 task 11 (S11-N7); seam=the real recovery over a restore-manifest journal a stopped recovery left; no_claim=the recovery that rewrites an edited manifest (the tests of the interrupted metadata restoration above)
+  test(`a --recover of a stopped metadata recovery whose manifest is the retained one already, with a staging file that ${staged.names}, ${staged.remains.length === 0 ? 'removes the staging file' : 'keeps the staging file'}`, async () => {
+    // Arrange: a published Wiki; a journal of a stopped metadata recovery, whose staging file stands in the Wiki folder; the manifest is the retained one.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-staging-file-')),
+    )
+    const output = join(root, '.codebook/wiki'),
+      first = join(root, '.codebook/first')
+    try {
+      await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+      await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: first,
+      })
+      const retained = await readFile(join(output, 'codebook-wiki.json'))
+      const id = '12345678-1234-1234-1234-123456789abc',
+        journal = output + '.publish-journal.json'
+      const record = {
+        projectRoot: root,
+        output,
+        operation: 'restore-manifest',
+        pid: 99999999,
+        id,
+        manifestSha256: createHash('sha256').update(retained).digest('hex'),
+        modifiedManifestSha256: createHash('sha256')
+          .update('{unfinished edit')
+          .digest('hex'),
+        modifiedManifestBackup: output + '.modified-manifest-' + id + '.json',
+        temporaryManifest: join(output, '.codebook-restore-' + id + '.json'),
+      }
+      await writeFile(journal, JSON.stringify(record))
+      await writeFile(record.modifiedManifestBackup, '{unfinished edit')
+      await writeFile(
+        record.temporaryManifest,
+        staged.bytes === 'RETAINED' ? retained : staged.bytes,
+      )
+
+      // Act
+      const recovery = await recoverWikiPublication({
+        projectRoot: root,
+        outputDirectory: output,
+      }).then(
+        ({ status }) => status,
+        (error) => error.message,
+      )
+
+      // Assert: the staging file is gone when it held the retained manifest, and the manifest is untouched.
+      assert.deepEqual(
+        {
+          recovery,
+          filesInTheWiki: (await readdir(output))
+            .filter((name) => name.startsWith('.codebook-restore-'))
+            .sort(),
+          manifestIsRetained: (
+            await readFile(join(output, 'codebook-wiki.json'))
+          ).equals(retained),
+        },
+        {
+          recovery: 'manifest-restored',
+          filesInTheWiki: staged.remains,
+          manifestIsRetained: true,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
+// Cycle 0048 task 16 (S11-N12): the answer of a recovery that ends an empty journal and the publish lock beside it.
+
+// Value: protects=the editor agent that reads the answer of --recover after a publish on a volume without hard links was killed between the create of its journal and its write: it learns that the empty journal was removed as well as the publish lock; fails_when=the answer names the lock's removal alone, so the agent cannot tell that the journal that kept every step out is gone; why_new=Cycle 0048 task 16 (S11-N12); seam=a publisher process whose hard links fail and which is killed once its journal is created, then the real recovery; no_claim=the files left beside the Wiki folder (the test of Cycle 0047 row 264 above)
+test('a --recover that ends an empty journal and the publish lock beside it answers that the journal was removed as well as the lock', async () => {
+  // Arrange: the publish is killed once its journal is made, before a byte of it is written; the empty journal has stood a minute.
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const killed = runKilledPublisher(
+      {
+        operation: 'publishWiki',
+        options: {
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        },
+        killAt: [
+          {
+            call: 'writing-halfway',
+            folder: dirname(wiki.output),
+            name: '^wiki\\.publish-journal\\.json$',
+          },
+        ],
+      },
+      ['--import', WITHOUT_HARD_LINKS_KILLED_AT_THE_JOURNAL_CREATE],
+    )
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      (answer) => answer,
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { killed, recovery },
+      {
+        killed: '',
+        recovery: {
+          status: 'publish-lock-removed',
+          output: wiki.output,
+          unwrittenJournalRemoved: true,
+        },
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0048 task 10 (S11-N6), changed by task 139 (OCR A): the refusal of an empty journal beside a missing Wiki folder names every prior Wiki and leaves the choice to the learner.
+
+// Value: protects=the learner's prior Wiki and files after a power cut left the Wiki folder missing and the journal empty while several folders keep a prior Wiki (one for each earlier publish): the agent is told every folder and that the learner chooses, so it never moves back an older Wiki that a time named as the newest; fails_when=the refusal names one folder as the newest by a time that an edit inside a folder does not change, or names none and no choice; why_new=Cycle 0048 tasks 10 and 139 (S11-N6, OCR A; task 157 folded the copy of this test without the later time into it); seam=a publisher process killed between the two moves of its swap, with two older prior Wikis made beside it, one touched after the kept one moved (an edit inside an older Wiki), one named to sort before and one to sort after the kept one; no_claim=a real power cut, and which folder the learner finally agrees to move back
+test('a --recover beside an empty journal and a missing Wiki folder, with three folders that keep a prior Wiki, names all of them and none as the newest, though an older folder was touched later', async () => {
+  // Arrange: the publish is killed between the two moves of its swap, so its prior Wiki is the folder it moved last; its journal is empty and a minute old; two older prior Wikis stand beside it, and the one that sorts last is touched after that move.
+  const wiki = await publishedWikiWithACandidate()
+  const journal = `${wiki.output}.publish-journal.json`
+  try {
+    const killed = runKilledPublisher({
+      operation: 'publishWiki',
+      options: {
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      },
+      killAt: [
+        { call: 'renaming', folder: dirname(wiki.output), name: '^next$' },
+      ],
+    })
+    await writeFile(journal, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+    const newestName = String(
+      (await readdir(dirname(wiki.output))).find((name) =>
+        name.startsWith('wiki.previous-'),
+      ),
+    )
+    const longAgo = new Date('2020-01-01T00:00:00Z')
+    const touchedLater = new Date(Date.now() + 3_600_000)
+    const olderFolders = [
+      'wiki.previous-00000000-0000-4000-8000-000000000000',
+      'wiki.previous-ffffffff-ffff-4fff-8fff-ffffffffffff',
+    ].map((name) => join(dirname(wiki.output), name))
+    for (const folder of olderFolders) {
+      await mkdir(folder)
+      await utimes(folder, longAgo, longAgo)
+    }
+    // The older folder that sorts last is edited later: its time is now ahead of the kept folder's.
+    await utimes(olderFolders[1], touchedLater, touchedLater)
+    const newest = join(dirname(wiki.output), newestName)
+
+    // Act
+    const recovery = await recoverWikiPublication({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+    }).then(
+      ({ status }) => status,
+      (error) => error.message,
+    )
+
+    // Assert: the refusal names the three folders in the order of their names, and leaves the choice to the learner.
+    const [first, last] = olderFolders
+    const kept = [first, newest, last].sort()
+    assert.deepEqual(
+      { killed, recovery },
+      {
+        killed: '',
+        recovery: `The Wiki publication journal is empty, and the Wiki folder ${wiki.output} is missing, while the folders ${kept.join(', ')} stand beside it, where a publish keeps the prior Wiki and the learner’s files when it replaces the Wiki: a publish stopped by a power cut or a system crash after it moved the Wiki there can leave its journal empty. Nothing was moved, and the journal was kept. Show this to the learner; once they agree, move the one of those folders that holds the Wiki they want back to ${wiki.output}, then run --recover again. The publisher cannot tell which of them was the Wiki last, as a change inside a folder does not change the folder’s own time: let the learner choose by what each folder holds.`,
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0048 task 14 (S11-N10): the copies of the learner's files keep their mode and times.
+for (const kept of [
+  {
+    names: 'times',
+    isSkipped: false,
+    read: async (path) => {
+      const status = await lstat(path)
+      return { modifiedAt: status.mtime.toISOString() }
+    },
+    expected: { modifiedAt: '2021-03-04T05:06:07.000Z' },
+  },
+  {
+    names: 'mode',
+    isSkipped: process.platform === 'win32',
+    read: async (path) => {
+      const status = await lstat(path)
+      return { mode: (status.mode & 0o777).toString(8) }
+    },
+    expected: { mode: '750' },
+  },
+  {
+    // Task 198: the copy is created with the original's bits, here without the write bit, and its bytes are still written through the handle that created it.
+    names: 'mode, with no write bit,',
+    isSkipped: process.platform === 'win32',
+    learnerMode: 0o444,
+    read: async (path) => {
+      const status = await lstat(path)
+      return { mode: (status.mode & 0o777).toString(8) }
+    },
+    expected: { mode: '444' },
+  },
+  {
+    names: 'permission bits, but not the setuid bit,',
+    isSkipped: process.platform === 'win32',
+    learnerMode: 0o4755,
+    read: async (path) => {
+      const status = await lstat(path)
+      return {
+        specialBits: (status.mode & 0o7000).toString(8),
+        permissionBits: (status.mode & 0o777).toString(8),
+      }
+    },
+    expected: { specialBits: '0', permissionBits: '755' },
+  },
+]) {
+  // Value: protects=the learner whose own file lies in the Wiki folder (a script they run, a note whose date they sort by) and who loses its execute bit or its modification date at the next publish; fails_when=the copy of the learner's file into the new Wiki is a new file with the mode the umask gives and the time of the copy; why_new=Cycle 0048 task 14 (S11-N10); seam=the real publish over a Wiki that holds a file of the learner's with a set mode and time; no_claim=owner and group, and a file system that keeps no mode (Windows reads the bits it has)
+  test(
+    `a publish keeps the ${kept.names} of the learner’s file in the new Wiki`,
+    { skip: kept.isSkipped },
+    async (context) => {
+      // Arrange: a published Wiki that holds a learner's file with mode 750 (or the mode the row names) last changed on 2021-03-04; a candidate stands beside it.
+      const wiki = await publishedWikiWithACandidate()
+      const learnerFile = join(wiki.output, 'manual.sh')
+      try {
+        await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+        await chmod(learnerFile, kept.learnerMode ?? 0o750)
+        // A file system that drops the setuid bit leaves nothing to show: the row is skipped there, read back from what the system kept.
+        if (
+          kept.learnerMode !== undefined &&
+          ((await lstat(learnerFile)).mode & 0o7000) !==
+            (kept.learnerMode & 0o7000)
+        ) {
+          context.skip('the file system kept no setuid bit on the original')
+          return
+        }
+        const changedAt = new Date('2021-03-04T05:06:07Z')
+        await utimes(learnerFile, changedAt, changedAt)
+
+        // Act
+        await publishWiki({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        })
+
+        // Assert
+        assert.deepEqual(await kept.read(learnerFile), kept.expected)
+      } finally {
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    },
+  )
+}
+
+// Cycle 0048 task 181 (Codex adversarial): the copy of a learner's file lets pass only the errors of a file system that keeps no mode or no time.
+for (const failed of [
+  { call: 'chmod', fail: failChmodOf },
+  { call: 'utimes', fail: failUtimesOf },
+]) {
+  // Value: protects=the learner whose own file lies in the Wiki folder and the Wiki itself, when the disk fails (EIO) while the publish sets the mode or the times of that file's copy: the publish stops before its swap, so the learner is not left with a Wiki whose copy has the mode or the time of its write; fails_when=writeOwnFile lets every error of the copy's chmod or utimes pass (`.catch(() => undefined)`), so a disk error publishes the copy with the mode and time of its write; why_new=Cycle 0048 task 181 (Codex adversarial); seam=a copy of the shipped publisher whose `node:fs/promises` fails the chmod or the utimes through the handle of the learner's file in the candidate with EIO (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf, failUtimesOf); no_claim=a chmod or utimes that fails on a real file system
+  test(`a publish whose copy of the learner’s file gets EIO from its ${failed.call} is refused with that error, leaves no copy in the candidate and keeps the Wiki and the learner’s file as they were`, async () => {
+    // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04, a candidate beside it, and a disk error at the row's call on the copy.
+    const { publishWiki: publishWhoseCopyGetsADiskError } =
+      await loadMarkedCopy('publish-wiki.mjs', '?failing')
+    const wiki = await publishedWikiWithACandidate()
+    const learnerFile = join(wiki.output, 'manual.sh'),
+      changedAt = new Date('2021-03-04T05:06:07Z')
+    const stopFailing = failed.fail(
+      (path) => path === join(wiki.next, 'manual.sh'),
+      'EIO',
+    )
+    try {
+      await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+      await chmod(learnerFile, 0o750)
+      await utimes(learnerFile, changedAt, changedAt)
+      const wikiBefore = await wikiAndLearnerFileOf(wiki.output, learnerFile)
+
+      // Act
+      const refusal = await publishWhoseCopyGetsADiskError({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => 'published',
+        (error) => error.code,
+      )
+      const copyInTheCandidate = await readFile(
+        join(wiki.next, 'manual.sh'),
+        'utf8',
+      ).catch(() => 'no copy')
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          copyInTheCandidate,
+          wikiAfter: await wikiAndLearnerFileOf(wiki.output, learnerFile),
+        },
+        {
+          refusal: 'EIO',
+          copyInTheCandidate: 'no copy',
+          wikiAfter: wikiBefore,
+        },
+      )
+    } finally {
+      stopFailing()
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Value: protects=the learner whose own file lies in the Wiki folder and the Wiki itself, on a volume that refuses the copy's chmod with a code of a file system that keeps no mode (EPERM) and whose disk then fails the copy's utimes (EIO): the disk error is not hidden by the refusal that came first, so the publish stops before its swap and the learner is not left with a copy whose times are those of its write; fails_when=writeOwnFile skips the utimes of a copy whose chmod was refused with a kept code, or lets the utimes' error pass once the chmod's was (`setWhereAble(handle.chmod(mode).then(() => handle.utimes(atime, mtime)))`), so the disk error publishes the copy; why_new=Cycle 0048 task 197 (Testing); seam=a copy of the shipped publisher whose `node:fs/promises` fails the chmod with EPERM and the utimes with EIO through the handle of the learner's file in the candidate (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf and failUtimesOf asked together); no_claim=a chmod or utimes that fails on a real file system
+test(
+  'a publish whose copy of the learner’s file gets EPERM from its chmod and EIO from its utimes is refused with the EIO, leaves no copy in the candidate and keeps the Wiki and the learner’s file as they were',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04, a candidate beside it, a chmod of the copy that a file system refuses as one that keeps no mode, and a disk error at its utimes.
+    const { publishWiki: publishWhoseCopyGetsTwoFailures } =
+      await loadMarkedCopy('publish-wiki.mjs', '?failing')
+    const wiki = await publishedWikiWithACandidate()
+    const learnerFile = join(wiki.output, 'manual.sh'),
+      changedAt = new Date('2021-03-04T05:06:07Z')
+    const isTheCopy = (path) => path === join(wiki.next, 'manual.sh')
+    const stopFailingChmod = failChmodOf(isTheCopy, 'EPERM'),
+      stopFailingUtimes = failUtimesOf(isTheCopy, 'EIO')
+    try {
+      await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+      await chmod(learnerFile, 0o750)
+      await utimes(learnerFile, changedAt, changedAt)
+      const wikiBefore = await wikiAndLearnerFileOf(wiki.output, learnerFile)
+
+      // Act
+      const refusal = await publishWhoseCopyGetsTwoFailures({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => 'published',
+        (error) => error.code,
+      )
+      const copyInTheCandidate = await readFile(
+        join(wiki.next, 'manual.sh'),
+        'utf8',
+      ).catch(() => 'no copy')
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          copyInTheCandidate,
+          wikiAfter: await wikiAndLearnerFileOf(wiki.output, learnerFile),
+        },
+        {
+          refusal: 'EIO',
+          copyInTheCandidate: 'no copy',
+          wikiAfter: wikiBefore,
+        },
+      )
+    } finally {
+      stopFailingChmod()
+      stopFailingUtimes()
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=the learner whose own file in the Wiki folder is private (mode 0600: notes, a token, a draft) and the other users of the machine: the copy is created with the original's permission bits, so it is never readable by others while it is copied, and where the volume refuses the copy's chmod with a code of a file system that keeps no mode it keeps them for good; fails_when=writeOwnFile creates the copy with the default mode (0o666 less the umask) and gives it the original's bits only with the chmod after its bytes, so a 0600 file is world-readable (0644 under umask 022) while copied and for good where the chmod is refused; why_new=Cycle 0048 task 198 (Red Team); seam=a copy of the shipped publisher whose `node:fs/promises` refuses the chmod of the learner's file in the candidate with EPERM and tells a test the copy's mode at the moment the chmod is called (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf with its swap); no_claim=who may read the file on a volume that keeps no mode; Windows, which keeps only the read-only bit
+test(
+  'a publish creates the copy of a learner’s 0600 file with the original’s permission bits, so no wider mode shows while it is copied or where the chmod is refused',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: a published Wiki that holds a learner's file with mode 600; the copy's chmod is refused as a volume that keeps no mode refuses it, and the test reads the copy's mode at the moment the chmod is called, when its bytes are written and the publisher has set nothing yet.
+    const { publishWiki: publishWhoseChmodIsRefused } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    const learnerFile = join(wiki.output, 'notes.txt')
+    let modeWhileCopied
+    const stopFailing = failChmodOf(
+      (path) => path === join(wiki.next, 'notes.txt'),
+      'EPERM',
+      async (path) => {
+        modeWhileCopied = (await lstat(path)).mode & 0o777
+      },
+    )
+    try {
+      await writeFile(learnerFile, 'a private note\n')
+      await chmod(learnerFile, 0o600)
+      // The mode of a file made by the same exclusive open with the original's 600, in the same folder (the umask of this process can only narrow it), then removed so the candidate holds no stray file.
+      const referenceFile = join(wiki.next, 'mode-of-a-new-file.txt')
+      await writeFile(referenceFile, '', { flag: 'wx', mode: 0o600 })
+      const modeOfANewFile = (await lstat(referenceFile)).mode & 0o777
+      await rm(referenceFile)
+
+      // Act
+      const result = await publishWhoseChmodIsRefused({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ preservedManualFiles }) => ({ preservedManualFiles }),
+        (error) => error.message,
+      )
+      const modeKept = (await lstat(learnerFile)).mode & 0o777
+
+      // Assert
+      assert.deepEqual(
+        {
+          result,
+          modeWhileCopied: modeWhileCopied?.toString(8),
+          modeKept: modeKept.toString(8),
+        },
+        {
+          result: { preservedManualFiles: 1 },
+          modeWhileCopied: modeOfANewFile.toString(8),
+          modeKept: modeOfANewFile.toString(8),
+        },
+      )
+      // The mode of that reference is the original's bits less the umask, never wider than 600.
+      assert.equal(modeOfANewFile & ~0o600, 0)
+    } finally {
+      stopFailing()
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+/**
+ * What a test compares to tell that a Wiki folder and a learner's file in it are as they were: the manifest's and the home page's bytes, and the learner's file's bytes, mode and modification time.
+ * @param {string} output - The Wiki folder.
+ * @param {string} learnerFile - The learner's file in it.
+ * @returns {Promise<Record<string, string>>} The values to compare.
+ * @example
+ * await wikiAndLearnerFileOf('/repo/.codebook/wiki', '/repo/.codebook/wiki/manual.sh') // => { manifest: '{…}', homePage: '<h1>Published</h1>…', learnerFile: '#!/bin/sh…', mode: '750', modifiedAt: '2021-03-04T05:06:07.000Z' }
+ */
+async function wikiAndLearnerFileOf(output, learnerFile) {
+  const status = await lstat(learnerFile)
+  return {
+    manifest: await readFile(join(output, 'codebook-wiki.json'), 'utf8'),
+    homePage: await readFile(join(output, 'index.html'), 'utf8'),
+    learnerFile: await readFile(learnerFile, 'utf8'),
+    mode: (status.mode & 0o777).toString(8),
+    modifiedAt: status.mtime.toISOString(),
+  }
+}
+
+// A file system that keeps no mode or no time answers with one of these; the copy then keeps the mode and time of its write.
+for (const code of [
+  'EPERM',
+  'EACCES',
+  'EINVAL',
+  'EISDIR',
+  'ENOTSUP',
+  'ENOSYS',
+]) {
+  // Value: protects=the learner whose Wiki folder lies on a volume that keeps no mode (FAT or exFAT mounted for another owner, a share, a FUSE file system) and who must still be able to publish: the copy of their file is published with the mode of its write and the times of the original; fails_when=writeOwnFile passes on the file system's answer to chmod, so a volume that keeps no mode refuses every publish that has a learner's file; why_new=Cycle 0048 task 181 (Codex adversarial: only such errors pass); seam=a copy of the shipped publisher whose `node:fs/promises` fails the chmod through the handle of the learner's file in the candidate with the row's code (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf); no_claim=the mode such a volume gives a file (the test reads it back from the volume the test runs on); Windows, which keeps only the read-only bit
+  test(
+    `a publish whose copy of the learner’s file gets ${code} from its chmod is published with the mode of the copy’s write and the times of the original`,
+    { skip: process.platform === 'win32' },
+    async () => {
+      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; the copy's chmod fails as the row says, so the copy keeps the mode its creation gave, which a file the test creates the same way in the candidate's folder shows (the original's 750 less the umask, and what the folder passes on).
+      const { publishWiki: publishWhoseCopyKeepsNoMode } = await loadMarkedCopy(
+        'publish-wiki.mjs',
+        '?failing',
+      )
+      const wiki = await publishedWikiWithACandidate()
+      const learnerFile = join(wiki.output, 'manual.sh'),
+        changedAt = new Date('2021-03-04T05:06:07Z')
+      const stopFailing = failChmodOf(
+        (path) => path === join(wiki.next, 'manual.sh'),
+        code,
+      )
+      try {
+        await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+        await chmod(learnerFile, 0o750)
+        await utimes(learnerFile, changedAt, changedAt)
+        // The mode of a file made by the same exclusive open with the original's permission bits, in the same folder, then removed so the candidate holds no stray file.
+        const referenceFile = join(wiki.next, 'mode-of-a-new-file.txt')
+        await writeFile(referenceFile, '', { flag: 'wx', mode: 0o750 })
+        const modeOfANewFile = (await lstat(referenceFile)).mode & 0o777
+        await rm(referenceFile)
+
+        // Act
+        const result = await publishWhoseCopyKeepsNoMode({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        }).then(
+          ({ preservedManualFiles }) => ({ preservedManualFiles }),
+          (error) => error.message,
+        )
+        const copy = await lstat(learnerFile)
+
+        // Assert
+        assert.deepEqual(
+          {
+            result,
+            mode: copy.mode & 0o777,
+            modifiedAt: copy.mtime.toISOString(),
+          },
+          {
+            result: { preservedManualFiles: 1 },
+            mode: modeOfANewFile,
+            modifiedAt: '2021-03-04T05:06:07.000Z',
+          },
+        )
+      } finally {
+        stopFailing()
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    },
+  )
+
+  // Value: protects=the learner whose Wiki folder lies on a volume that keeps no time (a share, a FUSE file system) and who must still be able to publish: the copy of their file is published with the mode of the original and the time of its write; fails_when=writeOwnFile passes on the file system's answer to utimes, so a volume that keeps no time refuses every publish that has a learner's file; why_new=Cycle 0048 task 181 (Codex adversarial: only such errors pass); seam=a copy of the shipped publisher whose `node:fs/promises` fails the utimes through the handle of the learner's file in the candidate with the row's code (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failUtimesOf); no_claim=the time such a volume gives a file
+  test(
+    `a publish whose copy of the learner’s file gets ${code} from its utimes is published with the mode of the original and the time of the copy’s write`,
+    { skip: process.platform === 'win32' },
+    async () => {
+      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; the copy's utimes fails as the row says.
+      const { publishWiki: publishWhoseCopyKeepsNoTime } = await loadMarkedCopy(
+        'publish-wiki.mjs',
+        '?failing',
+      )
+      const wiki = await publishedWikiWithACandidate()
+      const learnerFile = join(wiki.output, 'manual.sh'),
+        changedAt = new Date('2021-03-04T05:06:07Z')
+      const stopFailing = failUtimesOf(
+        (path) => path === join(wiki.next, 'manual.sh'),
+        code,
+      )
+      try {
+        await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+        await chmod(learnerFile, 0o750)
+        await utimes(learnerFile, changedAt, changedAt)
+
+        // Act
+        const result = await publishWhoseCopyKeepsNoTime({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        }).then(
+          ({ preservedManualFiles }) => ({ preservedManualFiles }),
+          (error) => error.message,
+        )
+        const copy = await lstat(learnerFile)
+
+        // Assert
+        assert.deepEqual(
+          {
+            result,
+            mode: (copy.mode & 0o777).toString(8),
+            isWrittenAfter2021: copy.mtime > new Date('2022-01-01T00:00:00Z'),
+          },
+          {
+            result: { preservedManualFiles: 1 },
+            mode: '750',
+            isWrittenAfter2021: true,
+          },
+        )
+      } finally {
+        stopFailing()
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    },
+  )
+}
+
+// Cycle 0048 task 15 (S11-N11): two recoveries of one Wiki at once answer with the publisher's sentences.
+
+// Value: protects=the learner and the agent whose two --recover runs of one Wiki overlap (two editor windows, two agents): the one that loses the race is told so in the publisher's words and runs --recover again, not given a raw ENOENT of the system; fails_when=the recovery reads the claim of an earlier recovery that the other recovery released meanwhile and rejects with ENOENT; why_new=Cycle 0048 task 15 (S11-N11); seam=a copy of the publisher over a file system that removes the claim just before the recovery reads it (scripts/tests/utils/swappedFolderFileSystem.mjs); no_claim=the outcome of a retry after the other recovery ended
+test('a --recover whose earlier claim of the journal was released by another recovery just before it read it is refused with the publisher’s sentence, not a raw ENOENT', async () => {
+  // Arrange: a journal of a stopped metadata recovery with a claim of a stopped owner; just before the recovery reads that claim, another recovery releases it.
+  const { recoverWikiPublication: recoverWhileTheClaimGoes } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-claim-released-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    const before = await readFile(join(output, 'codebook-wiki.json'))
+    const id = '12345678-1234-1234-1234-123456789abc'
+    const record = {
+      projectRoot: root,
+      output,
+      operation: 'restore-manifest',
+      pid: 99999999,
+      id,
+      manifestSha256: createHash('sha256').update(before).digest('hex'),
+      modifiedManifestSha256: createHash('sha256')
+        .update('{unfinished edit')
+        .digest('hex'),
+      modifiedManifestBackup: output + '.modified-manifest-' + id + '.json',
+      temporaryManifest: join(output, '.codebook-restore-' + id + '.json'),
+    }
+    const bytes = JSON.stringify(record)
+    await writeFile(journal, bytes)
+    await writeFile(join(output, 'codebook-wiki.json'), '{unfinished edit')
+    const claim =
+      journal + '.recovery-' + createHash('sha256').update(bytes).digest('hex')
+    await writeFile(
+      claim,
+      JSON.stringify({
+        pid: 99999999,
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      }),
+    )
+    swapBeforeReading(
+      (path) => path === claim,
+      () => rm(claim),
+    )
+
+    // Act
+    const recovery = await recoverWhileTheClaimGoes({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      recovery,
+      `Another recovery of this Wiki released its recovery claim ${claim} while this one read it, so nothing was moved. Run --recover again once no other recovery runs.`,
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner and the agent whose two --recover runs of one Wiki start a recovery of an edited manifest at once: the one that loses the race to write the journal is told so in the publisher's words, not given a raw EEXIST of the system; fails_when=the recovery rejects with the EEXIST of the link that gives its journal its name; why_new=Cycle 0048 task 15 (S11-N11); seam=a copy of the publisher over a file system that lets another recovery write the journal just before this one links its own (scripts/tests/utils/swappedFolderFileSystem.mjs); no_claim=the other recovery's own course
+test('a --recover whose journal of a manifest recovery was written by another recovery just before it linked its own is refused with the publisher’s sentence, not a raw EEXIST', async () => {
+  // Arrange: a published Wiki whose manifest the learner edited; just before the recovery gives its journal the name, another recovery writes a journal there.
+  const { recoverWikiPublication: recoverWhileTheJournalIsWritten } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-raced-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(join(output, 'codebook-wiki.json'), '{unfinished edit')
+    swapBeforeLinking(
+      (path) => path === journal,
+      () => writeFile(journal, '{"written":"by another recovery"}'),
+    )
+
+    // Act
+    const recovery = await recoverWhileTheJournalIsWritten({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert: the other recovery's journal is untouched.
+    assert.deepEqual(
+      { recovery, journal: await readFile(journal, 'utf8') },
+      {
+        recovery: `An earlier Wiki publication needs inspection. Run --recover after its process exits: ${journal}`,
+        journal: '{"written":"by another recovery"}',
+      },
+    )
+  } finally {
+    swapBeforeLinking(
+      () => false,
+      async () => undefined,
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the learner and the agent whose two --recover runs of one Wiki end the same empty journal at once: the one that finds the journal gone is told so in the publisher's words, not given a raw ENOENT of the system; fails_when=the recovery reads the empty journal again to remove it, and the other recovery removed it between its two reads, so the read rejects with ENOENT; why_new=Cycle 0048 task 15 (S11-N11); seam=a copy of the publisher over a file system that removes the journal just before the recovery's second read of it (scripts/tests/utils/swappedFolderFileSystem.mjs); no_claim=the outcome of a retry after the other recovery ended
+test('a --recover whose empty journal was ended by another recovery between its two reads of it is refused with the publisher’s sentence, not a raw ENOENT', async () => {
+  // Arrange: a published Wiki and an empty journal a minute old; the recovery's second read of the journal finds it removed.
+  const { recoverWikiPublication: recoverWhileTheJournalGoes } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-journal-ended-')),
+  )
+  const output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    journal = `${output}.publish-journal.json`
+  try {
+    await writeStage(first, root, '<h1>Original</h1>', undefined, output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeFile(journal, '')
+    const aMinuteAgo = new Date(Date.now() - 60_000)
+    await utimes(journal, aMinuteAgo, aMinuteAgo)
+    let reads = 0
+    swapBeforeReading(
+      (path) => path === journal && ++reads === 2,
+      () => rm(journal),
+    )
+
+    // Act
+    const recovery = await recoverWhileTheJournalGoes({
+      projectRoot: root,
+      outputDirectory: output,
+    }).then(
+      () => 'recovered',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      recovery,
+      `Publication ownership changed; the recovery record was preserved: ${journal}`,
+    )
+  } finally {
+    swapBeforeReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0048 task 9 (S11-N5): a publish whose look at its own record failed, whose record then stays, names --recover and keeps its refusal.
+for (const {
+  check,
+  recordName,
+  recordOf,
+  lookCode,
+  removalCode,
+  isLookedOf,
+  isRemovedOf,
+} of [
+  {
+    check: 'its publish lock once it took it',
+    recordName: 'Wiki publish lock',
+    recordOf: (output) => `${output}.publish-lock.json`,
+    lookCode: 'EBUSY',
+    removalCode: 'EBUSY',
+    // The first look at the lock while no journal stands is the check of the lock just taken.
+    isLookedOf: (lock, journal) => (path) =>
+      path === lock && !existsSync(journal),
+    isRemovedOf: (lock) => (path) => path === lock,
+  },
+  {
+    check: 'its publish lock before its swap',
+    recordName: 'Wiki publish lock',
+    recordOf: (output) => `${output}.publish-lock.json`,
+    lookCode: 'EIO',
+    removalCode: 'EACCES',
+    // The first look at the lock once the journal stands is the check before the swap.
+    isLookedOf: (lock, journal) => (path) =>
+      path === lock && existsSync(journal),
+    isRemovedOf: (lock) => (path) => path === lock,
+  },
+  {
+    check: 'its journal before its swap',
+    recordName: 'Wiki publication journal',
+    recordOf: (output) => `${output}.publish-journal.json`,
+    lookCode: 'EIO',
+    removalCode: 'EACCES',
+    // The check of the journal before the swap is the first look at it after the lock's check there.
+    isLookedOf: (lock, journal) => {
+      let isLockRechecked = false
+      return (path) => {
+        if (path === lock && existsSync(journal)) isLockRechecked = true
+        return path === journal && isLockRechecked
+      }
+    },
+    isRemovedOf: (lock, journal) => (path) => path === journal,
+  },
+]) {
+  // Value: protects=the editor agent and the learner whose publish was refused because a look at its own record failed (a scanner holds the file on Windows) and whose record then could not be removed either: the refusal tells them that the record stays and that --recover ends it, and it is not replaced by the raw error of the removal; fails_when=the refusal says only to publish again, which the record that stays refuses, or the removal's raw EBUSY or EACCES replaces the refusal, or the removal's failure is not kept as the cause; why_new=Cycle 0048 task 9 (S11-N5); seam=a copy of the publisher over a file system that fails a look at the record once and the removal of the record (scripts/tests/utils/failingFileSystem.mjs, failLookOf, observeRemovals); no_claim=a real scanner, and the retry of the removal before it gives up (unlinkRetried)
+  test(`a publish whose look at ${check} fails with ${lookCode} and whose record then cannot be removed is refused with the look’s sentence, and the record kept with --recover named`, async () => {
+    // Arrange: the look at the record fails once; the removal of the record fails with the row's code.
+    const { publishWiki: publishWhoseRecordStays } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    const lock = `${wiki.output}.publish-lock.json`,
+      journal = `${wiki.output}.publish-journal.json`
+    failLookOf(isLookedOf(lock, journal), lookCode)
+    const isRemoved = isRemovedOf(lock, journal)
+    let removalCause
+    const stopObserving = observeRemovals((path) => {
+      if (!isRemoved(path)) return
+      removalCause = Object.assign(new Error(`${removalCode}: unlink`), {
+        code: removalCode,
+      })
+      throw removalCause
+    })
+    try {
+      // Act
+      const refusal = await publishWhoseRecordStays({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => ({ message: 'published', causeIsTheRemoval: false }),
+        (error) => ({
+          message: error.message,
+          causeIsTheRemoval: error.cause === removalCause,
+        }),
+      )
+      stopObserving()
+      const besideTheWiki = await publisherFilesBeside(wiki.output)
+
+      // Assert
+      const record = recordOf(wiki.output)
+      assert.deepEqual(
+        { refusal, besideTheWiki },
+        {
+          refusal: {
+            message: `${unreadOwnRecordRefusalOf(recordName, record, lookCode)} The publisher could not remove its ${recordName} ${record} (${removalCode}), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again.`,
+            causeIsTheRemoval: true,
+          },
+          // The record whose removal failed stands beside the Wiki folder, alone.
+          besideTheWiki: [record.slice(record.lastIndexOf('/') + 1)],
+        },
+      )
+    } finally {
+      stopObserving()
+      failLookOf(() => false, lookCode)
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Cycle 0048 task 106 (OCR A): a refusal keeps its marks when a journal that cannot be removed wraps it, so the lock's own check still reads them.
+
+// Value: protects=the editor agent and the learner whose publish was refused because a look at its own publish lock failed before the swap and whose journal and lock both could not be removed: the refusal names both records that stay, so the agent knows --recover must end the lock too; fails_when=the wrap for the kept journal makes a new error from the refusal's message alone, so the mark that tells the lock's check that a failed look at the lock caused the refusal (unreadRecordPath) is lost and the answer names the journal only, while the lock stays and refuses the next publish; why_new=Cycle 0048 task 106 (OCR A); seam=a look at the lock that fails with EIO once the journal stands (failLookOf) and removals of the journal and the lock that fail (observeRemovals), over the real publish; no_claim=the words of the look's own sentence, which the neighbouring tests pin
+test('a publish whose look at its publish lock fails before its swap and whose journal and lock both cannot be removed is refused with the look’s sentence, and both records kept with --recover named', async () => {
+  // Arrange: the look at the lock fails once the journal stands; the removal of the journal fails with EIO, the removal of the lock with EACCES.
+  const { publishWiki: publishWhoseRecordsStay } = await loadMarkedCopy(
+    'publish-wiki.mjs',
+    '?failing',
+  )
+  const wiki = await publishedWikiWithACandidate()
+  const lock = `${wiki.output}.publish-lock.json`,
+    journal = `${wiki.output}.publish-journal.json`
+  failLookOf((path) => path === lock && existsSync(journal), 'EIO')
+  const stopObserving = observeRemovals((path) => {
+    if (path !== journal && path !== lock) return
+    const code = path === journal ? 'EIO' : 'EACCES'
+    throw Object.assign(new Error(`${code}: unlink`), { code })
+  })
+  try {
+    // Act
+    const refusal = await publishWhoseRecordsStay({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+    stopObserving()
+    const besideTheWiki = await publisherFilesBeside(wiki.output)
+
+    // Assert
+    assert.deepEqual(
+      { refusal, besideTheWiki },
+      {
+        refusal: `${unreadOwnRecordRefusalOf('Wiki publish lock', lock, 'EIO')} The publisher could not remove its Wiki publication journal ${journal} (EIO), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again. The publisher could not remove its Wiki publish lock ${lock} (EACCES), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again.`,
+        besideTheWiki: [
+          journal.slice(journal.lastIndexOf('/') + 1),
+          lock.slice(lock.lastIndexOf('/') + 1),
+        ].sort(),
+      },
+    )
+  } finally {
+    stopObserving()
+    failLookOf(() => false, 'EIO')
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0048 task 12 (S11-N8): the refusal of a copy of a learner's file that a recovery kept in the candidate.
+
+// Value: protects=the learner's newest text of a file of their own that a recovery kept in the candidate (the recovery answers it in changedFilesKept) because the learner saved it after the recovery checked it: the next publish refuses the file, and the refusal must not tell the agent to delete it; fails_when=the refusal of a file outside the manifest says "Delete it from the stage" for a copy of a learner's file that stands in the Wiki folder too, so the agent deletes the only copy of what the learner saved; why_new=Cycle 0048 task 12 (S11-N8); seam=a published Wiki with a learner's file and a candidate that holds a file of the same name; no_claim=the recovery that keeps the copy (the test of changedFilesKept above)
+test('a publish of a candidate that holds a copy of a learner’s file outside its manifest is refused with a sentence that keeps the copy for the learner and does not tell the agent to delete it', async () => {
+  // Arrange: a published Wiki that holds a learner's file; the candidate holds a file of the same name, as a recovery leaves one it kept.
+  const wiki = await publishedWikiWithACandidate()
+  try {
+    await writeFile(
+      join(wiki.output, 'manual.txt'),
+      'The learner kept these notes',
+    )
+    await writeFile(
+      join(wiki.next, 'manual.txt'),
+      'The learner kept these notes, and saved them again',
+    )
+
+    // Act
+    const refusal = await publishWiki({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.',
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the editor agent that reads the answer of --recover: it learns what changedFilesKept lists and not to delete those copies, that unwrittenJournalRemoved says an empty journal was ended with the lock, and which folder to move back among several; fails_when=the skill leaves any of the three undocumented, so the agent deletes a learner's saved text or cannot read the answer; why_new=Cycle 0048 tasks 10, 12 and 16 (S11-N6, S11-N8, S11-N12); seam=none; no_claim=what an agent does with the sentences, an eval gap the owner named (D9, D12)
+test('the bundled skill documents changedFilesKept, unwrittenJournalRemoved and that the learner chooses among several folders to move back, and tells the agent not to delete a kept copy', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      changedFilesKept: skill.includes(
+        "If a recovery of a stopped publish answers `changedFilesKept` (a list of paths in the candidate), it kept each of those files there on purpose: each is a copy of a learner's file that changed after the recovery checked it, because the learner saved it, so it may hold the learner's newest text.",
+      ),
+      doNotDelete: skill.includes(
+        'Do not delete it: show the learner its path, and once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete the copy from the candidate, and publish again.',
+      ),
+      unwrittenJournalRemoved: skill.includes(
+        'Where an empty journal stood beside that lock, the recovery ended it too and its result also has `unwrittenJournalRemoved: true`.',
+      ),
+      newestFolder: skill.includes(
+        'Where the refusal names several such folders, the publisher cannot tell which was the Wiki last (a change inside a folder does not change the folder’s own time): let the learner choose the one that holds the Wiki they want back, by what each folder holds.',
+      ),
+    },
+    {
+      changedFilesKept: true,
+      doNotDelete: true,
+      unwrittenJournalRemoved: true,
+      newestFolder: true,
+    },
+  )
+})
+
+// Value: protects=the editor agent that starts the publisher through a folder that holds a link (an extensions folder moved by a link, a Windows junction, a linked home folder): it gets the usage and the JSON answer, not silence with exit 0; fails_when=the command line compares the script's path as given with the real path Node runs it by, so a linked path starts nothing and the agent reads success with no stage; why_new=Cycle 0048 task 52 (QA captures 001-003); seam=none (the shipped CLI as the agent runs it); no_claim=every link kind of every system, only the directory link of the host (a junction on Windows)
+test('the publisher started through a linked skill folder prints its usage and exits 2 for no arguments, and answers --prepare with its JSON', async () => {
+  // Arrange
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-linked-skill-cli-')),
+  )
+  const linkedSkillFolder = join(directory, 'linked-skills'),
+    root = join(directory, 'project'),
+    output = join(root, '.codebook', 'wiki')
+  try {
+    await symlink(
+      fileURLToPath(new URL('../../skills/codebook', import.meta.url)),
+      linkedSkillFolder,
+      'junction',
+    )
+    await mkdir(root)
+    const linkedCommand = join(linkedSkillFolder, 'publish-wiki.mjs')
+
+    // Act
+    const withoutArguments = spawnSync(process.execPath, [linkedCommand], {
+      encoding: 'utf8',
+    })
+    const prepared = spawnSync(
+      process.execPath,
+      [linkedCommand, '--prepare', '--project', root, '--output', output],
+      { encoding: 'utf8' },
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        usageStatus: withoutArguments.status,
+        usageStdout: withoutArguments.stdout,
+        usageStderr: withoutArguments.stderr,
+        preparedStatus: prepared.status,
+        preparedStderr: prepared.stderr,
+        preparedKeys: Object.keys(JSON.parse(prepared.stdout || '{}')),
+        preparedOutput: JSON.parse(prepared.stdout || '{}').output,
+      },
+      {
+        usageStatus: 2,
+        usageStdout: '',
+        usageStderr: PUBLISHER_USAGE_STDERR,
+        preparedStatus: 0,
+        preparedStderr: '',
+        preparedKeys: ['stage', 'manifest', 'output', 'legacyAdopted'],
+        preparedOutput: output,
+      },
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a host program that imports the publisher while its own script path (process.argv[1]) names no file that exists (a program started from a stdin pipe, a bundler, a test runner with a removed script): the import ends without a throw, without the usage on stderr and without the exit code 2 the command line sets; fails_when=isStartedAsScript lets the error of the path's resolution escape (the import throws) or answers true for a path it cannot resolve (the usage is printed and the exit code is 2); why_new=the previous /ship pass (Step 7, 6386434f) found the unresolvable path untested; the linked-folder test above covers a path that resolves; seam=a child node process that sets process.argv[1] to a missing path before it imports the publisher; no_claim=a path that resolves to another file than the publisher, which every import by the tests of this file covers
+test('importing the publisher while the host script path names no existing file runs no command: no usage, no exit code, no throw', () => {
+  // Arrange
+  const publisherUrl = new URL(
+    '../../skills/codebook/publish-wiki.mjs',
+    import.meta.url,
+  ).href
+  const hostProgram = [
+    "process.argv[1] = '/codebook-no-such-folder/no-such-script.mjs'",
+    `const publisher = await import(${JSON.stringify(publisherUrl)})`,
+    'console.log(typeof publisher.publishWiki)',
+  ].join('\n')
+
+  // Act
+  const imported = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', hostProgram],
+    { encoding: 'utf8' },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      status: imported.status,
+      stdout: imported.stdout,
+      stderr: imported.stderr,
+    },
+    { status: 0, stdout: 'function\n', stderr: '' },
+  )
+})
+
+// Cycle 0048 task 65 (CodeRabbit): a page the published Wiki owns keeps the plain refusal of a stray file.
+
+// Value: protects=the agent whose candidate holds a page that the published Wiki owns but its manifest dropped (a page --render-only wrote into the candidate): the refusal must tell it to delete the page from the stage, since the copy sentence tells it to write into that owned page, and the next publish refuses the owned page as changed; fails_when=the refusal calls every stray file that stands in the Wiki folder a copy of a learner's file, owned pages included; why_new=Cycle 0048 task 65 (CodeRabbit strayFileRefusalOf); seam=a published Wiki with an extra page and a candidate that holds that page but lists only the overview; no_claim=a candidate whose Wiki has no publication record (a legacy one)
+test('a publish of a candidate that holds a page the published Wiki owns but its manifest dropped is refused with the plain sentence that tells the agent to delete it from the stage', async () => {
+  // Arrange: a published Wiki that owns pages/dropped.html; the candidate holds that file but its manifest lists only the overview.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-dropped-owned-page-')),
+  )
+  const root = join(directory, 'project'),
+    output = join(root, '.codebook/wiki'),
+    first = join(root, '.codebook/first'),
+    next = join(root, '.codebook/next')
+  try {
+    await mkdir(root)
+    await writeStage(first, root, '<h1>Published</h1>', 'dropped.html', output)
+    await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: first,
+    })
+    await writeStage(next, root, '<h1>Next</h1>', undefined, output)
+    await mkdir(join(next, 'pages'), { recursive: true })
+    await writeFile(join(next, 'pages/dropped.html'), '<p>rendered</p>')
+
+    // Act
+    const refusal = await publishWiki({
+      projectRoot: root,
+      outputDirectory: output,
+      stageDirectory: next,
+    }).then(
+      () => 'published',
+      (error) => error.message,
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      "The staged Wiki contains a file outside its published manifest: pages/dropped.html. Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.",
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0048 task 66 (Security, OCR A, native adversarial): the copy of a learner's file takes its mode and times from the file whose bytes were read.
+
+/** How long a test lets a publish run whose read of a path was swapped for a FIFO after the publisher's look at it: the refusal comes within milliseconds, so a publish that is still running after this has blocked on the FIFO, as one that opens it for reading without `O_NONBLOCK` does until a writer opens it. */
+const FIFO_SWAP_WAIT_MS = 5_000
+
+/**
+ * Puts a FIFO at a path, in place of what stands there, as another process that swaps a learner's file or a candidate's file after the publisher looked at it. Called by the tests of the reads that follow a look at the same path (Cycle 0048 task 199).
+ * @param {string} path - Where the FIFO goes.
+ * @returns {Promise<void>} Once the FIFO stands at the path.
+ * @throws When `mkfifo` is missing or fails.
+ * @example
+ * await putFifoAt(join(wiki.output, 'manual.sh'))
+ */
+async function putFifoAt(path) {
+  await rm(path, { force: true })
+  const made = spawnSync('mkfifo', [path], { timeout: FIFO_SWAP_WAIT_MS })
+  assert.equal(made.status, 0, 'mkfifo made the FIFO')
+}
+
+/**
+ * Lets an open for reading that waits on a FIFO go on, by opening the FIFO for writing without waiting and closing it again: the test's clean-up, so a publish that blocked on the FIFO (the code under test being wrong) ends and leaves no pending call that keeps the test process alive.
+ * @param {string} path - The FIFO.
+ * @returns {void}
+ * @example
+ * releaseReadersOf(join(wiki.output, 'manual.sh'))
+ */
+function releaseReadersOf(path) {
+  try {
+    closeSync(openSync(path, constants.O_WRONLY | constants.O_NONBLOCK))
+  } catch {
+    // No reader waits on the FIFO (ENXIO), or nothing stands at the path: there is nothing to release.
+  }
+}
+
+/**
+ * Waits for a publish to end for a bounded time, and answers how it ended: the sentence of its refusal, `published`, or that it was still running when the time was out, so a publish that hangs fails its test instead of hanging it.
+ * @param {Promise<unknown>} publishing - The publish.
+ * @param {number} milliseconds - The most to wait.
+ * @returns {Promise<string>} How the publish ended.
+ * @example
+ * await outcomeWithin(publishWiki({ projectRoot, outputDirectory, stageDirectory }), 5_000) // => 'published'
+ */
+async function outcomeWithin(publishing, milliseconds) {
+  let timer
+  const timeOut = new Promise((resolve) => {
+    timer = setTimeout(
+      () => resolve(`still running after ${milliseconds} ms`),
+      milliseconds,
+    )
+  })
+  try {
+    return await Promise.race([
+      publishing.then(
+        () => 'published',
+        (error) => error.message,
+      ),
+      timeOut,
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Cycle 0048 task 199 (native adversarial): a read of a path the publisher looked at first cannot wait on a FIFO put at the path after the look, and follows no link put there.
+const SWAPPED_READS = [
+  {
+    names: 'learner’s file',
+    isFileSwapped: (wiki) => join(wiki.output, 'manual.sh'),
+    arm: (path, swap) => swapBeforeOpeningToRead((read) => read === path, swap),
+    isJournalKept: false,
+    refusal: (path) => `A manual Wiki file changed during publication: ${path}`,
+  },
+  {
+    names: 'candidate’s manifest',
+    isFileSwapped: (wiki) => join(wiki.next, 'codebook-wiki.json'),
+    arm: (path, swap) => swapBeforeReading((read) => read === path, swap),
+    isJournalKept: false,
+    refusal: (path) => `Wiki publication requires a regular file: ${path}`,
+  },
+]
+const SWAPPED_BY = [
+  {
+    names: 'a FIFO',
+    isLinkFollowed: false,
+    put: (path) => putFifoAt(path),
+  },
+  {
+    names: 'a link to another file',
+    isLinkFollowed: true,
+    put: async (path, elsewhere) => {
+      await rm(path, { force: true })
+      await symlink(elsewhere, path)
+    },
+  },
+]
+for (const swapped of [
+  ...SWAPPED_READS.flatMap((read) => SWAPPED_BY.map((by) => ({ ...read, by }))),
+  {
+    names: 'candidate’s copy of the learner’s file before it is synced',
+    isFileSwapped: (wiki) => join(wiki.next, 'manual.sh'),
+    arm: (path, swap) => swapBeforeOpeningToRead((read) => read === path, swap),
+    // The refusal of a candidate that cannot be synced keeps the journal for --recover.
+    isJournalKept: true,
+    by: SWAPPED_BY[0],
+    refusal: (path) =>
+      `The candidate could not be synced to the disk before the swap: ${path} (it is no regular file or folder now). Nothing was moved and the Wiki is as it was, and the publication journal was kept. Run --recover, then prepare a candidate and publish again.`,
+  },
+]) {
+  // Value: protects=the agent and the learner whose publish holds the Wiki's lock while it reads: a FIFO put at a path after the publisher's look at it (by a tool, a sync client or a hostile clone's hook) makes the publish end with a refusal in seconds, and not wait for a writer for ever with the lock held and the Wiki folder in use, and a link put there is refused and not followed; fails_when=the read opens the path for reading without O_NONBLOCK and O_NOFOLLOW (a plain open or readFile), which blocks on the FIFO until a writer opens it and reads the file a link leads to; why_new=Cycle 0048 task 199 (native adversarial); seam=the publisher copy over a file system that runs a swap right before the open or the read of the path the test names (scripts/tests/utils/swappedFolderFileSystem.mjs, swapBeforeOpeningToRead and swapBeforeReading), a real FIFO made with mkfifo or a link, and the real publish bounded in time; no_claim=a writer that opens the FIFO (the test lets none); Windows, which has no FIFO in the file namespace and whose links need a privilege
+  test(
+    `a publish whose ${swapped.names} is swapped for ${swapped.by.names} after the publisher looked at it ends within ${FIFO_SWAP_WAIT_MS / 1000} seconds, with the Wiki and the publish lock as they were`,
+    { skip: process.platform === 'win32' },
+    async () => {
+      // Arrange: a published Wiki with a learner's file and a candidate; just before the publisher reads the file the row names, what the row names takes its place.
+      const { publishWiki: publishWhoseReadFindsASwap } = await loadMarkedCopy(
+        'publish-wiki.mjs',
+        '?swapped-folder',
+      )
+      const wiki = await publishedWikiWithACandidate()
+      const swappedPath = swapped.isFileSwapped(wiki),
+        elsewhere = join(wiki.directory, 'elsewhere.txt')
+      let publishing
+      try {
+        await writeFile(
+          join(wiki.output, 'manual.sh'),
+          '#!/bin/sh\necho notes\n',
+        )
+        await writeFile(elsewhere, 'other text')
+        const manifestBefore = await readFile(
+          join(wiki.output, 'codebook-wiki.json'),
+          'utf8',
+        )
+        swapped.arm(swappedPath, () => swapped.by.put(swappedPath, elsewhere))
+
+        // Act
+        publishing = publishWhoseReadFindsASwap({
+          projectRoot: wiki.root,
+          outputDirectory: wiki.output,
+          stageDirectory: wiki.next,
+        })
+        const outcome = await outcomeWithin(publishing, FIFO_SWAP_WAIT_MS)
+
+        // Assert
+        assert.deepEqual(
+          {
+            outcome,
+            manifest: await readFile(
+              join(wiki.output, 'codebook-wiki.json'),
+              'utf8',
+            ),
+            homePage: await readFile(join(wiki.output, 'index.html'), 'utf8'),
+            lockKept: existsSync(`${wiki.output}.publish-lock.json`),
+            journalKept: existsSync(`${wiki.output}.publish-journal.json`),
+          },
+          {
+            outcome: swapped.refusal(swappedPath),
+            manifest: manifestBefore,
+            homePage: wiki.wikiPage,
+            lockKept: false,
+            journalKept: swapped.isJournalKept,
+          },
+        )
+      } finally {
+        // A publish that blocked on the FIFO is let go and ended, so the test leaves no pending call behind; the armed swaps are cleared.
+        releaseReadersOf(swappedPath)
+        if (publishing !== undefined)
+          await outcomeWithin(publishing, FIFO_SWAP_WAIT_MS)
+        swapBeforeReading(
+          () => false,
+          async () => undefined,
+        )
+        swapBeforeOpeningToRead(
+          () => false,
+          async () => undefined,
+        )
+        await rm(wiki.directory, { recursive: true, force: true })
+      }
+    },
+  )
+}
+
+// Value: protects=the agent and the learner whose --recover holds the Wiki's lock while it reads the copy of a learner's file a stopped publish left in its candidate: a FIFO put at the copy's path after the recovery's look at it makes the recovery end in seconds, treating the FIFO as no copy of its own (an entry that is no regular file is none, as for a link), and not wait for a writer for ever; fails_when=regularFileOf reads the copy with a plain readFile after its look, which blocks on the FIFO until a writer opens it; why_new=Cycle 0048 task 199 (native adversarial); seam=the publisher copy over a file system that runs a swap right before the read of the copy (scripts/tests/utils/swappedFolderFileSystem.mjs, swapBeforeReading), a real FIFO made with mkfifo, a publish killed past finalize (publishWithACopyKilledPastFinalize), and the real recovery bounded in time; no_claim=a writer that opens the FIFO (the test lets none); what the recovery does with the FIFO afterwards; Windows, which has no FIFO in the file namespace
+test(
+  'a recovery whose stopped publish’s copy of the learner’s file is swapped for a FIFO after the recovery looked at it ends within 5 seconds and takes the FIFO for no copy of its own',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: the publish of the candidate is killed past finalize after it copied the learner's file; just before the recovery reads the copy, a FIFO takes its place.
+    const { recoverWikiPublication: recoverWhoseCopyIsAFifo } =
+      await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+    const { wiki, killed } = await publishWithACopyKilledPastFinalize()
+    const copy = join(wiki.next, 'manual.txt')
+    let recovering
+    try {
+      swapBeforeReading(
+        (path) => path === copy,
+        () => putFifoAt(copy),
+      )
+
+      // Act
+      recovering = recoverWhoseCopyIsAFifo({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      })
+      const outcome = await outcomeWithin(recovering, FIFO_SWAP_WAIT_MS)
+
+      // Assert
+      assert.deepEqual(
+        {
+          killed,
+          outcome,
+          lockKept: existsSync(`${wiki.output}.publish-lock.json`),
+          journalKept: existsSync(`${wiki.output}.publish-journal.json`),
+        },
+        {
+          killed: '',
+          outcome: 'published',
+          lockKept: false,
+          journalKept: false,
+        },
+      )
+    } finally {
+      // A recovery that blocked on the FIFO is let go and ended; the armed swap is cleared.
+      releaseReadersOf(copy)
+      if (recovering !== undefined)
+        await outcomeWithin(recovering, FIFO_SWAP_WAIT_MS)
+      swapBeforeReading(
+        () => false,
+        async () => undefined,
+      )
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=the learner whose script lies in the Wiki folder and whose file is swapped for a link (by a tool, a sync client or a hostile clone's hook) in the moment between the publisher's read of its bytes and its look at its mode: the copy keeps the mode of the file that was read, not 0777 of the link; fails_when=copyLearnerFiles reads the bytes by one look and the mode and times by a second look at the path, so a link there gives the copy the mode of the link; why_new=Cycle 0048 task 66 (Security, OCR A, native adversarial); seam=the publisher copy over a file system that runs a swap right after the learner's file is read (swapAfterReading), and the real publish; no_claim=a link that stays in the Wiki folder (the publish refuses it at its recheck); Windows, whose links keep no mode
+test(
+  'a publish whose learner’s file is swapped for a link right after its bytes are read keeps the mode of the file that was read in the copy, not the link’s 777',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: a published Wiki with a learner's file of mode 640; right after the publisher reads it, a link replaces it, and the original is back before the copy is made, as a sync client restores it.
+    const { publishWiki: publishWhoseReadIsFollowedBySwap } =
+      await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+    const wiki = await publishedWikiWithACandidate()
+    const learnerFile = join(wiki.output, 'manual.sh'),
+      elsewhere = join(wiki.directory, 'elsewhere.txt'),
+      learnerText = '#!/bin/sh\necho notes\n'
+    try {
+      await writeFile(elsewhere, 'other text')
+      await writeFile(learnerFile, learnerText)
+      await chmod(learnerFile, 0o640)
+      swapAfterReading(
+        (path) => path === learnerFile,
+        async () => {
+          await rm(learnerFile)
+          await symlink(elsewhere, learnerFile)
+        },
+      )
+      swapBeforeWriting(
+        (path) => path === join(wiki.next, 'manual.sh'),
+        async () => {
+          await rm(learnerFile)
+          await writeFile(learnerFile, learnerText)
+          await chmod(learnerFile, 0o640)
+        },
+      )
+
+      // Act
+      await publishWhoseReadIsFollowedBySwap({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      })
+
+      // Assert
+      const copy = await lstat(learnerFile)
+      assert.deepEqual(
+        { mode: (copy.mode & 0o777).toString(8), isFile: copy.isFile() },
+        { mode: '640', isFile: true },
+      )
+    } finally {
+      // The armed swaps are cleared, so a failure before the read cannot leak them into a later test.
+      swapAfterReading(
+        () => false,
+        async () => undefined,
+      )
+      swapBeforeWriting(
+        () => false,
+        async () => undefined,
+      )
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=the learner whose note is touched or saved again in the moment between the publisher's read of its bytes and its look at its times: the copy keeps the time the file had when the publisher opened it, so the bytes read and the time of the copy are of one file state; fails_when=copyLearnerFiles takes the times by a second look after the read, so the copy of the old bytes gets the later time; why_new=Cycle 0048 task 66 (Security, OCR A, native adversarial); seam=the publisher copy over a file system that runs a swap right after the learner's file is read (swapAfterReading), and the real publish; no_claim=a save that changes the bytes (the publish refuses it at its recheck of the learner's files)
+test('a publish whose learner’s file is touched right after its bytes are read gives the copy the time the file had when it was read, not the later time', async () => {
+  // Arrange: a published Wiki with a learner's file last changed on 2021-03-04; right after the publisher reads it, its times move to 2022-05-06.
+  const { publishWiki: publishWhoseReadIsFollowedByTouch } =
+    await loadMarkedCopy('publish-wiki.mjs', '?swapped-folder')
+  const wiki = await publishedWikiWithACandidate()
+  const learnerFile = join(wiki.output, 'manual.txt'),
+    changedAt = new Date('2021-03-04T05:06:07Z'),
+    touchedAt = new Date('2022-05-06T07:08:09Z')
+  try {
+    await writeFile(learnerFile, 'The learner kept these notes')
+    await utimes(learnerFile, changedAt, changedAt)
+    swapAfterReading(
+      (path) => path === learnerFile,
+      () => utimes(learnerFile, touchedAt, touchedAt),
+    )
+
+    // Act
+    await publishWhoseReadIsFollowedByTouch({
+      projectRoot: wiki.root,
+      outputDirectory: wiki.output,
+      stageDirectory: wiki.next,
+    })
+
+    // Assert
+    assert.equal(
+      (await lstat(learnerFile)).mtime.toISOString(),
+      '2021-03-04T05:06:07.000Z',
+    )
+  } finally {
+    // The armed swap is cleared, so a failure before the read cannot leak it into a later test.
+    swapAfterReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the tests of the publisher that count reads with swapAfterReading's predicate (`++reads === 2`): a read through a handle is one read for the predicate, as a readFile of the path is, so the swap runs after the read the test counted; fails_when=the predicate is asked again when the bytes of a handle are read (once at the open and once at the readFile of the handle), so a counting predicate counts a handle's read twice and the swap runs after no read or after the wrong one; why_new=Cycle 0048 task 121 (OCR B); seam=the stand-in file system of the swapped-folder mark, called by the test itself over a real file; no_claim=the publisher's own reads, and a handle that is opened and never read (its open is the one call of the predicate)
+test('a swap armed for the second read of a file by a counting predicate runs after the second read when that read goes through a handle, and the predicate is asked once for each read', async () => {
+  // Arrange: a file read once by readFile and once through a handle; the predicate counts every read of the file and the swap notes which read it ran after.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-swap-after-reading-')),
+  )
+  const file = join(directory, 'notes.txt')
+  const events = []
+  let reads = 0
+  try {
+    await writeFile(file, 'The learner kept these notes')
+    swapAfterReading(
+      (path) => path === file && ++reads === 2,
+      async () => {
+        events.push('swap ran')
+      },
+    )
+
+    // Act
+    await readThroughSwappedFolderFileSystem(file)
+    events.push('first read done')
+    const handle = await openThroughSwappedFolderFileSystem(file, 'r')
+    const bytes = await handle.readFile('utf8')
+    await handle.close()
+    events.push('second read done')
+
+    // Assert
+    assert.deepEqual(
+      { events, bytes, reads },
+      {
+        events: ['first read done', 'swap ran', 'second read done'],
+        bytes: 'The learner kept these notes',
+        reads: 2,
+      },
+    )
+  } finally {
+    // The armed swap is cleared, so a failure before the read cannot leak it into a later test.
+    swapAfterReading(
+      () => false,
+      async () => undefined,
+    )
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0048 task 83 (Performance): the conflict of a learner's file with an owned path is found by lookups, with the same answers.
+for (const conflict of [
+  {
+    names: 'the name of a folder the candidate puts a page in',
+    learnerPath: 'pages',
+    expectedRefusal: 'A manual Wiki file conflicts with the update: pages',
+  },
+  {
+    names: 'a file inside a folder named like a page of the candidate',
+    learnerPath: 'pages/notes.html/readme.txt',
+    expectedRefusal:
+      'A manual Wiki file conflicts with the update: pages/notes.html/readme.txt',
+  },
+]) {
+  // Value: protects=the learner whose file stands where the update needs a folder or a page: the publish refuses it before it writes a copy, whichever side of the path is the folder; fails_when=the check of the learner's files against the owned paths finds only the same path, so a file named like a folder of a page, or a file inside a folder named like a page, is copied into the candidate and breaks the swap; why_new=Cycle 0048 task 83 (Performance copyLearnerFiles); seam=the real publish over a Wiki whose learner's file shares a name with a folder or a page of the candidate; no_claim=the speed of the lookups
+  test(`a publish refuses a learner’s file with ${conflict.names} and names it`, async () => {
+    // Arrange: a published Wiki with the learner's file; the candidate adds the page pages/notes.html.
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-wiki-conflict-kinds-')),
+    )
+    const root = join(directory, 'project'),
+      output = join(root, '.codebook/wiki'),
+      first = join(root, '.codebook/first'),
+      next = join(root, '.codebook/next')
+    try {
+      await mkdir(root)
+      await writeStage(first, root, '<h1>Published</h1>', undefined, output)
+      await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: first,
+      })
+      await mkdir(dirname(join(output, conflict.learnerPath)), {
+        recursive: true,
+      })
+      await writeFile(
+        join(output, conflict.learnerPath),
+        'The learner’s own notes',
+      )
+      await writeStage(next, root, '<h1>Next</h1>', 'notes.html', output)
+
+      // Act
+      const refusal = await publishWiki({
+        projectRoot: root,
+        outputDirectory: output,
+        stageDirectory: next,
+      }).then(
+        () => 'published',
+        (error) => error.message,
+      )
+
+      // Assert
+      assert.equal(refusal, conflict.expectedRefusal)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+}
+
+// Cycle 0048 task 84 (Red Team): the skill says that the file the agent writes into is the learner's own.
+
+// Value: protects=the agent that follows the skill's rule that published output is read-only and also its step that puts a learner's kept text into the file of the same name in the Wiki folder: it learns the two do not clash, since that file is the learner's own and the edit needs their agreement; fails_when=the skill drops the sentence, so the step reads against the read-only rule and the agent either skips the step and loses the learner's text, or edits a page the publisher wrote; why_new=Cycle 0048 task 84 (Red Team SKILL.md); seam=none; no_claim=what an agent does with the sentence, an eval gap the owner named (D9, D12)
+test('the bundled skill says that the file of the same name in the Wiki folder is the learner’s own, so the kept text goes in with their agreement and not against the read-only rule', async () => {
+  // Arrange / Act
+  const skill = await readFile(
+    new URL('../../skills/codebook/SKILL.md', import.meta.url),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(
+    skill.includes(
+      "The file of the same name in the Wiki folder is the learner's own file, not a page the publisher wrote, so that edit is the learner's, made with their agreement; it does not break the rule that published output is read-only.",
+    ),
+    true,
+  )
+})

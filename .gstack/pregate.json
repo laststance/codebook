@@ -2,12 +2,143 @@
   "runner": "node extension/scripts/run-pregate-tests.mjs {files}",
   "dependencies": {
     ".coderabbit.yaml": [],
-    ".gitignore": [],
+    ".gitignore": [
+      "extension/scripts/tests/repositoryIgnore.test.mjs",
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "VERSION": [],
     ".codex/restore-product-context.mjs": [
       ".codex/restore-product-context.test.mjs"
     ],
-    "extension/test-timings.json": []
+    "extension/test-timings.json": [
+      "extension/scripts/tests/testShards.test.mjs"
+    ],
+    ".github/workflows/*.yml": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    ".github/workflows/*.yaml": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    ".github/actions/**": ["extension/scripts/tests/workflowPins.test.mjs"],
+    ".gstack/pregate.json": ["extension/scripts/tests/pregateTests.test.mjs"],
+    ".node-version": [
+      "extension/scripts/tests/health.test.mjs",
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    "AGENTS.md": [".codex/restore-product-context.test.mjs"],
+    ".codex/hooks.json": [".codex/restore-product-context.test.mjs"],
+    ".github/reader-dom/package.json": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    ".github/reader-dom/package-lock.json": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    "extension/scripts/checkHealth.mjs": [
+      "extension/scripts/tests/health.test.mjs"
+    ],
+    "extension/scripts/test-shard.mjs": [
+      "extension/scripts/tests/testShards.test.mjs"
+    ],
+    "extension/scripts/study-bootstrap-qa.mjs": [
+      "extension/scripts/tests/studyBootstrapQa.test.mjs",
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    "extension/scripts/wiki-reader-dom-qa.mjs": [
+      "extension/scripts/tests/wikiReaderDomQa.test.mjs",
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    "extension/scripts/fixtures/reader-shell-0.2.29.0.txt": [
+      "extension/scripts/tests/wikiReaderDomQa.test.mjs"
+    ],
+    "extension/scripts/tests/utils/prepareWikiBufferProbe.mjs": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/scripts/tests/utils/markedCopyHooks.mjs": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/scripts/tests/utils/killedPublisherProbe.mjs": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/skills/codebook/SKILL.md": [
+      "extension/scripts/tests/publishWiki.test.mjs",
+      "extension/scripts/tests/renderWikiPageLimit.test.mjs"
+    ],
+    "extension/skills/codebook/reader-shell.html": [
+      "extension/scripts/tests/publishWiki.test.mjs",
+      "extension/scripts/tests/studyBootstrapQa.test.mjs",
+      "extension/scripts/tests/renderWikiPageLimit.test.mjs",
+      "extension/scripts/tests/wikiReaderDomQa.test.mjs"
+    ],
+    "extension/src/constants.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/src/deepWikiReader.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/src/utils/installWikiUpdateStatus.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/src/utils/rebindDeepWikiEditorLinks.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/src/utils/installShortcutHelp.ts": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "codecov.yml": ["extension/scripts/tests/workflowPins.test.mjs"],
+    "extension/package.json": [
+      "extension/scripts/tests/workflowPins.test.mjs",
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/pnpm-workspace.yaml": [
+      "extension/scripts/tests/workflowPins.test.mjs",
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/scripts/run-pregate-tests.mjs": [
+      "extension/scripts/tests/pregateTests.test.mjs"
+    ],
+    "extension/scripts/utils/collectTestRun.mjs": [
+      "extension/scripts/tests/testShards.test.mjs"
+    ],
+    "extension/scripts/utils/planWholeSplitFiles.mjs": [
+      "extension/scripts/tests/testShards.test.mjs"
+    ],
+    "extension/scripts/*-qa.mjs": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    "extension/scripts/build-fast.mjs": [
+      "extension/scripts/tests/workflowPins.test.mjs"
+    ],
+    "extension/scripts/check-package.mjs": [
+      "extension/scripts/tests/package.test.mjs"
+    ],
+    "extension/scripts/package.mjs": [
+      "extension/scripts/tests/packageCli.test.mjs"
+    ],
+    "extension/scripts/tests/utils/wrongLookFileSystem.mjs": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/scripts/tests/utils/crlfShellFileSystem.mjs": [
+      "extension/scripts/tests/publishWiki.test.mjs"
+    ],
+    "extension/README.md": ["extension/scripts/tests/package.test.mjs"],
+    "extension/pnpm-lock.yaml": ["extension/scripts/tests/package.test.mjs"],
+    "extension/tsconfig.json": ["extension/scripts/tests/package.test.mjs"],
+    "extension/patches/**": ["extension/scripts/tests/package.test.mjs"],
+    "extension/src/**": ["extension/scripts/tests/package.test.mjs"],
+    "extension/scripts/**": ["extension/scripts/tests/package.test.mjs"],
+    "extension/skills/**": ["extension/scripts/tests/package.test.mjs"],
+    "extension/scripts/utils/runPackageCommand.mjs": [
+      "extension/scripts/tests/runPackageCommand.test.mjs"
+    ],
+    "extension/scripts/utils/withPackageOutput.mjs": [
+      "extension/scripts/tests/runPackageCommand.test.mjs"
+    ],
+    "extension/scripts/utils/packageConstants.mjs": [
+      "extension/scripts/tests/runPackageCommand.test.mjs"
+    ]
   },
-  "strays": { "allow": [".gstack"] },
+  "strays": {
+    "allow": [".gstack"]
+  },
   "warn": ["literals"]
 }

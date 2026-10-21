@@ -178,7 +178,8 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
       if (!Object.hasOwn(values, key)) throw new Error(`Unknown reader template field: ${key}`);
       return values[key];
     });
-    pages.set(page.path, requireReadablePage(page.path, pageHtml));
+    // Every page is written with LF only: its text may hold CRLF or a lone CR (an editor on Windows writes them), and a browser reads each as LF anyway. So the CRLF the publisher's refusal (lineEndRefusalOf in publish-wiki.mjs) looks for is only one that Git added at a checkout, never one the page's own text brought, and that refusal does not fire for a page that merely held CRLF.
+    pages.set(page.path, requireReadablePage(page.path, pageHtml.replace(/\r\n?/g, '\n')));
   }
   return pages;
 }

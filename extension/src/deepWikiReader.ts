@@ -24,6 +24,7 @@ import {
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
   WIKI_QUESTION_STATUS_STYLE,
+  WIKI_READER_FOREIGN_HOST_REFUSAL,
   WIKI_REFUSED_STEP_ADVICE,
   WIKI_RESPONSE_PART_BYTES,
   WIKI_RESPONSE_SEND_LIMIT_MS,
@@ -72,7 +73,7 @@ import { servedWikiPageOffThread } from './wikiPageWorker'
 /** A started Wiki reader: where the browser opens it, how it is told where the editor forwards it and that a project file changed, and how it is closed. */
 export type DeepWikiReader = {
   url: string
-  /** Tells the reader which address the editor forwards it to (a remote window forwards the loopback port, often to another one), so a question from its own page at that address is answered. Only an address on this machine is accepted; any other is ignored. @param address - The reader's URL as `vscode.env.asExternalUri` resolved it. */
+  /** Tells the reader which address the editor forwards it to (a remote window forwards the loopback port, often to another one), so a question from its own page at that address is answered. Only an address on this machine is accepted; any other is ignored. Every accepted address stays accepted, so a second call adds an address and does not replace the first. @param address - The reader's URL as `vscode.env.asExternalUri` resolved it. */
   acceptForwardedOrigin(address: string): void
   /** Tells the reader that a file of the project was changed, created or deleted, whoever wrote it; the reader raises its source-change stamp when the file can change the Wiki's freshness. @param path - Absolute path of the file. */
   noteSourceChange(path: string): void
@@ -271,7 +272,7 @@ export async function readDeepWikiManifest(
   return { files: new Set(paths), sources, revision, excludedPaths }
 }
 
-/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entries for the forwarded address and for reported file changes, and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
+/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entries for each forwarded address and for reported file changes, and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
 export async function startDeepWikiReader(
   outputDirectory: string,
   projectRoot: string,
@@ -326,8 +327,10 @@ export async function startDeepWikiReader(
     }
   })
   let origin = ''
-  /** The origin of the address the editor forwards this reader to, when that is another loopback address than its own. */
-  let forwardedOrigin: string | undefined
+  /** The origins of every address the editor forwarded this reader to, when each is another loopback address than its own; each stays accepted, as the page at an earlier address is still open when the editor forwards the port again. */
+  const forwardedOrigins = new Set<string>()
+  /** The host and port of each of {@link forwardedOrigins}, as a browser writes them in the Host header of a request to it. */
+  const forwardedHosts = new Set<string>()
   /** The freshness inspection in flight and the generation of the site it reads; requests of that generation that overlap await it. */
   let freshnessInspection:
     { generation: string; result: Promise<WikiFreshness> } | undefined
@@ -355,11 +358,11 @@ export async function startDeepWikiReader(
       if (freshnessInspection === inspection) freshnessInspection = undefined
     }
   }
-  /** The manifest read in flight for the requests that are no page, which every such request that comes meanwhile joins ({@link readManifestShared}). */
+  /** The manifest read in flight for the requests that come meanwhile, a page and a file that is no page alike ({@link readManifestShared}). */
   let sharedManifestRead: ReturnType<typeof readDeepWikiManifest> | undefined
   /**
-   * Reads the manifest for a request that is no page ({@link readManifest}): a request that comes while such a read is in flight joins it instead of reading and parsing the manifest once more, so the style sheets, images and fonts a page asks for at once cost one read between them, on the extension host's thread, however many they are.
-   * Called by the reader for a file of the Wiki that is no page and for a question; a page reads the manifest itself, under its place among the pages in hand ({@link takeWikiPagePlace}). A request that joins gets the manifest of a read that began before it came, as a read that ended just before it came would have given it.
+   * Reads the manifest for a page, a file that is no page or a question ({@link readManifest}): a request that comes while such a read is in flight joins it instead of reading and parsing the manifest once more, so the style sheets, images and fonts a page asks for at once, and the pages a browser opens at once, cost one read between them, on the extension host's thread, however many they are.
+   * Called by the reader for a file of the Wiki that is no page, for a question and, under its place among the pages in hand ({@link takeWikiPagePlace}), for a page. A request that joins gets the manifest of a read that began before it came, as a read that ended just before it came would have given it.
    * @returns The manifest, as {@link readDeepWikiManifest} answers it.
    * @throws What the read throws, to every request that joined it.
    * @example const { files } = await readManifestShared()
@@ -395,7 +398,21 @@ export async function startDeepWikiReader(
       ),
     )
   }
-  /** Routes only owned pages and questions; every request must carry this reader's random path token. @example await handleRequest(request, response) */
+  /**
+   * Says whether a request names this reader's own host and port in its Host header, or those of any address the editor forwarded it to.
+   * Called by {@link handleRequest} first, for every request: a name of another site that a DNS answer rebinds to the loopback address reaches this server with that name as its Host, so a page of another site, which holds the reader's address with its path token (a referrer or a link of a crafted page may have leaked it), reads nothing from the reader.
+   * @param request - The request.
+   * @returns `true` when the Host header is the reader's loopback host and port, or the host of a forwarded address; `false` for any other host and for no Host header.
+   * @example isOwnHost(request) // => false for `Host: rebound.example:41234`
+   */
+  function isOwnHost(request: IncomingMessage): boolean {
+    const asked = request.headers.host?.toLowerCase()
+    return (
+      asked !== undefined &&
+      (asked === new URL(origin).host || forwardedHosts.has(asked))
+    )
+  }
+  /** Routes only owned pages and questions; every request must carry this reader's random path token and name this reader's own host ({@link isOwnHost}). @example await handleRequest(request, response) */
   async function handleRequest(
     request: IncomingMessage,
     response: ServerResponse,
@@ -404,6 +421,11 @@ export async function startDeepWikiReader(
     // Every response says nosniff, its pages, its answers and the reader's own script included: a browser then runs as script only a response typed as JavaScript, and the reader's own script is the one.
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Cache-Control', 'no-store')
+    // A request that names another host is no request of the reader's own page, or of the editor's forward of it: nothing is read for it.
+    if (!isOwnHost(request)) {
+      sendJson(response, 403, { error: WIKI_READER_FOREIGN_HOST_REFUSAL })
+      return
+    }
     const url = new URL(request.url ?? '/', origin)
     if (!url.pathname.startsWith(prefix)) {
       sendJson(response, 404, { error: 'Unknown Wiki reader.' })
@@ -531,7 +553,7 @@ export async function startDeepWikiReader(
     }
   }
   /**
-   * Says whether a request to the question route is a question of this reader's own page: a POST of JSON from the reader's address, or from the one the editor forwards it to.
+   * Says whether a request to the question route is a question of this reader's own page: a POST of JSON from the reader's address, or from any one the editor forwarded it to.
    * Called by {@link answerQuestionRequest} before it reads the request's body.
    * @param request - The request.
    * @returns `true` for such a question; `false` for any other request, also one without an origin, which comes from no page of this reader.
@@ -539,10 +561,10 @@ export async function startDeepWikiReader(
    */
   function isQuestionOfOwnPage(request: IncomingMessage): boolean {
     const askedFrom = request.headers.origin
-    // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
+    // The reader's own page asks from the reader's address, or from an address the editor forwarded it to (every accepted forward stays accepted); a request without an origin is no page of this reader.
     const isOwnPage =
       askedFrom !== undefined &&
-      (askedFrom === origin || askedFrom === forwardedOrigin)
+      (askedFrom === origin || forwardedOrigins.has(askedFrom))
     return (
       request.method === 'POST' &&
       isOwnPage &&
@@ -603,8 +625,8 @@ export async function startDeepWikiReader(
     response: ServerResponse,
     relativePath: string,
   ): Promise<void> {
-    // An agent may publish a new owned directory while this reader stays open.
-    const { files } = await readManifest()
+    // An agent may publish a new owned directory while this reader stays open. Pages asked for at once (tabs restored, a page and the pages it names) join one read, as the files that are no page do, so the manifest, up to 64 MiB, is parsed once on the host's thread however many pages are in hand.
+    const { files } = await readManifestShared()
     // A browser that went while the manifest was read gets no page: nothing more is read for it.
     if (response.destroyed) return
     // A page the last update removed or renamed sends the learner to the overview instead of a JSON error, and the overview is told which page was asked for, so it can say so.
@@ -775,8 +797,11 @@ export async function startDeepWikiReader(
       acceptForwardedOrigin(address: string): void {
         const forwarded = new URL(address)
         // A forwarded address that is not on this machine is somebody else's page.
-        if (WIKI_LOOPBACK_HOSTS.includes(forwarded.hostname))
-          forwardedOrigin = forwarded.origin
+        if (WIKI_LOOPBACK_HOSTS.includes(forwarded.hostname)) {
+          // Every accepted address is kept: a later forward must not turn the page at an earlier one away.
+          forwardedOrigins.add(forwarded.origin)
+          forwardedHosts.add(forwarded.host.toLowerCase())
+        }
       },
       noteSourceChange(path: string): void {
         const projectPath = relative(projectRoot, path).split(sep).join('/')

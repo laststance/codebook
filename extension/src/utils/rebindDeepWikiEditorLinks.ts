@@ -1,4 +1,7 @@
-import { WIKI_OPEN_TARGET_ELEMENT_ID } from '../constants'
+import {
+  WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT,
+  WIKI_OPEN_TARGET_ELEMENT_ID,
+} from '../constants'
 
 import { addressAsBrowserReads } from './addressAsBrowserReads'
 import { browserAttributeText } from './browserAttributeText'
@@ -123,7 +126,7 @@ function freeOpenTargetIdIn(html: string): string {
  * @param html - The published page with its static editor fallback.
  * @param editorScheme - The scheme registered by the editor serving this request.
  * @param tagAtBodyEnd - The caller's tag, escaped, for the filter to put at the end of the page's body, or at the page's end when it has none, so that it reaches the learner judged; nothing is put in when omitted.
- * @returns The page with no link but those the publisher accepts today, Codebook action links bound to the active editor, the rail's "Open in …" link named after it, and the file and line beside that link. An entry whose address names no path or line keeps its link alone.
+ * @returns The page with no link but those the publisher accepts today, Codebook action links bound to the active editor, the rail's "Open in …" link named after it, and the file and line beside that link. An entry whose address names no path or line keeps its link alone, and so does an entry past {@link WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT} bytes of added targets.
  * @example
  * rebindDeepWikiEditorLinks('<a href="vscode://laststance.codebook/settings?root=%2Frepo">Settings</a>', 'cursor')
  * // => '<a href="cursor://laststance.codebook/settings?root=%2Frepo">Settings</a>'
@@ -153,6 +156,8 @@ export function rebindDeepWikiEditorLinks(
     )
   // The id of the added description is chosen once for the page, in one reading of its ids, and only when an entry gets a target.
   let targetId: string | undefined
+  // What the targets added so far make the page longer, in UTF-8 bytes, so that a page of crafted entries is not served many times its file ({@link WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT}).
+  let addedBytes = 0
   // A site published by 0.2.29.0 carries the link alone; it gets the target the publisher prints today.
   const editedPage = relabeledPage.replace(
     OPEN_ENTRY_WITHOUT_TARGET,
@@ -166,7 +171,15 @@ export function rebindDeepWikiEditorLinks(
       const target = openTargetOf(linkAttributes, editorScheme)
       if (target === undefined) return entry
       targetId ??= freeOpenTargetIdIn(relabeledPage)
-      return `${opening}${linkAttributes} aria-describedby="${targetId}"${link} ${openTargetHtml(target, targetId)}${closing}`
+      const withTarget = `${opening}${linkAttributes} aria-describedby="${targetId}"${link} ${openTargetHtml(target, targetId)}${closing}`
+      // The page is served as UTF-8, so the bound counts bytes: a character of a CJK path is one UTF-16 code unit and three bytes.
+      const entryAddedBytes =
+        Buffer.byteLength(withTarget) - Buffer.byteLength(entry)
+      // An entry that would take the page past the bound keeps its link alone.
+      if (addedBytes + entryAddedBytes > WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT)
+        return entry
+      addedBytes += entryAddedBytes
+      return withTarget
     },
   )
   // The filter reads the page as the edits above left it and puts the caller's tag in, so no tag or attribute they make reaches the learner unjudged.

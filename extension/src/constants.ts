@@ -7,7 +7,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
  */
 export const API_VERSION = '1.7'
-export const EXTENSION_VERSION = '0.2.31'
+export const EXTENSION_VERSION = '0.2.32'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -47,10 +47,14 @@ export const LINUX_PID_NAMESPACE_PATH = '/proc/self/ns/pid'
 export const MACHINE_KEY_HEX_LENGTH = 16
 /** How long an empty lock file or an empty prepared takeover claim must have stayed empty before it counts as left by a killed window; a running window is in that state for an instant. */
 export const STORAGE_LOCK_UNWRITTEN_GRACE_MS = 10_000
-/** How often the release of this window's storage lock reads and removes the lock before it leaves the lock for this window's next write ({@link withStorageLock}); on Windows a scanner or an indexer can hold the file for a moment, so its read or its removal fails. */
+/** How often the release of this window's storage lock reads and removes the lock before it leaves the lock in place ({@link withStorageLock}); on Windows a scanner or an indexer can hold the file for a moment, so its read or its removal fails. A release that still fails is not thrown: the write's result stands, and the lock is taken back by this window's timer ({@link STORAGE_LOCK_TAKE_BACK_DELAY_MS}) or by its next hold of that folder. */
 export const STORAGE_LOCK_RELEASE_ATTEMPTS = 20
 /** How long the release of this window's storage lock waits between two attempts; with {@link STORAGE_LOCK_RELEASE_ATTEMPTS} about half a second. */
 export const STORAGE_LOCK_RELEASE_RETRY_DELAY_MS = 25
+/** How long a window waits after its release left the storage lock in place (the system refused to read or remove it) before it takes the lock back without a further write ({@link withStorageLock}); a scanner or an indexer on Windows usually lets go within seconds. */
+export const STORAGE_LOCK_TAKE_BACK_DELAY_MS = 5_000
+/** How many times a window takes back a lock its release left in place, {@link STORAGE_LOCK_TAKE_BACK_DELAY_MS} apart, before it leaves the lock to its next write of that folder; with the delay about a minute. */
+export const STORAGE_LOCK_TAKE_BACK_ATTEMPTS = 12
 /** What an editor that runs without its telemetry service answers as `vscode.env.machineId` on every computer; it identifies none. */
 export const EDITOR_MACHINE_ID_PLACEHOLDER = 'someValue.machineId'
 export const CURSOR_MCP_CATALOG_REFRESH_STEP_MS = 1
@@ -153,6 +157,7 @@ export const READER_ERROR_KINDS = [
   { kind: 'citations', retryable: true, choiceRetired: false },
   { kind: 'control', retryable: false, choiceRetired: true },
   { kind: 'history-learning', retryable: true, choiceRetired: false },
+  { kind: 'history-not-saved', retryable: true, choiceRetired: false },
   { kind: 'history-position', retryable: true, choiceRetired: false },
   { kind: 'layout', retryable: false, choiceRetired: false },
   { kind: 'node-history-control', retryable: false, choiceRetired: true },
@@ -886,6 +891,11 @@ export const WIKI_FRESHNESS_MIN_INTERVAL_MS = 5_000
 export const WIKI_UPDATE_STATUS_RETRY_LIMIT = 3
 /** The id of the visually hidden element that names, as written, the file and line the rail's entry of a Wiki page opens. The entry's link refers to it as its description; the target shown beside the link carries no id and is hidden from assistive technology, because Chrome reads its wrap points as spaces. The publisher prints the same id (a page has one entry), and the reader gives it to the description it adds to a site published without one. */
 export const WIKI_OPEN_TARGET_ELEMENT_ID = 'codebook-open-target'
+/** What the reader's 403 says to a request whose Host is not its own loopback host or a loopback forward of it, which a learner sees in the browser when the editor forwards the reader to another host (a tunnel, a browser-based editor). */
+export const WIKI_READER_FOREIGN_HOST_REFUSAL =
+  'The Wiki reader answers only on this computer, at its own loopback address or at the loopback address the editor forwards it to. This address is neither, so the reader shows no page.'
+/** How many UTF-8 bytes the reader may add to one page beside its rail entries' links (the shown target and its description, each printing the path escaped), counted by `Buffer.byteLength` and not in UTF-16 code units; the bound counts only these targets and not the bytes the filter ({@link withServedAddresses}) adds afterwards when it renames a refused attribute (for example `referrerpolicy` to `data-codebook-unlinked`) or puts in the caller's tag. An entry past it keeps its link alone, as an entry whose address names no target does. A path of quotes written raw in a single-quoted address prints as six characters in each of the two copies, so a page of 2 MB made of such entries was served at 24.7 MB, about 12 times its file, where the reader's limits count about twice ({@link WIKI_PAGE_FILE_LIMIT_BYTES}); with this bound the targets make a page at most one page file limit larger than its file. An ordinary page has one entry that adds a few hundred bytes. */
+export const WIKI_OPEN_TARGET_ADDED_BYTES_LIMIT = 2_097_152
 /** How long after the window's `load` event the reader page writes the sentence into the line that says the overview stands in for a missing page. The line is in the page, empty, before that, so its text is a change of a status region that already exists; a screen reader speaks the page itself while it loads. */
 export const WIKI_MISSING_PAGE_TEXT_DELAY_MS = 150
 /** How many characters of the page path named in the address the missing-page line shows at most; anyone can write the address, so a longer value gets the sentence without the path instead of filling the reading column. */

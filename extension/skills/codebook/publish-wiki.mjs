@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { constants, realpathSync } from 'node:fs';
 import { link, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises';
 import { hostname, uptime } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep, win32 } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { renderWikiPages } from './render-wiki.mjs';
 
@@ -19,6 +20,16 @@ const isMissing = error => error.code === 'ENOENT';
 const PASSING_RENAME_ERRORS = ['EPERM', 'EBUSY'];
 /** How many times {@link retriedWhilePassing} tries a move or a removal that fails with a passing error, and by how much its wait before the next try grows each time, in milliseconds: at most 2.25 seconds of waiting in all. */
 const RENAME_TRIES = 10, RENAME_RETRY_STEP_MS = 50;
+/** The marks on a step's refusal that a reader further out checks, which {@link refusalWithKeptRecordOf} carries onto the refusal it makes anew: the path of a record whose look failed, and the flags of a refusal after a swap of the path, of a failed read of the candidate, of a candidate not synced and of a recovery that another superseded. Read by {@link marksOf}. */
+const REFUSAL_MARKS = ['unreadRecordPath', 'isHoldRefusal', 'isCandidateReadFailure', 'isUnsyncedCandidate', 'isSupersededRestore'];
+/** The permission bits a copy of a learner's file takes from its original: read, write and execute for the owner, the group and others (octal 777), never a setuid, setgid or sticky bit. Read by {@link copyLearnerFiles}. */
+const COPIED_MODE_BITS = 0o777;
+/** The flags with which a file is opened to be read whole after a look at its path: read-only, never waiting (`O_NONBLOCK`: the open of a FIFO that no writer has open would wait for one for ever, with the publish lock held) and never through a link at the last name of the path (`O_NOFOLLOW`). Windows has neither flag and no FIFO in its file namespace, so only the read-only flag stays there. Read by {@link readRegularFile}. */
+const READ_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
+/** The flags with which a file or a folder is opened to be synced: read-only and never waiting on a FIFO put at the path since the look (`O_NONBLOCK`; none on Windows). A link is followed as before. Read by {@link syncFolder}. */
+const SYNC_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+/** The errors with which a system answers the open with `O_NOFOLLOW` of a link: `ELOOP` on Linux and macOS, `EMLINK` on FreeBSD. Read by {@link readRegularFile}. */
+const LINK_AT_OPEN_ERRORS = ['ELOOP', 'EMLINK'];
 
 /** Runs a move or a removal of a folder or file, and runs it again, a bounded number of times with a growing wait ({@link RENAME_TRIES}), while it fails with an error that passes once another process lets go of the entry ({@link PASSING_RENAME_ERRORS}); any other error, and the last passing one, is passed on at once. Called by {@link renameRetried} and {@link unlinkRetried}. @param call - The move or the removal. @returns What the call resolves with. @throws What its last try rejects with. @example await retriedWhilePassing(() => unlink('/repo/.codebook/wiki.publish-lock.json')) // resolves after a passing EBUSY */
 async function retriedWhilePassing(call) {
@@ -173,12 +184,29 @@ function parseManifest(bytes, projectRoot) {
   return { manifest, owned };
 }
 
-/** Reads publisher metadata and owned files without accepting a symlink or special file. @example await regularBytes('/wiki/codebook-wiki.json') */
+/** Reads publisher metadata and owned files without accepting a symlink or special file: the look at the path refuses them, and the read goes through a handle that cannot wait on a FIFO put at the path since the look and follows no link put there ({@link readRegularFile}). A regular file put at the path since the look is read as it was before: the metadata files are replaced by their writers, each whole. @example await regularBytes('/wiki/codebook-wiki.json') */
 async function regularBytes(path, optional = false) {
   let stat;
   try { stat = await lstat(path); } catch (error) { if (optional && isMissing(error)) return undefined; throw error; }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Wiki publication requires a regular file: ' + path);
-  return readFile(path);
+  const reading = readRegularFile(path, 'Wiki publication requires a regular file: ' + path).then(({ bytes }) => bytes);
+  // A file that another process removed between the look and the read is a missing one, as it is when the look finds nothing.
+  return optional ? reading.catch(error => { if (isMissing(error)) return undefined; throw error; }) : reading;
+}
+
+/** Reads a file whole through one handle that was opened without waiting and without following a link ({@link READ_WITHOUT_WAITING}), and answers its bytes with the handle's status, read before the bytes: the handle must be a regular file, and, where `looked` is given, the file of that look (the same device and file id), so a FIFO, a link or another file put at the path between the look and the open is refused and never read. Called by {@link regularBytes}, {@link readLearnerFile} and {@link regularFileOf}. @param path - The file's path, which the caller looked at. @param refusal - The message of the refusal of an entry that is no regular file, or no longer the file the look found. @param looked - The look's status with bigint ids; none where only a regular file is required. @returns The bytes and the handle's status. @throws An error with `refusal` for a link at the path, a handle that is no regular file or another file than the look found; what the open, the status read or the read rejects with otherwise. @example await readRegularFile('/repo/.codebook/wiki/manual.sh', 'A manual Wiki file changed during publication: /repo/.codebook/wiki/manual.sh', await lstat('/repo/.codebook/wiki/manual.sh', { bigint: true })) // => { bytes: <Buffer …>, status: BigIntStats { … } } */
+async function readRegularFile(path, refusal, looked) {
+  let handle;
+  try { handle = await open(path, READ_WITHOUT_WAITING); }
+  catch (error) { throw LINK_AT_OPEN_ERRORS.includes(error.code) ? new Error(refusal, { cause: error }) : error; }
+  try {
+    const status = await handle.stat({ bigint: true });
+    // An entry that is no regular file, or not the file the look found, was put at the path since the look: its bytes are not read.
+    if (!status.isFile() || (looked !== undefined && !isSameFile(status, looked))) throw new Error(refusal);
+    return { bytes: await handle.readFile(), status };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 /** Inventories stage/output for the shared publisher; linked and special files remain untouched. @example await listFiles('/repo/.codebook/wiki') */
@@ -274,17 +302,26 @@ async function createParentOf(requested, root) {
   catch (error) { await removeMadeFolders(madeFolders); throw error; }
 }
 
+/** The name of a folder as its real path gives it, so one folder has one name, and so one lock and one journal beside it, whatever name the command line used: on NTFS the short name (`CODEBO~1`) and the long one name one folder, and on macOS and Windows names of another case do. A name that stands as a folder and no link, whose real path lies in the same parent, is read from its real path; a name that is missing, a link, a file or a junction to a folder elsewhere keeps the name it was given, since the folder checks that follow refuse it by that name. Called by {@link locations} for the output and the stage. @param path - The absolute path the command line gave. @returns The last segment of the folder's real path, or of `path` where no folder stands there. @example await realNameOf('C:\\repo\\.codebook\\WIKI~1') // => 'wiki' on NTFS */
+async function realNameOf(path) {
+  const status = await lookAt(path);
+  if (status === undefined || !status.isDirectory() || status.isSymbolicLink()) return basename(path);
+  const [real, parent] = await Promise.all([realpath(path), realpath(dirname(path))]);
+  // A junction that lstat calls a folder leads to a folder elsewhere: it keeps its name, and the folder checks refuse it by that name.
+  return dirname(real) === parent ? basename(real) : basename(path);
+}
+
 /** Resolves paths for {@link prepareWikiStage}, {@link publishWiki} and recovery without following directory aliases: the output, the stage, and beside the output the journal and the publish lock ({@link takePublishLock}). @example await locations('/repo', '/repo/.codebook/wiki') */
 async function locations(projectRoot, outputDirectory, stageDirectory, createParent = false) {
   const root = await realpath(projectRoot), requested = resolve(outputDirectory);
   // Checked before the parent is created: a missing folder behind a link would otherwise be made outside the project.
   const isInProjectBefore = await requireOwnFoldersToOutput(requested, root);
   const { isOutputInProject, madeFolders } = createParent ? await createParentOf(requested, root) : { isOutputInProject: isInProjectBefore, madeFolders: [] };
-  const output = join(await realpath(dirname(requested)), basename(requested));
+  const output = join(await realpath(dirname(requested)), await realNameOf(requested));
   const within = relative(output, root);
   // An output inside the project (the default .codebook/wiki) is accepted; only the project root itself, or a folder that contains it, is refused.
   if (!isAbsolute(within) && within !== '..' && !within.startsWith('..' + sep)) throw new Error('The Wiki output cannot be the project root or a folder that contains it. A folder inside the project, such as .codebook/wiki, is accepted.');
-  const stage = stageDirectory === undefined ? undefined : join(await realpath(dirname(resolve(stageDirectory))), basename(resolve(stageDirectory)));
+  const stage = stageDirectory === undefined ? undefined : join(await realpath(dirname(resolve(stageDirectory))), await realNameOf(resolve(stageDirectory)));
   if (stage !== undefined && (dirname(stage) !== dirname(output) || stage === output)) throw new Error('The Wiki stage must be a distinct sibling of its output.');
   // The output and the stage themselves are held to the rule of the folders above them: the prior Wiki is read and the new one written there.
   await requireRegularFolder(output, root, isOutputInProject, outputRefusalOf);
@@ -380,12 +417,15 @@ function assertBaseline(expected, state) {
     throw new Error('The Wiki output changed since this candidate was prepared. Preserve it and inspect --recover (with --stage for a legacy adoption) before preparing again.');
 }
 
+/** The refusal of a step that finds a journal at its place, or finds another step's journal written meanwhile: an earlier publication or recovery needs inspection, which --recover does once its process exits. It names the journal by its path alone. Called by {@link requireNoJournal} and {@link startManifestRecovery}. @example journalStandsRefusalOf('/repo/.codebook/wiki.publish-journal.json') // => 'An earlier Wiki publication needs inspection. Run --recover after its process exits: /repo/.codebook/wiki.publish-journal.json' */
+const journalStandsRefusalOf = journal => 'An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal;
+
 /** Keeps all ordinary entry points out of an unfinished publication transaction: a journal at its name refuses the step. Where the publish lock stands beside it, the journal is most often that of a publish that runs now, past the write of its journal, which it keeps for most of its time: the step is refused with the lock's sentence ({@link publishLockRefusalOf}), which says to wait for that publish, or to run --recover once a stopped one's process exits, so the agent is not sent to recover a live publish; a journal without a lock is a stopped step's, which needs --recover. Called by {@link prepareWikiStage} and {@link publishWiki} with the lock, before a publish takes its own, and by {@link underPublishLock} without it, once this run holds the lock. @param lock - The publish lock's path, looked at only where a journal stands; none under this run's own lock. @param retry - What the lock's sentence asks the agent to run once that publish ends ({@link publishLockRefusalOf}). @throws The refusal of the lock or of the journal, and that of an entry at the journal's name that is no regular file. @example await requireNoJournal('/repo/.codebook/wiki.publish-journal.json', '/repo/.codebook/wiki.publish-lock.json') // throws the lock's sentence beside a live publish */
 async function requireNoJournal(journal, lock, retry) {
   if (!(await regularBytes(journal, true))) return;
   // A journal beside the publish lock is most often a live publish's: the step is sent to wait for it, not to recover it. A lock that cannot be looked at leaves the journal's sentence.
   if (lock !== undefined && await lookAt(lock).catch(() => undefined) !== undefined) throw new Error(publishLockRefusalOf(lock, retry));
-  throw new Error('An earlier Wiki publication needs inspection. Run --recover after its process exits: ' + journal);
+  throw new Error(journalStandsRefusalOf(journal));
 }
 
 /** Whether the output's parent, and the entries beside the output given with it, still lie where the paths were resolved: their real paths inside the project, and the parent still the folder, by device and inode, it was then. Both are compared as bigints: an NTFS file id may lie above 2^53, where two JavaScript numbers of different ids are equal. A folder that cannot be looked at counts as moved. Called by {@link holdOfPath}. @example await isWhereItWasResolved('/repo/.codebook', parentIdentity, ['/repo/.codebook/wiki.stage-1'], '/repo') // => false once .codebook was swapped for a link */
@@ -434,14 +474,20 @@ const isSameFileAt = file => isSameFileSeenAt(file).catch(() => false);
 /** Whether the entry at a written file's path is the file the record names, as {@link isSameFileAt} answers it, except for a look that fails with a system error other than a missing entry, which says nothing of the file and is passed on ({@link noneUnlessFailed}). Called by {@link isSameFileAt} and {@link isStillWrittenSeen}. @throws The failure of the look. @example await isSameFileSeenAt({ path: '/repo/.codebook/next/manual.txt', dev: 2049n, ino: 131077n }) // throws for EACCES */
 const isSameFileSeenAt = file => lstat(file.path, { bigint: true }).then(status => status.isFile() && isSameFile(status, file), failure => Boolean(noneUnlessFailed(failure)));
 
-/** Writes a new file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). The open is exclusive ('wx'): it refuses any entry at the name, a link or a second name of another file included, so the write never lands in a file the step did not make. The bytes are synced to the disk before the close ({@link syncWhereAble}), so a power cut after a step that relies on them, such as a publish's swap, cannot leave the file empty or cut short; a sync that fails counts as a write that failed. Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing, and neither does a close that fails, since the bytes it handed on may be lost (a full disk or a quota met at the close on a network or synced file system); the file the open made holds part of the bytes at most then, and is removed ({@link removeOwnFile}) before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). A status read that fails leaves nothing that tells the file the open made from a file another process put at its name since, so the path is kept, and the refusal names it for the learner to judge ({@link unreadStatusRefusalOf}). Called by {@link writeFilesHeld}, {@link replaceOwnFile}, {@link replaceOwnFileThrough}, {@link restoreManifestHeld} and {@link writeWholeRecord}, by {@link publishJournalWriterOf} for the side file of a journal, and by {@link heldWriterOf} for each copy of a learner's file, which {@link copyLearnerFiles} hands it. @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open, the write, the sync or the close rejects with, the first of them; `EEXIST` while an entry stands at the name; for a status read that fails, the refusal that names the kept file, with that failure as its cause. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText) // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
-async function writeOwnFile(path, bytes) {
-  const handle = await open(path, 'wx');
+/** Writes a new file a step records as its own through one handle, and answers what {@link removeWritten} needs to tell that file from any other at its path: the SHA-256 digest of the bytes, and the device and file id of the file the handle wrote, as bigints (an NTFS file id may lie above 2^53). The open is exclusive ('wx'): it refuses any entry at the name, a link or a second name of another file included, so the write never lands in a file the step did not make. The bytes are synced to the disk before the close ({@link syncWhereAble}), so a power cut after a step that relies on them, such as a publish's swap, cannot leave the file empty or cut short; a sync that fails counts as a write that failed, and so does a `chmod` or `utimes` of a copy that fails other than as a file system without modes or times fails it ({@link UNSETTABLE_ATTRIBUTE_ERRORS}). Once another process swaps a folder on the path for a link, the path leads to another file, maybe a published file of the same name and bytes, whose identity this is not. A write that fails answers nothing, and neither does a close that fails, since the bytes it handed on may be lost (a full disk or a quota met at the close on a network or synced file system); the file the open made holds part of the bytes at most then, and is removed ({@link removeOwnFile}) before the failure is passed on, so no partial copy is left that no record names (a full disk, a file size limit). A status read that fails leaves nothing that tells the file the open made from a file another process put at its name since, so the path is kept, and the refusal names it for the learner to judge ({@link unreadStatusRefusalOf}). Called by {@link writeFilesHeld}, {@link replaceOwnFile}, {@link replaceOwnFileThrough}, {@link restoreManifestHeld} and {@link writeWholeRecord}, by {@link publishJournalWriterOf} for the side file of a journal, and by {@link heldWriterOf} for each copy of a learner's file, which {@link copyLearnerFiles} hands it. @param attributes - For the copy of a learner's file ({@link copyLearnerFiles}): the `mode` (permission bits), `atime` and `mtime` of the original; the copy is created with the `mode`, so no other user can read a private file while it is copied, narrowed by the umask only (on Windows only the write bit counts, as the read-only attribute, which the handle that made the file may still write through and a removal clears), and takes the exact `mode` and the times after its bytes, except where the file system answers that it keeps no mode or no time ({@link UNSETTABLE_ATTRIBUTE_ERRORS}), when it keeps the mode of its create and the time of its write; none for any other file, which takes the default mode (0o666 less the umask). @returns The file's record: its path, the digest of its bytes, and its `dev` and `ino`. @throws What the open, the write, the `chmod` or `utimes` of a copy (other than an error of {@link UNSETTABLE_ATTRIBUTE_ERRORS}), the sync or the close rejects with, the first of them; `EEXIST` while an entry stands at the name; for a status read that fails, the refusal that names the kept file, with that failure as its cause. @example await writeOwnFile('/repo/.codebook/next/codebook-publication.json', receiptText) // => { path: '/repo/.codebook/next/codebook-publication.json', hash: '…', dev: 2049n, ino: 131074n } */
+async function writeOwnFile(path, bytes, attributes) {
+  // A copy of a learner's file is created with the original's permission bits (the umask can only narrow them), so a private file is never readable by others while it is copied; any other file takes the default mode.
+  const handle = await open(path, 'wx', attributes?.mode);
   let file, failure, hasFailed = false;
   try {
     const { dev, ino } = await handle.stat({ bigint: true });
     file = { path, hash: digest(bytes), dev, ino };
     await handle.writeFile(bytes);
+    // The times of a file this write copies are set after the bytes, since a write changes the time, and its mode is set again so the copy has the original's exact bits where the umask narrowed them at the create; a file system that keeps no mode or no time either drops it with no error (Linux FAT and exFAT drop a mode they cannot keep) or answers with an error of {@link UNSETTABLE_ATTRIBUTE_ERRORS} (a volume mounted for another owner, a FUSE file system), and the copy then has the mode the create gave it (the original's bits less the umask, never wider) or the time of its write; any other failure, such as a disk error, fails the copy as a failed write does.
+    if (attributes !== undefined) {
+      await setWhereAble(handle.chmod(attributes.mode));
+      await setWhereAble(handle.utimes(attributes.atime, attributes.mtime));
+    }
     // The bytes are on the disk before the step that relies on them: once a publish ends, a power cut must not take a copy of a learner's file whose original went with the prior Wiki.
     await syncWhereAble(() => handle.sync());
   } catch (error) { failure = error; hasFailed = true; }
@@ -460,15 +506,26 @@ const unreadStatusRefusalOf = (path, failure) => 'The publisher made ' + path + 
 /** The errors with which a system or a file system answers a sync it cannot make, which leaves the file's bytes or the folder's names as they were before the publisher synced anything: Windows opens no folder to sync it, or refuses its sync (`EISDIR`, `EPERM`, `EACCES`, `EINVAL`), and some file systems sync no file or folder (`EINVAL`, `ENOTSUP`, `ENOSYS`). Read by {@link syncWhereAble} and {@link syncFolder}. */
 const UNSYNCABLE_ERRORS = ['EISDIR', 'EPERM', 'EACCES', 'EINVAL', 'ENOTSUP', 'ENOSYS'];
 
+/** The errors with which a system or a file system answers the `chmod` or the `utimes` of a copy of a learner's file when it keeps no mode or no time for this user, so the copy keeps the mode its create gave it (the original's bits less the umask) and the time of its write ({@link writeOwnFile}); the error of any other failure, a disk error (`EIO`) above all, fails the copy. Node's `filehandle.chmod` is chmod(2) and `filehandle.utimes` is futimes; on Windows Node sets only the read-only attribute through the handle (libuv `fs__fchmod`), and libuv names the Windows errors as `src/win/error.c` maps them. `EPERM`: chmod(2) and utimensat(2) on Linux, and chmod(2) and utimes(2) on macOS, fail so when this user does not own the file, as on a FAT, exFAT or share volume mounted with another owner for every file (the kernel's vfat `uid` option); libuv maps Windows' `ERROR_ACCESS_DENIED` to it. `EACCES`: utimensat(2) and utimes(2) for a caller that is no owner and may not write, and libuv's `ERROR_CANT_ACCESS_FILE` and `ERROR_ELEVATION_REQUIRED`. `EINVAL`: utimensat(2) for a time value the call refuses, and libuv's `ERROR_INVALID_PARAMETER`. `EISDIR`: libuv maps Windows' `ERROR_INVALID_FUNCTION`, which a file system that lacks the call answers, to it, as for a sync ({@link UNSYNCABLE_ERRORS}). `ENOTSUP`: a file system that says it supports no such call (Node names Linux's `EOPNOTSUPP` this way), and libuv's `ERROR_NOT_SUPPORTED`. `ENOSYS`: a FUSE file system that implements no such call, whose answer the kernel's `fuse_do_setattr` hands on unchanged. Not here: `EIO` (the disk failed; chmod(2) and utimes(2) list it), `EROFS` and `EBADF` (the file was made a moment before through this handle), and the errors of a full disk or a quota. Linux FAT and exFAT drop a mode they cannot keep with no error at all (`fat_setattr`, `exfat_setattr`), so nothing is passed for that. Read by {@link setWhereAble}. */
+const UNSETTABLE_ATTRIBUTE_ERRORS = ['EPERM', 'EACCES', 'EINVAL', 'EISDIR', 'ENOTSUP', 'ENOSYS'];
+
+/** Waits for the `chmod` or the `utimes` of a copy of a learner's file, and lets pass the error of a file system that keeps no mode or no time there ({@link UNSETTABLE_ATTRIBUTE_ERRORS}), so the copy keeps the mode its create gave it or the time of its write; any other failure, such as a disk error, is passed on. Called by {@link writeOwnFile} for each of the two, one after the other, so a refusal of one does not hide a disk error of the other. @param setting - The call's promise, as `handle.chmod(mode)`. @throws What the call rejects with, other than an error of {@link UNSETTABLE_ATTRIBUTE_ERRORS}. @example await setWhereAble(handle.chmod(0o750)) */
+const setWhereAble = setting => setting.catch(error => { if (!UNSETTABLE_ATTRIBUTE_ERRORS.includes(error.code)) throw error; });
+
 /** Runs a sync of a file or a folder, and lets pass one that the system or the file system cannot make there ({@link UNSYNCABLE_ERRORS}); any other failure, such as a disk error, is passed on. Called by {@link writeOwnFile} for each file it writes, by {@link publishJournalWriterOf} for each line of the list of copies, and by {@link syncFolder}. @param sync - The sync, as `() => handle.sync()`. @throws What the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}. @example await syncWhereAble(() => handle.sync()) */
 const syncWhereAble = sync => sync().catch(error => { if (!UNSYNCABLE_ERRORS.includes(error.code)) throw error; });
 
-/** Syncs a folder's names to the disk: it is opened read-only and synced, where the platform allows ({@link UNSYNCABLE_ERRORS}; Windows cannot sync a folder), so the names of the files a publish wrote or moved into it survive a power cut after the step that relies on them. Called by {@link publishWiki} for the folder that holds the journal and the lock, once the journal has its name and again once the swap moved the Wiki, and for the folders of the candidate before the swap, and by {@link publishJournalWriterOf} once the list of copies has its name. @throws What the open or the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}. @example await syncFolder('/repo/.codebook') */
+/** Syncs a folder's names to the disk: it is opened read-only and synced, where the platform allows ({@link UNSYNCABLE_ERRORS}; Windows cannot sync a folder), so the names of the files a publish wrote or moved into it survive a power cut after the step that relies on them; the open does not wait ({@link SYNC_WITHOUT_WAITING}), so a FIFO put at the path of a file since it was listed ends the open at once, is refused ({@link syncUnlessFailed} words the refusal for a candidate) and holds no publish for a writer. Called by {@link publishWiki} for the folder that holds the journal and the lock, once the journal has its name and again once the swap moved the Wiki, and for the files and folders of the candidate before the swap ({@link syncCandidate}; a file is opened read-only and synced as a folder is), by {@link restoreManifest} for the folders of a metadata recovery, and by {@link publishJournalWriterOf} once the list of copies has its name. @throws What the open or the sync rejects with, other than an error of {@link UNSYNCABLE_ERRORS}, and an error for an entry that is neither a file nor a folder. @example await syncFolder('/repo/.codebook') */
 async function syncFolder(folder) {
-  const handle = await open(folder, 'r').catch(error => { if (UNSYNCABLE_ERRORS.includes(error.code)) return undefined; throw error; });
+  const handle = await open(folder, SYNC_WITHOUT_WAITING).catch(error => { if (UNSYNCABLE_ERRORS.includes(error.code)) return undefined; throw error; });
   // A folder the system does not open, as Windows does not, is not synced.
   if (handle === undefined) return;
-  try { await syncWhereAble(() => handle.sync()); } finally { await handle.close().catch(() => undefined); }
+  try {
+    // A FIFO or another special entry put at the path since the look is no file or folder to sync: the system answers its sync as one it cannot make, which would pass, so it is refused here.
+    const status = await handle.stat();
+    if (!status.isFile() && !status.isDirectory()) throw new Error('it is no regular file or folder now');
+    await syncWhereAble(() => handle.sync());
+  } finally { await handle.close().catch(() => undefined); }
 }
 
 /** Removes a file the publisher made and no longer needs: the file a failed {@link writeOwnFile} made, which holds part of the bytes at most, the file beside a journal or a claim that {@link writeWholeRecord} gave the record's name, and the file a recovery read the file system's clock from. The path may lead to another file by now, so it is removed only while it is that file, by its device and file id ({@link isSameFileAt}), and no byte of another file is lost. Called by {@link writeOwnFile} once the write or the close failed, by {@link writeWholeRecord} once the record has its name or its write failed, by {@link fileSystemTimeBeside} for the file it read the file system's clock from, by {@link publishJournalWriterOf} for the list of copies and the side file of a journal it removes, and by {@link removeOrphan} for a list of copies a stopped run left. @param file - The record of the file the open made. @example await removeOwnFile({ path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131074n }) */
@@ -519,10 +576,10 @@ const noneUnlessFailed = failure => {
   return undefined;
 };
 
-/** Whether the record a run wrote ({@link writeWholeRecord}), its publish lock or its journal, still stands at its name as that run's: a regular file there, looked at without following a link, holds the run's bytes, by their SHA-256 digest, and those bytes carry the run's random id, which no record of another step holds. The name's device and file id are not compared: a mount that gives each name of a file a file id of its own (sshfs without `use_ino`, CIFS with `noserverino`) answers another id for the record's name than for the file written beside it that the link gave that name ({@link pendingPathOf}). A look or a read that fails with a system error says nothing of the record, so it is not taken for a lost one: it refuses the step with its code ({@link unreadOwnRecordRefusalOf}), and the step removes its own records by their bytes, as for every refusal before its swap. Called by {@link takePublishLock} for the lock and by {@link publishJournalWriterOf} for the journal. @param file - The record of the file the name was given ({@link writeWholeRecord}): its path and the digest of its bytes. @param recordName - The record, as the refusal names it. @returns Whether the run's record stands; false for a missing entry, one that is no regular file and one with other bytes. @throws The refusal of a look or a read that failed, with that failure as its cause. @example await isOwnRecordAt({ path: '/repo/.codebook/wiki.publish-lock.json', hash: '…' }, 'Wiki publish lock') // => false once a recovery ended the lock */
+/** Whether the record a run wrote ({@link writeWholeRecord}), its publish lock or its journal, still stands at its name as that run's: a regular file there, looked at without following a link, holds the run's bytes, by their SHA-256 digest, and those bytes carry the run's random id, which no record of another step holds. The name's device and file id are not compared: a mount that gives each name of a file a file id of its own (sshfs without `use_ino`, CIFS with `noserverino`) answers another id for the record's name than for the file written beside it that the link gave that name ({@link pendingPathOf}). A look or a read that fails with a system error says nothing of the record, so it is not taken for a lost one: it refuses the step with its code ({@link unreadOwnRecordRefusalOf}; the refusal carries the record's path as `unreadRecordPath`, so a step that cannot remove the record afterwards can say so, {@link refusalWithKeptRecordOf}), and the step removes its own records by their bytes, as for every refusal before its swap. Called by {@link takePublishLock} for the lock and by {@link publishJournalWriterOf} for the journal. @param file - The record of the file the name was given ({@link writeWholeRecord}): its path and the digest of its bytes. @param recordName - The record, as the refusal names it. @returns Whether the run's record stands; false for a missing entry, one that is no regular file and one with other bytes. @throws The refusal of a look or a read that failed, with that failure as its cause. @example await isOwnRecordAt({ path: '/repo/.codebook/wiki.publish-lock.json', hash: '…' }, 'Wiki publish lock') // => false once a recovery ended the lock */
 async function isOwnRecordAt(file, recordName) {
   const current = await regularBytes(file.path, true).catch(noneUnlessFailed).catch(failure => {
-    throw new Error(unreadOwnRecordRefusalOf(recordName, file.path, failure), { cause: failure });
+    throw Object.assign(new Error(unreadOwnRecordRefusalOf(recordName, file.path, failure), { cause: failure }), { unreadRecordPath: file.path });
   });
   return current !== undefined && digest(current) === file.hash;
 }
@@ -630,19 +687,30 @@ function parseRecordOf(bytes, refusal, refusalOfSyntax = () => refusal) {
 async function removeOwnedRecord(path, bytes, remove = unlink) {
   const current = await regularBytes(path, true);
   if (!current || !current.equals(Buffer.from(bytes))) throw new Error(ownershipRefusalOf(path));
-  await remove(path);
+  // A record that another step removed between the check and the removal is no longer this step's to remove: the same refusal, with the system's error as its cause.
+  await remove(path).catch(cause => { throw isMissing(cause) ? new Error(ownershipRefusalOf(path), { cause }) : cause; });
 }
 
 /** The refusal of a removal of a journal, a claim, a publish lock or a side file that no longer holds the bytes of the step that removes it; the record is kept. Called by {@link removeOwnedRecord} and {@link releaseClaims}. @example ownershipRefusalOf('/repo/.codebook/wiki.publish-journal.json') // => 'Publication ownership changed; the recovery record was preserved: /repo/.codebook/wiki.publish-journal.json' */
 const ownershipRefusalOf = path => 'Publication ownership changed; the recovery record was preserved: ' + path;
 
+/** The refusal of a candidate that holds a file its manifest does not list ({@link readCandidateManifest}). It has three cases. (1) A stray at a path that the published Wiki owns (its record, checked by {@link inspectOutput}, lists the path) is a rendering the agent dropped from the manifest, so it gets the plain sentence, which tells the agent to delete it from the stage: the copy sentence would have the agent write into an owned page, which the next publish refuses as changed. (2) A stray at a path that the published Wiki does not own, where a file of the same name stands in the Wiki folder, is a copy of a learner's file, so it gets the copy sentence. A recovery of a stopped publish keeps such a copy in the candidate when it changed after the recovery checked it, because the learner saved it, and answers it in `changedFilesKept` ({@link changedFilesKeptOf}); the copy may hold the learner's newest text, so the sentence does not tell the agent to delete it but to show it to the learner first. (3) Any other stray, with no file of the same name in the Wiki folder, is the agent's to delete or to list, and gets the plain sentence too. Called by {@link readCandidateManifest}. @param stray - The file's path in the candidate. @param output - The Wiki folder, where the file of the same name is looked for. @param root - The project's root, for the Wiki's record. @returns The sentence. @example await strayFileRefusalOf('manual.txt', '/repo/.codebook/wiki', '/repo') // => 'The staged Wiki contains a copy of the learner’s file outside its published manifest: manual.txt. Nothing was written. …' */
+async function strayFileRefusalOf(stray, output, root) {
+  // A look that fails says nothing of the file, so the plain sentence stays.
+  const inWiki = await lookAt(join(output, stray)).catch(() => undefined);
+  // The paths the published Wiki owns, from its checked record; a Wiki that cannot be inspected owns none here (the publish refuses it in its own words after this).
+  const publishedOwned = inWiki?.isFile() ? (await inspectOutput(output, root, { allowLegacy: true }).catch(() => undefined))?.owned : undefined;
+  if (inWiki?.isFile() && !publishedOwned?.has(stray)) return 'The staged Wiki contains a copy of the learner’s file outside its published manifest: ' + stray + '. Nothing was written. A recovery that kept it (its answer lists it in changedFilesKept) kept it because it changed after the recovery checked it, so it may hold what the learner saved: do not delete it yet. Show it to the learner; once they agree, put what they want to keep into the file of the same name in the Wiki folder, delete this copy from the stage, then publish again.';
+  return 'The staged Wiki contains a file outside its published manifest: ' + stray + ". Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.";
+}
+
 /** Reads a candidate's manifest and refuses a candidate that holds a file its manifest does not list, named so the step that removes it is clear, or an asset that is no raster image, before anything is rendered or written. Called by {@link publishWiki}. @returns The manifest's bytes, the manifest and the paths it owns. @throws The refusal of the stray file or of the asset. @example await readCandidateManifest('/repo/.codebook/next', '/repo') // => { bytes, manifest, owned } */
-async function readCandidateManifest(stage, root) {
+async function readCandidateManifest(stage, root, output) {
   const bytes = await regularBytes(join(stage, MANIFEST)), { manifest, owned } = parseManifest(bytes, root);
   const files = await listFiles(stage);
   // A file of the stage the manifest does not list is named, so the step that removes it is clear.
   const stray = files.find(path => ![MANIFEST, RECEIPT].includes(path) && !owned.has(path));
-  if (stray !== undefined) throw new Error('The staged Wiki contains a file outside its published manifest: ' + stray + ". Nothing was written. Delete it from the stage, or list it among the manifest's pages or assets, then publish again.");
+  if (stray !== undefined) throw new Error(await strayFileRefusalOf(stray, output, root));
   // An asset is a raster image or nothing; checked before anything is rendered or written.
   for (const path of manifest.assets) await requireRasterAsset(stage, path);
   return { bytes, manifest, owned };
@@ -688,6 +756,12 @@ async function publishJournalOf({ root, output, stage }, prior, receipt, manifes
     finalizedReceiptSha256: digest(finalizedReceiptText), prepared: { sha256: digest(preparedText) }, learnerCopies: [] };
   return { record, backup, finalizedReceiptText, preparedText };
 }
+
+/** The refusal of a step as it stands once a record of its own could not be removed after it: the step's refusal first, whose words stay, then a sentence that names the record by its path alone and the failure of its removal by its code ({@link errorCodeOf}), says that the record stays and refuses the next publish, and sends the agent to --recover; the removal's failure is the cause. Without it a refusal that says to publish again is wrong while the record stays, and the raw error of the removal would replace the refusal. Called by {@link publishWiki} for the journal, by {@link takePublishLock} and {@link underPublishLock} for the lock. @param refusal - The step's own refusal. @param recordName - The record, as the refusal names it. @param removalFailure - What the removal rejected with. @returns The refusal to throw. @example refusalWithKeptRecordOf(refusal, 'Wiki publish lock', '/repo/.codebook/wiki.publish-lock.json', ebusyError).message // => 'The publisher could not look at its Wiki publish lock … Publish again once the file can be read: … The publisher could not remove its Wiki publish lock /repo/.codebook/wiki.publish-lock.json (EBUSY), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again.' */
+const refusalWithKeptRecordOf = (refusal, recordName, path, removalFailure) => Object.assign(new Error(refusal.message + ' The publisher could not remove its ' + recordName + ' ' + path + ' (' + errorCodeOf(removalFailure) + '), so it stays and refuses the next publish. Run --recover once the file can be removed, then publish again.', { cause: removalFailure }), marksOf(refusal));
+
+/** The marks a step's refusal carries for the readers further out: `unreadRecordPath` ({@link isOwnRecordAt}, read by {@link takePublishLock} and {@link underPublishLock}) and the flags {@link holdRefusalOf}, {@link writeFilesHeld}, {@link publishWiki} and {@link restoreManifestHeld} set. A refusal that {@link refusalWithKeptRecordOf} makes anew carries them, so a journal that cannot be removed does not hide from the lock's check that a failed look at the lock caused the refusal. Called by {@link refusalWithKeptRecordOf}. @param refusal - The refusal whose marks are read. @returns The marks it holds, none for a mark it lacks. @example marksOf(Object.assign(new Error('x'), { unreadRecordPath: '/repo/.codebook/wiki.publish-lock.json' })) // => { unreadRecordPath: '/repo/.codebook/wiki.publish-lock.json' } */
+const marksOf = refusal => Object.fromEntries(REFUSAL_MARKS.filter(mark => refusal[mark] !== undefined).map(mark => [mark, refusal[mark]]));
 
 /** The journal of a publish and the files beside it, as the publish writes them: `write` puts the side file that keeps the candidate's prepared manifest and record in place first ({@link preparedPathOf}), new and whole, at a name no other step writes, then the journal that names its digest ({@link writeWholeRecord}), small enough for one write; a refused journal removes the side file again. Each copy of a learner's file into the candidate is named before the copy begins ({@link copyLearnerFiles}): the path is appended as one line to the list of copies beside the journal ({@link copiesListPathOf}), which the first copy creates, exclusive and without following a link, once the output's path holds ({@link openCopiesList}), and every later line goes through the handle of that create, so no line follows a link put at the list's name since; the list's name and each line are synced to the disk before the copy it names begins ({@link syncFolder}, {@link syncWhereAble}); the journal is written once. A stop at any point leaves a list whose whole lines name every copy that began, so the recovery removes only what such a copy left ({@link learnerCopiesIn}). Called by {@link publishWiki} for the journal it writes. @param preparedText - The side file's text ({@link publishJournalOf}). @returns The journal's bytes, by which the publish removes the journal, `write`, `requireHeld`, which refuses once the journal's name no longer holds the bytes `write` wrote ({@link isOwnRecordAt}, {@link lostJournalRefusalOf}), and with the system's code where its look fails ({@link unreadOwnRecordRefusalOf}): on a file system without hard links the journal is created at its name and written after ({@link writeWholeRecord}), and a recovery may end it, empty, past the grace ({@link endUnwrittenJournal}), `recordCopyBegun`, which names one more copy, `closeCopiesList`, which closes the list once the copies are made, and `remove`, which removes the list and the side file, each while it is the file created ({@link removeOwnFile}), and then the journal ({@link removeOwnedRecord}), tried again while a scanner or an indexer on Windows holds it ({@link unlinkRetried}), unless `requireHeld` found it no longer this publish's; a list or a side file whose removal fails stays for a later step, which removes it once no journal names it: the sweep for the list ({@link removeOrphansBeside}), the next publish for the side file ({@link removeStrayPreparedFiles}). @throws What the side file's write, the journal's, the list's create or an append rejects with; the list is removed with the journal then. @example const journalNow = publishJournalWriterOf(record, preparedText, '/repo/.codebook/wiki.publish-journal.json', requirePathHeld); await journalNow.write(); await journalNow.recordCopyBegun('manual.txt'); await journalNow.closeCopiesList(); await journalNow.remove() */
 function publishJournalWriterOf(record, preparedText, journal, requirePathHeld) {
@@ -760,18 +834,40 @@ function finalizerOf(stage, id, finalized) {
 /** The learner's files of a Wiki: its files that its manifest does not list, other than its manifest and its record; none without a Wiki. Called by {@link publishWiki}, {@link requireLearnerFilesUnchanged} and {@link learnerCopiesIn}. @example learnerFilesOf(wiki) // => ['manual.txt'] */
 const learnerFilesOf = wiki => wiki ? wiki.files.filter(path => ![MANIFEST, RECEIPT].includes(path) && !wiki.owned.has(path)) : [];
 
-/** Copies the learner's files of the prior Wiki into the candidate, each held and new ({@link heldWriterOf}, {@link writeOwnFile}), after refusing one that stands where the update has an owned file or folder; the journal names each copy before it begins (`recordCopyBegun`, {@link publishJournalWriterOf}), and the list of copies is closed once they are made, or once a copy is refused. Called by {@link publishWiki}. @returns The SHA-256 digest of each copy's bytes, by path, for {@link requireLearnerFilesUnchanged}. @throws The refusal of a conflicting file. @example await copyLearnerFiles(['manual.txt'], owned, '/repo/.codebook/wiki', '/repo/.codebook/next', writeHeld, journalNow) // => { 'manual.txt': '…' } */
+/** Reads a regular file of the prior Wiki through one handle and answers its bytes with the status of that same file, taken from the handle before the bytes are read: the look at the path refuses a link and a special file as {@link regularBytes} does, and the handle's status must be that look's file (the same device and file id), so a link or another file put at the path between the look and the open is refused and not read, and a FIFO put there is refused too: the open does not wait for a writer ({@link readRegularFile}); the mode and the times come from the file whose bytes were read, never from a second look at the path, which a swap or a save in between would change. Called by {@link copyLearnerFiles}. @param path - The file's path in the Wiki folder. @returns The bytes and the handle's status (its mode and its access and modification times). @throws The refusal of an entry that is no regular file, or that is not the file the look found, and what the look or the read rejects with. @example await readLearnerFile('/repo/.codebook/wiki/manual.sh') // => { bytes: <Buffer …>, status: Stats { mode: 33256, … } } */
+async function readLearnerFile(path) {
+  const looked = await lstat(path, { bigint: true });
+  if (!looked.isFile()) throw new Error('Wiki publication requires a regular file: ' + path);
+  // A file that is not the one the look found was put at the path since: its bytes are not read.
+  return readRegularFile(path, 'A manual Wiki file changed during publication: ' + path, looked);
+}
+
+/** Builds the test of whether a learner's file stands where the update has an owned file or folder, with lookups in place of a scan of the owned paths for each file: the path itself is owned, a folder above the path is owned (an owned file where the learner's file needs a folder), or the path is a folder above an owned path (a learner's file where the update needs a folder). The folders above the owned paths are collected once. Called by {@link copyLearnerFiles}. @param owned - The paths the update owns. @returns The test, given a learner's path. @example conflictsWithOwnedOf(new Set(['pages/notes.html']))('pages') // => true */
+function conflictsWithOwnedOf(owned) {
+  const ownedFolders = new Set();
+  for (const ownedPath of owned) for (let slash = ownedPath.indexOf('/'); slash !== -1; slash = ownedPath.indexOf('/', slash + 1)) ownedFolders.add(ownedPath.slice(0, slash));
+  return path => {
+    if (owned.has(path) || ownedFolders.has(path)) return true;
+    // A folder above the learner's file that the update owns as a file.
+    for (let slash = path.indexOf('/'); slash !== -1; slash = path.indexOf('/', slash + 1)) if (owned.has(path.slice(0, slash))) return true;
+    return false;
+  };
+}
+
+/** Copies the learner's files of the prior Wiki into the candidate, each held and new ({@link heldWriterOf}, {@link writeOwnFile}), after refusing one that stands where the update has an owned file or folder; each copy is created with the permission bits of its original and keeps them and the times of its original ({@link writeOwnFile}), so a private file is never readable by others while it is copied; the journal names each copy before it begins (`recordCopyBegun`, {@link publishJournalWriterOf}), and the list of copies is closed once they are made, or once a copy is refused. Called by {@link publishWiki}. @returns The SHA-256 digest of each copy's bytes, by path, for {@link requireLearnerFilesUnchanged}. @throws The refusal of a conflicting file. @example await copyLearnerFiles(['manual.txt'], owned, '/repo/.codebook/wiki', '/repo/.codebook/next', writeHeld, journalNow) // => { 'manual.txt': '…' } */
 async function copyLearnerFiles(manual, owned, output, stage, writeHeld, journalNow) {
-  const manualHashes = Object.create(null);
+  const manualHashes = Object.create(null), conflictsWithOwned = conflictsWithOwnedOf(owned);
   try {
     for (const path of manual) {
-      if ([...owned].some(ownedPath => ownedPath === path || ownedPath.startsWith(path + '/') || path.startsWith(ownedPath + '/')))
+      if (conflictsWithOwned(path))
         throw new Error('A manual Wiki file conflicts with the update: ' + path);
-      const content = await regularBytes(join(output, path));
+      // The bytes and the status are of one file, read through one handle ({@link readLearnerFile}).
+      const { bytes: content, status: original } = await readLearnerFile(join(output, path));
       manualHashes[path] = digest(content);
       // The journal names the copy before its file exists, so the recovery tells a part it left from a file the learner put there.
       await journalNow.recordCopyBegun(path);
-      await writeHeld(join(stage, path), content, writeOwnFile);
+      // The copy is created with the original's permission bits (not a setuid, setgid or sticky bit) and keeps them and its times, so a script of the learner's still runs, a note keeps its date and a private file is never readable by others while it is copied.
+      await writeHeld(join(stage, path), content, (copyPath, bytes) => writeOwnFile(copyPath, bytes, { mode: Number(original.mode) & COPIED_MODE_BITS, atime: original.atime, mtime: original.mtime }));
     }
   } catch (error) {
     // The refusal of a copy is the one reported; the list is removed with the journal.
@@ -807,7 +903,7 @@ async function restoreFinalizedFiles(finalized, stage) {
   return failure === undefined ? undefined : new Error('Publication failed; the candidate’s prepared manifest and record could not be put back in ' + stage + ': ' + failure.message + '. Run --recover.', { cause: failure });
 }
 
-/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview. Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. Each file the publish writes is synced before its close ({@link writeOwnFile}), the folder that holds the journal and the lock once the journal has its name, the candidate's folders before the swap ({@link foldersWrittenIn}) and the folder of the Wiki again after it ({@link syncFolder}), so a power cut leaves a journal that a recovery can read wherever it guards a change; that a crash leaves these bytes is the file system's promise, which no test here can show. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
+/** Publishes a prepared candidate while retaining exact prior metadata, generated files and manual files, or, with `renderOnly`, writes its pages alone for a preview. Nothing is written before the publish lock ({@link underPublishLock}), so a second publish or preview of the same Wiki, by another agent or another editor window, is refused before it writes a page, with a sentence that names the lock. A journal that cannot be removed after the swap, after every try ({@link unlinkRetried}), does not fail the publish, whose Wiki stands: the answer names it as `publishJournalKept`, which --recover ends once this process exits. Each file the publish writes is synced before its close ({@link writeOwnFile}), the folder that holds the journal and the lock once the journal has its name, every file and folder of the candidate before the last check of the learner's files and the swap ({@link syncCandidate}; a failed sync keeps the journal), the folder of the Wiki again after it ({@link syncFolder}), and the learner's files in the prior Wiki are compared with their copies after it ({@link manualFilesChangedSince}; the answer names a file saved late as `manualFilesSavedAfterCheck`), so a power cut leaves a journal that a recovery can read wherever it guards a change; that a crash leaves these bytes is the file system's promise, which no test here can show. @param options.system - The system whose process and boot the lock and the journal record of their owner ({@link SYSTEM_HERE}, which the CLI passes). @example await publishWiki({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', stageDirectory: '/repo/.codebook/wiki.stage' }) */
 export async function publishWiki({ projectRoot, outputDirectory, stageDirectory, renderOnly = false, system = SYSTEM_HERE }) {
   // The read of the owner the lock and the journal name (PowerShell and reg.exe on Windows, sysctl, ps and ioreg on macOS) starts now and runs beside the rendering.
   ownerHere(system);
@@ -818,7 +914,7 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
   // The candidate's look is taken before it is read, so a candidate another publish moved into the Wiki, or one removed, while this one waited for the lock is told under it.
   await isFolderWhereItWas(stage);
   await requireNoJournal(journal, paths.lock);
-  const { bytes, manifest, owned } = await readCandidateManifest(stage, root);
+  const { bytes, manifest, owned } = await readCandidateManifest(stage, root, output);
   // Validate authored content without modifying either the stage or published output.
   const rendered = await renderWikiPages(manifest, { projectRoot: root, outputDirectory: output });
   const { receiptBytes, receipt } = await readCandidateRecord(stage, root, output, bytes);
@@ -849,12 +945,12 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       // The manifest and the record take the place of the entries at their names, which a link put there after they were read does not lead out of the candidate, and which a stop never leaves empty.
       await finalize(MANIFEST, manifestText, bytes);
       await finalize(RECEIPT, finalizedReceiptText, receiptBytes);
+      // Every file and folder of the candidate, the agent's assets and the folders above them included, is on the disk before the candidate becomes the Wiki; the syncs run before the last check, so a save during them is seen by it.
+      await syncCandidate(stage);
       // Recheck after acquiring the journal and copying files; a stale generation cannot win a later swap.
       const current = await inspectPrior();
       assertBaseline(receipt.baseline, current);
       await requireLearnerFilesUnchanged(current, manual, manualHashes, output);
-      // The names of the candidate's pages, copies and finalized files are on the disk before the candidate becomes the Wiki.
-      for (const folder of foldersWrittenIn(stage, written, made)) await syncFolder(folder);
       // The lock and the journal must still be this publish's when the Wiki moves: a recovery may have ended either since.
       await lock.requireHeld();
       await journalNow.requireHeld();
@@ -864,19 +960,53 @@ export async function publishWiki({ projectRoot, outputDirectory, stageDirectory
       swapped = true;
       // The Wiki is updated: the swap's moves are on the disk before the journal that guards them goes, and a journal this publish cannot remove now, after every try, is named in its answer for --recover to end, and fails nothing.
       const journalKept = await syncFolder(dirname(output)).then(() => journalNow.remove()).then(() => ({}), () => ({ publishJournalKept: journal }));
-      return { output, previousOutput: backup, publishedFiles: owned.size, preservedManualFiles: manual.length, ...journalKept };
+      // A learner's file saved after the last check went into the prior Wiki, now at `backup`: the answer names it instead of counting it preserved.
+      const manualAnswer = await manualFilesAnswerOf(manual.length, manualHashes, backup);
+      return { output, previousOutput: backup, publishedFiles: owned.size, ...manualAnswer, ...journalKept };
     } catch (error) {
       if (swapped) throw error; // Cleanup failure must not roll back an already usable new generation.
       const undoFailure = await undoRefusedPublish({ output, stage, backup, movedOld, written, made, finalized, requirePathHeld, isFolderWhereItWas, refusal: error });
       if (undoFailure !== undefined) throw undoFailure;
-      await journalNow.remove();
-      throw error;
+      // A candidate that could not be synced leaves the journal, so the next step is a recovery that looks at the candidate again, not a publish that trusts it.
+      if (error.isUnsyncedCandidate) throw error;
+      // A journal that cannot be removed stays for --recover; the refusal is still the one the agent needs, and it says so.
+      const removalFailure = await journalNow.remove().then(() => undefined, failure => failure);
+      throw removalFailure === undefined ? error : refusalWithKeptRecordOf(error, 'Wiki publication journal', journal, removalFailure);
     }
   });
 }
 
-/** The folders of a candidate whose names a publish wrote or made: the candidate itself, which holds its finalized manifest and record, the folder of each page and each copy of a learner's file it wrote, and the folder that holds each folder it made, each once. Called by {@link publishWiki}, which syncs them before its swap ({@link syncFolder}). @example foldersWrittenIn('/repo/.codebook/next', [{ path: '/repo/.codebook/next/pages/a.html' }], ['/repo/.codebook/next/pages']) // => ['/repo/.codebook/next', '/repo/.codebook/next/pages'] */
-const foldersWrittenIn = (stage, written, made) => [...new Set([stage, ...written.map(file => dirname(file.path)), ...made.map(folder => dirname(folder))])];
+/** The part of a publish's answer about the learner's files of the prior Wiki: `preservedManualFiles`, how many of them kept the bytes the publish checked, and `manualFilesSavedAfterCheck`, the paths of those the learner saved after the publish's last check ({@link manualFilesChangedSince}), whose saved bytes went into the prior Wiki and not into the new one; the list is left out where none changed or no prior Wiki was moved aside. Called by {@link publishWiki} once the Wiki moved. @param manualCount - How many learner's files the publish copied into the new Wiki. @param manualHashes - The SHA-256 digest of each learner's file as the publish copied it, by path. @param backup - The folder the prior Wiki was moved to; undefined where there was none. @example await manualFilesAnswerOf(2, { 'notes.md': '…' }, '/repo/.codebook/wiki.previous-4f2c…') // => { preservedManualFiles: 1, manualFilesSavedAfterCheck: ['notes.md'] } after the learner saved notes.md late */
+async function manualFilesAnswerOf(manualCount, manualHashes, backup) {
+  const changed = !backup ? [] : await manualFilesChangedSince(manualHashes, backup);
+  const preservedManualFiles = manualCount - changed.length;
+  return changed.length === 0 ? { preservedManualFiles } : { preservedManualFiles, manualFilesSavedAfterCheck: changed };
+}
+
+/** The learner's files of the prior Wiki that no longer hold the bytes the publish copied from them: after the swap the prior Wiki lies at `backup`, and an editor that kept the file open, or a save made after the publish's last check, writes there. A file that cannot be read now counts as changed, since nothing says what it holds. Called by {@link publishWiki} once the Wiki moved. @param manualHashes - The SHA-256 digest of each learner's file as the publish copied it, by path. @param backup - The folder the prior Wiki was moved to. @returns The paths whose bytes differ, in the order of `manualHashes`; empty when none changed. @example await manualFilesChangedSince({ 'notes.txt': digest(Buffer.from('a')) }, '/repo/.codebook/wiki.previous-1') // => [] */
+async function manualFilesChangedSince(manualHashes, backup) {
+  const changed = [];
+  for (const [path, copied] of Object.entries(manualHashes)) {
+    const isSame = await regularBytes(join(backup, path)).then(bytes => digest(bytes) === copied, () => false);
+    if (!isSame) changed.push(path);
+  }
+  return changed;
+}
+
+/** Syncs every file and every folder of a candidate to the disk, folders after what they hold, in the order of their names: the pages and copies the publish wrote, and the assets and folders the agent made while it prepared the candidate, which no write of the publish synced. Called by {@link publishWiki} before the last check of the learner's files and the swap. @param directory - The candidate or a folder in it. @throws An error with `isUnsyncedCandidate`, naming the path, when a sync fails other than as {@link UNSYNCABLE_ERRORS} says a system cannot make it; the cause is the system's error. @example await syncCandidate('/repo/.codebook/next') */
+async function syncCandidate(directory) {
+  const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : 1);
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    // A link or a special file is no part of a candidate the publish accepts; it is not followed here.
+    if (entry.isDirectory()) await syncCandidate(path);
+    else if (entry.isFile()) await syncUnlessFailed(path);
+  }
+  await syncUnlessFailed(directory);
+}
+
+/** Syncs one file or folder of a candidate ({@link syncFolder}, which opens a file read-only as it opens a folder) and gives a failure the sentence of a candidate that could not be synced. Called by {@link syncCandidate}. @example await syncUnlessFailed('/repo/.codebook/next/assets/flow.png') */
+const syncUnlessFailed = path => syncFolder(path).catch(cause => { throw Object.assign(new Error('The candidate could not be synced to the disk before the swap: ' + path + ' (' + cause.message + '). Nothing was moved and the Wiki is as it was, and the publication journal was kept. Run --recover, then prepare a candidate and publish again.', { cause }), { isUnsyncedCandidate: true }); });
 
 /** Refuses a publish or a preview under its lock whose candidate is no longer the folder it read before the lock ({@link folderLookOf}): another publish of the same candidate moved it into the Wiki while this one waited for the lock (on macOS and Windows its owner read may take a while), or it was removed or put in place again. Without it, a path inside the project that names the candidate would be refused as a link on the Wiki's path, and a candidate outside the project would be made again and written into. Called by {@link publishWiki} first under the lock, before anything is written. @throws The refusal, which names the candidate. @example await requireCandidateHere('/repo/.codebook/next', isFolderWhereItWas) // throws once another publish moved the candidate into the Wiki */
 async function requireCandidateHere(stage, isFolderWhereItWas) {
@@ -902,7 +1032,11 @@ async function takePublishLock({ lock }, requirePathHeld, system) {
   const requireHeld = async () => { if (!(await isOwnRecordAt(file, PUBLISH_LOCK_NAME))) throw new Error(lostPublishLockRefusalOf(lock)); };
   const release = () => removeOwnedRecord(lock, bytes, unlinkRetried);
   // A lock a recovery ended between its create and its write is no longer this run's: the run stops before it writes anything. A lock of this run's bytes that still stands, as after a look that failed, goes with the refusal.
-  await requireHeld().catch(async error => { await release().catch(() => undefined); throw error; });
+  await requireHeld().catch(async error => {
+    const removalFailure = await release().then(() => undefined, failure => failure);
+    // A lock whose look failed and that cannot be removed stays for --recover, which the refusal then names.
+    throw removalFailure !== undefined && error.unreadRecordPath === lock ? refusalWithKeptRecordOf(error, PUBLISH_LOCK_NAME, lock, removalFailure) : error;
+  });
   return { id, requireHeld, release };
 }
 
@@ -917,9 +1051,9 @@ async function underPublishLock(paths, requirePathHeld, system, step) {
     await removeOrphansBeside(paths, requirePathHeld, { system, goneOwners: [] });
     outcome = await step(lock);
   } catch (error) {
-    // A lock this run cannot remove now is ended by --recover; the run's refusal is the one the agent needs.
-    await lock.release().catch(() => undefined);
-    throw error;
+    // A lock this run cannot remove now is ended by --recover; the run's refusal is the one the agent needs, and it names --recover where a failed look at the lock caused it.
+    const removalFailure = await lock.release().then(() => undefined, failure => failure);
+    throw removalFailure !== undefined && error.unreadRecordPath === paths.lock ? refusalWithKeptRecordOf(error, PUBLISH_LOCK_NAME, paths.lock, removalFailure) : error;
   }
   // The step succeeded: a lock this run cannot remove now is named in its answer, for --recover to end.
   const isReleased = await lock.release().then(() => true, () => false);
@@ -942,11 +1076,13 @@ async function learnerCopiesIn(stage, wiki, output, root, begun) {
   return copies;
 }
 
-/** Reads a regular file of a candidate without following a link, with the record of the file read: its path, the SHA-256 digest of its bytes, and its device and file id as bigints, the status read before the bytes, so a file put at the path in between is not the one recorded. Called by {@link learnerCopiesIn}. @returns The bytes and the record ({@link writeOwnFile} answers one of the same form). @throws The refusal of an entry that is no regular file, and what the look or the read rejects with. @example await regularFileOf('/repo/.codebook/next/manual.txt') // => { bytes: <Buffer …>, file: { path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131077n } } */
+/** Reads a regular file of a candidate without following a link and without waiting on a FIFO put at the path since the look ({@link readRegularFile}), with the record of the file read: its path, the SHA-256 digest of its bytes, and its device and file id as bigints, the status read before the bytes, so a file put at the path in between is not the one recorded. Called by {@link learnerCopiesIn}. @returns The bytes and the record ({@link writeOwnFile} answers one of the same form). @throws The refusal of an entry that is no regular file, and what the look or the read rejects with. @example await regularFileOf('/repo/.codebook/next/manual.txt') // => { bytes: <Buffer …>, file: { path: '/repo/.codebook/next/manual.txt', hash: '…', dev: 2049n, ino: 131077n } } */
 async function regularFileOf(path) {
-  const status = await lstat(path, { bigint: true });
-  if (!status.isFile()) throw new Error('Wiki publication requires a regular file: ' + path);
-  const bytes = await readFile(path);
+  const looked = await lstat(path, { bigint: true });
+  const refusal = 'Wiki publication requires a regular file: ' + path;
+  if (!looked.isFile()) throw new Error(refusal);
+  // The bytes and the record come from one handle, which must be the file of the look.
+  const { bytes, status } = await readRegularFile(path, refusal, looked);
   return { bytes, file: { path, hash: digest(bytes), dev: status.dev, ino: status.ino } };
 }
 
@@ -1368,16 +1504,24 @@ async function processStateOf(pid, owner, system) {
   return liveStart !== undefined && liveStart !== owner.start ? 'gone' : 'running';
 }
 
-/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal, by {@link endStoppedLock} for a publish lock, by {@link claimRecovery} for an earlier claim and by {@link isOrphanStopped} for the writer a file beside a record names. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwners`, the places the learner named with `--gone-host` and `--gone-space`, one pair for each (none when absent): an owner judged `elsewhere` at one of those host names and spaces counts as gone; one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one judged `elsewhere`, worded by why this recovery cannot look at it ({@link elsewhereRefusalOf}). @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
+/** Whether an owner whose place the learner named gone may still run here: it ran on this host name and in this space of process ids, which names a pid namespace, under no other boot and on no other computer than this recovery's, and a live process has its process id and its start ({@link processStateOf}). The place of such an owner is judged `elsewhere` where no boot id is compared and no equal digest of the computer's id is named (as where reg.exe is blocked), because another computer may have the same host name; the pair the refusal names for this computer's own place must still not end a publish that runs here. An owner of another boot or computer cannot be a process here, so it is not probed. Called by {@link requireExited}. @param pid - The recorded process id. @param owner - The recorded owner, in the form {@link ownerHere} writes; undefined for a record of an earlier version, which {@link ownerStateOf} judges by its process id alone. @param here - This recovery's owner ({@link ownerHere}). @param system - The system the start of a live process is read from. @returns True while a live process has the id and the start, or its start cannot be read. @example await isLiveOwnerHere(process.pid, { host: 'devbox', space: 'linux@1', boot: {} }, { host: 'devbox', space: 'linux@1', boot: {} }, SYSTEM_HERE) // => true */
+async function isLiveOwnerHere(pid, owner, here, system) {
+  if (owner === undefined || owner.host !== here.host || owner.space !== here.space || !namesItsSpace(owner.space)) return false;
+  if (isOfAnotherMachine(owner, here) || isOfAnotherBoot(owner, here)) return false;
+  return await processStateOf(pid, owner, system) === 'running';
+}
+
+/** Refuses recovery while a recorded publisher or recovery process may still own the operation ({@link ownerStateOf}), or when it ran where this recovery cannot look at it, unless the learner confirmed that place gone ({@link isOwnerAt}). Called by {@link resumeJournal} for a journal, by {@link endStoppedLock} for a publish lock, by {@link claimRecovery} for an earlier claim and by {@link isOrphanStopped} for the writer a file beside a record names. @param recorded - The parsed journal or claim, with its `pid` and, from this version on, its `owner`. @param ownerJudgement - The `system` this recovery runs on ({@link SYSTEM_HERE}) and the `goneOwners`, the places the learner named with `--gone-host` and `--gone-space`, one pair for each (none when absent): an owner judged `elsewhere` at one of those host names and spaces counts as gone, unless it ran on this host name and space and a live process has its process id and start ({@link isLiveOwnerHere}); one judged `running` never does. @throws The refusal of an invalid owner, of one that may still run, and of one judged `elsewhere`, worded by why this recovery cannot look at it ({@link elsewhereRefusalOf}). @example await requireExited({ pid: 1 }, { system: SYSTEM_HERE }) // throws: The prior Wiki publisher process 1 may still be running; inspect it before recovery. */
 async function requireExited(recorded, { system, goneOwners = [] }) {
   requireOwnerForm(recorded);
   const { pid, owner } = recorded, here = await ownerHere(system);
   const state = await ownerStateOf({ pid, owner }, here, system);
-  // An owner in a place the learner confirmed gone counts as gone; the options never end an owner that may still run here.
-  if (state === 'gone' || state === 'elsewhere' && isOwnerAt(owner, goneOwners)) return;
+  const isConfirmedGone = state === 'elsewhere' && isOwnerAt(owner, goneOwners);
+  // An owner in a place the learner confirmed gone counts as gone, unless it ran on this computer and its process id and start live here now: the options never end an owner that may still run here.
+  if (state === 'gone' || isConfirmedGone && !(await isLiveOwnerHere(pid, owner, here, system))) return;
   // Where the learner named places already, the place of this owner is one more pair beside them: a stopped recovery may have run in a second place that cannot come back.
   const wayOut = goneOwners.length === 0 ? '--gone-host and --gone-space set to that host name and space' : 'one more --gone-host and --gone-space pair set to that host name and space, keeping the pairs already named';
-  if (state === 'elsewhere') throw new Error(elsewhereRefusalOf(pid, owner, here, wayOut));
+  if (state === 'elsewhere' && !isConfirmedGone) throw new Error(elsewhereRefusalOf(pid, owner, here, wayOut));
   throw new Error('The prior Wiki publisher process ' + pid + ' may still be running; inspect it before recovery.');
 }
 
@@ -1455,6 +1599,9 @@ async function claimOwnersOf(journal, bytes) {
   throw new Error('The Wiki recovery claims form a cycle; all records were preserved.');
 }
 
+/** The refusal of a recovery that found the claim of an earlier recovery at its place and then found it gone: another recovery released it meanwhile. It names the claim by its path alone; nothing was moved, and the agent runs --recover again. Called by {@link claimRecovery}. @example releasedClaimRefusalOf('/repo/.codebook/wiki.publish-journal.json.recovery-3f2a…') // => 'Another recovery of this Wiki released its recovery claim /repo/.codebook/wiki.publish-journal.json.recovery-3f2a… while this one read it, so nothing was moved. Run --recover again once no other recovery runs.' */
+const releasedClaimRefusalOf = path => 'Another recovery of this Wiki released its recovery claim ' + path + ' while this one read it, so nothing was moved. Run --recover again once no other recovery runs.';
+
 /** Claims stopped recovery attempts of a journal, or of a publish lock ({@link endStoppedLock}), through append-only exclusive records beside it, without unlinking another contender's lock; each claim names its owner as the `system` of `ownerJudgement` tells it ({@link ownerHere}), and an earlier claim ({@link stoppedClaimAt}) is judged by it and by the places the learner confirmed gone ({@link requireExited}); an earlier claim without a byte is ended ({@link endUnwrittenClaim}) and its place claimed. @example await claimRecovery(journal, journalBytes, { system: SYSTEM_HERE }) */
 async function claimRecovery(journal, bytes, ownerJudgement) {
   // Journal hash -> exclusive owner -> stopped owner ID -> exclusive successor; a live owner stops traversal.
@@ -1464,7 +1611,7 @@ async function claimRecovery(journal, bytes, ownerJudgement) {
     const path = journal + '.recovery-' + parent, id = randomUUID(), claimBytes = JSON.stringify({ pid: process.pid, owner: await ownerHere(ownerJudgement.system), id });
     try { await writeWholeRecord(path, claimBytes, id); claims.push({ path, bytes: claimBytes }); return claims; }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
-    const previous = await stoppedClaimAt(path, false);
+    const previous = await stoppedClaimAt(path, false).catch(cause => { throw isMissing(cause) ? new Error(releasedClaimRefusalOf(path), { cause }) : cause; });
     // A claim without a byte has no successor: once it is ended, this recovery claims its place.
     if (previous.record === undefined) { await endUnwrittenClaim(path); continue; }
     await requireExited(previous.record, ownerJudgement);
@@ -1498,27 +1645,42 @@ async function recoveryState(root, output, stageDirectory) {
   return { ...parsed, bytes, actual: await regularBytes(join(output, MANIFEST), true), files, legacyRecovery: true };
 }
 
-/** Ends a resumed metadata recovery whose edited manifest the learner changed again after its process stopped: the staging file it wrote in the Wiki folder is removed while it holds the retained manifest, so no file of the recovery's is left there for the next publish to carry over as the learner's, and the edit it kept beside the Wiki stays. The refusal it answers is marked, so {@link runRecovery} removes the journal and {@link recoverAt} recovers again from the manifest as it is now. Called by {@link requireRecordedEdit}. @returns The marked refusal, to be thrown. @example throw await endSupersededRestore(record, requireHeld) */
-async function endSupersededRestore(record, requireHeld) {
+/** Removes the staging file of a metadata recovery from the Wiki folder while it holds the retained manifest, the bytes the recovery wrote into it ({@link writeStagingManifest}): a file of other bytes may be the learner's, or a write a stop cut short, and stays. Without it the file is left in the Wiki folder where no manifest lists it, and the next publish carries it over as a file of the learner's. Called by {@link endSupersededRestore} and {@link restoreManifest}. @param record - The recovery's journal record. @param requireHeld - The hold of the output's path and folder, checked just before the removal. @example await removeStagingManifest(record, requireHeld) */
+async function removeStagingManifest(record, requireHeld) {
   const temporary = await regularBytes(record.temporaryManifest, true).catch(() => undefined);
   if (temporary !== undefined && digest(temporary) === record.manifestSha256) { await requireHeld(); await unlink(record.temporaryManifest); }
+}
+
+/** Ends a resumed metadata recovery whose edited manifest the learner changed again after its process stopped: the staging file it wrote in the Wiki folder is removed while it holds the retained manifest ({@link removeStagingManifest}), so no file of the recovery's is left there for the next publish to carry over as the learner's, and the edit it kept beside the Wiki stays. The refusal it answers is marked, so {@link runRecovery} removes the journal and {@link recoverAt} recovers again from the manifest as it is now. Called by {@link requireRecordedEdit}. @returns The marked refusal, to be thrown. @example throw await endSupersededRestore(record, requireHeld) */
+async function endSupersededRestore(record, requireHeld) {
+  await removeStagingManifest(record, requireHeld);
   return Object.assign(new Error('The altered Wiki manifest changed again after an interrupted recovery; that recovery was ended.'), { isSupersededRestore: true });
 }
 
-/** Restores only receipt-verified metadata, retaining altered bytes before the atomic rename; each write goes through `writeHeld`, and the rename waits for `requireHeld` ({@link restoreManifestHeld}). A recovery resumed after its process stopped (`isResumed`) whose edited manifest changed again since is ended ({@link endSupersededRestore}); one that runs from its start refuses such a change, which happened while it ran. @example await restoreManifest(record, paths, writeHeld, requireHeld, false) */
+/** Restores only receipt-verified metadata, retaining altered bytes before the atomic rename; each write goes through `writeHeld`, and the rename waits for `requireHeld` ({@link restoreManifestHeld}). The folder of the kept copy and the Wiki folder are synced ({@link syncFolder}) before the rename, and the Wiki folder again after it, so the journal that the caller removes next never outlives the names it guards. A recovery resumed after its process stopped (`isResumed`) whose edited manifest changed again since is ended ({@link endSupersededRestore}); one that runs from its start refuses such a change, which happened while it ran. @example await restoreManifest(record, paths, writeHeld, requireHeld, false) */
 async function restoreManifest(record, paths, writeHeld, requireHeld, isResumed) {
   const { root, output } = paths;
   let state = await recoveryState(root, output, record.sourceStage);
   if (!holdsRetainedGeneration(state, record)) throw new Error('The retained Wiki generation changed; recovery was stopped.');
-  if (state.actual && digest(state.actual) === record.manifestSha256) return;
+  // A manifest that is the retained one needs no restore. The rename of an earlier run may stand only in the cache: its folder is on the disk before this run's journal goes. The staging file a stopped run of this recovery left goes first, while it holds the retained manifest.
+  if (state.actual && digest(state.actual) === record.manifestSha256) {
+    await removeStagingManifest(record, requireHeld);
+    await syncFolder(output);
+    return;
+  }
   await requireRecordedEdit(state, record, requireHeld, isResumed);
   await keepEditedManifest(state, record, writeHeld);
   await writeStagingManifest(state, record, writeHeld);
+  // The names of the kept copy (beside the Wiki folder) and of the staging file (in it) are on the disk before the rename that replaces the edit: a power cut must not keep the rename and lose the copy's name.
+  await syncFolder(dirname(record.modifiedManifestBackup));
+  await syncFolder(output);
   state = await recoveryState(root, output, record.sourceStage);
   if (!holdsRetainedGeneration(state, record) || actualDigestOf(state) !== record.modifiedManifestSha256)
     throw new Error('The Wiki changed before metadata recovery; all files were preserved.');
   await requireHeld();
   await renameRetried(record.temporaryManifest, join(output, MANIFEST));
+  // The rename is on the disk before the journal that guards it goes.
+  await syncFolder(output);
 }
 
 /** Whether a recovery state still holds the generation a metadata recovery journal retains: a record, or a legacy adoption, whose manifest has the journal's SHA-256 digest. Called by {@link restoreManifest} before and after its writes. @example holdsRetainedGeneration(state, record) // => true while the Wiki's record is the one recovered */
@@ -1664,11 +1826,13 @@ async function fileSystemTimeBeside(path) {
 /** The refusal of a journal without a byte changed within {@link UNWRITTEN_RECORD_GRACE_MS}, whose step may be writing it now. Read by {@link endUnwrittenJournal}. */
 const UNWRITTEN_JOURNAL_REFUSAL = 'The Wiki publication journal is empty, and the step that created it may be writing it now. Nothing was moved. Run --recover again once that process exits.';
 
-/** Ends a journal without a byte ({@link endUnwrittenJournal}), then the publish lock beside it where one stands: a publish on a file system without hard links that stopped between its journal's create and its write left its lock too ({@link writeWholeRecord}), with the side file of its journal, and that lock would refuse every later publish. So the recovery opens again once the journal is gone ({@link openRecovery}), which ends that lock under the gate of its owner ({@link endStoppedLock}), with what its run left beside them, and answers `publish-lock-removed`, as the recovery of a stopped publish's lock does; a lock that gate refuses (its owner may still run, or ran where this recovery cannot look) is refused so, the journal ended. Called by {@link openRecovery}. @param ownerJudgement - The system and the places the learner confirmed gone. @returns What {@link openRecovery} answers: `unwritten-journal-removed` where no lock stands. @throws The refusals of {@link endUnwrittenJournal}, and those of the lock's recovery. @example await endUnwrittenJournalOfRun(paths, requirePathHeld, { system: SYSTEM_HERE, goneOwners: [] }) // => { result: { status: 'publish-lock-removed', output: '/repo/.codebook/wiki' } } */
+/** Ends a journal without a byte ({@link endUnwrittenJournal}), then the publish lock beside it where one stands: a publish on a file system without hard links that stopped between its journal's create and its write left its lock too ({@link writeWholeRecord}), with the side file of its journal, and that lock would refuse every later publish. So the recovery opens again once the journal is gone ({@link openRecovery}), which ends that lock under the gate of its owner ({@link endStoppedLock}), with what its run left beside them, and answers `publish-lock-removed`, as the recovery of a stopped publish's lock does, with `unwrittenJournalRemoved: true` to say that the journal went too; a lock that gate refuses (its owner may still run, or ran where this recovery cannot look) is refused so, the journal ended. Called by {@link openRecovery}. @param ownerJudgement - The system and the places the learner confirmed gone. @returns What {@link openRecovery} answers: `unwritten-journal-removed` where no lock stands; the lock's answer with `unwrittenJournalRemoved: true` where one stood. @throws The refusals of {@link endUnwrittenJournal}, and those of the lock's recovery. @example await endUnwrittenJournalOfRun(paths, requirePathHeld, { system: SYSTEM_HERE, goneOwners: [] }) // => { result: { status: 'publish-lock-removed', output: '/repo/.codebook/wiki' } } */
 async function endUnwrittenJournalOfRun(paths, requirePathHeld, ownerJudgement) {
   const result = await endUnwrittenJournal(paths, requirePathHeld, ownerJudgement.goneOwners);
-  // A lock that stands once the journal is gone is ended by its own gate, as where no journal stood.
-  return await regularBytes(paths.lock, true) === undefined ? { result } : openRecovery(paths, requirePathHeld, ownerJudgement);
+  if (await regularBytes(paths.lock, true) === undefined) return { result };
+  // A lock that stands once the journal is gone is ended by its own gate, as where no journal stood; the answer of that end says that the journal was removed too.
+  const lockOpened = await openRecovery(paths, requirePathHeld, ownerJudgement);
+  return lockOpened.result === undefined ? lockOpened : { result: { ...lockOpened.result, unwrittenJournalRemoved: true } };
 }
 
 /** Ends a journal without a byte: one an earlier version leaves when it stops between the exclusive create of its journal and the write of it, which it does before a publish copies, finalizes or moves anything and before a recovery writes anything, and one this version leaves so on a file system that cannot link ({@link writeWholeRecord}). It names no owner and no step, and nothing it guards was changed yet, so it is removed once it has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS} ({@link endUnwrittenRecord}), past which no step that runs is still between the two; without that, every preparation and publish would stay refused for it while the skill forbids deleting a journal. One exception: a power cut or a system crash after a publish moved the Wiki folder aside can leave the journal written before that move empty, where the file system kept the move and not the journal's bytes; so a journal past the grace is kept while the Wiki folder is missing and a folder in which a publish keeps the prior Wiki stands beside it, and the refusal names that folder ({@link requireNoUnnamedPriorWiki}). Places confirmed gone are refused, as such a journal names no owner. Called by {@link endUnwrittenJournalOfRun}. @returns `unwritten-journal-removed`. @throws The refusal of places confirmed gone, that of a journal changed within the grace ({@link UNWRITTEN_JOURNAL_REFUSAL}), that of a journal whose age cannot be judged ({@link unreadClockRefusalOf}), that of a missing Wiki folder beside a kept prior Wiki ({@link unnamedPriorWikiRefusalOf}), and that of a changed path. @example await endUnwrittenJournal(paths, requirePathHeld, []) // => { status: 'unwritten-journal-removed', output: '/repo/.codebook/wiki' } */
@@ -1684,10 +1848,11 @@ async function requireNoUnnamedPriorWiki(output) {
   if (kept.length > 0) throw new Error(unnamedPriorWikiRefusalOf(output, kept));
 }
 
-/** The refusal of {@link requireNoUnnamedPriorWiki}: it names the Wiki folder and each folder beside it in which a publish keeps the prior Wiki, by the name the publisher gives such a folder alone ({@link keptPriorWikisBeside}), no text of a file, and says what the learner does: move that folder back to the Wiki folder's path, the newest where several stand, and recover again, which then ends the journal. @param kept - The paths of those folders, one at least. @example unnamedPriorWikiRefusalOf('/repo/.codebook/wiki', ['/repo/.codebook/wiki.previous-6f1c…']) // => 'The Wiki publication journal is empty, and the Wiki folder /repo/.codebook/wiki is missing, while the folder /repo/.codebook/wiki.previous-6f1c… stands beside it, … move that folder back to /repo/.codebook/wiki, then run --recover again.' */
+/** The refusal of {@link requireNoUnnamedPriorWiki}: it names the Wiki folder and each folder beside it in which a publish keeps the prior Wiki, by the name the publisher gives such a folder alone ({@link keptPriorWikisBeside}), no text of a file, and says what the learner does: move that folder back to the Wiki folder's path, the one that holds the Wiki they want where several stand, and recover again, which then ends the journal. No folder is named the newest: the order of several cannot be told, as a change inside a folder does not change the folder's own time, and the name of a folder holds a random id, so the learner chooses by what each folder holds. @param kept - The paths of those folders, one at least. @example unnamedPriorWikiRefusalOf('/repo/.codebook/wiki', ['/repo/.codebook/wiki.previous-6f1c…']) // => 'The Wiki publication journal is empty, and the Wiki folder /repo/.codebook/wiki is missing, while the folder /repo/.codebook/wiki.previous-6f1c… stands beside it, … move that folder back to /repo/.codebook/wiki, then run --recover again.' */
 const unnamedPriorWikiRefusalOf = (output, kept) => 'The Wiki publication journal is empty, and the Wiki folder ' + output + ' is missing, while ' + (kept.length === 1 ? 'the folder ' + kept[0] + ' stands' : 'the folders ' + kept.join(', ') + ' stand') +
   ' beside it, where a publish keeps the prior Wiki and the learner’s files when it replaces the Wiki: a publish stopped by a power cut or a system crash after it moved the Wiki there can leave its journal empty. Nothing was moved, and the journal was kept. Show this to the learner; once they agree, move ' +
-  (kept.length === 1 ? 'that folder' : 'the newest of those folders') + ' back to ' + output + ', then run --recover again.';
+  (kept.length === 1 ? 'that folder' : 'the one of those folders that holds the Wiki they want') + ' back to ' + output + ', then run --recover again.' +
+  (kept.length === 1 ? '' : ' The publisher cannot tell which of them was the Wiki last, as a change inside a folder does not change the folder’s own time: let the learner choose by what each folder holds.');
 
 /** Ends a journal or a publish lock without a byte once it has stood unchanged for {@link UNWRITTEN_RECORD_GRACE_MS} ({@link hasStoodUnwritten}): it names no owner, so places confirmed gone are refused, and a younger one is refused with the sentence given, as its writer may be writing it now. Called by {@link endUnwrittenJournal} and {@link endStoppedLock}. @param refusal - The refusal of a record changed within the grace. @param recordName - The record, as the refusal of places confirmed gone names it ({@link goneOwnerRefusalOf}). @param requireEndable - What refuses the end of a record past the grace whose step may have changed something although the record is empty ({@link requireNoUnnamedPriorWiki} for a journal); nothing by default. @throws The refusal of places confirmed gone, that refusal, that of a record whose age cannot be judged ({@link unreadClockRefusalOf}), that of `requireEndable`, that of a changed path, and that of a record that got bytes meanwhile ({@link removeOwnedRecord}). @example await endUnwrittenRecord('/repo/.codebook/wiki.publish-lock.json', UNWRITTEN_LOCK_REFUSAL, requirePathHeld, []) */
 async function endUnwrittenRecord(path, refusal, requirePathHeld, goneOwners, recordName, requireEndable = async () => undefined) {
@@ -1749,9 +1914,14 @@ async function endStoppedLock(bytes, paths, requirePathHeld, ownerJudgement) {
   return hasJournal ? undefined : { status: 'publish-lock-removed', output };
 }
 
-/** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails after every try ({@link unlinkRetried}) stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @returns What the recovery's answer says of the lock: `{ publishLockRemoved: true }` once it was removed, `{ publishLockKept }` with its path where its removal failed, which one more --recover ends, and nothing where no lock of that run stands. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') // => { publishLockRemoved: true } */
+/** The code the answer of {@link endLockOfRun} gives a publish lock that stands and cannot be read, when the failure carries no system code: an entry at the lock's name that is no regular file. Read by {@link endLockOfRun}. */
+const UNREADABLE_LOCK_CODE = 'NOT_A_REGULAR_FILE';
+
+/** Removes the publish lock of the run whose journal a recovery ended, known by the id the journal takes from it ({@link publishJournalOf}); a lock of another run, one that is no record the publisher writes, an entry that is no regular file, and a lock whose removal fails after every try ({@link unlinkRetried}) stay, for the next recovery to judge by their own gate ({@link endStoppedLock}). Called by {@link runRecovery} once the journal is removed. @returns What the recovery's answer says of the lock: `{ publishLockRemoved: true }` once it was removed, `{ publishLockKept }` with its path where its removal failed, which one more --recover ends, `{ publishLockKept, publishLockKeptCode }` with the system's code of a failed look or read of a lock that stands ({@link UNREADABLE_LOCK_CODE} for an entry that is no regular file), and nothing where no lock of that run stands. @example await endLockOfRun('6f1c…', '/repo/.codebook/wiki.publish-lock.json') // => { publishLockRemoved: true } */
 async function endLockOfRun(id, lock) {
-  const bytes = await regularBytes(lock, true).catch(() => undefined);
+  let bytes;
+  // A lock that is missing is no lock of this run to end; one that stands and cannot be read stays, and the answer names it with the system's code, for one more --recover.
+  try { bytes = await regularBytes(lock, true); } catch (error) { return { publishLockKept: lock, publishLockKeptCode: typeof error.code === 'string' ? error.code : UNREADABLE_LOCK_CODE }; }
   let held;
   try { held = bytes === undefined ? undefined : JSON.parse(bytes); } catch { held = undefined; }
   // Only the lock of this run is this recovery's to end.
@@ -1916,7 +2086,8 @@ async function startManifestRecovery(paths, requirePathHeld, system) {
   if (state.actual && state.actual.equals(state.bytes)) return { result: { status: 'published-current', output } };
   const record = await manifestJournalOf(state, paths, system), bytes = Buffer.from(JSON.stringify(record));
   await requirePathHeld();
-  await writeWholeRecord(journal, bytes, record.id);
+  // A journal that another recovery wrote first keeps this one out (the link refuses an entry at the name), with the sentence of a journal that stands.
+  await writeWholeRecord(journal, bytes, record.id).catch(cause => { throw cause.code === 'EEXIST' ? new Error(journalStandsRefusalOf(journal), { cause }) : cause; });
   await requirePathHeld().catch(async error => { await removeOwnedRecord(journal, bytes); throw error; });
   return { record, bytes, claims: [] };
 }
@@ -2101,7 +2272,18 @@ function commandOf(args) {
   return { operation: COMMAND_OPERATIONS[mode], options: { projectRoot: values.project, outputDirectory: values.output, stageDirectory: values.stage, adoptExisting: values['adopt-existing'] === true, renderOnly: values['render-only'] === true, goneOwners, system: SYSTEM_HERE } };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+/** Tells whether this file is the script Node was started with. Node runs a main script by its real path (it resolves links, Windows junctions included), so `import.meta.url` names the target while the path given on the command line may pass through a link; comparing the two as written made the command line do nothing, with exit 0, when started through a linked folder. Both sides are compared by their real paths. Called once by the command line at the end of this file; importing the module (a test, the renderer) starts nothing. @param startedPath - The script path as given to Node (`process.argv[1]`); undefined when Node has none (a REPL, `-e`). @param moduleUrl - The `file:` URL of this module. @returns True when the two name the same file; false when either path cannot be resolved (a missing file counts as no start of the script). @example isStartedAsScript('/linked/skills/publish-wiki.mjs', import.meta.url) // => true when /linked/skills links to this file's folder */
+function isStartedAsScript(startedPath, moduleUrl) {
+  if (!startedPath) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(resolve(startedPath));
+  } catch {
+    // A path that cannot be resolved is no start of the script.
+    return false;
+  }
+}
+
+if (isStartedAsScript(process.argv[1], import.meta.url)) {
   const command = commandOf(process.argv.slice(2));
   if (command === undefined) {
     console.error(USAGE);

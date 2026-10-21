@@ -14,14 +14,16 @@ import { removeWithoutFollowing } from './removeWithoutFollowing'
 type LeftoverJudgement = {
   identity: StorageOwnerIdentity
   readStart: ProcessStartReader
+  /** The lock the leftovers belong to, beside which the file system's clock is probed for an empty one ({@link isLeftEmpty}), never inside a claim folder. */
+  lockPath: string
 }
 
 /** Removes one owner file, a placed claim or a prepared lock, when its owner is gone ({@link isStaleStorageLock}); a file that cannot be removed stays for the next sweep. @example await removeStaleOwnerFile('/storage/learning/writer.lock.pending-4f2c', judgement) */
 async function removeStaleOwnerFile(
   path: string,
-  { identity, readStart }: LeftoverJudgement,
+  { identity, readStart, lockPath }: LeftoverJudgement,
 ): Promise<void> {
-  if (await isStaleStorageLock(path, identity, readStart))
+  if (await isStaleStorageLock(path, identity, readStart, lockPath))
     await unlink(path).catch(() => undefined)
 }
 
@@ -39,13 +41,18 @@ async function removeStaleOwnerFile(
 async function removeStalePreparedClaim(
   path: string,
   claimName: string,
-  { identity, readStart }: LeftoverJudgement,
+  { identity, readStart, lockPath }: LeftoverJudgement,
 ): Promise<void> {
   // Nothing is read below a path that is no folder of its parent's own.
   if (!(await isFolderOfItsOwn(path).catch(() => false))) return
   if (
-    (await isStaleStorageLock(join(path, claimName), identity, readStart)) ||
-    (await isLeftEmpty(path, 'directory'))
+    (await isStaleStorageLock(
+      join(path, claimName),
+      identity,
+      readStart,
+      lockPath,
+    )) ||
+    (await isLeftEmpty(path, 'directory', lockPath))
   )
     await removeWithoutFollowing(path).catch(() => undefined)
 }
@@ -99,6 +106,7 @@ export async function removeStaleStorageClaims(
 ): Promise<void> {
   const cache = new Map<number, Promise<string | undefined>>()
   const judgement: LeftoverJudgement = {
+    lockPath,
     identity,
     readStart: (pid, inputs) => readStart(pid, { ...inputs, cache }),
   }

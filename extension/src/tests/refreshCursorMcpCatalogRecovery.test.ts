@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import * as fileSystem from 'node:fs/promises'
-import {
+import fsPromises, {
   link,
   lstat,
   mkdir,
@@ -33,6 +32,9 @@ import {
 import { loadDropSecondNameWhoseLinkIsRefused } from './utils/loadDropSecondNameWhoseLinkIsRefused'
 import { loadModule } from './utils/loadModule'
 import { loadSecondNameRulesOverHeldFiles } from './utils/loadSecondNameRulesOverHeldFiles'
+
+/** The real `node:fs/promises`, which a test passes on to the loaded catalog beside the calls it replaces. */
+const fileSystem = fsPromises
 
 /** The config Codebook creates for a first-time Cursor user. */
 const EMPTY_CONFIG = '{"mcpServers":{}}\n'
@@ -1147,6 +1149,189 @@ test('a staged Cursor MCP config that a killed window left in ~/.cursor without 
         'storage',
       ],
     },
+  )
+})
+
+// Value: protects=a Cursor window that is staging its first config in a settings folder on a file server or a network home whose clock runs behind this window's clock: the sweep of another window must not remove the file at the instant it is staged; fails_when=the sweep takes a staged file's age from this window's clock less the file system's stamp, so a window whose clock runs ten minutes ahead of the file system's finds a file staged this instant a killed window's and removes it; why_new=Cycle 0048 task 24 (S11-N17d); seam=this window's clock, which the test sets ten minutes ahead of the file system's, and the real files; no_claim=a real network home
+test('a staged Cursor MCP config of this instant stays in ~/.cursor while this window’s clock runs ten minutes ahead of the file system’s, and one the file system dates two minutes ago is removed', async (context) => {
+  // Arrange: one staged file two minutes old by the file system's clock and one of this instant; then this window's clock is set ten minutes ahead.
+  const folders = await catalogFolders(context)
+  const oldName = await leaveStagedConfig(
+    folders.cursorDirectory,
+    '66666666-6666-4666-8666-666666666666',
+    EMPTY_CONFIG,
+    120_000,
+  )
+  const youngName = await leaveStagedConfig(
+    folders.cursorDirectory,
+    '77777777-7777-4777-8777-777777777777',
+    EMPTY_CONFIG,
+    0,
+  )
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() + 600_000 })
+
+  // Act
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+
+  // Assert
+  const entries = await readdir(folders.cursorDirectory)
+  assert.deepEqual(
+    {
+      oldRemains: entries.includes(oldName),
+      youngRemains: entries.includes(youngName),
+    },
+    { oldRemains: false, youngRemains: true },
+  )
+})
+
+// Value: protects=a killed window's staged config is removed when this window's clock runs behind the file system's; fails_when=the age comes from this window's clock, so the file never ages; why_new=the task 24 test sets a clock ahead only; seam=none; no_claim=a real network home (the test sets only this window's Date)
+test('a staged Cursor MCP config that the file system dates two minutes ago is removed while this window’s clock runs ten minutes behind the file system’s', async (context) => {
+  // Arrange: one staged file two minutes old by the file system's clock; then this window's clock is set ten minutes behind.
+  const folders = await catalogFolders(context)
+  const oldName = await leaveStagedConfig(
+    folders.cursorDirectory,
+    '88888888-8888-4888-8888-888888888888',
+    EMPTY_CONFIG,
+    120_000,
+  )
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() - 600_000 })
+
+  // Act
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+
+  // Assert
+  const entries = await readdir(folders.cursorDirectory)
+  assert.equal(entries.includes(oldName), false)
+})
+
+/**
+ * Makes `open` of `node:fs/promises` record the staged-config names it is asked to create exclusively, and refuse them when a test says so, which is how the sweep's clock probe in Cursor's folder is seen (the probe is named like a staged config).
+ * @param context - The test, whose end restores `open`.
+ * @param cursorDirectory - Cursor's settings folder.
+ * @param isRefusing - Whether the probe's file is refused with `EACCES`.
+ * @returns The names that were asked for; read it after the call under test.
+ */
+function watchStagedConfigCreations(
+  context: TestContext,
+  cursorDirectory: string,
+  isRefusing: boolean,
+): string[] {
+  const asked: string[] = []
+  const open = fsPromises.open.bind(fsPromises)
+  context.mock.method(
+    fsPromises,
+    'open',
+    (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
+      if (
+        dirname(String(path)) === cursorDirectory &&
+        basename(String(path)).startsWith('.codebook-')
+      ) {
+        asked.push(basename(String(path)))
+        if (isRefusing)
+          return Promise.reject(
+            Object.assign(new Error('EACCES'), { code: 'EACCES' }),
+          )
+      }
+      return Reflect.apply(open, fsPromises, [path, ...rest])
+    },
+  )
+  return asked
+}
+
+// Value: protects=a staged config that may belong to a live window in a settings folder whose clock cannot be read (a full disk, a read-only network home): the sweep leaves it; fails_when=the sweep judges a file's age without the file system's clock (the unreadable clock does not end the sweep), so a file staged a moment ago is removed; why_new=Cycle 0048 task 79 (S11-N17d, branch of task 24 without a test); seam=open of node:fs/promises, which refuses the clock probe's file (a staged-config name in Cursor's folder); no_claim=a full disk or a read-only network home
+test('a staged Cursor MCP config two minutes old stays in ~/.cursor while no file can be created to read the file system’s clock', async (context) => {
+  // Arrange: a refresh has made the config; a killed window's staged file two minutes old stands beside it; the folder then refuses new staged names.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  await leaveStagedConfig(
+    folders.cursorDirectory,
+    '99999999-9999-4999-8999-999999999999',
+    EMPTY_CONFIG,
+    120_000,
+  )
+  const asked = watchStagedConfigCreations(
+    context,
+    folders.cursorDirectory,
+    true,
+  )
+
+  // Act
+  const refresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refreshGaveAGeneration: /^answered [a-f0-9-]{36}$/.test(refresh),
+      probeWasTried: asked.length === 1,
+      entriesOfTheCursorFolder: (await readdir(folders.cursorDirectory)).sort(),
+    },
+    {
+      refreshGaveAGeneration: true,
+      probeWasTried: true,
+      entriesOfTheCursorFolder: [
+        '.codebook-99999999-9999-4999-8999-999999999999.mcp.json',
+        'mcp.json',
+        'storage',
+      ],
+    },
+  )
+})
+
+// Value: protects=the learner's ~/.cursor and the refresh's speed: a refresh that finds no staged name makes no file to read the clock; fails_when=the sweep creates the clock probe before it knows a staged name is there, so every refresh creates and removes a file in Cursor's folder; why_new=Cycle 0048 task 79 (S11-N17d, branch of task 24 without a test); seam=open of node:fs/promises, whose creations of staged names in Cursor's folder the test records; no_claim=a real network home
+test('a refresh of Cursor’s MCP catalog creates no clock probe in ~/.cursor when no staged config stands there', async (context) => {
+  // Arrange: a refresh has made the config; no staged name stands in the folder.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const asked = watchStagedConfigCreations(
+    context,
+    folders.cursorDirectory,
+    false,
+  )
+
+  // Act
+  const refresh = await outcomeOf(
+    refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refreshGaveAGeneration: /^answered [a-f0-9-]{36}$/.test(refresh),
+      stagedNamesAskedFor: asked,
+    },
+    { refreshGaveAGeneration: true, stagedNamesAskedFor: [] },
+  )
+})
+
+// Value: protects=the learner's ~/.cursor from a clock probe left behind by every sweep that removes a killed window's staged config; fails_when=the probe file is not removed after the clock is read, so Cursor's folder holds one more .codebook-<uuid>.mcp.json after each such sweep; why_new=Cycle 0048 task 79 (S11-N17d, branch of task 24 without a test); seam=open of node:fs/promises, whose creations of staged names the test records, and the real files; no_claim=a window killed in the instant of the clock read (the next sweep removes that probe by its age)
+test('a sweep of ~/.cursor that removed a killed window’s staged config leaves no clock probe file in the folder', async (context) => {
+  // Arrange: a refresh has made the config; a staged file two minutes old stands beside it.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  await leaveStagedConfig(
+    folders.cursorDirectory,
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    EMPTY_CONFIG,
+    120_000,
+  )
+  const asked = watchStagedConfigCreations(
+    context,
+    folders.cursorDirectory,
+    false,
+  )
+
+  // Act
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+
+  // Assert
+  assert.deepEqual(
+    {
+      probesCreated: asked.length,
+      entriesOfTheCursorFolder: (await readdir(folders.cursorDirectory)).sort(),
+    },
+    { probesCreated: 1, entriesOfTheCursorFolder: ['mcp.json', 'storage'] },
   )
 })
 

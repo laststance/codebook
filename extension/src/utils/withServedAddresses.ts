@@ -45,6 +45,10 @@ const REFUSED_IN_ANY_ADDRESS = /&#|^[/\\]{2}/
 const UNREAD_NAMED_REFERENCE = /&[A-Za-z][A-Za-z0-9]*;/
 /** The values of an svg animation's `attributeName` that change the address of the element it animates, so the animation would give a link an address the filter never saw. */
 const ANIMATED_ADDRESSES = new Set(['href', 'xlink:href'])
+/** The value of a meta element's `name` by which a page sets the referrer policy of the whole page (compared without case, as a browser does), which overrides the reader's `Referrer-Policy: no-referrer` header. */
+const REFERRER_META_NAME = 'referrer'
+/** The attribute by which one element sets its own referrer policy (a link, an area, an image, a frame, a link element, a script), which overrides the reader's `Referrer-Policy: no-referrer` header for what that element fetches or opens. */
+const REFERRER_POLICY_ATTRIBUTE = 'referrerpolicy'
 /** The attributes by which a browser navigates, where a Codebook address is bound to the serving editor: a link's, an svg link's, a form's and a button's form action. */
 const REBOUND_ATTRIBUTES = new Set([
   'href',
@@ -121,7 +125,7 @@ function addressesOf(name: string, text: string): string[] {
 }
 
 /**
- * Whether the publisher accepts one address today (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), read as a browser reads it: without the spaces and control characters at its ends and without any tab or line break in it. Accepted are a relative path and a `#fragment` (no colon before the first slash, question mark or number sign, and no named reference there), an `http`, `https` or `mailto` address, and Codebook's own editor address ({@link CODEBOOK_ADDRESS_STARTS}); never one of {@link REFUSED_IN_ANY_ADDRESS}. Called by {@link isRefusedAddress}.
+ * Whether the publisher's renderer accepts one address today (this file's copy of its private `isAcceptedAddress` of `render-wiki-diagrams.mjs`), read as a browser reads it: without the spaces and control characters at its ends and without any tab or line break in it. Accepted are a relative path and a `#fragment` (no colon before the first slash, question mark or number sign, and no named reference there), an `http`, `https` or `mailto` address, and Codebook's own editor address ({@link CODEBOOK_ADDRESS_STARTS}); never one of {@link REFUSED_IN_ANY_ADDRESS}. Called by {@link isRefusedAddress}.
  * @param address - One address, its references read.
  * @returns Whether a page may keep it as a link.
  * @example
@@ -163,20 +167,29 @@ function isRefusedAddress(name: string, written: string): boolean {
  * - an address attribute ({@link ADDRESS_ATTRIBUTES}) that holds an address the publisher refuses today ({@link isRefusedAddress});
  * - an `http-equiv` of `refresh`, by which a page moves the browser to another address by itself;
  * - a `srcdoc`, whose value is a whole page of its own that the filter does not read;
- * - an svg animation's `attributeName` of `href` or `xlink:href` ({@link ANIMATED_ADDRESSES}), which gives a link the address of its `to`, `from`, `by` or `values`.
+ * - an svg animation's `attributeName` of `href` or `xlink:href` ({@link ANIMATED_ADDRESSES}), which gives a link the address of its `to`, `from`, `by` or `values`;
+ * - a `referrerpolicy` ({@link REFERRER_POLICY_ATTRIBUTE}) and the `name` of a meta element that is `referrer` ({@link REFERRER_META_NAME}): each overrides the reader's `Referrer-Policy: no-referrer` header, so a page could send its own address, which holds the reader's private path token, to another site.
  * Called by {@link editOf} and {@link renamesUnder}.
  * @param attribute - The attribute: its name in lower case and its value as written.
+ * @param tagName - The name in lower case of the start tag that holds the attribute.
  * @returns Whether the attribute is renamed.
  * @example
- * isRefusedAttribute({ name: 'http-equiv', written: '&#114efresh', … }) // => true
+ * isRefusedAttribute({ name: 'http-equiv', written: '&#114efresh', … }, 'meta') // => true
+ * isRefusedAttribute({ name: 'name', written: 'Referrer', … }, 'meta')          // => true
+ * isRefusedAttribute({ name: 'name', written: 'referrer', … }, 'input')         // => false
  */
-function isRefusedAttribute(attribute: HtmlAttribute): boolean {
+function isRefusedAttribute(
+  attribute: HtmlAttribute,
+  tagName: string,
+): boolean {
   const { name } = attribute
   const written = attribute.written ?? ''
   const keyword = browserAttributeText(written).trim().toLowerCase()
-  if (name === 'srcdoc') return true
+  if (name === 'srcdoc' || name === REFERRER_POLICY_ATTRIBUTE) return true
   if (name === 'http-equiv') return keyword === 'refresh'
   if (name === 'attributename') return ANIMATED_ADDRESSES.has(keyword)
+  if (name === 'name')
+    return tagName === 'meta' && keyword === REFERRER_META_NAME
   return ADDRESS_ATTRIBUTES.has(name) && isRefusedAddress(name, written)
 }
 
@@ -222,16 +235,18 @@ function reboundAddressOf(
 /**
  * The edit one attribute of a served page gets: a refused one loses its effect by its name ({@link isRefusedAttribute}), and a kept one that holds a Codebook address is bound to the serving editor ({@link reboundAddressOf}); called by {@link withServedAddresses}.
  * @param attribute - The attribute.
+ * @param tagName - The name in lower case of the start tag that holds the attribute.
  * @param editorScheme - The scheme registered by the editor serving this request.
  * @returns The attribute's edits, none for an attribute served as written.
  * @example
- * editOf({ name: 'href', written: 'javascript:run()', nameStart: 3, nameEnd: 7, … }, 'vscode') // => [{ start: 3, end: 7, text: 'data-codebook-unlinked' }]
+ * editOf({ name: 'href', written: 'javascript:run()', nameStart: 3, nameEnd: 7, … }, 'a', 'vscode') // => [{ start: 3, end: 7, text: 'data-codebook-unlinked' }]
  */
 function editOf(
   attribute: HtmlAttribute,
+  tagName: string,
   editorScheme: 'vscode' | 'cursor',
 ): Edit[] {
-  if (isRefusedAttribute(attribute))
+  if (isRefusedAttribute(attribute, tagName))
     return [
       {
         start: attribute.nameStart,
@@ -298,9 +313,12 @@ function renamesUnder(page: string, readings: readonly HtmlReading[]): Edit[] {
   const renames = new Map<number, Edit>()
   // Every reading's start tags; a name two readings refuse is renamed once.
   for (const reading of readings)
-    for (const { attributes } of readHtmlStartTags(page, reading))
+    for (const { name: tagName, attributes } of readHtmlStartTags(
+      page,
+      reading,
+    ))
       for (const attribute of attributes)
-        if (isRefusedAttribute(attribute))
+        if (isRefusedAttribute(attribute, tagName))
           renames.set(attribute.nameStart, {
             start: attribute.nameStart,
             end: attribute.nameEnd,
@@ -361,9 +379,9 @@ function withNoLinkAnyReadingRefuses(servedByChrome: string): string {
 /**
  * Serves a page's addresses as the reader may serve them, in one pass over the page: it keeps only the addresses the publisher accepts today and takes the effect from every other one while its text stays, and it binds every Codebook address to the editor that serves the page.
  *
- * Refused are an address of another scheme (`javascript:`, `data:`, `file:`, `vscode-insiders:`, an editor address that is not Codebook's own …), a refresh (`<meta http-equiv="refresh">`), a frame's own page (`srcdoc`) and an svg animation of an address, each read as a browser reads its value ({@link isRefusedAttribute}). The attribute's name becomes `data-codebook-unlinked`, so the element and its value stay and a browser follows nothing. A Codebook address in a link, a form's action or a button's form action gets the serving editor's scheme, in whatever form a browser reads it ({@link reboundAddressOf}).
+ * Refused are an address of another scheme (`javascript:`, `data:`, `file:`, `vscode-insiders:`, an editor address that is not Codebook's own …), a refresh (`<meta http-equiv="refresh">`), a frame's own page (`srcdoc`), an svg animation of an address, and a `referrerpolicy` or a meta `name="referrer"` (which would let a page send its own address, with the reader's private path token, to another site), each read as a browser reads its value ({@link isRefusedAttribute}). The attribute's name becomes `data-codebook-unlinked`, so the element and its value stay and a browser follows nothing. A Codebook address in a link, a form's action or a button's form action gets the serving editor's scheme, in whatever form a browser reads it ({@link reboundAddressOf}).
  *
- * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is the publisher's (`isAcceptedAddress` of `render-wiki-diagrams.mjs`), so a page reads alike published today and served. One published site works in both editors, as each binds Codebook's addresses to itself.
+ * Why: the reader serves pages of any age. A Wiki published before the publisher refused such addresses, or a page written straight into the Wiki folder, may carry one. In the editor's browser an editor address opens a file or runs another extension, often without a question once the learner allowed the editor's scheme for Codebook's own links; a refresh moves the page to such an address without a click, and the page's policy does not stop it. The rule is a copy in this file of the one the publisher's renderer applies (`isAcceptedAddress`, private to `render-wiki-diagrams.mjs` and reached through its exported `scriptingClauseOf`, which `render-wiki.mjs` calls for every page), not code the two share; the test 'the reader keeps exactly the addresses the shipped publisher accepts in a page’s content' holds the two alike, so a page reads alike published today and served. One published site works in both editors, as each binds Codebook's addresses to itself.
  * How: the page is read as Chrome 151 reads it ({@link readHtmlStartTags}): the attributes of its start tags are judged, and a comment, a script's or a style's text and any other text are served as published. A refused attribute's name is replaced by letters and hyphens, and a rebound value keeps its place, so the page is read as before. The reader opens in the system's default browser, which may read a select by the rules before 2025 or run without scripting; so a page with a select or a noscript is then read under each of those readings too, and an attribute any of them refuses loses its effect as well, also where Chrome reads it as text ({@link withNoLinkAnyReadingRefuses}); Codebook's addresses are rebound by Chrome's reading alone. On an ordinary page the time grows with the page's size. A page with a select and a noscript is read under all four readings: Chrome's, then the three others, and again under all four after each round that renamed an attribute, until a round renames nothing ({@link withNoLinkAnyReadingRefuses}); where an svg or a math start tag comes before the reader's script tag and Chrome's reading leaves no such content open there, up to three more readings of the page up to the tag ({@link isForeignContentOpenInAnyReading}); and where the tag goes at the page's end, or after a meta that leaves such content, Chrome's reading of the whole page once more, with them in it, before the rounds. A page built for it can make the HTML parser's own rules take time that grows with the square of its nesting (13 s to minutes for 1 MB), which no reading of the tags avoids; so the Wiki reader runs this function only on a worker thread, which it stops after {@link WIKI_PAGE_SERVE_DEADLINE_MS} ({@link servedWikiPageOffThread}).
  * The reader's own script tag, when the caller hands one, goes in by the same pass, at the start of the `</body>` Chrome's reading took as the body's end ({@link readHtmlPage}): there Chrome reads between two tags, so the tag starts and ends a script element of its own and changes no other tag; a `</body>` in a comment, a value or a script's text, or written in capitals, is read as a browser reads it. A page without such an end, or whose body no `<body>` tag opened (the parser records no end for a body it adds by itself), gets the tag at its end, and the filter reads the page with the tag in it, as the tag may close a tag the page leaves open; a page that ends inside a comment, an open tag or a raw-text element then takes the tag into that text, where it loads nothing (a hand-edited page only: the publisher opens every page's body with a tag). So does a page with a `<template>` left open: the parser ignores every `</body>` inside the template, so the page has no body end it takes, and the tag at the page's end becomes part of the template's content, which a browser keeps inert, so the page runs without the reader's script (a hand-edited page only: the renderer refuses a `template` tag in a page's content). Where svg or MathML content is open at the tag's place in Chrome's reading or in another reading the filter judges the page under, by the select rules before 2025 or without scripting (an element of it other than an integration point is the current node there), a script tag would be an svg or MathML element in that reading, which loads nothing; so a meta that leaves that content goes in before the tag ({@link FOREIGN_CONTENT_EXIT}, {@link isForeignContentOpenInAnyReading}), and the filter reads the page with both in it, as that reading then reads what follows outside that content.
  * Called by {@link rebindDeepWikiEditorLinks} last, for every page the reader serves, so the page served is this function's output.
@@ -409,8 +427,8 @@ export function withServedAddresses(
         editorScheme,
       )
   }
-  const edits = startTags.flatMap(({ attributes }) =>
-    attributes.flatMap((attribute) => editOf(attribute, editorScheme)),
+  const edits = startTags.flatMap(({ name: tagName, attributes }) =>
+    attributes.flatMap((attribute) => editOf(attribute, tagName, editorScheme)),
   )
   // The body's end tag starts between two tags, so the insertion stands apart from every attribute's edit.
   if (tagAtBodyEnd !== undefined && bodyEndTagStart !== undefined) {

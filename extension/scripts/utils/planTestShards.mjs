@@ -1,6 +1,6 @@
+import { isSplitTestFile } from './isSplitTestFile.mjs'
 import { testNamePattern } from './testNamePattern.mjs'
 import {
-  SPLIT_TEST_FILE_MS,
   TEST_FILE_OVERHEAD_MS,
   TEST_INVOCATION_OVERHEAD_MS,
   TEST_PART_TARGET_MS,
@@ -26,7 +26,12 @@ function splitTestFile(file, tests) {
     .toSorted()
     .map((name) => ({ name, ms: tests[name] }))
   const total = named.reduce((sum, test) => sum + test.ms, 0)
-  const parts = packLightestFirst(named, Math.ceil(total / TEST_PART_TARGET_MS))
+  // Never more parts than tests: more would stay empty, and a total past what a number holds (Infinity) would ask for an array of that length.
+  const partCount = Math.min(
+    Math.ceil(total / TEST_PART_TARGET_MS),
+    named.length,
+  )
+  const parts = packLightestFirst(named, partCount)
     .filter((part) => part.length > 0)
     .map((part) => ({
       names: part.map((test) => test.name),
@@ -49,18 +54,10 @@ function splitTestFile(file, tests) {
   ]
 }
 
-/** Tells whether a recorded file is slow enough, and has enough named tests, to run in parts. @example isSplit({ totalMs: 9000, tests: { a: 5000, b: 4000 } }) // => true */
-function isSplit(timing) {
-  return (
-    timing.totalMs > SPLIT_TEST_FILE_MS &&
-    Object.keys(timing.tests ?? {}).length > 1
-  )
-}
-
 /** Turns one test file into the units a lane can take: the whole file, or its name-selected parts when its recorded tests are slow. @example unitsOfTestFile('a.test.js', { totalMs: 300 }) // => [{ file: 'a.test.js', ms: 700 }] */
 function unitsOfTestFile(file, timing) {
   if (!timing) return [{ file, ms: UNKNOWN_TEST_FILE_MS }]
-  return isSplit(timing)
+  return isSplitTestFile(timing)
     ? splitTestFile(file, timing.tests)
     : [{ file, ms: timing.totalMs + TEST_FILE_OVERHEAD_MS }]
 }

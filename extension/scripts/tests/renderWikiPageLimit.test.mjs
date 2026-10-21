@@ -332,3 +332,41 @@ test('the bundled skill tells the agent that the publisher refuses a page over 2
     true,
   )
 })
+
+// Cycle 0048 task 8 (S11-N4): a page whose text already holds CRLF line ends.
+
+// Value: protects=every learner whose agent writes CRLF line ends into a page's text, as an editor on Windows may: the page is written with LF only, so a checkout with CRLF line ends changes it by the one rule the D13 refusal and its way out know; fails_when=the renderer keeps the CR of a page's text, so the published page holds CRLF before any checkout and no LF-read digest of it matches the publication record; why_new=Cycle 0048 task 8 (S11-N4); seam=none (the real renderer); no_claim=Git's own conversion, and the refusal of the publisher (publishWiki.test.mjs)
+test('a page whose text holds CRLF line ends is rendered with LF line ends only', async () => {
+  // Arrange: an overview whose paragraph holds 3 lines that end with CRLF and 1 line that ends with a lone CR.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-render-crlf-text-lf-only-')),
+  )
+  try {
+    const manifest = await overviewOfLetters(root, 1)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Flow</h2><pre>one\r\ntwo\r\nthree\r\nfour\rfive</pre>'
+
+    // Act
+    const page =
+      (
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        })
+      ).get('index.html') ?? ''
+
+    // Assert
+    assert.deepEqual(
+      {
+        hasCarriageReturn: page.includes('\r'),
+        preformattedText: /<pre>([^<]*)<\/pre>/.exec(page)?.[1],
+      },
+      {
+        hasCarriageReturn: false,
+        preformattedText: 'one\ntwo\nthree\nfour\nfive',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

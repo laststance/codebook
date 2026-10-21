@@ -875,8 +875,10 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/currentStorageOwner.ts',
     'extension/src/utils/currentUserName.ts',
     'extension/src/utils/deriveMachineKeys.ts',
+    'extension/src/utils/describeKeptStorageLock.ts',
     'extension/src/utils/describeNoStorageFolder.ts',
     'extension/src/utils/describeRefusedLinkBack.ts',
+    'extension/src/utils/describeRefusedStorageLock.ts',
     'extension/src/utils/describeUnopenedFile.ts',
     'extension/src/utils/describeUnopenedMovedFile.ts',
     'extension/src/utils/dropSecondNameOfMovedFile.ts',
@@ -893,10 +895,12 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/isSameFileId.ts',
     'extension/src/utils/isSameStorageMachine.ts',
     'extension/src/utils/isStaleStorageLock.ts',
+    'extension/src/utils/judgeLeftEmpty.ts',
     'extension/src/utils/listFolderTreeWithoutFollowing.ts',
     'extension/src/utils/listPlacedClaims.ts',
     'extension/src/utils/modifiedAtMsOf.ts',
     'extension/src/utils/namesMachineInClear.ts',
+    'extension/src/utils/newStagedConfigPath.ts',
     'extension/src/utils/openWithoutFollowing.ts',
     'extension/src/utils/passIfMissing.ts',
     'extension/src/utils/placeStorageLock.ts',
@@ -904,6 +908,7 @@ test('the Windows job runs its test files on windows-latest, one at a time, and 
     'extension/src/utils/processStartFormHere.ts',
     'extension/src/utils/psProgramPath.ts',
     'extension/src/utils/readBootIdentity.ts',
+    'extension/src/utils/readFileSystemNowMs.ts',
     'extension/src/utils/readLiveWikiUpdateMarker.ts',
     'extension/src/utils/readProcessStart.ts',
     'extension/src/utils/readRecordedOwner.ts',
@@ -1671,4 +1676,111 @@ test('the pin of pnpm’s wait reads the wait and its exemptions in every form Y
     exemptionsWithASpace: { exempts: true, waitMinutes: undefined },
     neither: { exempts: false, waitMinutes: undefined },
   })
+})
+
+// Value: protects=the restored `extension/node_modules` of the Test jobs, which must be the folder the manifest and the runner would install; fails_when=the cache key leaves out `extension/package.json` (a changed script or dependency range restores an older folder) or the runner's architecture (a folder with native packages built for another processor is restored); why_new=Cycle 0048 task 28 (test guide, 2026-10-02: the key left out both); seam=none; no_claim=that the lockfile and the manifest agree
+test('the dependency cache of the Test workflow changes with the extension manifest and the runner architecture', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+
+  // Act
+  const key = /^ +key: (extension-node-modules-.*)$/m.exec(workflow)?.[1]
+  const hashedFiles = /hashFiles\(([^)]*)\)/.exec(key ?? '')?.[1].split(', ')
+
+  // Assert
+  assert.equal(key?.includes('${{ runner.os }}-${{ runner.arch }}-'), true)
+  assert.deepEqual(hashedFiles, [
+    "'.node-version'",
+    "'extension/package.json'",
+    "'extension/pnpm-lock.yaml'",
+    "'extension/pnpm-workspace.yaml'",
+    "'extension/patches/**'",
+  ])
+})
+
+// Value: protects=every place that restores `extension/node_modules` from the cache (the Test shards, its split-files job and the reader-dom job, which says it restores the same cache): all must use the key that changes with the manifest and the runner architecture; fails_when=a restore keeps the old key (no `runner.arch`, no `extension/package.json`), so that job restores a folder the manifest or the processor does not match, or a restore uses a key the pin does not read; why_new=Cycle 0048 task 45 (Maintainability, CodeRabbit, OCR B: the pin of task 28 read the first key of test.yml only); seam=none; no_claim=that the lockfile and the manifest agree
+test('every workflow step that restores extension/node_modules uses the key that changes with the manifest and the runner architecture', async () => {
+  // Arrange
+  const definitions = await ciDefinitions()
+
+  // Act
+  const restores = definitions.flatMap(({ path, text }) => {
+    const folderRestores = text.match(/^ +path: extension\/node_modules$/gm)
+    if (folderRestores === null) return []
+    const keys = [
+      ...text.matchAll(/^ +key: (extension-node-modules-.*)$/gm),
+    ].map(([, key]) => ({
+      hasArch: key.includes('${{ runner.os }}-${{ runner.arch }}-'),
+      hashedFiles: /hashFiles\(([^)]*)\)/.exec(key)?.[1].split(', '),
+    }))
+    return [{ path, restoreSteps: folderRestores.length, keys }]
+  })
+
+  // Assert
+  const expectedKey = {
+    hasArch: true,
+    hashedFiles: [
+      "'.node-version'",
+      "'extension/package.json'",
+      "'extension/pnpm-lock.yaml'",
+      "'extension/pnpm-workspace.yaml'",
+      "'extension/patches/**'",
+    ],
+  }
+  assert.deepEqual(restores, [
+    {
+      path: '.github/workflows/reader-dom.yml',
+      restoreSteps: 1,
+      keys: [expectedKey],
+    },
+    {
+      path: '.github/workflows/test.yml',
+      restoreSteps: 2,
+      keys: [expectedKey, expectedKey],
+    },
+  ])
+})
+
+// Value: protects=the errors a split file raises after its last test, which the Test shards hide (their parts end with `--test-force-exit`); fails_when=the Test workflow no longer runs the split files whole after a push to main, or runs them before the shards have passed, or runs them with a name pattern or the forced exit; why_new=Cycle 0048 task 26 (test guide, 2026-10-02: no CI job ran the split files without --test-force-exit); seam=none; no_claim=that pull requests run it (it costs about four minutes of two processors)
+test('the Test workflow runs the split files whole, with Node’s default exit, after a push to main whose shards passed', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+
+  // Act
+  const job = /^ {2}split-files:\n((?: {4}.*\n| *\n)+)/m.exec(workflow)?.[1]
+
+  // Assert
+  assert.equal(job?.includes('    needs: test\n'), true)
+  assert.equal(job?.includes("    if: github.event_name == 'push'\n"), true)
+  assert.equal(
+    job?.includes(
+      '        run: node scripts/test-shard.mjs --whole-split-files --lanes 2\n',
+    ),
+    true,
+  )
+  assert.equal(job?.includes('--test-force-exit'), false)
+})
+
+// Value: protects=the split-files job of every push to main: a later push must not cancel the run of an earlier commit, because a cancelled run never runs that commit's split files whole (the shards hide an error a split file raises after its last test); a pull request still cancels its own older run; fails_when=the Test workflow's concurrency group is the ref for a push too with `cancel-in-progress: true`, so the second push to main cancels the first run, `split-files` included; why_new=Cycle 0048 task 143 (native adversarial: `cancel-in-progress: true` cancelled the run of the earlier push); seam=the text of .github/workflows/test.yml, with package.yml's group as the model; no_claim=what GitHub does with the group (the semantics of `concurrency` are GitHub's)
+test('the Test workflow gives each push its own concurrency group and cancels only the older run of a pull request, so split-files of an earlier push is never cancelled', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+
+  // Act
+  // The comment lines above the keys explain them and are no setting.
+  const concurrency = /^concurrency:\n((?: {2}.*\n)+)/m
+    .exec(workflow)?.[1]
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('#'))
+    .join('\n')
+
+  // Assert
+  assert.equal(
+    concurrency,
+    [
+      "  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}",
+      "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+      '',
+    ].join('\n'),
+  )
 })

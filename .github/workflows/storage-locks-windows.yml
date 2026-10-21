@@ -88,8 +88,10 @@ on:
       - extension/src/utils/currentStorageOwner.ts
       - extension/src/utils/currentUserName.ts
       - extension/src/utils/deriveMachineKeys.ts
+      - extension/src/utils/describeKeptStorageLock.ts
       - extension/src/utils/describeNoStorageFolder.ts
       - extension/src/utils/describeRefusedLinkBack.ts
+      - extension/src/utils/describeRefusedStorageLock.ts
       - extension/src/utils/describeUnopenedFile.ts
       - extension/src/utils/describeUnopenedMovedFile.ts
       - extension/src/utils/dropSecondNameOfMovedFile.ts
@@ -106,10 +108,12 @@ on:
       - extension/src/utils/isSameFileId.ts
       - extension/src/utils/isSameStorageMachine.ts
       - extension/src/utils/isStaleStorageLock.ts
+      - extension/src/utils/judgeLeftEmpty.ts
       - extension/src/utils/listFolderTreeWithoutFollowing.ts
       - extension/src/utils/listPlacedClaims.ts
       - extension/src/utils/modifiedAtMsOf.ts
       - extension/src/utils/namesMachineInClear.ts
+      - extension/src/utils/newStagedConfigPath.ts
       - extension/src/utils/openWithoutFollowing.ts
       - extension/src/utils/passIfMissing.ts
       - extension/src/utils/placeStorageLock.ts
@@ -117,6 +121,7 @@ on:
       - extension/src/utils/processStartFormHere.ts
       - extension/src/utils/psProgramPath.ts
       - extension/src/utils/readBootIdentity.ts
+      - extension/src/utils/readFileSystemNowMs.ts
       - extension/src/utils/readLiveWikiUpdateMarker.ts
       - extension/src/utils/readProcessStart.ts
       - extension/src/utils/readRecordedOwner.ts

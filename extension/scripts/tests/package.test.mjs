@@ -23,6 +23,7 @@ import { COMPILED_DIRECTORIES } from '../utils/packageConstants.mjs'
 import { readVsixEntries } from '../utils/readVsixEntries.mjs'
 import { runPackageCommand } from '../utils/runPackageCommand.mjs'
 import { verifyPackageContent } from '../utils/verifyPackageContent.mjs'
+import { writeProgressWhileRunning } from '../utils/writeProgressWhileRunning.mjs'
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
 let directory, artifact, original, receipt
@@ -41,7 +42,10 @@ before(async () => {
       'export declare const obsolete: string;',
     )
   }
-  receipt = await buildPackage(repository, artifact)
+  // The build runs several commands in turn and prints nothing; the lines keep the pre-gate's silence watch from ending the run.
+  receipt = await writeProgressWhileRunning(() =>
+    buildPackage(repository, artifact),
+  )
   original = await readVsixEntries(artifact)
 })
 after(async () => {
@@ -90,7 +94,7 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true)
   assert.equal(receipt.isolatedWikiPageWorker, true)
-  assert.equal(checked.extension.version, '0.2.31')
+  assert.equal(checked.extension.version, '0.2.32')
   assert.equal(checked.extension.apiVersion, '1.7')
   assert.equal(checked.entries, 32)
   assert.equal(receipt.dependencies.length, 16)

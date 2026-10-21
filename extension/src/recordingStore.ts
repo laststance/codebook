@@ -232,7 +232,7 @@ export class RecordingStore {
 
   /**
    * Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted, and a start that fails after making its folder removes it again ({@link createRecordingFolder}).
-   * A start whose write under the storage lock succeeded stands also when the release of the lock fails at each of its attempts ({@link withStorageLock}): the recording, its writer record and this store's writer are made, and a failed start would leave them as this window's reservation, which no list shows and no removal deletes, until the editor closes (Cycle 0047 row 240). The lock left is this process's, which its next hold of the storage takes back (Cycle 0047 row 199); until then other windows are refused by it.
+   * A start whose write under the storage lock succeeded stands also when the release of the lock fails at each of its attempts: {@link withStorageLock} never throws a failed release, it returns the write's result, so the recording, its writer record and this store's writer, made under the lock, are the start's answer (Cycle 0047 row 240, Cycle 0048 tasks 21 and 97). The lock left is this process's: its timer takes it back some seconds later (Cycle 0048 task 22) and so does its next hold of the storage (Cycle 0047 row 199); until then other windows are refused by it.
    * @example await store.start(binding, runtime.evidence.elapsedMs())
    */
   start(
@@ -247,7 +247,6 @@ export class RecordingStore {
       return Promise.reject(
         new Error('Recording belongs to another workspace.'),
       )
-    let started: RecordingWriter | undefined
     const pending = this.writes.then(() =>
       withStorageLock(this.learningDirectory, async () => {
         await this.initialize(version)
@@ -286,12 +285,7 @@ export class RecordingStore {
           () => this.release(header.studyId, writer),
         )
         this.active.set(header.studyId, writer)
-        started = writer
         return writer
-      }).catch((error: unknown) => {
-        // Only the lock's release can fail once the writer is made: the recording stands, and the lock is taken back by this process's next hold.
-        if (started) return started
-        throw error
       }),
     )
     this.writes = pending.catch(() => undefined)
@@ -1033,7 +1027,7 @@ export class RecordingStore {
   }
 
   /**
-   * Gives the status of an unsealed recording for {@link list} and {@link read}: this session's own writer says it; any other recording is `unfinalized` while its writer may still run and `interrupted` once it is gone, by the one rule of {@link isRecordingWriterLive} (the record of the writer's full identity, or for a recording of 0.2.29.0 its header's host name and process id). A writer this computer cannot confirm (`unconfirmed-here`: a process id that a later process or one of another user has) reads `interrupted` here as well; only the removal's dialog treats it apart.
+   * Gives the status of an unsealed recording for {@link list} and {@link read}: this session's own writer says it; any other recording is `unfinalized` while its writer may still run and `interrupted` once it is gone, by the one rule of {@link isRecordingWriterLive} (the record of the writer's full identity, or for a recording of 0.2.29.0 its header's host name and process id). A writer this computer cannot confirm (`unconfirmed-here`: a process id that a later process or one of another user has) reads `interrupted` here as well, and so does a writer record that stands and cannot be read (`unreadable`, {@link isRecordingWriterLive}); only the removal's dialog treats them apart. The learner's view maps `interrupted` and `unfinalized` to `partial`.
    * @param header - The recording's header.
    * @param writer - This session's writer of the recording, if any.
    * @param starts - The process starts of the caller's list ({@link list}); one for this recording alone when left out ({@link read}).
