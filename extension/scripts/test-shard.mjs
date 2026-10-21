@@ -103,6 +103,9 @@ async function readTestFiles() {
   return files
 }
 
+/** The refusal of a recording that must not write timings: a test or hook that did not end, a run that sent nothing, failed tests. Its message is the whole sentence; the caller prints it as one line `✖ <sentence>`. */
+class RecordingRefusal extends Error {}
+
 /** Says in one sentence what in a recording did not end, or `undefined` when everything ended: a test that did not end within the limit, a hook that did not end (the runner failed the hook's tests for its time), or a run that sent nothing for the limit, with the files that started and did not end. @example describeUnendedRecording({ timedOutTests: [{ file: 'a.test.js', name: 'opens' }], hookTimedOutTests: [], stall: undefined }, 120) // => 'a.test.js: "opens" did not end within 120 s and was ended; timings were not recorded.' */
 function describeUnendedRecording(
   { timedOutTests, hookTimedOutTests, stall },
@@ -115,7 +118,7 @@ function describeUnendedRecording(
   if (hungHook)
     return `${hungHook.file}: a hook of ${JSON.stringify(hungHook.name)} did not end within ${silenceSeconds} s and was ended; timings were not recorded.`
   if (stall)
-    return `the run sent nothing for ${silenceSeconds} s and was ended; ${stall.files.length > 0 ? `${stall.files.join(', ')} started and did not end` : 'no file was running'}; timings were not recorded.`
+    return `The run sent nothing for ${silenceSeconds} s and was ended; ${stall.files.length > 0 ? `${stall.files.join(', ')} started and did not end` : 'no file was running'}; timings were not recorded.`
   return undefined
 }
 
@@ -128,10 +131,12 @@ async function recordTimings(files, silenceSeconds) {
   })
   const { results } = recording
   const unended = describeUnendedRecording(recording, silenceSeconds)
-  if (unended) throw new Error(unended)
+  if (unended) throw new RecordingRefusal(unended)
   const failed = results.filter((result) => result.failed).length
   if (failed > 0)
-    throw new Error(`${failed} tests failed; timings were not recorded.`)
+    throw new RecordingRefusal(
+      `${failed} tests failed; timings were not recorded.`,
+    )
   await writeFile(
     timingsPath,
     `${JSON.stringify(buildTestTimings(results), null, 2)}\n`,
@@ -223,7 +228,12 @@ function readCheckedOptions() {
 const options = readCheckedOptions()
 const files = await readTestFiles()
 if (options.record) {
-  await recordTimings(files, options.silenceSeconds)
+  // A refusal is one line for the reader, not a stack trace of this script; any other error keeps its stack.
+  await recordTimings(files, options.silenceSeconds).catch((error) => {
+    if (!(error instanceof RecordingRefusal)) throw error
+    console.error(`✖ ${error.message}`)
+    process.exit(1)
+  })
 } else {
   // A refusal is one line for the reader, not a stack trace of this script.
   const timings = await readTestTimings(timingsPath).catch((error) => {

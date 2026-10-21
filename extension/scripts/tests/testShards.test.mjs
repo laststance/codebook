@@ -2077,7 +2077,7 @@ async function recordFixtureFile(context, file, source) {
   return { result, left, elapsedMs, timings }
 }
 
-// Value: protects=the timings recording from a `before` hook that does not end: the runner fails the hook's tests as `hookFailed` (for its time) and the file's process keeps running, so the recording used to wait for the job's end; it now ends with the hook's test named and no process left; fails_when=only a test the runner failed for its time ends the recording, so a hung hook is waited for until the job is cancelled, or the file's process is left running; why_new=Cycle 0048 task 149 (native adversarial: still running 15 s after a 1 s limit); seam=test-shard.mjs --record on a fixture build whose file has a `before` hook that holds a timer, with a 3 s limit; no_claim=an `after` hook (the same failure type)
+// Value: protects=the timings recording from a `before` hook that does not end: the runner fails the hook's tests as `hookFailed` (for its time) and the file's process keeps running, so the recording used to wait for the job's end; it now ends with the hook's test named and no process left; fails_when=only a test the runner failed for its time ends the recording, so a hung hook is waited for until the job is cancelled, or the file's process is left running; why_new=Cycle 0048 task 149 (native adversarial: still running 15 s after a 1 s limit); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; seam=test-shard.mjs --record on a fixture build whose file has a `before` hook that holds a timer, with a 3 s limit; no_claim=an `after` hook (the same failure type)
 test(
   'the timings recording ends a before hook that does not end, names its test and leaves no process',
   { skip: process.platform === 'win32' },
@@ -2104,7 +2104,7 @@ test(
       {
         code: result.code,
         sentence:
-          /hook\.test\.js: a hook of "first" did not end within 3 s and was ended; timings were not recorded\./.test(
+          /^✖ hook\.test\.js: a hook of "first" did not end within 3 s and was ended; timings were not recorded\.\n$/.test(
             result.stderr,
           ),
         // gstack-timing-ok: the 3 s limit ends the hook; the recording must end long before the 45 s bound of the script, which a recording that waits for the file would reach.
@@ -2123,7 +2123,7 @@ test(
   },
 )
 
-// Value: protects=the timings recording from a file whose process does not exit after its tests passed (a timer left at the top level): the file sends nothing more, so the recording used to wait for it for ever; it now ends after the limit with the file named and no process left; fails_when=the recording ends only at a failed test, so a file that passed its tests and holds the process open holds the recording; why_new=Cycle 0048 task 149 (native adversarial: a file process that does not exit sends nothing more); seam=test-shard.mjs --record on a fixture build whose file passes its test and leaves a timer, with a 3 s limit (the run's silence bound is that and 5 s more); no_claim=the margin value
+// Value: protects=the timings recording from a file whose process does not exit after its tests passed (a timer left at the top level): the file sends nothing more, so the recording used to wait for it for ever; it now ends after the limit with the file named and no process left; fails_when=the recording ends only at a failed test, so a file that passed its tests and holds the process open holds the recording; why_new=Cycle 0048 task 149 (native adversarial: a file process that does not exit sends nothing more); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; seam=test-shard.mjs --record on a fixture build whose file passes its test and leaves a timer, with a 3 s limit (the run's silence bound is that and 5 s more); no_claim=the margin value
 test(
   'the timings recording ends a run that sends nothing for the limit, names the file that did not end and leaves no process',
   { skip: process.platform === 'win32' },
@@ -2150,7 +2150,7 @@ test(
       {
         code: result.code,
         sentence:
-          /the run sent nothing for 3 s and was ended; lingering\.test\.js started and did not end; timings were not recorded\./.test(
+          /^✖ The run sent nothing for 3 s and was ended; lingering\.test\.js started and did not end; timings were not recorded\.\n$/.test(
             result.stderr,
           ),
         // gstack-timing-ok: the run's silence bound is the 3 s limit and 5 s of margin; the recording must end long before the 45 s bound of the script.
@@ -2169,7 +2169,7 @@ test(
   },
 )
 
-// Value: protects=the timings recording from a hung test whose file ignores SIGTERM: the runner's abort sends SIGTERM to the file, which keeps running; the recording waits for the file within the grace and then kills every process under it with SIGKILL; fails_when=the recording ends at the abort and leaves the file's process (it was running 15 s after the recording ended), or the kill is missing after the grace; why_new=Cycle 0048 task 149 (after an abort, a test file that ignores SIGTERM keeps running); seam=test-shard.mjs --record on a fixture build whose test ignores SIGTERM and hangs, with a 3 s limit and the 5 s grace; no_claim=a file that ends at SIGTERM (the recording above covers the hung test's sentence)
+// Value: protects=the timings recording from a hung test whose file ignores SIGTERM: the runner's abort sends SIGTERM to the file, which keeps running; the recording waits for the file within the grace and then kills every process under it with SIGKILL; fails_when=the recording ends at the abort and leaves the file's process (it was running 15 s after the recording ended), or the kill is missing after the grace; why_new=Cycle 0048 task 149 (after an abort, a test file that ignores SIGTERM keeps running); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; seam=test-shard.mjs --record on a fixture build whose test ignores SIGTERM and hangs, with a 3 s limit and the 5 s grace; no_claim=a file that ends at SIGTERM (the recording above covers the hung test's sentence)
 test(
   'the timings recording ends a hung test whose file ignores SIGTERM, names the test and leaves no process',
   { skip: process.platform === 'win32' },
@@ -2186,7 +2186,7 @@ test(
       {
         code: result.code,
         sentence:
-          /stubborn\.test\.js: "never ends" did not end within 3 s and was ended; timings were not recorded\./.test(
+          /^✖ stubborn\.test\.js: "never ends" did not end within 3 s and was ended; timings were not recorded\.\n$/.test(
             result.stderr,
           ),
         // gstack-timing-ok: the 3 s limit and the 5 s grace end the recording; it must end long before the 45 s bound of the script.
@@ -2283,7 +2283,7 @@ test('a call that prints more than the output bound keeps the end of its output 
   assert.equal(lines.at(-5), 'printed line 20000')
 })
 
-// Value: protects=the timings recording from a test that never ends: the recording ends with that test named and failed, and writes no timings file; fails_when=`--record` runs with no limit, so one hung test holds the recording until the job is cancelled; why_new=Cycle 0048 task 57 (Red Team: task 25's limit covered one entry point of three); seam=test-shard.mjs --record started as a process on a fixture build with a 3 s limit; no_claim=the default limit (120 s) and the timings of a recording that passes
+// Value: protects=the timings recording from a test that never ends: the recording ends with that test named and failed, and writes no timings file; fails_when=`--record` runs with no limit, so one hung test holds the recording until the job is cancelled; why_new=Cycle 0048 task 57 (Red Team: task 25's limit covered one entry point of three); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; seam=test-shard.mjs --record started as a process on a fixture build with a 3 s limit; no_claim=the default limit (120 s) and the timings of a recording that passes
 test('the timings recording ends a test that never ends, names it and writes no timings file', async (context) => {
   // Arrange
   const root = await createFixtureExtension(context, {
@@ -2305,9 +2305,9 @@ test('the timings recording ends a test that never ends, names it and writes no 
 
   // Assert
   assert.equal(result.code, 1)
-  assert.match(
+  assert.equal(
     result.stderr,
-    /hanging\.test\.js: "never ends" did not end within 3 s/,
+    '✖ hanging.test.js: "never ends" did not end within 3 s and was ended; timings were not recorded.\n',
   )
   assert.equal(
     await readFile(join(root, 'test-timings.json'), 'utf8').catch(
@@ -2381,7 +2381,7 @@ test('the timings recording writes every file with its total and the named tests
   )
 })
 
-// Value: protects=the shard plan from timings of a failing run: the recording is refused with the number of failed tests and writes no timings file; fails_when=a failing test is recorded as if it had passed (its time is that of a failure), or the file is written before the refusal; why_new=Cycle 0048 task 86 (Step 7: only the hang of the recording was tested); seam=test-shard.mjs --record started as a process on a fixture build with one failing test; no_claim=a hung test, which the recording's hang test above covers
+// Value: protects=the shard plan from timings of a failing run: the recording is refused with the number of failed tests and writes no timings file; fails_when=a failing test is recorded as if it had passed (its time is that of a failure), or the file is written before the refusal; why_new=Cycle 0048 task 86 (Step 7: only the hang of the recording was tested); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; seam=test-shard.mjs --record started as a process on a fixture build with one failing test; no_claim=a hung test, which the recording's hang test above covers
 test('the timings recording is refused with the number of failed tests and writes no timings file', async (context) => {
   // Arrange
   const root = await createFixtureExtension(context, {
@@ -2399,10 +2399,7 @@ test('the timings recording is refused with the number of failed tests and write
 
   // Assert
   assert.equal(result.code, 1)
-  assert.match(
-    result.stderr,
-    /Error: 1 tests failed; timings were not recorded\./,
-  )
+  assert.equal(result.stderr, '✖ 1 tests failed; timings were not recorded.\n')
   assert.equal(
     await readFile(join(root, 'test-timings.json'), 'utf8').catch(
       () => 'no file',
