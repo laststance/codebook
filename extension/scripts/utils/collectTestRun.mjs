@@ -65,7 +65,7 @@ function endProcessesUnderThisOne() {
  * @param options.testTimeoutMs - How long one test, or a hook, may take before it is failed, and the base of the silence bound of the whole run.
  * @param options.killGraceMs - How long the file processes get to end after an abort before they are killed ({@link CALL_KILL_GRACE_MS} by default).
  * @param options.stallMarginMs - The time added to `testTimeoutMs` for the run's silence bound ({@link RECORD_STALL_MARGIN_MS} by default).
- * @returns `{ results, timedOutTests, hookTimedOutTests, stall }`: one `{ file, name, ms, failed, timedOut, hookTimedOut }` per finished top-level test, the `{ file, name }` of each test that was ended for its time, the `{ file, name }` of each test whose hook did not end, and `{ files }` (the names of the files that started and did not end) when the run sent nothing for the limit, `undefined` otherwise. The files that were still running at an abort end as failed results of the runner's own.
+ * @returns `{ results, timedOutTests, hookTimedOutTests, stall }`: one `{ file, name, ms, failed, timedOut, hookTimedOut }` per finished top-level test, the `{ file, name }` of each test that was ended for its time, the `{ file, name }` of each test whose hook did not end, and `{ files }` (the names of the files that started and did not end) when the run sent nothing for the limit plus `stallMarginMs`, `undefined` otherwise. The files that were still running at an abort end as failed results of the runner's own.
  * @example
  * const { results } = await collectTestRun({ files: ['/repo/dist/tests/a.test.js'], concurrency: 4, testTimeoutMs: 120_000 })
  */
