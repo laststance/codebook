@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import {
   cp,
   copyFile,
@@ -257,8 +257,14 @@ test('the pre-gate policy declares the script test that reads each repository fi
     codexHooks: ['.codex/restore-product-context.test.mjs'],
     healthChecker: [`${scriptTests}health.test.mjs`],
     shardScript: [`${scriptTests}testShards.test.mjs`],
-    studyCheck: [`${scriptTests}studyBootstrapQa.test.mjs`],
-    wikiCheck: [`${scriptTests}wikiReaderDomQa.test.mjs`],
+    studyCheck: [
+      `${scriptTests}studyBootstrapQa.test.mjs`,
+      `${scriptTests}workflowPins.test.mjs`,
+    ],
+    wikiCheck: [
+      `${scriptTests}wikiReaderDomQa.test.mjs`,
+      `${scriptTests}workflowPins.test.mjs`,
+    ],
     wikiShellFixture: [`${scriptTests}wikiReaderDomQa.test.mjs`],
     publishProbe: publishWiki,
     publishHooks: publishWiki,
@@ -277,6 +283,78 @@ test('the pre-gate policy declares the script test that reads each repository fi
     editorLinks: publishWiki,
     shortcutHelp: publishWiki,
   })
+  assert.deepEqual(missingTests, [])
+})
+
+// Value: protects=the pre-gate runs the script test that starts a script as a process, copies it into a fixture, or reads it by a path built in code: a change to `run-pregate-tests.mjs`, `collectTestRun.mjs`, `planWholeSplitFiles.mjs`, a browser check (`*-qa.mjs`), `build-fast.mjs`, `check-package.mjs`, `package.mjs`, a file-system stand-in of the publisher's tests, `codecov.yml`, `extension/package.json` or `extension/pnpm-workspace.yaml` selects the test that runs or reads it; fails_when=one of these entries is dropped or points to another test, so a change to such a file runs no test that starts or reads it (the import graph does not reach a file that a test only starts); why_new=Cycle 0048 task 136 (OCR B, Red Team: task 122 found only literal reads); seam=none (the policy file and the files it names); no_claim=files a test only writes into a fixture, and the files the import graph reaches
+test('the pre-gate policy declares the script test that starts or copies each script and reads each browser check, and every browser check in the folder is covered', () => {
+  // Arrange
+  const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+  const policy = JSON.parse(
+    readFileSync(`${repositoryRoot}.gstack/pregate.json`, 'utf8'),
+  )
+  const scripts = 'extension/scripts/'
+  const scriptTests = 'extension/scripts/tests/'
+
+  // Act
+  const declared = (file) => policy.dependencies[file]
+  const lanes = {
+    pregateRunner: declared(`${scripts}run-pregate-tests.mjs`),
+    collectTestRun: declared(`${scripts}utils/collectTestRun.mjs`),
+    planWholeSplitFiles: declared(`${scripts}utils/planWholeSplitFiles.mjs`),
+    browserChecks: declared(`${scripts}*-qa.mjs`),
+    studyBootstrapCheck: declared(`${scripts}study-bootstrap-qa.mjs`),
+    wikiReaderDomCheck: declared(`${scripts}wiki-reader-dom-qa.mjs`),
+    fastBuild: declared(`${scripts}build-fast.mjs`),
+    packageChecker: declared(`${scripts}check-package.mjs`),
+    packageCommand: declared(`${scripts}package.mjs`),
+    wrongLookStandIn: declared(`${scriptTests}utils/wrongLookFileSystem.mjs`),
+    crlfShellStandIn: declared(`${scriptTests}utils/crlfShellFileSystem.mjs`),
+    codecov: declared('codecov.yml'),
+    extensionManifest: declared('extension/package.json'),
+    pnpmWorkspace: declared('extension/pnpm-workspace.yaml'),
+  }
+  const browserChecksInFolder = readdirSync(`${repositoryRoot}${scripts}`)
+    .filter((name) => name.endsWith('-qa.mjs'))
+    .toSorted()
+  const namedTests = Object.values(policy.dependencies).flat()
+  const missingTests = namedTests.filter(
+    (test) => !existsSync(`${repositoryRoot}${test}`),
+  )
+
+  // Assert
+  const workflowPins = [`${scriptTests}workflowPins.test.mjs`]
+  const publishWiki = [`${scriptTests}publishWiki.test.mjs`]
+  assert.deepEqual(lanes, {
+    pregateRunner: [`${scriptTests}pregateTests.test.mjs`],
+    collectTestRun: [`${scriptTests}testShards.test.mjs`],
+    planWholeSplitFiles: [`${scriptTests}testShards.test.mjs`],
+    browserChecks: workflowPins,
+    studyBootstrapCheck: [
+      `${scriptTests}studyBootstrapQa.test.mjs`,
+      `${scriptTests}workflowPins.test.mjs`,
+    ],
+    wikiReaderDomCheck: [
+      `${scriptTests}wikiReaderDomQa.test.mjs`,
+      `${scriptTests}workflowPins.test.mjs`,
+    ],
+    fastBuild: workflowPins,
+    packageChecker: [`${scriptTests}package.test.mjs`],
+    packageCommand: [`${scriptTests}packageCli.test.mjs`],
+    wrongLookStandIn: publishWiki,
+    crlfShellStandIn: publishWiki,
+    codecov: workflowPins,
+    extensionManifest: workflowPins,
+    pnpmWorkspace: workflowPins,
+  })
+  // The five checks that exist today are all read by workflowPins.test.mjs; a sixth needs no new entry because of the glob.
+  assert.deepEqual(browserChecksInFolder, [
+    'repository-return-qa.mjs',
+    'study-bootstrap-qa.mjs',
+    'study-reading-pose-qa.mjs',
+    'understanding-focus-qa.mjs',
+    'wiki-reader-dom-qa.mjs',
+  ])
   assert.deepEqual(missingTests, [])
 })
 
