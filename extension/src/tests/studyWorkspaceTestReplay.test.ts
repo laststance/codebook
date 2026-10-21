@@ -342,10 +342,12 @@ test('the Save item of a live test run is drawn in the status bar while the Stud
     service.environment.build.sourceHash = 'f'.repeat(64)
     service.environment.createNodeTestRun = async () =>
       twoStopOwnedRun(configuration.source, sourceText)
+    // The start's idempotency key, named by what this run is for.
+    const runName = 'closed-pane-save-item'
     const receipt = service.start({
       instanceId: service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'closed-pane-save-item',
+      key: runName,
       configuration: {
         version: 1,
         adapter: 'vitest-node',
@@ -531,10 +533,12 @@ test('Save learning replay of a live test run asks first, ends the run on Save n
     service.environment.build.sourceHash = 'f'.repeat(64)
     service.environment.createNodeTestRun = async () =>
       twoStopOwnedRun(configuration.source, sourceText)
+    // The start's idempotency key, named by what this run is for.
+    const runName = 'save-flow'
     const receipt = service.start({
       instanceId: service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'save-flow',
+      key: runName,
       configuration: {
         version: 1,
         adapter: 'vitest-node',
