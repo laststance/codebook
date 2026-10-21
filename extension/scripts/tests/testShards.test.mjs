@@ -2416,6 +2416,25 @@ test('the refusal of a run that sent nothing names the silence bound in seconds,
   ])
 })
 
+// Value: protects=the reader of a recording that was ended for its silence while no file was running (a runner that stopped between files): the refusal still says what ended and that no file was running, in one sentence, instead of naming no file; fails_when=the sentence of a stall with no started file loses that clause, joins an empty list into `started and did not end`, or answers nothing; why_new=Cycle 0048 task 174 (Step 7 of the third /ship: no test reached this branch; task 177 moved the sentence into describeUnendedRecording, which takes a stall without a run); seam=describeUnendedRecording with a hard-coded stall; no_claim=a real run that goes silent with no file running, which only a runner that hangs between files produces
+test('the refusal of a run that sent nothing while no file was running says so in one sentence', () => {
+  // Arrange
+  const recording = {
+    timedOutTests: [],
+    hookTimedOutTests: [],
+    stall: { files: [], silentMs: 125_000 },
+  }
+
+  // Act
+  const sentence = describeUnendedRecording(recording, 120)
+
+  // Assert
+  assert.equal(
+    sentence,
+    'The run sent nothing for 125 s and was ended; no file was running; timings were not recorded.',
+  )
+})
+
 // Value: protects=the timings recording from a hung test whose file ignores SIGTERM: the runner's abort sends SIGTERM to the file, which keeps running; the recording waits for the file within the grace and then kills every process under it with SIGKILL; fails_when=the recording ends at the abort and leaves the file's process (it was running 15 s after the recording ended), or the kill is missing after the grace; why_new=Cycle 0048 task 149 (after an abort, a test file that ignores SIGTERM keeps running); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; seam=test-shard.mjs --record on a fixture build whose test ignores SIGTERM and hangs, with a 3 s limit and the 5 s grace; no_claim=a file that ends at SIGTERM (the recording above covers the hung test's sentence)
 test(
   'the timings recording ends a hung test whose file ignores SIGTERM, names the test and leaves no process',
