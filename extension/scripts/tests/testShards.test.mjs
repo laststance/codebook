@@ -141,6 +141,66 @@ test('a test file the timings do not know still runs in exactly one call', () =>
   assert.equal(timesRun(plan, 'known.test.js', 'any test'), 1)
 })
 
+/** Writes a timings file with the given entries, reads it back with {@link readTestTimings} (so each entry is one the reader accepts) and plans `files` on one shard with one lane. @example await planFromTimingsFile(context, { 'a.test.js': { totalMs: 12 } }, ['a.test.js']) */
+async function planFromTimingsFile(context, entries, files) {
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-timings-plan-'))
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  const timingsPath = join(folder, 'test-timings.json')
+  await writeFile(timingsPath, JSON.stringify({ files: entries }))
+  const timings = await readTestTimings(timingsPath)
+  return planTestShards({ files, timings, shards: 1, lanes: 1 })
+}
+
+// Value: protects=the shard plan for a recorded file whose tests add up to 0 ms: the reader accepts it, so the planner plans it (the whole file, at its recorded total) and does not throw a TypeError for a part it has none to fill; fails_when=a split file whose recorded tests are all 0 reaches the planner's packing with 0 parts; why_new=Cycle 0048 task 156 (OCR B: { totalMs: 9000, tests: { a: 0, b: 0 } } threw a raw TypeError); seam=readTestTimings with planTestShards; no_claim=the order or time balance of other files
+test('a recorded file whose tests all took 0 ms is planned as one whole file at its recorded total, and the plan does not throw', async (context) => {
+  // Arrange
+  const entries = {
+    'zero.test.js': { totalMs: 9_000, tests: { a: 0, b: 0 } },
+  }
+
+  // Act
+  const plan = await planFromTimingsFile(context, entries, ['zero.test.js'])
+
+  // Assert
+  assert.deepEqual(plan, [[[{ files: ['zero.test.js'], ms: 9_400 }]]])
+})
+
+// Value: protects=the shard plan for the other recorded entries the reader accepts and the planner could divide by or count to 0 or Infinity: no tests recorded, a total of 0, a total that is slow with `tests: {}`, and tests whose durations add up past what a number holds; each file is planned and every test of the large one still runs once; fails_when=the part count is 0, NaN or Infinity (a RangeError for an array of that length, or a TypeError from packing into no part); why_new=Cycle 0048 task 156 (every count or division of the planner a valid entry can make 0 or Infinity); seam=readTestTimings with planTestShards; no_claim=the shard or lane count, which test-shard.mjs checks
+test('every other entry the timings reader accepts is planned too, including tests whose durations add up past what a number holds', async (context) => {
+  // Arrange
+  const entries = {
+    'huge.test.js': { totalMs: 9_000, tests: { a: 1e308, b: 1e308 } },
+    'none.test.js': { totalMs: 0 },
+    'empty.test.js': { totalMs: 12_000, tests: {} },
+    'one.test.js': { totalMs: 9_000, tests: { only: 9_000 } },
+  }
+
+  // Act
+  const plan = await planFromTimingsFile(context, entries, Object.keys(entries))
+
+  // Assert
+  assert.deepEqual(plan, [
+    [
+      [
+        {
+          files: ['empty.test.js', 'none.test.js', 'one.test.js'],
+          ms: 12_400 + 400 + 9_400,
+        },
+        {
+          files: ['huge.test.js'],
+          ms: 1e308,
+          skipPattern: '/^(?:b)$/',
+        },
+        {
+          files: ['huge.test.js'],
+          ms: 1e308,
+          namePattern: '/^(?:b)$/',
+        },
+      ],
+    ],
+  ])
+})
+
 test('a slow file is spread over the lanes so that every lane of every shard takes the same planned time', () => {
   // Arrange
   const timings = {

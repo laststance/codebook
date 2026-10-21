@@ -26,7 +26,12 @@ function splitTestFile(file, tests) {
     .toSorted()
     .map((name) => ({ name, ms: tests[name] }))
   const total = named.reduce((sum, test) => sum + test.ms, 0)
-  const parts = packLightestFirst(named, Math.ceil(total / TEST_PART_TARGET_MS))
+  // Never more parts than tests: more would stay empty, and a total past what a number holds (Infinity) would ask for an array of that length.
+  const partCount = Math.min(
+    Math.ceil(total / TEST_PART_TARGET_MS),
+    named.length,
+  )
+  const parts = packLightestFirst(named, partCount)
     .filter((part) => part.length > 0)
     .map((part) => ({
       names: part.map((test) => test.name),
