@@ -103,15 +103,30 @@ if (build.status !== 0) {
   process.exit(build.status ?? 1)
 }
 
+/** Says in one line that a run's runner could not start and why. @example reportCouldNotStart(['/repo/extension/dist/tests/a.test.js'], new Error('spawn E2BIG')) // prints 'run-pregate-tests: extension/dist/tests/a.test.js could not start: spawn E2BIG' */
+function reportCouldNotStart(files, error) {
+  console.error(
+    `run-pregate-tests: ${files.map((file) => relative(repositoryRoot, file)).join(', ')} could not start: ${error.message}`,
+  )
+}
+
 /** Runs one planned `node --test` call, prints its output with its summary lines marked as the run's own, names a run ended for its silence or by a signal, and answers its exit code, output and whether it was ended for its silence. @example await runTests({ files: ['/repo/extension/dist/tests/a.test.js'], args: [] }) // => { code: 0, output: '✔ …', timedOut: false } */
 function runTests({ files, args }) {
   return new Promise((resolveRun) => {
-    const child = spawn(process.execPath, ['--test', ...args, ...files], {
-      cwd: extension,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // The summary lines are read as text (`ℹ tests 12`); FORCE_COLOR would put colour codes around them.
-      env: plainOutputEnvironment(process.env),
-    })
+    let child
+    try {
+      child = spawn(process.execPath, ['--test', ...args, ...files], {
+        cwd: extension,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // The summary lines are read as text (`ℹ tests 12`); FORCE_COLOR would put colour codes around them.
+        env: plainOutputEnvironment(process.env),
+      })
+    } catch (error) {
+      // Node throws at once, and emits no `error` event, for a start the system refuses (E2BIG for a long list of files, ENOMEM): the run fails in one line, as a runner whose `error` event comes, and the lane goes on to its next run.
+      reportCouldNotStart(files, error)
+      resolveRun({ code: 1, output: '', timedOut: false })
+      return
+    }
     const silenceTimeoutMs = silenceLimitOfRun(
       files,
       silenceSeconds === undefined ? undefined : silenceSeconds * 1000,
@@ -140,9 +155,7 @@ function runTests({ files, args }) {
     child.on('error', (error) => {
       watch.stop()
       // A runner that cannot start closes with a failure code; this line says why.
-      console.error(
-        `run-pregate-tests: ${files.map((file) => relative(repositoryRoot, file)).join(', ')} could not start: ${error.message}`,
-      )
+      reportCouldNotStart(files, error)
     })
     child.on('close', (code, signal) => {
       watch.stop()

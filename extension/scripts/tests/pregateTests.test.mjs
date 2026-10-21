@@ -1218,6 +1218,63 @@ test('the pre-gate runner names the run and the error when a runner cannot start
   )
 })
 
+// Value: protects=the pre-gate lane from a run whose runner the system refuses to start at once (Node throws from spawn, with no `error` event, for E2BIG on a long list of files and for ENOMEM): the run fails in one line that names the files and the error, the next run goes on and the lane fails with code 1 and no stack trace; fails_when=the throw rejects the run's promise, so the runner ends with a stack trace of its own and runs no later run; why_new=Cycle 0048 task 204 (the class of test-shard.mjs: every await of a run that can reject); seam=run-pregate-tests.mjs started as a process in a fixture repository with a module loaded first (`--import` through NODE_OPTIONS, only in the runner's process) that makes child_process.spawn throw `spawn E2BIG` for the product test's run; no_claim=which refusals a machine under load raises (E2BIG and ENOMEM both throw from spawn)
+test('the pre-gate runner fails a run whose runner the system refuses to start in one line and still runs the next run', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {
+    'product.test.js': notingTest('product', true),
+  })
+  await writeFile(
+    join(root, 'extension/scripts/tests/script.test.mjs'),
+    notingTest('script', true),
+  )
+  const spawnThatThrowsOnce = join(root, 'spawn-that-throws.mjs')
+  await writeFile(
+    spawnThatThrowsOnce,
+    [
+      "import { createRequire, syncBuiltinESMExports } from 'node:module'",
+      "const childProcess = createRequire(import.meta.url)('node:child_process')",
+      // Only the pre-gate runner's own process changes spawn; the runs it starts load this module too and must keep theirs.
+      "if (process.argv[1].endsWith('run-pregate-tests.mjs')) {",
+      '  const realSpawn = childProcess.spawn',
+      '  childProcess.spawn = (command, args, options) => {',
+      "    if (args.some((argument) => argument.endsWith('product.test.js')))",
+      "      throw Object.assign(new Error('spawn E2BIG'), { code: 'E2BIG' })",
+      '    return realSpawn(command, args, options)',
+      '  }',
+      '  syncBuiltinESMExports()',
+      '}',
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runPregateRunner(
+    root,
+    [
+      'extension/scripts/tests/script.test.mjs',
+      'extension/src/tests/product.test.ts',
+    ],
+    { NODE_OPTIONS: `--import=${pathToFileURL(spawnThatThrowsOnce).href}` },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      stderr: result.stderr,
+      order: result.order,
+      combinedSummary: /^ℹ tests 1$/m.test(result.stdout),
+    },
+    {
+      code: 1,
+      stderr:
+        'run-pregate-tests: extension/dist/tests/product.test.js could not start: spawn E2BIG\n',
+      order: ['build', 'script'],
+      combinedSummary: true,
+    },
+  )
+})
+
 // Value: protects=the pre-gate from a build that never ends: it is ended after its limit and the lane fails with one line that names the limit, before any test runs; fails_when=the build runs with no time bound, so a hung build holds the pre-gate with nothing shown; why_new=Cycle 0048 task 73 (native adversarial); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build hangs, with `--build-seconds 2`; no_claim=the default limit (300 s)
 test('the pre-gate runner ends a build that never ends after its limit, names the limit and runs no test', async (context) => {
   // Arrange
