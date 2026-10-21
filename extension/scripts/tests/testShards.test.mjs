@@ -2452,6 +2452,94 @@ test(
   },
 )
 
+/** Runs {@link collectTestRun} on one fixture file in a helper process of its own (a script file: `run()` starts the test files with the flags of its process, and `--input-type` would make them fail) and answers what the helper printed after the call returned: how it ended, the number of SIGINT, SIGTERM and SIGHUP handlers, and the process ids under the helper. @example await collectInHelper(directory, 'passing.test.js') // => { outcome: 'passed', SIGINT: 0, SIGTERM: 0, SIGHUP: 0, under: [] } */
+async function collectInHelper(directory, file) {
+  const helperPath = join(directory, `record-${file}.mjs`)
+  await writeFile(
+    helperPath,
+    [
+      `import { collectTestRun } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/collectTestRun.mjs')).href)}`,
+      `import { listProcessIdsUnder } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/listProcessIdsUnder.mjs')).href)}`,
+      `const run = await collectTestRun({ files: [${JSON.stringify(join(directory, file))}], concurrency: 1, testTimeoutMs: 1_000, stallMarginMs: 500, killGraceMs: 2_000 })`,
+      "const outcome = run.stall ? 'silent' : run.hookTimedOutTests.length > 0 ? 'hook-hung' : run.timedOutTests.length > 0 ? 'test-hung' : 'passed'",
+      "console.log(JSON.stringify({ outcome, SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM'), SIGHUP: process.listenerCount('SIGHUP'), under: listProcessIdsUnder(process.pid) }))",
+    ].join('\n'),
+  )
+  const helper = spawn(process.execPath, [helperPath], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([name]) => name !== 'NODE_TEST_CONTEXT',
+      ),
+    ),
+  })
+  let output = ''
+  helper.stdout.on('data', (chunk) => (output += chunk))
+  // A call that never returns (its file ignores SIGTERM and nothing kills it) is answered as such after 30 s, and the helper is ended.
+  const deadline = setTimeout(() => helper.kill('SIGKILL'), 30_000)
+  await new Promise((resolve) => helper.on('close', resolve))
+  clearTimeout(deadline)
+  const lastLine = output.trim().split('\n').at(-1)
+  return lastLine
+    ? JSON.parse(lastLine)
+    : { outcome: 'the call did not return' }
+}
+
+// Value: protects=the process that runs the timings recording from a signal handler or a file process that outlives the call: once {@link collectTestRun} returns, no SIGINT, SIGTERM or SIGHUP handler is left (a handler would keep a later signal from ending the script by Node's default) and no process runs under it, for a passing run, a test that did not end, a `before` hook that did not end and a silent run (a file that passed its tests and keeps its process), the three ended runs with a file that ignores SIGTERM; fails_when=the outer `finally` drops `releaseSignalEnd()` (three handlers are left), or the SIGKILL after the grace is dropped (the file that ignores SIGTERM is still running); why_new=Cycle 0048 task 187 (State machines: no test showed the end state of the call, only the signal during its wait); seam=collectTestRun in a helper process per fixture file, with a 1 s limit, 0.5 s of margin and a 2 s grace, the helper printing its listener counts and listProcessIdsUnder(process.pid) after the call returned; no_claim=a signal during the call (the two recording tests of signals), Windows, where the table answers nothing
+test(
+  'the timings recording leaves no signal handler and no file process once it returns, for a passing run, a test or a hook that did not end, and a silent run',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const directory = await mkdtemp(join(tmpdir(), 'codebook-recording-end-'))
+    context.after(() => rm(directory, { recursive: true, force: true }))
+    killNotedProcessesAfter(context, join(directory, 'pids.log'))
+    const notePid = [
+      "const { appendFileSync } = require('node:fs')",
+      "const { join } = require('node:path')",
+      "const { before, test } = require('node:test')",
+      "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+    ]
+    const ignoresSigterm = "process.on('SIGTERM', () => {})"
+    const sources = {
+      'passing.test.js': [...notePid, "test('passes', () => {})"],
+      'hung-test.test.js': [
+        ...notePid,
+        ignoresSigterm,
+        "test('never ends', () => new Promise(() => setInterval(() => {}, 1_000)))",
+      ],
+      'hung-hook.test.js': [
+        ...notePid,
+        ignoresSigterm,
+        'before(() => new Promise(() => setInterval(() => {}, 1_000)))',
+        "test('first', () => {})",
+      ],
+      'silent.test.js': [
+        ...notePid,
+        ignoresSigterm,
+        "test('passes', () => {})",
+        'setInterval(() => {}, 1_000)',
+      ],
+    }
+    for (const [file, lines] of Object.entries(sources))
+      await writeFile(join(directory, file), lines.join('\n'))
+
+    // Act
+    const ends = await Promise.all(
+      Object.keys(sources).map((file) => collectInHelper(directory, file)),
+    )
+
+    // Assert
+    const noHandlerNoProcess = { SIGINT: 0, SIGTERM: 0, SIGHUP: 0, under: [] }
+    assert.deepEqual(ends, [
+      { outcome: 'passed', ...noHandlerNoProcess },
+      { outcome: 'test-hung', ...noHandlerNoProcess },
+      { outcome: 'hook-hung', ...noHandlerNoProcess },
+      { outcome: 'silent', ...noHandlerNoProcess },
+    ])
+  },
+)
+
 // Value: protects=the shard script's count of a call and the pre-gate's combined summary: only the last complete block of `ℹ tests`, `ℹ pass` and `ℹ fail` lines at column 0 is the runner's own; a block that a printed line breaks in the middle, a block without `ℹ tests` and a block the runner died in count nothing, and the lines that follow a complete block join it; fails_when=a line between two summary lines does not end the block, so a test that prints `ℹ tests 5`, `ℹ pass 5`, a line of its own and `ℹ fail 0` is counted as the runner's summary; why_new=testShards and pregateTests read the last block of a whole run, not these breaks inside one block; seam=none; no_claim=what Node prints for a real run; the outputs are hard-coded strings
 test('the last summary block is read only when it is whole, and a line a test printed between two summary lines ends the block', () => {
   // Arrange
