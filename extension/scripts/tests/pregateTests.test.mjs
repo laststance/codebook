@@ -2294,3 +2294,39 @@ test(
     )
   },
 )
+
+// Value: protects=the pre-gate from a lane that passes with no test run: a build that a signal ends (not its limit, not its own exit code) has no exit code, and the runner then ends with code 1 instead of 0, before any test runs; fails_when=the build's missing exit code is passed to process.exit() as it is (null ends the process with 0), so a killed build, an out-of-memory kill for one, reads as a green lane; why_new=the build tests cover an exit code (3), the limit and a start that fails, not a build that has no exit code; seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build sends SIGKILL to itself; no_claim=the sentence for such a build (the runner prints none), and Windows, where a killed process has an exit code
+test(
+  'the pre-gate runner fails the lane with code 1 and runs no test when a signal ends its build',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureRepository(context, {
+      'product.test.js': notingTest('product', true),
+    })
+    await writeFile(
+      join(root, 'extension/scripts/build-fast.mjs'),
+      [
+        "import { appendFileSync } from 'node:fs'",
+        "appendFileSync(process.env.ORDER_LOG, 'build\\n')",
+        "process.kill(process.pid, 'SIGKILL')",
+        '',
+      ].join('\n'),
+    )
+
+    // Act
+    const result = await runPregateRunner(root, [
+      'extension/src/tests/product.test.ts',
+    ])
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        order: result.order,
+        claimsTheLimit: result.stderr.includes('did not end within'),
+      },
+      { code: 1, order: ['build'], claimsTheLimit: false },
+    )
+  },
+)

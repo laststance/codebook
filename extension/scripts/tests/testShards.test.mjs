@@ -2491,3 +2491,158 @@ test('a timings file with an entry that is no { totalMs, tests? } of finite dura
   assert.deepEqual(refusals, Array(8).fill(expectedRefusal))
   assert.equal(accepted, undefined)
 })
+
+// Value: protects=the reader of a recording that fails for a reason that is no refusal (here the timings file cannot be written because a folder stands at its path): the failure keeps its error name and its stack, so a defect of the script or of the checkout is not worded as a refusal of the caller; fails_when=the recording's catch turns every error into the one line `✖ <message>`, so a bug in the recording looks like a sentence of the script and its frames are lost; why_new=Cycle 0048 task 166 (a failure that is no refusal keeps its stack) pinned the refusal's one line only, not this other half of the same catch; seam=test-shard.mjs --record started as a process on a fixture build whose test passes and whose `test-timings.json` is a folder; no_claim=which errors other than a write error can reach the catch
+test('the timings recording keeps the error name and the stack of a failure that is no refusal, and does not word it as a one-line refusal', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'passing.test.js': loggingTestSource(['opens']) },
+  })
+  await mkdir(join(root, 'test-timings.json'))
+
+  // Act
+  const result = await runShardScript(root, ['--record'], 30_000)
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      namesTheError: result.stderr.includes('EISDIR'),
+      keepsStackFrames: /\n\s+at .*test-shard\.mjs/.test(result.stderr),
+      isOneLineRefusal: result.stderr.startsWith('✖'),
+      stdout: result.stdout,
+    },
+    {
+      code: 1,
+      namesTheError: true,
+      keepsStackFrames: true,
+      isOneLineRefusal: false,
+      stdout: '',
+    },
+  )
+})
+
+// Value: protects=the shard job with several lanes from a script that is ended by a signal: every lane's call is ended with its whole tree, not only one of them, and the script exits with 143; fails_when=the signal handler ends one registered child only (the first or the last one), so the other lane's runner and its test file, which ignores SIGTERM, keep running after the script exited; why_new=the SIGTERM test above runs one lane with one call, so a handler that ends a single child passes it; seam=test-shard.mjs started as a process on a fixture build of two hanging files that ignore SIGTERM, with --lanes 2, sent SIGTERM to its pid alone; no_claim=SIGINT and SIGHUP, and the recording (its own test)
+test(
+  'the shard script that gets SIGTERM during two lanes ends the whole tree of both lanes and exits with 143',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureExtension(context, {
+      tests: {
+        'first.test.js': hangingFileNotingItsPid({ ignoresSigterm: true }),
+        'second.test.js': hangingFileNotingItsPid({ ignoresSigterm: true }),
+      },
+      timings: {
+        files: {
+          'first.test.js': { totalMs: 100 },
+          'second.test.js': { totalMs: 100 },
+        },
+      },
+    })
+    const pidsPath = join(root, 'dist/tests/pids.log')
+    killNotedProcessesAfter(context, pidsPath)
+    const { child, ended } = startShardScript(context, root, [
+      '--shard',
+      '1/1',
+      '--lanes',
+      '2',
+    ])
+    const filePids = await waitForPids(pidsPath, 2, 30_000)
+    const treeBefore = listProcessIdsUnder(child.pid)
+
+    // Act
+    child.kill('SIGTERM')
+    const result = await ended
+    const left = await waitUntilNoneExists(treeBefore, 10_000)
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        signal: result.signal,
+        bothFilesRunning: filePids.length,
+        treeHeldBothFiles: filePids.every((pid) => treeBefore.includes(pid)),
+        processesLeft: left,
+      },
+      {
+        code: 143,
+        signal: null,
+        bothFilesRunning: 2,
+        treeHeldBothFiles: true,
+        processesLeft: [],
+      },
+    )
+  },
+)
+
+/** Reads the output of a started script until it holds `text` or the wait is over. @example await waitForOutput(() => output, 'ready', 10_000) // => true */
+async function waitForOutput(readOutput, text, waitMs) {
+  const until = Date.now() + waitMs
+  while (!readOutput().includes(text) && Date.now() < until) await delay(25)
+  return readOutput().includes(text)
+}
+
+// Value: protects=the scripts from a second signal while their children are being ended (Ctrl-C pressed twice, a terminal closed during a cancel): each registered end runs once, an end that throws does not stop the others or the exit, and the exit code is that of the first signal; fails_when=a second signal starts every end again (a tree read and killed twice, a second `taskkill` pair on Windows), a throwing end escapes the handler as an uncaught error with code 1, or the code follows the later signal; why_new=the signal tests run one signal to a script with one end that works; seam=endChildrenOnSignal in a process of its own with two ends (one waits for a release over stdin, one throws) and a SIGINT followed by a SIGTERM; no_claim=what the ends do to real children, which the shard and pre-gate signal tests cover
+test(
+  'a second signal while the ends are under way starts no end again, an end that throws does not stop the others, and the exit code is the first signal’s',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const moduleUrl = pathToFileURL(
+      join(scriptsDirectory, 'utils/endChildrenOnSignal.mjs'),
+    ).href
+    const source = [
+      `import { endChildrenOnSignal } from ${JSON.stringify(moduleUrl)}`,
+      'let endsStarted = 0',
+      'let release',
+      "endChildrenOnSignal(() => { endsStarted += 1; console.log('waiting end started'); return new Promise((resolve) => { release = resolve }) })",
+      "endChildrenOnSignal(() => { throw new Error('this child cannot be ended') })",
+      "process.on('SIGTERM', () => console.log('second signal seen'))",
+      "process.on('exit', () => console.log(`ends started: ${endsStarted}`))",
+      "process.stdin.on('data', () => release())",
+      "console.log('ready')",
+    ].join('\n')
+    const child = spawn(
+      process.execPath,
+      ['--input-type=module', '-e', source],
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    )
+    context.after(() => child.kill('SIGKILL'))
+    let output = ''
+    let errors = ''
+    child.stdout.on('data', (chunk) => (output += chunk))
+    child.stderr.on('data', (chunk) => (errors += chunk))
+    const ended = new Promise((resolve) =>
+      child.on('close', (code, signal) => resolve({ code, signal })),
+    )
+    assert.equal(await waitForOutput(() => output, 'ready', 20_000), true)
+
+    // Act
+    child.kill('SIGINT')
+    assert.equal(
+      await waitForOutput(() => output, 'waiting end started', 20_000),
+      true,
+    )
+    child.kill('SIGTERM')
+    assert.equal(
+      await waitForOutput(() => output, 'second signal seen', 20_000),
+      true,
+    )
+    child.stdin.write('release\n')
+    const result = await ended
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        signal: result.signal,
+        endsStarted: /ends started: (\d+)/.exec(output)?.[1],
+        errors,
+      },
+      { code: 130, signal: null, endsStarted: '1', errors: '' },
+    )
+  },
+)
