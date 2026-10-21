@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
-import { appendFile } from 'node:fs/promises'
+import { appendFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { NODE_TEST_HISTORY_DIRECTORY } from '../constants'
+import { NODE_TEST_HISTORY_DIRECTORY, NODE_TEST_PROFILE } from '../constants'
+import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import type { NodeTestSourceStop } from '../ownedNodeTestRun'
+import type { NodeTestRuntime } from '../runtime'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
@@ -20,6 +23,84 @@ import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 /** The last view the reader posted to its panes. */
 function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
   return harness.postedMessages().slice(-1)[0]
+}
+
+/**
+ * Builds a fake owned Node run with two declared stops and a passing result, as a live test run the workspace's Save acts on.
+ * @param source - The cited source of both stops.
+ * @param sourceText - The cited source's text, which each stop's debugger snapshot holds so the stop verifies.
+ * @returns The run, which pauses at its first stop and reaches the second one when it advances.
+ * @example const run = twoStopOwnedRun(configuration.source, sourceText)
+ */
+function twoStopOwnedRun(
+  source: NodeTestConfiguration['source'],
+  sourceText: string,
+): NodeTestRuntime {
+  const stops = [0, 1].map(
+    (index) =>
+      ({
+        index,
+        runId: 'node-run',
+        sessionId: 'owned-session',
+        threadId: 7,
+        elapsedMs: 10 + index * 10,
+        worker: { pid: 1, processGroup: 1, workspace: '/private/test' },
+        source,
+        frame: {
+          id: 10 + index,
+          name: 'schedule',
+          line: source.line,
+          column: source.column,
+        },
+        variables: [{ name: 'delayMs', value: '5000', variablesReference: 0 }],
+        facts: [
+          { path: 'delayMs', mode: 'value', display: '5000', type: 'number' },
+        ],
+        debuggerSnapshot: {
+          version: 1,
+          frames: [
+            {
+              name: 'schedule',
+              line: source.line,
+              column: source.column,
+              source: {
+                name: source.path,
+                text: sourceText,
+                hash: sha256(sourceText),
+                line: source.line,
+              },
+              scopes: [{ name: 'Local', variables: [0] }],
+            },
+          ],
+          variables: [
+            { name: 'delayMs', value: '5000', type: 'number', children: [] },
+          ],
+          limitations: [],
+        },
+      }) satisfies NodeTestSourceStop,
+  )
+  let cursor = 0
+  return {
+    id: 'node-run',
+    async prepare() {
+      return stops[cursor]!
+    },
+    hasNextStop() {
+      return cursor < stops.length - 1
+    },
+    async advance() {
+      return stops[++cursor]!
+    },
+    async complete() {
+      return {
+        exitCode: 0,
+        signal: null,
+        output: 'Tests 1 passed',
+        elapsedMs: 40,
+      }
+    },
+    async stop(): Promise<void> {},
+  }
 }
 
 // Value: protects=Open replay of a sealed test replay while the Study pane is closed: the pane opens and the replay lands on its first verified stop with the replay debugger presented; fails_when=Open replay goes to the browser replay's controller, the closed pane stays closed, or the replay lands on the output banner; why_new=Open replay opened only browser recordings (C49-2, DS1, DS10, AC4); seam=the editor and the debugger are fakes; no_claim=the host's own pane arrangement (N49)
@@ -247,6 +328,38 @@ test('Open replay of a test replay during a browser replay tells the learner one
   }
 })
 
+// Value: protects=the learner's answer Close browser replay to the one-replay-at-a-time notice: the browser replay closes and the test replay opens in its place; fails_when=the answer closes nothing, or the test replay stays unopened after the browser replay closed; why_new=the refusal test only dismisses the notice (DS10, AC4); seam=none; no_claim=the host's notification look (the learner's answer is scripted)
+test('choosing Close browser replay in the one-replay-at-a-time notice closes the browser replay and opens the test replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    harness.answerWarningDialogs(async () => 'Close browser replay')
+
+    // Act
+    await harness.reader.openLearningReplay(nodeHistory.studyId)
+
+    // Assert
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      nodeHistory.studyId,
+    )
+    assert.equal(harness.controller.state().studyId, undefined)
+    assert.deepEqual(harness.errorMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a test replay whose history cannot be read: the load-failure notification names the replay and its cause, and one Output › Codebook entry is written; fails_when=the failure is silent outside the pane, names no replay, or writes no entry; why_new=X4 (AC4, AC17); seam=a journal edited after its seal; no_claim=Show details, which the notification's button runs
 test('a test replay whose history cannot be read raises the load-failure notification and writes an Output entry', async () => {
   // Arrange
@@ -335,6 +448,110 @@ test('a pane open sent while a host open still reads its history wins, and a dou
     assert.deepEqual(harness.errorMessages, [])
   } finally {
     context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=Save of a live test run in the real workspace: live item, modal question, Save now ending the run, partial item, and the notice's Open replay showing the replay; fails_when=the question is not modal, Save now leaves the run running, the item is not redrawn or Open replay shows no replay; why_new=NodeLearningSave tests use a fake host and no test joins it to the workspace (C49-2, AC3, AC4); seam=none; no_claim=the host's dialogs and status bar (a fake owned Node run and fake editor stand in)
+test('Save learning replay of a live test run asks first, ends the run on Save now, and its partial notice opens the test replay', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    await harness.reader.open()
+    const { service, configuration } = harness
+    const sourceText = await readFile(
+      join(harness.directory, configuration.source.path),
+      'utf8',
+    )
+    service.environment.build.sourceHash = 'f'.repeat(64)
+    service.environment.createNodeTestRun = async () =>
+      twoStopOwnedRun(configuration.source, sourceText)
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: 'save-flow',
+      configuration: {
+        version: 1,
+        adapter: 'vitest-node',
+        book: configuration.book,
+        testFile: 'src/scheduler.test.ts',
+        testHash: 'a'.repeat(64),
+        testTitles: ['job scheduler', 'runs a delayed job after its timer'],
+        source: configuration.source,
+        inspections: configuration.inspections.slice(0, 1),
+        additionalStops: [
+          {
+            ...configuration.source,
+            anchorIndex: 0,
+            inspections: configuration.inspections.slice(0, 1),
+          },
+        ],
+      },
+    })
+    const record = service.record(receipt)
+    await record.preparation
+    const studyId = `${service.instanceId}_${record.id}`
+    // The learner answers the modal question with Save now, and the partial notice with Open replay.
+    let itemWhenNoticeAppeared: string | undefined
+    harness.answerWarningDialogs(async (items) => {
+      if (items.includes('Save now')) return 'Save now'
+      itemWhenNoticeAppeared = harness.saveStatus.text
+      return 'Open replay'
+    })
+    await readerSeams(harness).refresh()
+    const liveItem = {
+      text: harness.saveStatus.text,
+      command: structuredClone(harness.saveStatus.command),
+    }
+
+    // Act
+    await harness.reader.saveLearningReplay(studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          studyId && !harness.reader.inspect().view?.loading,
+      'the partial test replay is shown',
+      2_000,
+    )
+
+    // Assert
+    assert.deepEqual(liveItem, {
+      text: '$(record) Recording explanation · stop 1 of 2 · Save learning replay',
+      command: {
+        title: 'Save learning replay',
+        command: 'codebook.saveLearningReplay',
+        arguments: [studyId],
+      },
+    })
+    assert.equal(
+      harness.warningDialogs[0]?.title,
+      'Saving ends the test run before its result (1 of 2 stops reached). Save now?',
+    )
+    assert.equal(
+      JSON.stringify(harness.warningDialogs[0]?.options),
+      '{"modal":true}',
+    )
+    assert.equal(record.stopped, true)
+    assert.equal(
+      itemWhenNoticeAppeared,
+      '$(warning) Learning partially saved · Open replay',
+    )
+    assert.equal(
+      harness.saveStatus.text,
+      '$(warning) Learning partially saved · Open replay',
+    )
+    assert.equal(
+      harness.saveStatus.tooltip,
+      'Saved available learning · No result recorded · Missing: learning summary and sequence, an explanation step for stop 1, complete execution evidence. Open replay to inspect retained evidence.',
+    )
+    assert.equal(
+      harness.warningDialogs[1]?.title,
+      'Learning partially saved. Ask the chat for learning summary and sequence, an explanation step for stop 1, then save again. Not recorded: complete execution evidence. An explanation cannot add them; only a new test run records them.',
+    )
+    assert.equal(harness.reader.inspect().view?.nodeHistory?.status, 'partial')
+    assert.deepEqual(harness.errorMessages, [])
+  } finally {
     await harness.close()
   }
 })

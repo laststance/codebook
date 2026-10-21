@@ -426,6 +426,56 @@ test('a test that a signal ended after its last stop records its result and verd
   }
 })
 
+// Value: protects=a test that ran and failed (exit 1, report intact): not-demonstrated everywhere, a sealed partial history that stays a replay, its failing verdict and reason; fails_when=a failing exit ends the run in an error, seals complete, reads demonstrated or loses its replay; why_new=only a signal and a missing report ran through the service (X16, AC1, AC2); seam=none; no_claim=how Vitest words a failure (the owned run is a fake that answers exit 1)
+test('a test that ran and failed is not-demonstrated and its sealed history stays a replay with its failing verdict', async () => {
+  // Arrange
+  const run = await testRunHarness({
+    complete: async () => ({
+      exitCode: 1,
+      signal: null,
+      output: 'Tests 1 failed',
+      elapsedMs: 40,
+    }),
+  })
+  try {
+    const { record } = await run.start()
+    const studyId = `${run.service.instanceId}_${record.id}`
+
+    // Act
+    await continueCurrentPause(run.service, record)
+    const state = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+
+    // Assert
+    assert.equal(state.error, undefined)
+    assert.deepEqual(
+      [state.finalOutcome, state.studyOutcome, state.recordedStudyOutcome],
+      ['not-demonstrated', 'not-demonstrated', 'not-demonstrated'],
+    )
+    assert.equal(state.nodeTest?.testResult, 'failed')
+    assert.equal(state.nodeTest?.historyStatus, 'partial')
+    assert.equal(state.nodeTest?.replayAvailable, true)
+    assert.equal(state.recording.status, 'partial')
+    assert.equal(
+      state.recording.reason,
+      'The test did not pass: Test failed · exit code 1.',
+    )
+    const summary = await run.service.nodeHistoryStore!.summarize(studyId)
+    assert.deepEqual(
+      [summary?.status, summary?.verdict, summary?.testResult],
+      ['partial', 'Test failed · exit code 1', 'failed'],
+    )
+    const history = await run.service.nodeHistoryStore!.read(studyId)
+    const result = history.entries.at(-1)
+    assert.ok(result?.type === 'result')
+    assert.equal(result.exitCode, 1)
+  } finally {
+    await run.harness.close()
+  }
+})
+
 // Value: protects=that an exit 0 whose report is missing records no result; fails_when=a result entry with exit 0 is written, so the history claims a pass nothing confirmed; why_new=the exit-facts branch must not cover a passing exit (EN5); seam=the owned run's result is a fake; no_claim=none beyond protects
 test('an exit 0 whose Vitest report is missing records no result', async () => {
   // Arrange

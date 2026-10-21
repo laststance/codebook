@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { StudyError } from '../errors'
 import { cutCauseForDisplay } from '../utils/cutCauseForDisplay'
 import { sanitizeCause } from '../utils/sanitizeCause'
+import { sanitizedStack } from '../utils/sanitizedStack'
 
 const STORAGE =
   '/Users/ada/Library/Application Support/Code/User/workspaceStorage/4f2a/laststance.codebook'
@@ -109,4 +110,38 @@ test('a cause longer than 300 characters is cut for display and a short one is k
   assert.equal(Array.from(cut).length, 300)
   assert.ok(cut.endsWith('… [cut]'))
   assert.equal(cutCauseForDisplay('EIO: i/o error'), 'EIO: i/o error')
+})
+
+// Value: protects=an Output entry's stack: one line per frame, without the message line, none naming a storage folder, the repository or the home directory; fails_when=a frame keeps a private path, the message line is repeated, or a stackless error gives an empty stack; why_new=sanitizedStack had no test, and the entries' tests assert the cause only (X5, AC17); seam=none; no_claim=how a real engine words its frames
+test('an Output entry’s stack drops the message line and names no storage folder, repository root or home directory', () => {
+  // Arrange
+  const roots = {
+    storage: [STORAGE],
+    workspace: '/Users/ada/code/scheduler',
+    home: '/Users/ada',
+  }
+  const failing = new Error('ENOSPC: no space left on device')
+  failing.stack = [
+    'Error: ENOSPC: no space left on device',
+    `    at NodeTestHistoryWriter.finish (${STORAGE}/dist/nodeTestHistoryStore.js:812:13)`,
+    '    at async StudyService.sealNodeHistory (/Users/ada/code/scheduler/node_modules/codebook/service.js:3480:7)',
+    '    at async Object.<anonymous> (/Users/ada/.vscode/extensions/laststance.codebook-0.2.33/dist/extension.js:90:5)',
+  ].join('\n')
+  const withoutFrames = new Error('EIO: i/o error')
+  withoutFrames.stack = 'Error: EIO: i/o error'
+
+  // Act
+  const stack = sanitizedStack(failing, roots)
+
+  // Assert
+  assert.equal(
+    stack,
+    [
+      'at NodeTestHistoryWriter.finish (<storage>/dist/nodeTestHistoryStore.js:812:13)',
+      'at async StudyService.sealNodeHistory (<workspace>/node_modules/codebook/service.js:3480:7)',
+      'at async Object.<anonymous> (~/.vscode/extensions/laststance.codebook-0.2.33/dist/extension.js:90:5)',
+    ].join('\n'),
+  )
+  assert.equal(sanitizedStack(withoutFrames, roots), undefined)
+  assert.equal(sanitizedStack('Error: not an error object', roots), undefined)
 })
