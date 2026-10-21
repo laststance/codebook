@@ -1024,6 +1024,58 @@ test('running the split files whole says that no file is split and passes when e
   )
 })
 
+// Value: protects=the reader of the `split-files` job's log and the owner of the timings file: a run of the split files whole sums up as "Split files whole: …", never "Shard 1/1: …" (no shard is involved), and `--record` with `--whole-split-files` (or with `--list`, `--shard`, `--lanes`, which a recording ignores) is refused in one line before anything runs or is written, instead of the recording winning silently; fails_when=the whole-split-files run prints the shard line again, or the pair is accepted and `--record` rewrites the timings file while the caller asked for a run of the split files; why_new=Cycle 0048 task 137 (OCR B); seam=test-shard.mjs started as a process on a fixture build with one split file; no_claim=the recording itself, which the tests below cover
+test('running the split files whole sums up as its own line, and a recording refuses the options it would ignore', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'slow.test.js': loggingTestSource(['first', 'second']) },
+    timings: {
+      files: {
+        'slow.test.js': {
+          totalMs: 18_000,
+          tests: { first: 9_000, second: 9_000 },
+        },
+      },
+    },
+  })
+  const timingsBefore = await readFile(join(root, 'test-timings.json'), 'utf8')
+
+  // Act
+  const whole = await runShardScript(root, [
+    '--whole-split-files',
+    '--lanes',
+    '1',
+  ])
+  const refusals = []
+  for (const option of [
+    ['--whole-split-files'],
+    ['--list'],
+    ['--shard', '1/2'],
+    ['--lanes', '2'],
+  ])
+    refusals.push(await runShardScript(root, ['--record', ...option]))
+
+  // Assert
+  assert.equal(whole.code, 0)
+  assert.match(
+    whole.stdout,
+    /^Split files whole: 2 tests in 1 calls on 1 lanes, \d+ s, 0 failed calls\.$/m,
+  )
+  assert.doesNotMatch(whole.stdout, /Shard 1\/1/)
+  assert.deepEqual(
+    refusals.map(({ code, stdout, stderr }) => ({ code, stdout, stderr })),
+    ['--whole-split-files', '--list', '--shard', '--lanes'].map((option) => ({
+      code: 1,
+      stdout: '',
+      stderr: `✖ --record runs every file and rewrites the timings; leave out ${option}.\n`,
+    })),
+  )
+  assert.equal(
+    await readFile(join(root, 'test-timings.json'), 'utf8'),
+    timingsBefore,
+  )
+})
+
 // Value: protects=the shard job's verdict on a call that was ended for its silence: it fails whatever exit code the runner gives after the SIGTERM, and the silent file is named; fails_when=the failure of a call is decided by the runner's exit code alone, so a runner that winds down with exit code 0 after the silence SIGTERM makes the hung test pass as "0 failed calls" and the job goes green; why_new=Cycle 0048 task 53 (Core, OCR B); seam=test-shard.mjs started as a process on a fixture build whose copy of runTestInvocation starts a stand-in runner (`runnerArguments`) that exits 0 at its SIGTERM; no_claim=what the real Node runner exits with after a SIGTERM (it exits 1)
 test('the shard script fails the shard for a call ended for its silence even when the runner exits 0 after the SIGTERM', async (context) => {
   // Arrange

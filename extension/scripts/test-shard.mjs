@@ -5,6 +5,7 @@
 //   node scripts/test-shard.mjs --shard 3/8 --lanes 2 --list   print that share's plan without running it
 //   node scripts/test-shard.mjs --record                run every file and rewrite test-timings.json; a test that takes longer than the silence limit fails the recording
 //   node scripts/test-shard.mjs --whole-split-files     run the files the plan splits, whole and with Node's default exit; with none split it says so and passes
+//   --record takes no --whole-split-files, --list, --shard or --lanes: a recording runs every file and ignores them, so the pair is refused
 //   --silence-seconds 120                               end a call that prints nothing for this long (at most 2147483)
 //
 // Build first (`pnpm build` or `pnpm build:fast`); this script only reads dist/tests.
@@ -42,12 +43,25 @@ function parseShard(text) {
   return { shard, shards }
 }
 
+/** Refuses `--record` beside an option that a recording ignores, so the recording never wins silently over what the caller asked for (and a `--list` never rewrites the timings). Called by {@link readOptions}. @example refuseOptionsARecordingIgnores({ record: true, list: true }) // throws '--record runs every file and rewrites the timings; leave out --list.' */
+function refuseOptionsARecordingIgnores(values) {
+  if (!values.record) return
+  const ignored = ['whole-split-files', 'list', 'shard', 'lanes'].find(
+    (name) => values[name],
+  )
+  if (ignored)
+    throw new Error(
+      `--record runs every file and rewrites the timings; leave out --${ignored}.`,
+    )
+}
+
 /** Reads the command line of this script. @example readOptions() // => { shard: 2, shards: 8, lanes: 2, list: false, record: false, wholeSplitFiles: false, silenceSeconds: 120 } */
 function readOptions() {
   const { values } = parseArgs({
     options: {
-      shard: { type: 'string', default: '1/1' },
-      lanes: { type: 'string', default: String(availableParallelism()) },
+      // No defaults for the two options a recording ignores: a given one is what the refusal below reads.
+      shard: { type: 'string' },
+      lanes: { type: 'string' },
       list: { type: 'boolean', default: false },
       record: { type: 'boolean', default: false },
       'whole-split-files': { type: 'boolean', default: false },
@@ -57,12 +71,13 @@ function readOptions() {
       },
     },
   })
+  refuseOptionsARecordingIgnores(values)
   const silenceSeconds = parseSilenceSeconds(values['silence-seconds'])
-  const lanes = Number(values.lanes)
+  const lanes = Number(values.lanes ?? availableParallelism())
   if (!(Number.isInteger(lanes) && lanes >= 1))
     throw new Error('--lanes must be a positive integer.')
   return {
-    ...parseShard(values.shard),
+    ...parseShard(values.shard ?? '1/1'),
     lanes,
     list: values.list,
     record: values.record,
@@ -205,8 +220,12 @@ if (options.record) {
   } else {
     const startedAt = performance.now()
     const { tests, failedCalls } = await runLanes(lanes, options.silenceSeconds)
+    // No shard is involved in a run of the split files; the line says what ran.
+    const runName = options.wholeSplitFiles
+      ? 'Split files whole'
+      : `Shard ${options.shard}/${options.shards}`
     console.log(
-      `Shard ${options.shard}/${options.shards}: ${tests} tests in ${lanes.flat().length} calls on ${options.lanes} lanes, ${Math.round((performance.now() - startedAt) / 1000)} s, ${failedCalls} failed calls.`,
+      `${runName}: ${tests} tests in ${lanes.flat().length} calls on ${options.lanes} lanes, ${Math.round((performance.now() - startedAt) / 1000)} s, ${failedCalls} failed calls.`,
     )
     if (failedCalls > 0) process.exitCode = 1
   }
