@@ -3446,6 +3446,161 @@ test(
   },
 )
 
+/**
+ * Runs {@link collectTestRun} in a helper process of its own whose `node:test` is a stand-in module, and answers how the call ended and what it left behind. A resolve hook in the helper gives `collectTestRun.mjs` the stand-in (`registerHooks` of `node:module`, matched on the specifier and the importing module), so the code under test has no seam for it; `node:test` stays Node's own everywhere else.
+ * Called by the tests of the recording's failure paths, which the real `run()` cannot reach through its options.
+ * @param context - The running test: the folder of the stand-in and the helper is removed when it ends, and every process the stand-in noted in `pids.log` or started under the test process is ended.
+ * @param standInSource - The source of the stand-in module (ESM) that exports `run`; it may note a process id with `appendFileSync(process.env.STAND_IN_PIDS_PATH, …)` and read `process.env.STAND_IN_SLEEP_SECONDS`.
+ * @returns `{ error, SIGINT, SIGTERM, SIGHUP, timers, under, noted, notedByTheTest }`: the message the call rejected with (`undefined` when it did not reject), the listener counts, the active `Timeout` count, the ids under the helper, whether each noted process id still ran in the helper after the call settled and a short wait, and the ids the stand-in noted.
+ * @throws When the helper printed no result (it crashed or was ended at 60 s), with its exit code, signal and error output.
+ * @example
+ * const ended = await collectWithStandInRun(context, 'export const run = () => { throw new Error("options refused") }')
+ * // => { error: 'options refused', SIGINT: 0, SIGTERM: 0, SIGHUP: 0, timers: 0, under: [], noted: {}, notedByTheTest: [] }
+ */
+async function collectWithStandInRun(context, standInSource) {
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-stand-in-run-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const pidsPath = join(directory, 'pids.log')
+  killNotedProcessesAfter(context, pidsPath)
+  const standInPath = join(directory, 'stand-in-test.mjs')
+  await writeFile(standInPath, standInSource)
+  const collectUrl = pathToFileURL(
+    join(scriptsDirectory, 'utils/collectTestRun.mjs'),
+  ).href
+  const helperPath = join(directory, 'collect-with-stand-in.mjs')
+  await writeFile(
+    helperPath,
+    [
+      "import { readFileSync } from 'node:fs'",
+      "import { registerHooks } from 'node:module'",
+      "import { setTimeout as delay } from 'node:timers/promises'",
+      `import { listProcessIdsUnder } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/listProcessIdsUnder.mjs')).href)}`,
+      'registerHooks({',
+      '  resolve(specifier, context, nextResolve) {',
+      `    if (specifier === 'node:test' && context.parentURL === ${JSON.stringify(collectUrl)})`,
+      `      return { url: ${JSON.stringify(pathToFileURL(standInPath).href)}, shortCircuit: true }`,
+      '    return nextResolve(specifier, context)',
+      '  },',
+      '})',
+      `const { collectTestRun } = await import(${JSON.stringify(collectUrl)})`,
+      'let error',
+      "await collectTestRun({ files: ['/fixture/stand-in.test.js'], concurrency: 1, testTimeoutMs: 1_000, stallMarginMs: 500, killGraceMs: 2_000 }).catch((rejection) => { error = rejection.message })",
+      // A killed child is reaped by this process a moment after the kill; the timers are counted after this wait, so a stall timer (1.5 s) that was left is still there.
+      'await delay(300)',
+      'const exists = (pid) => { try { process.kill(pid, 0); return true } catch { return false } }',
+      "const notedIds = (() => { try { return readFileSync(process.env.STAND_IN_PIDS_PATH, 'utf8').split('\\n').filter(Boolean).map(Number) } catch { return [] } })()",
+      "console.log(JSON.stringify({ error, SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM'), SIGHUP: process.listenerCount('SIGHUP'), timers: process.getActiveResourcesInfo().filter((resource) => resource === 'Timeout').length, under: listProcessIdsUnder(process.pid), noted: Object.fromEntries(notedIds.map((pid) => [pid, exists(pid)])), notedByTheTest: notedIds }))",
+    ].join('\n'),
+  )
+  return await new Promise((resolve, reject) => {
+    const helper = spawn(process.execPath, [helperPath], {
+      timeout: 60_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([name]) => name !== 'NODE_TEST_CONTEXT',
+          ),
+        ),
+        STAND_IN_PIDS_PATH: pidsPath,
+        STAND_IN_SLEEP_SECONDS: String(
+          86_400 + Math.floor(Math.random() * 10_000),
+        ),
+      },
+    })
+    let stdout = ''
+    let stderr = ''
+    helper.stdout.on('data', (chunk) => (stdout += chunk))
+    helper.stderr.on('data', (chunk) => (stderr += chunk))
+    helper.on('error', reject)
+    helper.on('close', (code, signal) => {
+      // A helper that crashed or printed nothing must fail the test with what it did, not with a JSON error from inside this handler.
+      try {
+        resolve(JSON.parse(stdout.trim().split('\n').at(-1)))
+      } catch {
+        reject(
+          new Error(
+            `The stand-in helper printed no result (exit code ${code}, signal ${signal}). Output: ${JSON.stringify(stdout)}. Error output: ${JSON.stringify(stderr)}`,
+          ),
+        )
+      }
+    })
+  })
+}
+
+// Value: protects=the process that runs the timings recording from a call whose `run()` refuses its options and throws: the call rejects with the refusal and leaves no stall timer and no SIGINT, SIGTERM or SIGHUP handler behind (a handler would keep a later signal from ending the script by Node's default, and the timer would hold the process for the limit); fails_when=`run()` is called after the stall timer and the signal handlers start and outside the `try` whose `finally` releases them, so a throw leaves one timer and three handlers; why_new=Cycle 0048 task 206 (OCR C: the parent's probe of d9f0919b left one SIGTERM handler and one timer); seam=collectTestRun in a helper process whose `node:test` is a stand-in module (a resolve hook, no seam in the code) with a `run` that throws `options refused`; no_claim=that Node's real `run()` throws for any of these options (task 173: it does not today)
+test('the timings recording that is refused by run() rejects with the refusal and leaves no stall timer and no signal handler', async (context) => {
+  // Arrange
+  const standIn = 'export function run() { throw new Error("options refused") }'
+
+  // Act
+  const ended = await collectWithStandInRun(context, standIn)
+
+  // Assert
+  assert.deepEqual(ended, {
+    error: 'options refused',
+    SIGINT: 0,
+    SIGTERM: 0,
+    SIGHUP: 0,
+    timers: 0,
+    under: [],
+    noted: {},
+    notedByTheTest: [],
+  })
+})
+
+// Value: protects=the process that runs the timings recording from an event stream that throws after a file started (task 173: the stream cannot throw through run()'s options today, so this is the catch's own contract): the call ends every process under it, removes the signal handlers and the timers, and passes the stream's error on; fails_when=the catch drops endProcessesUnderThisOne() (the process that stands for the file keeps running) or the outer `finally` drops releaseSignalEnd() (three handlers stay); why_new=Cycle 0048 task 207 (State machines: no test reached the catch of a run whose event stream throws); seam=collectTestRun in a helper process whose `node:test` is a stand-in module (a resolve hook, no seam in the code) with a `run` whose stream yields the `test:dequeue` of a file, starts `sleep` with a unique duration under the helper (its id noted) and throws `stream refused`; no_claim=that Node's run() can reject (task 173's evidence stands); Windows, where the table answers nothing
+test(
+  'the timings recording whose event stream throws ends the file process, removes the signal handlers and timers, and passes the error on',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const standIn = [
+      "import { spawn } from 'node:child_process'",
+      "import { appendFileSync } from 'node:fs'",
+      'export function run() {',
+      '  return (async function* () {',
+      // The process that stands for the file's process, found by the recording through the process table.
+      "    const fileProcess = spawn('sleep', [process.env.STAND_IN_SLEEP_SECONDS], { stdio: 'ignore' })",
+      '    appendFileSync(process.env.STAND_IN_PIDS_PATH, `${fileProcess.pid}\\n`)',
+      "    yield { type: 'test:dequeue', data: { file: '/fixture/stand-in.test.js', name: '/fixture/stand-in.test.js', nesting: 0 } }",
+      "    throw new Error('stream refused')",
+      '  })()',
+      '}',
+    ].join('\n')
+
+    // Act
+    const ended = await collectWithStandInRun(context, standIn)
+
+    // Assert
+    const [fileProcessId] = ended.notedByTheTest
+    assert.deepEqual(
+      {
+        error: ended.error,
+        SIGINT: ended.SIGINT,
+        SIGTERM: ended.SIGTERM,
+        SIGHUP: ended.SIGHUP,
+        timers: ended.timers,
+        under: ended.under,
+        notedProcesses: ended.notedByTheTest.length,
+        fileProcessRunsInTheHelper: ended.noted[fileProcessId],
+        fileProcessRunsForTheTest: processExists(fileProcessId),
+      },
+      {
+        error: 'stream refused',
+        SIGINT: 0,
+        SIGTERM: 0,
+        SIGHUP: 0,
+        timers: 0,
+        under: [],
+        notedProcesses: 1,
+        fileProcessRunsInTheHelper: false,
+        fileProcessRunsForTheTest: false,
+      },
+    )
+  },
+)
+
 // Value: protects=the shard script's count of a call and the pre-gate's combined summary: only the last complete block of `ℹ tests`, `ℹ pass` and `ℹ fail` lines at column 0 is the runner's own; a block that a printed line breaks in the middle, a block without `ℹ tests` and a block the runner died in count nothing, and the lines that follow a complete block join it; fails_when=a line between two summary lines does not end the block, so a test that prints `ℹ tests 5`, `ℹ pass 5`, a line of its own and `ℹ fail 0` is counted as the runner's summary; why_new=testShards and pregateTests read the last block of a whole run, not these breaks inside one block; seam=none; no_claim=what Node prints for a real run; the outputs are hard-coded strings
 test('the last summary block is read only when it is whole, and a line a test printed between two summary lines ends the block', () => {
   // Arrange

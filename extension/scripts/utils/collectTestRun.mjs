@@ -107,13 +107,14 @@ export async function collectTestRun({
     abortRun()
   })
   const releaseSignalEnd = endChildrenOnSignal(endProcessesUnderThisOne)
-  const events = run({
-    files,
-    concurrency,
-    timeout: testTimeoutMs,
-    signal: abort.signal,
-  })
+  // `run()` checks its options and can throw: it is called inside the `try` whose `finally` releases what is started above, so a throw leaves no stall timer and no signal handler behind.
   try {
+    const events = run({
+      files,
+      concurrency,
+      timeout: testTimeoutMs,
+      signal: abort.signal,
+    })
     try {
       for await (const event of events) {
         stallTimer.reset()
@@ -138,6 +139,8 @@ export async function collectTestRun({
     if (abort.signal.aborted)
       await endFileProcessesAfterAbort(abortedAt, killGraceMs)
   } finally {
+    // The inner `finally` stops the stall timer once the events are read; a throw of `run()` comes before it.
+    stallTimer.stop()
     clearTimeout(forceTimer)
     releaseSignalEnd()
   }
