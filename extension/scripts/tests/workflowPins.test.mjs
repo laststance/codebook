@@ -1757,3 +1757,27 @@ test('the Test workflow runs the split files whole, with Node’s default exit, 
   )
   assert.equal(job?.includes('--test-force-exit'), false)
 })
+
+// Value: protects=the split-files job of every push to main: a later push must not cancel the run of an earlier commit, because a cancelled run never runs that commit's split files whole (the shards hide an error a split file raises after its last test); a pull request still cancels its own older run; fails_when=the Test workflow's concurrency group is the ref for a push too with `cancel-in-progress: true`, so the second push to main cancels the first run, `split-files` included; why_new=Cycle 0048 task 143 (native adversarial: `cancel-in-progress: true` cancelled the run of the earlier push); seam=the text of .github/workflows/test.yml, with package.yml's group as the model; no_claim=what GitHub does with the group (the semantics of `concurrency` are GitHub's)
+test('the Test workflow gives each push its own concurrency group and cancels only the older run of a pull request, so split-files of an earlier push is never cancelled', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+
+  // Act
+  // The comment lines above the keys explain them and are no setting.
+  const concurrency = /^concurrency:\n((?: {2}.*\n)+)/m
+    .exec(workflow)?.[1]
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('#'))
+    .join('\n')
+
+  // Assert
+  assert.equal(
+    concurrency,
+    [
+      "  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}",
+      "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+      '',
+    ].join('\n'),
+  )
+})

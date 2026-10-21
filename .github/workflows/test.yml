@@ -10,8 +10,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: true
+  # Supersede old pull request runs only. A push to main keeps its own run, because a later push that cancelled it would take
+  # its `split-files` job with it, and that commit's split files would never run whole. The group of a push is its commit.
+  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
