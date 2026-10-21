@@ -476,6 +476,40 @@ test('a question from the address the editor forwarded the reader to is answered
   }
 })
 
+// Value: protects=a learner whose editor forwards the reader's port to a second loopback address after a first (a second window, a port that was taken again, a second open of the reader): the page at the first address still asks its questions and is still served; fails_when=the reader keeps only the last forwarded address, so a question from the first one and a request with the first one's Host header get 403; why_new=Cycle 0048 task 140 (native adversarial); seam=none (the reader's real answers to a POST with a chosen Origin and to a raw request with a chosen Host); no_claim=that an editor forwards twice, only that the reader answers both addresses it was told
+test('a reader told two forwarded loopback addresses answers questions and requests from both, and still refuses a third address it was not told', async () => {
+  // Arrange: the editor forwarded the reader's port to localhost:54321, and later to localhost:54322.
+  const wiki = await serveWikiThatAnswers()
+  try {
+    const pathname = new URL(wiki.reader.url).pathname
+    wiki.reader.acceptForwardedOrigin(`http://localhost:54321${pathname}`)
+    wiki.reader.acceptForwardedOrigin(`http://localhost:54322${pathname}`)
+
+    // Act
+    const questionStatuses = [
+      await wiki.ask('http://localhost:54321'),
+      await wiki.ask('http://localhost:54322'),
+      await wiki.ask('http://localhost:54323'),
+    ]
+    const pageStatuses = [
+      (await askAndReadSlowly(wiki.reader.url, { Host: 'localhost:54321' }, 0))
+        .status,
+      (await askAndReadSlowly(wiki.reader.url, { Host: 'localhost:54322' }, 0))
+        .status,
+      (await askAndReadSlowly(wiki.reader.url, { Host: 'localhost:54323' }, 0))
+        .status,
+    ]
+
+    // Assert
+    assert.deepEqual(
+      { questionStatuses, pageStatuses },
+      { questionStatuses: [200, 200, 403], pageStatuses: [200, 200, 403] },
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a question from any other origin is refused', async () => {
   // Arrange: one forwarded address on this machine was accepted, and one that is not on this machine was offered.
   const wiki = await serveWikiThatAnswers()

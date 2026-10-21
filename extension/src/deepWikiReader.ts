@@ -73,7 +73,7 @@ import { servedWikiPageOffThread } from './wikiPageWorker'
 /** A started Wiki reader: where the browser opens it, how it is told where the editor forwards it and that a project file changed, and how it is closed. */
 export type DeepWikiReader = {
   url: string
-  /** Tells the reader which address the editor forwards it to (a remote window forwards the loopback port, often to another one), so a question from its own page at that address is answered. Only an address on this machine is accepted; any other is ignored. @param address - The reader's URL as `vscode.env.asExternalUri` resolved it. */
+  /** Tells the reader which address the editor forwards it to (a remote window forwards the loopback port, often to another one), so a question from its own page at that address is answered. Only an address on this machine is accepted; any other is ignored. Every accepted address stays accepted, so a second call adds an address and does not replace the first. @param address - The reader's URL as `vscode.env.asExternalUri` resolved it. */
   acceptForwardedOrigin(address: string): void
   /** Tells the reader that a file of the project was changed, created or deleted, whoever wrote it; the reader raises its source-change stamp when the file can change the Wiki's freshness. @param path - Absolute path of the file. */
   noteSourceChange(path: string): void
@@ -327,10 +327,10 @@ export async function startDeepWikiReader(
     }
   })
   let origin = ''
-  /** The origin of the address the editor forwards this reader to, when that is another loopback address than its own. */
-  let forwardedOrigin: string | undefined
-  /** The host and port of {@link forwardedOrigin}, as a browser writes them in the Host header of a request to it. */
-  let forwardedHost: string | undefined
+  /** The origins of every address the editor forwarded this reader to, when each is another loopback address than its own; each stays accepted, as the page at an earlier address is still open when the editor forwards the port again. */
+  const forwardedOrigins = new Set<string>()
+  /** The host and port of each of {@link forwardedOrigins}, as a browser writes them in the Host header of a request to it. */
+  const forwardedHosts = new Set<string>()
   /** The freshness inspection in flight and the generation of the site it reads; requests of that generation that overlap await it. */
   let freshnessInspection:
     { generation: string; result: Promise<WikiFreshness> } | undefined
@@ -399,17 +399,17 @@ export async function startDeepWikiReader(
     )
   }
   /**
-   * Says whether a request names this reader's own host and port in its Host header, or those of the address the editor forwards it to.
+   * Says whether a request names this reader's own host and port in its Host header, or those of any address the editor forwarded it to.
    * Called by {@link handleRequest} first, for every request: a name of another site that a DNS answer rebinds to the loopback address reaches this server with that name as its Host, so a page of another site, which holds the reader's address with its path token (a referrer or a link of a crafted page may have leaked it), reads nothing from the reader.
    * @param request - The request.
-   * @returns `true` when the Host header is the reader's loopback host and port, or the forwarded address's host; `false` for any other host and for no Host header.
+   * @returns `true` when the Host header is the reader's loopback host and port, or the host of a forwarded address; `false` for any other host and for no Host header.
    * @example isOwnHost(request) // => false for `Host: rebound.example:41234`
    */
   function isOwnHost(request: IncomingMessage): boolean {
     const asked = request.headers.host?.toLowerCase()
     return (
       asked !== undefined &&
-      (asked === new URL(origin).host || asked === forwardedHost)
+      (asked === new URL(origin).host || forwardedHosts.has(asked))
     )
   }
   /** Routes only owned pages and questions; every request must carry this reader's random path token and name this reader's own host ({@link isOwnHost}). @example await handleRequest(request, response) */
@@ -553,7 +553,7 @@ export async function startDeepWikiReader(
     }
   }
   /**
-   * Says whether a request to the question route is a question of this reader's own page: a POST of JSON from the reader's address, or from the one the editor forwards it to.
+   * Says whether a request to the question route is a question of this reader's own page: a POST of JSON from the reader's address, or from any one the editor forwarded it to.
    * Called by {@link answerQuestionRequest} before it reads the request's body.
    * @param request - The request.
    * @returns `true` for such a question; `false` for any other request, also one without an origin, which comes from no page of this reader.
@@ -564,7 +564,7 @@ export async function startDeepWikiReader(
     // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
     const isOwnPage =
       askedFrom !== undefined &&
-      (askedFrom === origin || askedFrom === forwardedOrigin)
+      (askedFrom === origin || forwardedOrigins.has(askedFrom))
     return (
       request.method === 'POST' &&
       isOwnPage &&
@@ -798,8 +798,9 @@ export async function startDeepWikiReader(
         const forwarded = new URL(address)
         // A forwarded address that is not on this machine is somebody else's page.
         if (WIKI_LOOPBACK_HOSTS.includes(forwarded.hostname)) {
-          forwardedOrigin = forwarded.origin
-          forwardedHost = forwarded.host.toLowerCase()
+          // Every accepted address is kept: a later forward must not turn the page at an earlier one away.
+          forwardedOrigins.add(forwarded.origin)
+          forwardedHosts.add(forwarded.host.toLowerCase())
         }
       },
       noteSourceChange(path: string): void {
