@@ -810,6 +810,44 @@ test('the shard script refuses a shard total or a lane count above 1000 in one l
   )
 })
 
+// Value: protects=the shard script on a machine with more than 1,000 hardware threads: the default lane count is its thread count capped at the bound, so a run with no `--lanes` is not refused as `--lanes must be at most 1000.`, an option the caller did not give; a `--lanes` the caller gives above the bound is still refused (the test above); fails_when=the default is `availableParallelism()` as it is, so a machine that reports 1,001 threads is refused before any plan; why_new=Cycle 0048 task 184 (OCR B: the default lane count was refused by the bound it did not choose); seam=test-shard.mjs --shard 1/1 --list started as a process on a fixture build, with a module loaded first (`--import` through NODE_OPTIONS) that makes os.availableParallelism() answer 1001; no_claim=what a real machine of that size does (the plan of 1,000 lanes is what the script reports for the answer 1001)
+test('the shard script plans 1000 lanes, and does not refuse the default, on a machine that reports 1001 hardware threads', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'a.test.js': loggingTestSource(['opens']) },
+    timings: { files: { 'a.test.js': { totalMs: 10 } } },
+  })
+  const machineOf1001Threads = join(root, 'machine-of-1001-threads.mjs')
+  await writeFile(
+    machineOf1001Threads,
+    [
+      "import { createRequire, syncBuiltinESMExports } from 'node:module'",
+      "const os = createRequire(import.meta.url)('node:os')",
+      'os.availableParallelism = () => 1001',
+      // The script's named import of availableParallelism reads the synced export.
+      'syncBuiltinESMExports()',
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runShardScript(
+    root,
+    ['--shard', '1/1', '--list'],
+    60_000,
+    { NODE_OPTIONS: `--import=${pathToFileURL(machineOf1001Threads).href}` },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: result.code,
+      stderr: result.stderr,
+      laneCount: JSON.parse(result.stdout || '[]').length,
+    },
+    { code: 0, stderr: '', laneCount: 1000 },
+  )
+})
+
 // Value: protects=the reader of a shard job whose build is missing: the refusal "No compiled test files in <dir>; build first." is one line `✖ …` with exit code 1 and no stack frame, in every mode of the script, like its option and timings refusals; fails_when=the refusal is thrown uncaught, so stderr holds the source line, `Error: …`, `at …` frames and the Node version, in any mode; why_new=Cycle 0048 task 166 (the parent: the same class as the recording's refusals, task 108's rule); seam=test-shard.mjs started as a process on a fixture whose dist/tests is empty, and on one whose dist/tests is missing, once per mode; no_claim=a build that exists but holds no test of the plan
 test('the shard script refuses a missing build in one line, with exit code 1, in every mode', async (context) => {
   // Arrange

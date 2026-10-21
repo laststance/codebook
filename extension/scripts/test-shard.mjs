@@ -79,7 +79,10 @@ function readOptions() {
   })
   refuseOptionsARecordingIgnores(values)
   const silenceSeconds = parseSilenceSeconds(values['silence-seconds'])
-  const lanes = Number(values.lanes ?? availableParallelism())
+  // The default is this machine's thread count within the bound: a machine with more than MAX_LANES threads must not be refused for an option it did not give.
+  const lanes = Number(
+    values.lanes ?? Math.min(availableParallelism(), MAX_LANES),
+  )
   if (!(Number.isInteger(lanes) && lanes >= 1))
     throw new Error('--lanes must be a positive integer.')
   if (lanes > MAX_LANES)
