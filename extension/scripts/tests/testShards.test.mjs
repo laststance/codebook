@@ -2666,6 +2666,7 @@ test(
       markedSleepProcesses(UNDER_ROOT_SLEEP_SECONDS).length > 0 &&
       Date.now() < untilGone
     )
+      // gstack-timing-ok: a poll of the outcome with a generous bound, not a fixed wait: a process the end killed is gone a moment after its SIGKILL, and the 5 s only ends the poll of a run in which a sleep outlived the end, which the assertion then names; a load only delays the poll.
       await delay(50)
     const left = markedSleepProcesses(UNDER_ROOT_SLEEP_SECONDS)
 
