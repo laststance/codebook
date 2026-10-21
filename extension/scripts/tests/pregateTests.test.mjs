@@ -210,7 +210,7 @@ test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the
   assert.equal(existsSync(`${repositoryRoot}${workflowPins[0]}`), true)
 })
 
-// Value: protects=the pre-gate runs the script test that reads a repository file no import reaches (a file it opens by a path built in code, a place beside it, a file it copies into a fixture, or the policy itself): a change to that file selects the test; fails_when=one of these entries is dropped or points to another test, so a change to `.gitignore`, `AGENTS.md`, `.codex/hooks.json`, the shipped skill's `SKILL.md` or `reader-shell.html`, a browser check, the health checker, the shard script or the policy runs no test that reads it; why_new=Cycle 0048 task 122 (Red Team: workflowPins.test.mjs read five files that the policy named nowhere; the same search over every script test found the rest); seam=none; no_claim=files that a test only writes into a fixture (the fixtures of packageIO.test.mjs, `extension/test-timings.json`), and the files the import graph reaches, which the pre-gate decides
+// Value: protects=the pre-gate runs the script test that reads a repository file no import reaches (a file it opens by a path built in code, a place beside it, a file it copies into a fixture, or the policy itself): a change to that file selects the test; fails_when=one of these entries is dropped or points to another test, so a change to `.gitignore`, `AGENTS.md`, `.codex/hooks.json`, the shipped skill's `SKILL.md` or `reader-shell.html`, a browser check, the health checker, the shard script or the policy runs no test that reads it; why_new=Cycle 0048 task 122 (Red Team: workflowPins.test.mjs read five files that the policy named nowhere; the same search over every script test found the rest); Cycle 0048 task 154 added renderWikiPageLimit.test.mjs and wikiReaderDomQa.test.mjs to the reader shell (the renderer reads it) and package.test.mjs to `.gitignore` (the Git status guarding the build reads it); seam=none; no_claim=files that a test only writes into a fixture (the fixtures of packageIO.test.mjs, `extension/test-timings.json`), and the files the import graph reaches, which the pre-gate decides
 test('the pre-gate policy declares the script test that reads each repository file the import graph does not reach, and every test it names exists', () => {
   // Arrange
   const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -256,7 +256,10 @@ test('the pre-gate policy declares the script test that reads each repository fi
   // Assert
   const publishWiki = [`${scriptTests}publishWiki.test.mjs`]
   assert.deepEqual(lanes, {
-    gitignore: [`${scriptTests}repositoryIgnore.test.mjs`],
+    gitignore: [
+      `${scriptTests}repositoryIgnore.test.mjs`,
+      `${scriptTests}package.test.mjs`,
+    ],
     policy: [`${scriptTests}pregateTests.test.mjs`],
     agents: ['.codex/restore-product-context.test.mjs'],
     codexHooks: ['.codex/restore-product-context.test.mjs'],
@@ -281,6 +284,8 @@ test('the pre-gate policy declares the script test that reads each repository fi
     readerShell: [
       `${scriptTests}publishWiki.test.mjs`,
       `${scriptTests}studyBootstrapQa.test.mjs`,
+      `${scriptTests}renderWikiPageLimit.test.mjs`,
+      `${scriptTests}wikiReaderDomQa.test.mjs`,
     ],
     constants: publishWiki,
     deepWikiReader: publishWiki,
@@ -291,7 +296,166 @@ test('the pre-gate policy declares the script test that reads each repository fi
   assert.deepEqual(missingTests, [])
 })
 
-// Value: protects=the pre-gate runs the script test that starts a script as a process, copies it into a fixture, or reads it by a path built in code: a change to `run-pregate-tests.mjs`, `collectTestRun.mjs`, `planWholeSplitFiles.mjs`, a browser check (`*-qa.mjs`), `build-fast.mjs`, `check-package.mjs`, `package.mjs`, a file-system stand-in of the publisher's tests, `codecov.yml`, `extension/package.json` or `extension/pnpm-workspace.yaml` selects the test that runs or reads it; fails_when=one of these entries is dropped or points to another test, so a change to such a file runs no test that starts or reads it (the import graph does not reach a file that a test only starts); why_new=Cycle 0048 task 136 (OCR B, Red Team: task 122 found only literal reads); seam=none (the policy file and the files it names); no_claim=files a test only writes into a fixture, and the files the import graph reaches
+/**
+ * Turns a glob of `.gstack/pregate.json` into the pattern the gstack pre-gate matches a repository path with: `*` is any characters but `/`, `**` any characters, `**` followed by `/` zero or more folders, `?` one character but `/`.
+ * Called by {@link testsSelectedBy} so the policy tests read a glob as the pre-gate does.
+ * @param glob - A key of `dependencies`.
+ * @returns The pattern that matches the whole path.
+ * @example globPattern('extension/src/**').test('extension/src/a/b.ts') // => true
+ */
+function globPattern(glob) {
+  let pattern = '^'
+  for (let index = 0; index < glob.length; index += 1) {
+    const character = glob[index]
+    if (character === '*' && glob[index + 1] === '*') {
+      index += 1
+      // `**/` also matches no folder at all.
+      if (glob[index + 1] === '/') {
+        index += 1
+        pattern += '(?:.*/)?'
+      } else pattern += '.*'
+    } else if (character === '*') pattern += '[^/]*'
+    else if (character === '?') pattern += '[^/]'
+    else pattern += character.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`${pattern}$`)
+}
+
+/**
+ * Lists the tests the policy selects for one repository file: the union of the tests of every `dependencies` entry whose glob matches the file, as the pre-gate unions them. Called by the policy tests that pin which test a file selects when a module reads it by path.
+ * @param dependencies - The `dependencies` object of `.gstack/pregate.json`.
+ * @param file - A repository path.
+ * @returns The selected test paths, without repeats, sorted.
+ * @example testsSelectedBy({ 'a/**': ['t.mjs'], 'a/b.txt': ['u.mjs'] }, 'a/b.txt') // => ['t.mjs', 'u.mjs']
+ */
+function testsSelectedBy(dependencies, file) {
+  const selected = Object.entries(dependencies)
+    .filter(([glob]) => globPattern(glob).test(file))
+    .flatMap(([, tests]) => tests)
+  return [...new Set(selected)].toSorted()
+}
+
+// Value: protects=the pre-gate runs package.test.mjs for a change to any file its package build reads by a path built in code: the five package inputs `readBuildIdentity` names, every file in the four folders it walks (`src`, `scripts`, `patches`, `skills`), and `.gitignore`, which the Git status that guards the build reads; fails_when=the policy drops package.test.mjs from one of these, or `readBuildIdentity` reads another file or folder that the policy does not name (the test reads the lists out of that module), so a change there runs no test that builds the package from it; why_new=Cycle 0048 task 154 (OCR B: tasks 122 and 136 gave lanes to what a test reads or starts itself, not to what a module it imports or a script it starts reads by path: `buildPackage.mjs:59` and `readBuildIdentity.mjs:53-84` read the files below for the build that package.test.mjs runs on the checkout); seam=none (the policy file, the module's source and the folders); no_claim=that a content change in a file the build only hashes (`scripts`, `patches`) can fail package.test.mjs (it can fail for a symlink, a missing file or a build that no longer compiles or bundles), and files the build reads in a fixture (packageIO.test.mjs, packageCli.test.mjs, health.test.mjs)
+test('the pre-gate policy runs package.test.mjs for every file its package build reads by path: the package inputs, the four folders the build identity walks, and the ignore rules', () => {
+  // Arrange
+  const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+  const policy = JSON.parse(
+    readFileSync(`${repositoryRoot}.gstack/pregate.json`, 'utf8'),
+  )
+  const identitySource = readFileSync(
+    `${repositoryRoot}extension/scripts/utils/readBuildIdentity.mjs`,
+    'utf8',
+  )
+  const quotedIn = (declaration) =>
+    [...identitySource.match(declaration)[1].matchAll(/'([^']+)'/g)].map(
+      (match) => match[1],
+    )
+
+  // Act
+  const namedInputs = quotedIn(/const files = \[([^\]]*)\]/)
+  const walkedFolders = quotedIn(/const parts = \[([^\]]*)\]/)
+  const readFiles = [
+    ...namedInputs.map((file) => `extension/${file}`),
+    ...walkedFolders.flatMap((folder) =>
+      readdirSync(`${repositoryRoot}extension/${folder}`, {
+        recursive: true,
+        withFileTypes: true,
+      })
+        .filter((entry) => entry.isFile())
+        .map((entry) =>
+          `${entry.parentPath}/${entry.name}`
+            .slice(repositoryRoot.length)
+            .replaceAll('\\', '/'),
+        ),
+    ),
+    '.gitignore',
+  ]
+  const packageTest = 'extension/scripts/tests/package.test.mjs'
+  const leftOut = readFiles.filter(
+    (file) => !testsSelectedBy(policy.dependencies, file).includes(packageTest),
+  )
+
+  // Assert
+  assert.deepEqual(namedInputs, [
+    'package.json',
+    'pnpm-lock.yaml',
+    'tsconfig.json',
+    'pnpm-workspace.yaml',
+    'README.md',
+  ])
+  assert.deepEqual(walkedFolders, ['src', 'scripts', 'patches', 'skills'])
+  assert.deepEqual(leftOut, [])
+  assert.deepEqual(
+    {
+      manifest: testsSelectedBy(policy.dependencies, 'extension/package.json'),
+      patch: testsSelectedBy(
+        policy.dependencies,
+        'extension/patches/@modelcontextprotocol__sdk@1.30.0.patch',
+      ),
+      ignoreRules: testsSelectedBy(policy.dependencies, '.gitignore'),
+    },
+    {
+      manifest: [
+        'extension/scripts/tests/package.test.mjs',
+        'extension/scripts/tests/workflowPins.test.mjs',
+      ],
+      patch: ['extension/scripts/tests/package.test.mjs'],
+      ignoreRules: [
+        'extension/scripts/tests/package.test.mjs',
+        'extension/scripts/tests/repositoryIgnore.test.mjs',
+      ],
+    },
+  )
+})
+
+// Value: protects=the pre-gate runs the script tests that run a module which reads a repository file by a path built in code: the Wiki renderer reads `reader-shell.html` beside itself for every page it renders (renderWikiPageLimit.test.mjs, the publisher's tests, and wikiReaderDomQa.test.mjs through the check it starts), and runPackageCommand.test.mjs copies three utilities into a fixture and runs them there; fails_when=a change to the shell runs neither renderWikiPageLimit.test.mjs nor wikiReaderDomQa.test.mjs, or a change to one of the three copied utilities runs no runPackageCommand.test.mjs; why_new=Cycle 0048 task 154 (OCR B, the class of a module's read by path: `render-wiki.mjs:126` reads the shell, and `runPackageCommand.test.mjs:84-91` reads the three utilities by a name beside a base URL); seam=none (the policy file); no_claim=the tests the import graph reaches by an import
+test('the pre-gate policy runs the tests that render a Wiki page or start the Wiki reader check for a change to the reader shell, and the test that copies the package command utilities for a change to one of them', () => {
+  // Arrange
+  const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
+  const policy = JSON.parse(
+    readFileSync(`${repositoryRoot}.gstack/pregate.json`, 'utf8'),
+  )
+
+  // Act
+  const lanes = {
+    readerShell: testsSelectedBy(
+      policy.dependencies,
+      'extension/skills/codebook/reader-shell.html',
+    ),
+    runPackageCommand: testsSelectedBy(
+      policy.dependencies,
+      'extension/scripts/utils/runPackageCommand.mjs',
+    ),
+    withPackageOutput: testsSelectedBy(
+      policy.dependencies,
+      'extension/scripts/utils/withPackageOutput.mjs',
+    ),
+    packageConstants: testsSelectedBy(
+      policy.dependencies,
+      'extension/scripts/utils/packageConstants.mjs',
+    ),
+  }
+
+  // Assert
+  const packageAndCommand = [
+    'extension/scripts/tests/package.test.mjs',
+    'extension/scripts/tests/runPackageCommand.test.mjs',
+  ]
+  assert.deepEqual(lanes, {
+    readerShell: [
+      'extension/scripts/tests/package.test.mjs',
+      'extension/scripts/tests/publishWiki.test.mjs',
+      'extension/scripts/tests/renderWikiPageLimit.test.mjs',
+      'extension/scripts/tests/studyBootstrapQa.test.mjs',
+      'extension/scripts/tests/wikiReaderDomQa.test.mjs',
+    ],
+    runPackageCommand: packageAndCommand,
+    withPackageOutput: packageAndCommand,
+    packageConstants: packageAndCommand,
+  })
+})
+
+// Value: protects=the pre-gate runs the script test that starts a script as a process, copies it into a fixture, or reads it by a path built in code: a change to `run-pregate-tests.mjs`, `collectTestRun.mjs`, `planWholeSplitFiles.mjs`, a browser check (`*-qa.mjs`), `build-fast.mjs`, `check-package.mjs`, `package.mjs`, a file-system stand-in of the publisher's tests, `codecov.yml`, `extension/package.json` or `extension/pnpm-workspace.yaml` selects the test that runs or reads it; fails_when=one of these entries is dropped or points to another test, so a change to such a file runs no test that starts or reads it (the import graph does not reach a file that a test only starts); why_new=Cycle 0048 task 136 (OCR B, Red Team: task 122 found only literal reads); Cycle 0048 task 154 added package.test.mjs to `extension/package.json` and `extension/pnpm-workspace.yaml`; task 155 derived the browser-check assertion from the folder (every script that drives `playwright-cli`) and from workflowPins.test.mjs's listing of `*-qa.mjs`, so a sixth check needs no edit here; seam=none (the policy file and the files it names); no_claim=files a test only writes into a fixture, and the files the import graph reaches
 test('the pre-gate policy declares the script test that starts or copies each script and reads each browser check, and every browser check in the folder is covered', () => {
   // Arrange
   const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -319,9 +483,20 @@ test('the pre-gate policy declares the script test that starts or copies each sc
     extensionManifest: declared('extension/package.json'),
     pnpmWorkspace: declared('extension/pnpm-workspace.yaml'),
   }
+  // A browser check is a script of the folder that drives the browser CLI; workflowPins.test.mjs reads every `*-qa.mjs` of the folder, by the listing and the filter below.
   const browserChecksInFolder = readdirSync(`${repositoryRoot}${scripts}`)
-    .filter((name) => name.endsWith('-qa.mjs'))
+    .filter(
+      (name) =>
+        name.endsWith('.mjs') &&
+        readFileSync(`${repositoryRoot}${scripts}${name}`, 'utf8').includes(
+          'playwright-cli',
+        ),
+    )
     .toSorted()
+  const workflowPinsSource = readFileSync(
+    `${repositoryRoot}${scriptTests}workflowPins.test.mjs`,
+    'utf8',
+  )
   const namedTests = Object.values(policy.dependencies).flat()
   const missingTests = namedTests.filter(
     (test) => !existsSync(`${repositoryRoot}${test}`),
@@ -329,6 +504,10 @@ test('the pre-gate policy declares the script test that starts or copies each sc
 
   // Assert
   const workflowPins = [`${scriptTests}workflowPins.test.mjs`]
+  const workflowPinsAndPackage = [
+    `${scriptTests}workflowPins.test.mjs`,
+    `${scriptTests}package.test.mjs`,
+  ]
   const publishWiki = [`${scriptTests}publishWiki.test.mjs`]
   assert.deepEqual(lanes, {
     pregateRunner: [`${scriptTests}pregateTests.test.mjs`],
@@ -349,17 +528,22 @@ test('the pre-gate policy declares the script test that starts or copies each sc
     wrongLookStandIn: publishWiki,
     crlfShellStandIn: publishWiki,
     codecov: workflowPins,
-    extensionManifest: workflowPins,
-    pnpmWorkspace: workflowPins,
+    extensionManifest: workflowPinsAndPackage,
+    pnpmWorkspace: workflowPinsAndPackage,
   })
-  // The five checks that exist today are all read by workflowPins.test.mjs; a sixth needs no new entry because of the glob.
-  assert.deepEqual(browserChecksInFolder, [
-    'repository-return-qa.mjs',
-    'study-bootstrap-qa.mjs',
-    'study-reading-pose-qa.mjs',
-    'understanding-focus-qa.mjs',
-    'wiki-reader-dom-qa.mjs',
-  ])
+  // Every browser check, whatever its name, is in the lane of workflowPins.test.mjs: a sixth check passes when its name is read by that test and fails when it is not.
+  const checksWorkflowPinsDoesNotRead = browserChecksInFolder.filter(
+    (name) =>
+      !testsSelectedBy(policy.dependencies, `${scripts}${name}`).includes(
+        workflowPins[0],
+      ),
+  )
+  assert.deepEqual(checksWorkflowPinsDoesNotRead, [])
+  // The test reads the checks by listing the folder and keeping the names that end in `-qa.mjs`, which is what the glob `*-qa.mjs` of the policy names.
+  assert.match(
+    workflowPinsSource,
+    /readdir\(join\(repositoryRoot, 'extension\/scripts'\)\)\)\s*\.filter\(\(name\) => name\.endsWith\('-qa\.mjs'\)\)/,
+  )
   assert.deepEqual(missingTests, [])
 })
 
