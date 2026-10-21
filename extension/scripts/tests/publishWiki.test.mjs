@@ -21220,6 +21220,61 @@ for (const failed of [
   })
 }
 
+// Value: protects=the learner whose own file lies in the Wiki folder and the Wiki itself, on a volume that refuses the copy's chmod with a code of a file system that keeps no mode (EPERM) and whose disk then fails the copy's utimes (EIO): the disk error is not hidden by the refusal that came first, so the publish stops before its swap and the learner is not left with a copy whose times are those of its write; fails_when=writeOwnFile skips the utimes of a copy whose chmod was refused with a kept code, or lets the utimes' error pass once the chmod's was (`setWhereAble(handle.chmod(mode).then(() => handle.utimes(atime, mtime)))`), so the disk error publishes the copy; why_new=Cycle 0048 task 197 (Testing); seam=a copy of the shipped publisher whose `node:fs/promises` fails the chmod with EPERM and the utimes with EIO through the handle of the learner's file in the candidate (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf and failUtimesOf asked together); no_claim=a chmod or utimes that fails on a real file system
+test(
+  'a publish whose copy of the learner’s file gets EPERM from its chmod and EIO from its utimes is refused with the EIO, leaves no copy in the candidate and keeps the Wiki and the learner’s file as they were',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04, a candidate beside it, a chmod of the copy that a file system refuses as one that keeps no mode, and a disk error at its utimes.
+    const { publishWiki: publishWhoseCopyGetsTwoFailures } =
+      await loadMarkedCopy('publish-wiki.mjs', '?failing')
+    const wiki = await publishedWikiWithACandidate()
+    const learnerFile = join(wiki.output, 'manual.sh'),
+      changedAt = new Date('2021-03-04T05:06:07Z')
+    const isTheCopy = (path) => path === join(wiki.next, 'manual.sh')
+    const stopFailingChmod = failChmodOf(isTheCopy, 'EPERM'),
+      stopFailingUtimes = failUtimesOf(isTheCopy, 'EIO')
+    try {
+      await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
+      await chmod(learnerFile, 0o750)
+      await utimes(learnerFile, changedAt, changedAt)
+      const wikiBefore = await wikiAndLearnerFileOf(wiki.output, learnerFile)
+
+      // Act
+      const refusal = await publishWhoseCopyGetsTwoFailures({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        () => 'published',
+        (error) => error.code,
+      )
+      const copyInTheCandidate = await readFile(
+        join(wiki.next, 'manual.sh'),
+        'utf8',
+      ).catch(() => 'no copy')
+
+      // Assert
+      assert.deepEqual(
+        {
+          refusal,
+          copyInTheCandidate,
+          wikiAfter: await wikiAndLearnerFileOf(wiki.output, learnerFile),
+        },
+        {
+          refusal: 'EIO',
+          copyInTheCandidate: 'no copy',
+          wikiAfter: wikiBefore,
+        },
+      )
+    } finally {
+      stopFailingChmod()
+      stopFailingUtimes()
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
 /**
  * What a test compares to tell that a Wiki folder and a learner's file in it are as they were: the manifest's and the home page's bytes, and the learner's file's bytes, mode and modification time.
  * @param {string} output - The Wiki folder.

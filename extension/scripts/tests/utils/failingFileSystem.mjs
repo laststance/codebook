@@ -22,8 +22,13 @@ export function failWriteOf(isAwaited, code, swap) {
   }
 }
 
-/** The close, the status read, the `chmod` or the `utimes` through a handle that a test asked to fail: the file it waits for, the call, the system error and what runs first in the failing call; gone once it failed or was stopped. */
-let pendingHandleCallFailure
+/** The close, the status read, the `chmod` and the `utimes` through a handle that a test asked to fail, one place for each call, so a test may ask for a `chmod` and a `utimes` of one file together: the file it waits for, the call, the system error and what runs first in the failing call; gone once it failed or was stopped. */
+const pendingHandleCallFailures = {
+  close: undefined,
+  stat: undefined,
+  chmod: undefined,
+  utimes: undefined,
+}
 
 /**
  * Asks the next close of a handle of a file that `isAwaited` names to close the file and then fail with a system error, once: as a close on a network or synced file system that runs into a full disk (`ENOSPC`) or a quota (`EDQUOT`) after the whole write was handed on. Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process.
@@ -36,7 +41,7 @@ let pendingHandleCallFailure
  */
 export function failCloseOf(isAwaited, code, swap) {
   const failure = { isAwaited, call: 'close', code, swap }
-  pendingHandleCallFailure = failure
+  pendingHandleCallFailures[failure.call] = failure
   return stopHandleCallFailureOf(failure)
 }
 
@@ -51,12 +56,12 @@ export function failCloseOf(isAwaited, code, swap) {
  */
 export function failStatOf(isAwaited, code, swap) {
   const failure = { isAwaited, call: 'stat', code, swap }
-  pendingHandleCallFailure = failure
+  pendingHandleCallFailures[failure.call] = failure
   return stopHandleCallFailureOf(failure)
 }
 
 /**
- * Asks the next `chmod` through a handle of a file that `isAwaited` names to fail with a system error, once, and change no mode: as a file system that keeps no mode answers it (`EPERM` on a FAT or exFAT volume mounted for another owner, `ENOTSUP` on some network shares, `ENOSYS` on a FUSE file system without the call), or as a disk that cannot be written answers it (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process.
+ * Asks the next `chmod` through a handle of a file that `isAwaited` names to fail with a system error, once, and change no mode: as a file system that keeps no mode answers it (`EPERM` on a FAT or exFAT volume mounted for another owner, `ENOTSUP` on some network shares, `ENOSYS` on a FUSE file system without the call), or as a disk that cannot be written answers it (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process. A `chmod` and a `utimes` asked for the same file both fail on it ({@link failUtimesOf}): the first with its code, the second with its own.
  * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose `chmod` fails.
  * @param {string} code - The system error, such as `EIO`, `EPERM`, `ENOTSUP`.
  * @returns {() => void} Drops this failure while it is still to come, without clearing a newer one ({@link stopHandleCallFailureOf}).
@@ -65,7 +70,7 @@ export function failStatOf(isAwaited, code, swap) {
  */
 export function failChmodOf(isAwaited, code) {
   const failure = { isAwaited, call: 'chmod', code }
-  pendingHandleCallFailure = failure
+  pendingHandleCallFailures[failure.call] = failure
   return stopHandleCallFailureOf(failure)
 }
 
@@ -79,12 +84,12 @@ export function failChmodOf(isAwaited, code) {
  */
 export function failUtimesOf(isAwaited, code) {
   const failure = { isAwaited, call: 'utimes', code }
-  pendingHandleCallFailure = failure
+  pendingHandleCallFailures[failure.call] = failure
   return stopHandleCallFailureOf(failure)
 }
 
 /**
- * The stop of a close, a status read, a `chmod` or a `utimes` that {@link failCloseOf}, {@link failStatOf}, {@link failChmodOf} or {@link failUtimesOf} asked to fail: it drops that failure while it is still to come and leaves a newer one, which another call asked for since, in place. Called by all four.
+ * The stop of a close, a status read, a `chmod` or a `utimes` that {@link failCloseOf}, {@link failStatOf}, {@link failChmodOf} or {@link failUtimesOf} asked to fail: it drops that failure while it is still to come and leaves a newer one for the same call, which a later request made, in place; a failure asked for another call is not touched. Called by all four.
  * @param {object} failure - The failure that call put in place.
  * @returns {() => void} The stop.
  * @example
@@ -92,8 +97,8 @@ export function failUtimesOf(isAwaited, code) {
  */
 function stopHandleCallFailureOf(failure) {
   return () => {
-    if (pendingHandleCallFailure === failure)
-      pendingHandleCallFailure = undefined
+    if (pendingHandleCallFailures[failure.call] === failure)
+      pendingHandleCallFailures[failure.call] = undefined
   }
 }
 
@@ -268,17 +273,23 @@ export async function open(path, ...rest) {
  */
 async function openFailing(path, ...rest) {
   const handle = await fileSystem.open(path, ...rest)
-  const failure = pendingWriteFailure,
-    callFailure = pendingHandleCallFailure
-  // Only the awaited file's handle fails, once.
-  if (callFailure?.isAwaited(String(path))) {
-    pendingHandleCallFailure = undefined
-    return handleWhoseCallFails(
-      handle,
-      callFailure.call,
-      callFailure.code,
-      callFailure.swap && (() => callFailure.swap(String(path))),
-    )
+  const failure = pendingWriteFailure
+  // Only the awaited file's handle fails, once for each call asked: a `chmod` and a `utimes` asked together both fail on it.
+  const callFailures = Object.values(pendingHandleCallFailures).filter(
+    (candidate) => candidate?.isAwaited(String(path)),
+  )
+  if (callFailures.length > 0) {
+    let failing = handle
+    for (const callFailure of callFailures) {
+      pendingHandleCallFailures[callFailure.call] = undefined
+      failing = handleWhoseCallFails(
+        failing,
+        callFailure.call,
+        callFailure.code,
+        callFailure.swap && (() => callFailure.swap(String(path))),
+      )
+    }
+    return failing
   }
   if (!failure?.isAwaited(String(path))) return handle
   pendingWriteFailure = undefined
