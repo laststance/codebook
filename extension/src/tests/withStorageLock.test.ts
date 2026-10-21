@@ -495,7 +495,7 @@ test('an empty clock probe a killed window left beside the lock is removed by th
   )
 })
 
-// Value: protects=a lock that may belong to a live window stays when the file system's clock cannot be read; fails_when=an empty lock old by this window's clock is taken over although no file can be created in the folder to read the file system's clock; why_new=Cycle 0048 task 40 (S11-N17e); seam=open of node:fs/promises, which refuses the clock probe's file (a prepared-lock name beside the lock); no_claim=a full disk or a read-only network home
+// Value: protects=a lock that may belong to a live window stays when the file system's clock cannot be read; fails_when=an empty lock old by this window's clock is taken over although no file can be created in the folder to read the file system's clock; why_new=Cycle 0048 task 40 (S11-N17e), its refusal sentence extended by task 132 (native adversarial); seam=open of node:fs/promises, which refuses the clock probe's file (a prepared-lock name beside the lock); no_claim=a full disk or a read-only network home
 test('an empty lock file that is old by this window’s clock stays in place while no file can be created to read the file system’s clock', async (context) => {
   // Arrange: a lock file of zero bytes untouched for a minute, and a folder that refuses the clock probe's file (named like a prepared lock beside the lock).
   const directory = await storageDirectory(context)
@@ -522,7 +522,7 @@ test('an empty lock file that is old by this window’s clock stays in place whi
   // Assert
   assert.equal(
     outcome,
-    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. The lock file is empty and older than 10 seconds, but the folder takes no new file now (a full disk, a read-only folder or a quota), so Codebook cannot read the clock of the file system to tell whether a writer left it. Make room or write access in the folder, then retry; if the lock stays, move the file away.`,
   )
   assert.equal(writes, 0)
   assert.deepEqual(await readdir(directory), ['writer.lock'])
@@ -2093,7 +2093,7 @@ test('a Cursor setup whose own leftover catalog lock stays unreadable takes it b
       ownerReadsOfTheSetup: window.ownerReads,
     },
     {
-      setup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+      setup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. This window itself left the lock: the system would not let it read or remove the file, and its tries to take the lock back have not removed it. Close the program that holds the file (a virus scanner or an indexer can), then retry; if the lock stays, move the file away.`,
       ownerReadsOfTheSetup: 20,
     },
   )
@@ -2143,9 +2143,128 @@ test('a Cursor setup refused for its own unreadable leftover catalog lock leaves
         .catch(() => 'missing'),
     },
     {
-      refusedSetup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+      refusedSetup: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. This window itself left the lock: the system would not let it read or remove the file, and its tries to take the lock back have not removed it. Close the program that holds the file (a virus scanner or an indexer can), then retry; if the lock stays, move the file away.`,
       nextSetup: 'answered',
       config: 'written',
+    },
+  )
+})
+
+// Value: protects=a caller that names a lock its release left in place (a study removal says "the storage lock could not be released" and why) also when the release did not throw but could not read the lock's owner at any attempt, as on Windows while a scanner holds the file; fails_when=a release that answers kept calls no onReleaseFailure, so a removal answers moved without a word while the lock still refuses every other window; why_new=Cycle 0048 task 131 (Codex adversarial, Codex structured, native adversarial): only a thrown release reached onReleaseFailure; seam=the read of the lock's owner in a loaded withStorageLock, which answers nothing for the whole first release; no_claim=a real scanner on Windows
+test('a write whose lock this window could not read at any attempt of its release reports the lock it left in place to a caller that asks for it', async (context) => {
+  // Arrange: a window whose reads of its lock's owner answer nothing for the whole first release, so the release ends kept and throws nothing.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const window = await windowWithRefusedRelease(lockPath)
+  const reportedFailures: string[] = []
+
+  // Act
+  const outcome = await window
+    .withStorageLock(
+      directory,
+      async () => {
+        window.readsToRefuse = 1_000
+        return 'written'
+      },
+      undefined,
+      undefined,
+      undefined,
+      (error) => {
+        reportedFailures.push(String(error))
+      },
+    )
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    { outcome, reportedFailures, entries: await readdir(directory) },
+    {
+      outcome: 'written',
+      reportedFailures: [
+        `Error: The storage lock file ${lockPath} was left in place: the system would not let this window read its owner to remove it. This window tries to take it back; until then other windows are refused.`,
+      ],
+      entries: ['writer.lock'],
+    },
+  )
+})
+
+// Value: protects=the learner whose window left a lock that its twelve take-backs could not remove (a scanner holds the file): the next write's refusal names that the window itself left the lock and the way out, instead of saying another writer or an interrupted session holds it; fails_when=a refusal for this window's own kept leftover reads like one for another window's lock, so the learner looks for a second window that does not exist; why_new=Cycle 0048 task 131 (Codex adversarial, Codex structured, native adversarial): after the last take-back the lock stayed with no word to the learner; seam=the removal of the lock in a loaded withStorageLock, refused every time, and the timer, which the test fakes; no_claim=a real scanner on Windows
+test('a write refused after the twelve take-backs of this window’s own leftover lock failed says that this window left the lock and what to do', async (context) => {
+  // Arrange: a window whose first release and twelve take-backs are all refused: 13 * 20 = 260 refused removals, and no further take-back is planned.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const window = await windowWithRefusedRelease(lockPath, true)
+  await window
+    .withStorageLock(directory, async () => {
+      window.isRemovalRefused = true
+    })
+    .catch(() => undefined)
+  for (let wait = 1; wait <= 12; wait++) {
+    const refusedBefore = window.refusedRemovals
+    context.mock.timers.tick(5_000)
+    await untilReached(
+      () =>
+        window.refusedRemovals >= refusedBefore + 20 &&
+        (wait === 12 || window.timersPending === 1),
+      `the end of take-back ${wait} of 12 (20 refused removals, then the next take-back planned)`,
+    )
+  }
+  let writes = 0
+
+  // Act
+  const outcome = await window
+    .withStorageLock(directory, async () => {
+      writes += 1
+    })
+    .catch((error: unknown) => String(error))
+
+  // Assert
+  assert.deepEqual(
+    { outcome, writes, entries: await readdir(directory) },
+    {
+      outcome: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. This window itself left the lock: the system would not let it read or remove the file, and its tries to take the lock back have not removed it. Close the program that holds the file (a virus scanner or an indexer can), then retry; if the lock stays, move the file away.`,
+      writes: 0,
+      entries: ['writer.lock'],
+    },
+  )
+})
+
+// Value: protects=the learner whose storage folder takes no new file (a full disk, a read-only mount, a quota) and holds an empty lock that a killed writer left: the refusal names the unknown clock and the way out, so the learner does not wait for "an interrupted session" to end; fails_when=the refusal for such a lock is the plain "another writer or an interrupted session" sentence, which names no cause the learner can act on (task 40 keeps such a lock on purpose, and still does); why_new=Cycle 0048 task 132 (native adversarial): isLeftEmpty answers false for an unreadable clock and the refusal could not tell it from a live writer; seam=the open of the clock probe in the lock's folder, which the system refuses; no_claim=a real full disk
+test('an empty lock file older than the grace stays and the refusal names the clock of the file system that could not be read, while the folder takes no new file', async (context) => {
+  // Arrange: a lock file of zero bytes that nothing has touched for a minute, in a folder whose clock probe (a new file) is refused with ENOSPC.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  await leaveUntouchedFor(lockPath, 60_000)
+  const open = fsPromises.open.bind(fsPromises)
+  context.mock.method(
+    fsPromises,
+    'open',
+    (path: Parameters<typeof open>[0], ...rest: unknown[]) => {
+      if (rest[0] === 'wx')
+        return Promise.reject(
+          Object.assign(new Error('ENOSPC: no space left on device, open'), {
+            code: 'ENOSPC',
+          }),
+        )
+      return Reflect.apply(open, fsPromises, [path, ...rest])
+    },
+  )
+  let writes = 0
+
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+
+  // Assert
+  assert.deepEqual(
+    { outcome, writes, entries: await readdir(directory) },
+    {
+      outcome: `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock. The lock file is empty and older than 10 seconds, but the folder takes no new file now (a full disk, a read-only folder or a quota), so Codebook cannot read the clock of the file system to tell whether a writer left it. Make room or write access in the folder, then retry; if the lock stays, move the file away.`,
+      writes: 0,
+      entries: ['writer.lock'],
     },
   )
 })

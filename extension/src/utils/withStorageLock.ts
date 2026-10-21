@@ -13,7 +13,9 @@ import {
 } from '../constants'
 
 import { currentStorageOwner } from './currentStorageOwner'
+import { describeKeptStorageLock } from './describeKeptStorageLock'
 import { describeNoStorageFolder } from './describeNoStorageFolder'
+import { describeRefusedStorageLock } from './describeRefusedStorageLock'
 import { isSameStorageMachine } from './isSameStorageMachine'
 import { placeStorageLock } from './placeStorageLock'
 import {
@@ -116,14 +118,15 @@ async function releaseStorageLock(
  * Releases this process's lock when a write under it has ended, and notes a lock that may still name this process so that it is taken back; called by {@link releaseAfterWrite}.
  * @param path - The `writer.lock` file.
  * @param holder - The owner record this process placed.
+ * @returns What the release found ({@link LockRelease}); `kept` when the lock may still name this process, so that {@link releaseAfterWrite} reports it like a failed release.
  * @throws What removing the lock threw ({@link releaseStorageLock}): the write was made, and {@link releaseAfterWrite} hands the failure on; the lock is noted all the same.
  * @example
- * await releaseOwnLock('/storage/learning/writer.lock', { pid: process.pid, hostname: 'workstation' })
+ * await releaseOwnLock('/storage/learning/writer.lock', { pid: process.pid, hostname: 'workstation' }) // => 'released'
  */
 async function releaseOwnLock(
   path: string,
   holder: RecordedOwner & StorageOwnerIdentity,
-): Promise<void> {
+): Promise<LockRelease> {
   let release: LockRelease = 'kept'
   try {
     release = await releaseStorageLock(path, holder)
@@ -137,11 +140,12 @@ async function releaseOwnLock(
       takeBacksMade.delete(path)
     }
   }
+  return release
 }
 
 /**
  * Releases this process's lock after a write under it, without letting a failed release replace what the write did; called by {@link withStorageLock} in its `finally`.
- * The write was made when the release runs: its result (a recording's writer, a published catalog) or its own error is what the caller needs. A release that fails is handed to `onReleaseFailure`, for a caller that names the lock in its answer (a study removal, {@link removalAfterLockFailure}); the lock is taken back all the same ({@link releaseOwnLock}).
+ * The write was made when the release runs: its result (a recording's writer, a published catalog) or its own error is what the caller needs. A release that fails, and one that leaves the lock in place because its owner could not be read at any attempt ({@link describeKeptStorageLock}), is handed to `onReleaseFailure`, for a caller that names the lock in its answer (a study removal, {@link removalAfterLockFailure}); the lock is taken back all the same ({@link releaseOwnLock}).
  * @param path - The `writer.lock` file.
  * @param holder - The owner record this process placed.
  * @param onReleaseFailure - Told what removing the lock threw; a caller that does not ask never learns of it.
@@ -154,7 +158,9 @@ async function releaseAfterWrite(
   onReleaseFailure?: (error: unknown) => void,
 ): Promise<void> {
   try {
-    await releaseOwnLock(path, holder)
+    // A release that kept the lock throws nothing, but it leaves a lock that blocks other windows: the caller is told as for a thrown failure.
+    if ((await releaseOwnLock(path, holder)) === 'kept')
+      onReleaseFailure?.(new Error(describeKeptStorageLock(path)))
   } catch (error) {
     onReleaseFailure?.(error)
   }
@@ -332,11 +338,11 @@ export async function withStorageLock<Value>(
           return acquire()
         throw error
       })
-      .catch((error) => {
+      .catch(async (error) => {
         // Only the lock's own refusal gets its type: a caller waits for it and for nothing else.
         if (error.code === 'EEXIST')
           throw new StorageLockHeldError(
-            `Learning storage is locked by another writer or an interrupted session (lock file: ${path}). No data changed; retry after resolving the lock.`,
+            `Learning storage is locked by another writer or an interrupted session (lock file: ${path}). No data changed; retry after resolving the lock.${await describeRefusedStorageLock(path, unreleasedOwnLocks.has(path))}`,
             { cause: error },
           )
         throw error

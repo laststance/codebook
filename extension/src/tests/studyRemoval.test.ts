@@ -676,6 +676,29 @@ test('a removal whose storage lock cannot be released after every file moved is 
   assert.deepEqual(await storage.library.list(), [])
 })
 
+// Value: protects=a removal that moved every file names the storage lock that its release left in place without a thrown error (the lock's owner could not be read at any attempt, as on Windows while a scanner holds the file), so the learner is told that other windows are refused; fails_when=a release that answers kept reaches no onReleaseFailure, so the removal answers moved with no unreleasedLock and the storage line says nothing about a lock that still blocks other windows; why_new=Cycle 0048 task 131 (Codex adversarial, Codex structured, native adversarial): the test above makes the release throw, none made it end kept; seam=the injected mover, which overwrites the lock file with text that is no owner record with its last move; no_claim=a real scanner on Windows
+test('a removal whose storage lock stays in place because its owner cannot be read is reported as moved and names the lock', async (context) => {
+  // Arrange: the Trash takes every file and, with the last one, the lock file is overwritten with bytes that are no owner record, so the release reads no owner at any of its attempts.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const lockPath = join(await realpath(storage.directory), 'writer.lock')
+  const moverThatSpoilsTheLock: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path.endsWith('.study.v3.json')) await writeFile(lockPath, 'unreadable')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverThatSpoilsTheLock,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'moved',
+    unreleasedLock: `The storage lock file ${lockPath} was left in place: the system would not let this window read its owner to remove it. This window tries to take it back; until then other windows are refused.`,
+  })
+  assert.deepEqual(await storage.library.list(), [])
+})
+
 // Value: protects=a removal that stopped half way keeps saying so when its storage lock cannot be released either; fails_when=the lock's rejection hides that a recording already moved; why_new=the existing partly-moved tests release the lock; seam=the injected mover
 test('a removal that stopped at a refused sidecar and then cannot release its storage lock is reported as partly moved and names both failures', async (context) => {
   // Arrange: the Trash takes the recording, then refuses the sidecar while the lock file disappears.
@@ -1372,7 +1395,7 @@ test('after a removal could not release its storage lock and the lock stayed, a 
   // Assert
   assert.equal(removal.outcome, 'moved')
   await assert.rejects(save, {
-    message: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(storage.directory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
+    message: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(storage.directory), 'writer.lock')}). No data changed; retry after resolving the lock. This window itself left the lock: the system would not let it read or remove the file, and its tries to take the lock back have not removed it. Close the program that holds the file (a virus scanner or an indexer can), then retry; if the lock stays, move the file away.`,
   })
 })
 
