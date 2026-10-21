@@ -5,6 +5,7 @@ import { test } from 'node:test'
 
 import { NODE_TEST_HISTORY_DIRECTORY } from '../constants'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
@@ -14,6 +15,7 @@ import {
   saveOneStopNodeHistory,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
 /** The last view the reader posted to its panes. */
 function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
@@ -131,6 +133,82 @@ test('a test replay whose stop does not verify opens on its first event', async 
     assert.equal(harness.historicalDebugPresentations.length, 0)
   } finally {
     context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=Open retained history after a failed seal: the recorded part of the test history opens read-only as an interrupted history, on its recorded stop; fails_when=the unsealed prefix cannot be opened, or opens as if the run were still recording; why_new=X6's Open retained history (AC3, AC4); seam=the history's writer is abandoned after its stop, as the service abandons it when the seal throws; no_claim=a journal no read can verify, which the load-failure test covers
+test('Open retained history opens the recorded part of a test history whose seal failed, read-only', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = nodeTestHistoryHeader(store.workspaceKey),
+      sourceText = 'const nextTheme = "dark";\n'
+    const writer = await store.start(history)
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 100,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts\n',
+    })
+    await writer.appendStop({
+      index: 0,
+      runId: 'test-run',
+      sessionId: 'test-session',
+      threadId: 1,
+      elapsedMs: 200,
+      worker: { pid: 1, processGroup: 1, workspace: '/private/test' },
+      source: history.configuration.source,
+      frame: { id: 1, name: 'notifyManager', line: 1, column: 1 },
+      variables: [{ name: 'nextTheme', value: 'dark', variablesReference: 0 }],
+      facts: [
+        { path: 'nextTheme', mode: 'value', display: 'dark', type: 'string' },
+      ],
+      debuggerSnapshot: {
+        version: 1,
+        frames: [
+          {
+            name: 'notifyManager',
+            line: 1,
+            column: 1,
+            source: {
+              name: history.configuration.source.path,
+              text: sourceText,
+              hash: sha256(sourceText),
+              line: 1,
+            },
+            scopes: [{ name: 'Local', variables: [0] }],
+          },
+        ],
+        variables: [
+          { name: 'nextTheme', value: 'dark', type: 'string', children: [] },
+        ],
+        limitations: [],
+      },
+    })
+    // The seal threw: the service abandons the writer, and its journal stays an unsealed prefix.
+    writer.abandon()
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
+        !lastView(harness)?.loading,
+      'the retained history is shown',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.status,
+      'interrupted',
+    )
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.deepEqual(harness.errorMessages, [])
+  } finally {
     await harness.close()
   }
 })
