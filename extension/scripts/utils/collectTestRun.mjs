@@ -50,7 +50,15 @@ function followFile(event, running) {
     running.delete(basename(file))
 }
 
-/** Ends every process that runs under this one with SIGKILL; the recording starts nothing but the runner's file processes. @example endProcessesUnderThisOne() */
+/**
+ * Ends every process that runs under this one with SIGKILL on POSIX; on Windows it ends nothing.
+ *
+ * Why: the recording starts nothing but the runner's file processes, so the processes under this one are the run's own. On POSIX the table ({@link listProcessIdsUnder}) names them, the file processes and what they started, and {@link killProcessIds} kills them. On Windows the process table answers nothing ({@link readProcessTable}), so the list is empty and this step ends nothing: what ends the file processes there is the abort's own kill, which Node's `subprocess.kill()` makes outright on Windows (SIGTERM, SIGINT, SIGHUP and SIGKILL all terminate the process forcefully; the file cannot ignore it), and what a file process started without `detached` ends with it (only `options.detached` lets a child outlive its parent on Windows).
+ *
+ * Called by {@link collectTestRun} at the end of the grace after an abort, at a SIGINT, SIGTERM or SIGHUP ({@link endChildrenOnSignal}) and after an unexpected failure of the run.
+ * @example
+ * endProcessesUnderThisOne()
+ */
 function endProcessesUnderThisOne() {
   killProcessIds(listProcessIdsUnder(process.pid))
 }
@@ -58,7 +66,7 @@ function endProcessesUnderThisOne() {
 /**
  * Runs test files with Node's `run()` and collects every finished top-level test. The run is aborted, and its file processes ended, as soon as a test does not end within `testTimeoutMs` (the runner fails it with its timeout), a hook does not end within it (the runner fails the hook's tests as `hookFailed` for its time), or the run sends no event for the limit plus {@link RECORD_STALL_MARGIN_MS} (so the runner's own timeout event comes first; the sum is capped at {@link MAX_TIMER_DELAY_MS}, the longest wait a timer keeps), as a file whose process does not exit after its tests ends.
  *
- * An abort makes the runner send SIGTERM to its file processes, which a test file may ignore; the recording therefore waits for them within `killGraceMs` and then ends every process that still runs under this one with SIGKILL (it starts nothing else), so nothing of the run outlives it. A SIGINT, SIGTERM or SIGHUP to this process, from the start of the run until its file processes have ended (that wait included), ends them the same way ({@link endChildrenOnSignal}).
+ * An abort makes the runner send SIGTERM to its file processes. On POSIX a test file may ignore it; the recording therefore waits for them within `killGraceMs` and then ends every process that still runs under this one with SIGKILL (it starts nothing else), so nothing of the run outlives it. On Windows the process table answers nothing, so that step ends nothing; the abort's kill itself ends a file process outright (Node's kill there cannot be ignored), and what a file process started, not `detached`, ends with it. A SIGINT, SIGTERM or SIGHUP to this process, from the start of the run until its file processes have ended (that wait included), ends them the same way ({@link endChildrenOnSignal}): with SIGKILL on POSIX; on Windows that end finds nothing in the table, and the exit of this process ends the file processes as it ends any child that is not `detached`.
  *
  * Called by `scripts/test-shard.mjs --record`, which gives the recording the same bound as the shard calls.
  * @param options.files - Absolute paths of the test files.
@@ -89,7 +97,7 @@ export async function collectTestRun({
     if (abort.signal.aborted) return
     abort.abort()
     abortedAt = performance.now()
-    // The abort ends the stream even when a file process ignores SIGTERM; this timer kills such a process when the grace has passed.
+    // The abort ends the stream even when a file process ignores SIGTERM; on POSIX this timer kills such a process when the grace has passed (on Windows the abort's kill has ended it already and the step finds nothing).
     forceTimer = setTimeout(endProcessesUnderThisOne, killGraceMs)
   }
   // A timer longer than {@link MAX_TIMER_DELAY_MS} fires at once, and the limit (at most that, by the option's check) plus the margin can pass it.
@@ -136,7 +144,7 @@ export async function collectTestRun({
   return { results, timedOutTests, hookTimedOutTests, stall }
 }
 
-/** Waits for the file processes of an aborted run to end within what is left of the grace, then ends the ones that still run with SIGKILL. @example await endFileProcessesAfterAbort(performance.now(), 5_000) */
+/** Waits for the file processes of an aborted run to end within what is left of the grace, then ends the ones that still run with SIGKILL (POSIX; on Windows the table is empty, so the wait and the kill are no-ops). @example await endFileProcessesAfterAbort(performance.now(), 5_000) */
 async function endFileProcessesAfterAbort(abortedAt, killGraceMs) {
   const deadline = abortedAt + killGraceMs
   while (
