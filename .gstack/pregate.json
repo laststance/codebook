@@ -10,7 +10,9 @@
     ".codex/restore-product-context.mjs": [
       ".codex/restore-product-context.test.mjs"
     ],
-    "extension/test-timings.json": [],
+    "extension/test-timings.json": [
+      "extension/scripts/tests/testShards.test.mjs"
+    ],
     ".github/workflows/*.yml": [
       "extension/scripts/tests/workflowPins.test.mjs"
     ],

@@ -213,7 +213,7 @@ test('the pre-gate policy declares workflowPins.test.mjs as the test lane of the
   assert.equal(existsSync(`${repositoryRoot}${workflowPins[0]}`), true)
 })
 
-// Value: protects=the pre-gate runs the script test that reads a repository file no import reaches (a file it opens by a path built in code, a place beside it, a file it copies into a fixture, or the policy itself): a change to that file selects the test; fails_when=one of these entries is dropped or points to another test, so a change to `.gitignore`, `AGENTS.md`, `.codex/hooks.json`, the shipped skill's `SKILL.md` or `reader-shell.html`, a browser check, the health checker, the shard script or the policy runs no test that reads it; why_new=Cycle 0048 task 122 (Red Team: workflowPins.test.mjs read five files that the policy named nowhere; the same search over every script test found the rest); Cycle 0048 task 154 added renderWikiPageLimit.test.mjs and wikiReaderDomQa.test.mjs to the reader shell (the renderer reads it) and package.test.mjs to `.gitignore` (the Git status guarding the build reads it); seam=none; no_claim=files that a test only writes into a fixture (the fixtures of packageIO.test.mjs, `extension/test-timings.json`), and the files the import graph reaches, which the pre-gate decides
+// Value: protects=the pre-gate runs the script test that reads a repository file no import reaches (a file it opens by a path built in code, a place beside it, a file it copies into a fixture, or the policy itself): a change to that file selects the test; fails_when=one of these entries is dropped or points to another test, so a change to `.gitignore`, `AGENTS.md`, `.codex/hooks.json`, the shipped skill's `SKILL.md` or `reader-shell.html`, a browser check, the health checker, the shard script or the policy runs no test that reads it; why_new=Cycle 0048 task 122 (Red Team: workflowPins.test.mjs read five files that the policy named nowhere; the same search over every script test found the rest); Cycle 0048 task 154 added renderWikiPageLimit.test.mjs and wikiReaderDomQa.test.mjs to the reader shell (the renderer reads it) and package.test.mjs to `.gitignore` (the Git status guarding the build reads it); Cycle 0048 task 191 (Red Team) gave the committed `extension/test-timings.json` its lane, testShards.test.mjs, which reads it through readTestTimings; seam=none; no_claim=files that a test only writes into a fixture (the fixtures of packageIO.test.mjs), and the files the import graph reaches, which the pre-gate decides
 test('the pre-gate policy declares the script test that reads each repository file the import graph does not reach, and every test it names exists', () => {
   // Arrange
   const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -231,6 +231,7 @@ test('the pre-gate policy declares the script test that reads each repository fi
     codexHooks: declared('.codex/hooks.json'),
     healthChecker: declared('extension/scripts/checkHealth.mjs'),
     shardScript: declared('extension/scripts/test-shard.mjs'),
+    timings: declared('extension/test-timings.json'),
     studyCheck: declared('extension/scripts/study-bootstrap-qa.mjs'),
     wikiCheck: declared('extension/scripts/wiki-reader-dom-qa.mjs'),
     wikiShellFixture: declared(
@@ -268,6 +269,7 @@ test('the pre-gate policy declares the script test that reads each repository fi
     codexHooks: ['.codex/restore-product-context.test.mjs'],
     healthChecker: [`${scriptTests}health.test.mjs`],
     shardScript: [`${scriptTests}testShards.test.mjs`],
+    timings: [`${scriptTests}testShards.test.mjs`],
     studyCheck: [
       `${scriptTests}studyBootstrapQa.test.mjs`,
       `${scriptTests}workflowPins.test.mjs`,
