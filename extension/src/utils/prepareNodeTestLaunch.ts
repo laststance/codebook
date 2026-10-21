@@ -1,29 +1,27 @@
-import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, realpath, stat } from 'node:fs/promises'
+import { mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, relative, sep } from 'node:path'
-
-import { z } from 'zod'
+import { join } from 'node:path'
 
 import {
   NODE_TEST_EXCLUDED_FILE_LIMIT,
-  NODE_TEST_MINIMUM_VITEST_MAJOR,
   REPOSITORY_RUN_TIMEOUT_MS,
 } from '../constants'
 import { StudyError } from '../errors'
 import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 
+import {
+  checkNodeTestFiles,
+  type CheckedNodeTestStop,
+} from './checkNodeTestFiles'
 import type {
   ListVitestTestFilesRequest,
   VitestListedFile,
 } from './listVitestTestFiles'
+import { readVitestPrerequisite } from './readVitestPrerequisite'
 import { requireNodeTestTitles } from './requireNodeTestTitles'
+import { resolveOwnedRepositoryFile } from './resolveOwnedRepositoryFile'
 
-export type PreparedNodeTestStop = {
-  file: string
-  source: NodeTestConfiguration['source']
-  inspections: NodeTestConfiguration['inspections']
-}
+export type PreparedNodeTestStop = CheckedNodeTestStop
 /** A private folder owned by one run; `file` is where Vitest writes the JSON report that proves which test ran. */
 export type NodeTestReportLocation = { directory: string; file: string }
 export type PreparedNodeTestLaunch = {
@@ -41,7 +39,6 @@ export type ListVitestTestFiles = (
   request: ListVitestTestFilesRequest,
 ) => Promise<VitestListedFile[]>
 
-const vitestPackageSchema = z.object({ version: z.string() })
 /** Makes every regular-expression character in a test title literal. @example literalPattern('adds (x).') // => 'adds \\(x\\)\\.' */
 const literalPattern = (text: string) =>
   text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -58,8 +55,9 @@ const literalGlob = (path: string) => path.replace(/[\\*?[\]{}()!+@]/g, '\\$&')
  * @param workspace - Opened repository root.
  * @param configuration - Validated test intent of a new run.
  * @param listTestFiles - Runs the owned `vitest list --filesOnly` with the run's Node and cancellation.
+ * The paths and hashes are checked by {@link checkNodeTestFiles} and the root Vitest by {@link readVitestPrerequisite}, the same checks the run's preparation made before its history began; they run again here because time passes between the two.
  * @returns The checked program, argv, stops, cited title path and the private report location the caller must remove.
- * @throws When a path, hash or Vitest version check fails, the identity is retired or missing, or Vitest cannot select the cited file alone.
+ * @throws The typed refusal of {@link checkNodeTestFiles} or the root Vitest's `PREREQUISITE_MISSING`; an error when the Vitest program is not a file of the repository, the identity is retired or missing, or Vitest cannot select the cited file alone.
  * @example
  * ```ts
  * await prepareNodeTestLaunch('/repo', config, listTestFiles)
@@ -72,88 +70,21 @@ export async function prepareNodeTestLaunch(
   listTestFiles: ListVitestTestFiles,
 ): Promise<PreparedNodeTestLaunch> {
   const testTitles = requireNodeTestTitles(configuration)
-  const root = await realpath(workspace)
-  const resolveOwnedFile = async (path: string): Promise<string> => {
-    const file = await realpath(join(root, path))
-    const owned = relative(root, file)
-    // Existing symlinks may be used only when they still resolve inside this exact checkout.
-    if (
-      !owned ||
-      owned === '..' ||
-      owned.startsWith(`..${sep}`) ||
-      !(await stat(file)).isFile()
-    )
-      throw new Error(
-        `Node test path is not a file in the opened repository: ${path}`,
-      )
-    return file
-  }
-  const declaredStops = [
-    { source: configuration.source, inspections: configuration.inspections },
-    ...(configuration.additionalStops ?? []).map((stop) => ({
-      source: {
-        path: stop.path,
-        hash: stop.hash,
-        line: stop.line,
-        column: stop.column,
-      },
-      inspections: stop.inspections,
-    })),
-  ]
-  const [
-    testFile,
-    sourceFile,
-    program,
-    vitestPackage,
-    ...additionalSourceFiles
-  ] = await Promise.all([
-    resolveOwnedFile(configuration.testFile),
-    resolveOwnedFile(configuration.source.path),
-    resolveOwnedFile('node_modules/vitest/vitest.mjs'),
-    resolveOwnedFile('node_modules/vitest/package.json'),
-    ...(configuration.additionalStops ?? []).map((stop) =>
-      resolveOwnedFile(stop.path),
-    ),
-  ])
-  const vitestPackageJson = vitestPackageSchema.safeParse(
-    await readFile(vitestPackage, 'utf8')
-      .then((text): unknown => JSON.parse(text))
-      .catch(() => undefined),
+  const { root, testFile, stops } = await checkNodeTestFiles(
+    workspace,
+    configuration,
   )
-  const vitestVersion = vitestPackageJson.success
-    ? vitestPackageJson.data.version
-    : 'an unreadable version'
-  const vitestMajor = Number.parseInt(vitestVersion, 10)
   // Older Vitest lacks the verified file listing, exclusion and report behavior this exact selection relies on.
-  if (
-    !Number.isInteger(vitestMajor) ||
-    vitestMajor < NODE_TEST_MINIMUM_VITEST_MAJOR
+  const vitest = await readVitestPrerequisite(root)
+  if (!vitest.ready) throw new StudyError('PREREQUISITE_MISSING', vitest.reason)
+  const program = await resolveOwnedRepositoryFile(
+    root,
+    'node_modules/vitest/vitest.mjs',
   )
+  if (!program)
     throw new StudyError(
       'PREREQUISITE_MISSING',
-      `The node-test profile needs Vitest ${NODE_TEST_MINIMUM_VITEST_MAJOR} or later; this repository has ${vitestVersion}.`,
-    )
-  const stops = declaredStops.map((stop, index) => ({
-    ...stop,
-    file: index === 0 ? sourceFile : additionalSourceFiles[index - 1]!,
-  }))
-  const [testBytes, ...sourceBytes] = await Promise.all([
-    readFile(testFile),
-    ...stops.map((stop) => readFile(stop.file)),
-  ])
-  for (const [index, stop] of stops.entries()) {
-    if (
-      createHash('sha256').update(sourceBytes[index]!).digest('hex') !==
-      stop.source.hash
-    )
-      throw new Error(
-        `Node test source changed; declared stop ${index + 1} requires a current source before running the test.`,
-      )
-  }
-  const testHash = createHash('sha256').update(testBytes).digest('hex')
-  if (testHash !== configuration.testHash)
-    throw new Error(
-      'Node test file changed; review the current test before running it.',
+      'node-test needs the root Vitest program node_modules/vitest/vitest.mjs inside the opened repository; reinstall Vitest at the repository root, then call codebook_status again.',
     )
   const excludes = await excludeOtherTestFiles(
     root,
@@ -162,7 +93,7 @@ export async function prepareNodeTestLaunch(
     program,
     listTestFiles,
   )
-  const separator = vitestMajor >= 5 ? ' > ' : ' '
+  const separator = vitest.major >= 5 ? ' > ' : ' '
   // Created last so a refused preparation leaves nothing behind; the run removes it on release.
   const reportDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-vitest-report-'),
@@ -187,11 +118,11 @@ export async function prepareNodeTestLaunch(
   ]
   return {
     workspace: root,
-    testFile: testFile,
+    testFile,
     testTitles,
-    sourceFile: sourceFile,
+    sourceFile: stops[0]!.file,
     stops,
-    program: program,
+    program,
     args,
     report,
   }
