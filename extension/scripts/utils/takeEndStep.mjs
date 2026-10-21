@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
 
+import { childStillRuns } from './childStillRuns.mjs'
+
 /** How many times the program that ends a tree is started when it hangs and is stopped: the first start and one more. */
 const TREE_END_ATTEMPTS = 2
 
@@ -21,11 +23,10 @@ export function takeEndStep(child, step, killGraceMs) {
     child.kill(step.signal)
     return
   }
-  const stillRuns = () => child.exitCode === null && child.signalCode === null
   // A failed start emits 'error' and may emit 'exit' too; the child is ended alone once, and only while it still runs.
   let fellBack = false
   const endChildAlone = () => {
-    if (fellBack || !stillRuns()) return
+    if (fellBack || !childStillRuns(child)) return
     fellBack = true
     child.kill()
   }
@@ -39,7 +40,7 @@ export function takeEndStep(child, step, killGraceMs) {
     ender.on('exit', (code, signal) => {
       if (code === 0) return
       // A program stopped for its time (a signal ended it) gets one more start while the child runs.
-      if (signal !== null && attemptsLeft > 1 && stillRuns()) {
+      if (signal !== null && attemptsLeft > 1 && childStillRuns(child)) {
         start(attemptsLeft - 1)
         return
       }
