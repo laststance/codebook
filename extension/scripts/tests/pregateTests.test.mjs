@@ -2454,6 +2454,42 @@ test(
   },
 )
 
+// Value: protects=the reader of a failed pre-gate lane whose build could not be started (the program is missing, or the system refuses the start): the runner fails the lane with code 1 before any test runs, with one line that says why; fails_when=`reportBuildFailure` drops the line of a build that could not start, so the lane fails with no word, or the runner goes on to the runs; why_new=Cycle 0048 task 195 (Step 7 of the third /ship: runBuildWithLimit's own test checks the error it answers, no test read the runner's line for it); seam=run-pregate-tests.mjs started as a process in a fixture repository, with a module loaded first (`--import`) that gives the runner, and only the runner, a program path that does not exist, so the spawn of its build fails with ENOENT; no_claim=other start failures (EACCES, EAGAIN), which take the same branch
+test('the pre-gate runner fails the lane with code 1, says the build could not start and runs no test when its build cannot be started', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {
+    'product.test.js': notingTest('product', true),
+  })
+  const missingProgram = join(root, 'no-such-node')
+  const preloadPath = join(root, 'missing-node.mjs')
+  await writeFile(
+    preloadPath,
+    [
+      '// Only the runner gets the missing program; the processes it would start never run.',
+      "if (process.argv[1]?.endsWith('run-pregate-tests.mjs'))",
+      `  process.execPath = ${JSON.stringify(missingProgram)}`,
+      '',
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runPregateRunner(
+    root,
+    ['extension/src/tests/product.test.ts'],
+    { NODE_OPTIONS: `--import=${pathToFileURL(preloadPath).href}` },
+  )
+
+  // Assert
+  assert.deepEqual(
+    { code: result.code, order: result.order, stderr: result.stderr },
+    {
+      code: 1,
+      order: [],
+      stderr: `run-pregate-tests: the build could not start: spawn ${missingProgram} ENOENT\n`,
+    },
+  )
+})
+
 // Value: protects=the reader of a failed pre-gate lane whose test run a signal ended that the runner did not send (an out-of-memory kill, a kill from outside): the lane fails and one line names the run and the signal, where the run's own output just stops; fails_when=the runner fails the lane with no line that says why, or passes it; why_new=Cycle 0048 task 170 (Step 7 of the third /ship found a killed build named by no line; a run was the same, while the shard script names the signal of such a call); seam=run-pregate-tests.mjs started as a process in a fixture repository whose product test file sends SIGKILL to the `node --test` process that runs it; no_claim=Windows, where a killed process has an exit code and no signal
 test(
   'the pre-gate runner fails the lane and names the run and the signal when a signal it did not send ends a test run',

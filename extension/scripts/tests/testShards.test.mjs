@@ -2009,6 +2009,41 @@ test(
   },
 )
 
+// Value: protects=the processes that hold the pid of a child that has already exited: an end of such a child signals nothing and reads no tree, since its pid can belong to another program by then; fails_when=`endProcessTree` drops the check that the child still runs (`childStillRuns`), so it stops and kills the process now at that pid and everything under it; why_new=Cycle 0048 task 194 (Step 7 of the third /ship: every test of endProcessTree ends a child that still runs); seam=endProcessTree given a child that reports an exit (`exitCode: 0`) whose pid is a live process with a child of its own, standing in for a pid given to another program; no_claim=a real reuse of the pid by another program (a live process of the test stands in for it)
+test(
+  'the end of a child that has already exited signals nothing and leaves the processes at its pid alone',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { childPid, grandchildPid } = await startTwoProcesses(context)
+    const signalsSent = []
+    const exitedChild = {
+      pid: childPid,
+      exitCode: 0,
+      signalCode: null,
+      kill: (signal) => {
+        signalsSent.push(signal)
+        return true
+      },
+    }
+
+    // Act
+    await endProcessTree(exitedChild, { platform: process.platform })
+    // gstack-timing-ok: an end that wrongly reached the pid would have killed its child at once; half a second lets that kill be seen before the check.
+    await delay(500)
+
+    // Assert
+    assert.deepEqual(
+      {
+        signalsSent,
+        processAtThePidRuns: processExists(childPid),
+        itsChildRuns: processExists(grandchildPid),
+      },
+      { signalsSent: [], processAtThePidRuns: true, itsChildRuns: true },
+    )
+  },
+)
+
 // Value: protects=the forced step of a silent call on POSIX against a runner that keeps starting processes (the real runner starts a test file after another) and ignores SIGTERM: none of the processes it started in the moment of the forced step outlives the call; fails_when=the runner's tree is read and the runner is killed with nothing stopped, so a process it starts between the last look and its kill is found by no look (a killed runner has no children: they are given to `init`) and runs on with no parent; why_new=Cycle 0048 task 189 (Red Team: watchCallSilence's forced step reads the tree and kills the runner in the same order as endProcessTree did); seam=runTestInvocation with a stand-in runner that ignores SIGTERM and starts a `sleep` of the marked duration every millisecond, a 2.5 s silence limit and a 1.5 s grace; the clean-up ends every marked process by its id; no_claim=Windows (taskkill /T /F ends the tree there)
 test(
   'a call ended for its silence leaves none of the processes its runner kept starting until the forced step',
@@ -2572,6 +2607,46 @@ test(
   },
 )
 
+// Value: protects=the timings recording of a file whose `before` hook throws: the runner fails the hook's test as `hookFailed` with the thrown error as its cause, and the recording refuses it as a failed test, not as a hook that did not end; fails_when=`failedForTime` takes every `hookFailed` for a hook the runner ended for its time, so a hook that threw aborts the run and the refusal says it did not end within the limit; why_new=Cycle 0048 task 192 (Step 7 of the third /ship: the hook test above gives `hookFailed` the runner's timeout cause only; no test gave it an error); seam=test-shard.mjs --record on a fixture build whose file has a `before` hook that throws, with a 3 s limit; no_claim=other causes of `hookFailed` on a Node release later than 24.21 (one fixture on the runner in use)
+test(
+  'the timings recording of a file whose before hook throws is refused as failed tests, not as a hook that did not end',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const source = [
+      "const { appendFileSync } = require('node:fs')",
+      "const { join } = require('node:path')",
+      "const { before, test } = require('node:test')",
+      "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+      "before(() => { throw new Error('the setup broke') })",
+      "test('first', () => {})",
+    ].join('\n')
+
+    // Act
+    const { result, left, timings } = await recordFixtureFile(
+      context,
+      'throwing-hook.test.js',
+      source,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        stderr: result.stderr,
+        processesLeft: left,
+        timings,
+      },
+      {
+        code: 1,
+        stderr: '✖ 1 tests failed; timings were not recorded.\n',
+        processesLeft: [],
+        timings: 'no file',
+      },
+    )
+  },
+)
+
 // Value: protects=the timings recording from a file whose process does not exit after its tests passed (a timer left at the top level): the file sends nothing more, so the recording used to wait for it for ever; it now ends after the limit and 5 s more with the file named and no process left; fails_when=the recording ends only at a failed test, so a file that passed its tests and holds the process open holds the recording, or the refusal names the limit alone as the time the run sent nothing; why_new=Cycle 0048 task 149 (native adversarial: a file process that does not exit sends nothing more); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; Cycle 0048 task 168 (Step 8 of the third /ship: the sentence said 3 s where the run had sent nothing for 8 s); seam=test-shard.mjs --record on a fixture build whose file passes its test and leaves a timer, with a 3 s limit (the run's silence bound is that and 5 s more); no_claim=why the margin is 5 s (the runner's own timeout event comes first within it)
 test(
   'the timings recording ends a run that sends nothing for the limit plus 5 s, names the file that did not end, with that time, and leaves no process',
@@ -2613,6 +2688,53 @@ test(
         endedInTime: true,
         processesLeft: [],
         timings: 'no file',
+      },
+    )
+  },
+)
+
+// Value: protects=the reader of a recording that was ended for its silence while other files had ended: the refusal names only the files that started and did not end, so the file to look at is the one named; fails_when=a file is not taken off the running files at its own summary or completion (`followFile`), so a file that passed and ended is named beside the one that holds the run open; why_new=Cycle 0048 task 193 (Step 7 of the third /ship: the silence tests above run one file a recording, so the files that ended are never in a sentence); seam=test-shard.mjs --record on a fixture build of a file that passes and ends (it sorts first) and a file that passes and leaves a timer, with a 3 s limit; no_claim=the runner's event order for many files at once (two files run here)
+test(
+  'the timings recording of a run that sends nothing names only the file that did not end, not a file that ended before',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureExtension(context, {
+      tests: {
+        // It sorts before the other file, so it starts first and ends even where the recording runs one file at a time.
+        'early.test.js': [
+          "const { test } = require('node:test')",
+          "test('passes', () => {})",
+        ].join('\n'),
+        'lingering.test.js': [
+          "const { appendFileSync } = require('node:fs')",
+          "const { join } = require('node:path')",
+          "const { test } = require('node:test')",
+          "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+          "test('passes', () => {})",
+          'setInterval(() => {}, 1_000)',
+        ].join('\n'),
+      },
+    })
+    const pidsPath = join(root, 'dist/tests/pids.log')
+    killNotedProcessesAfter(context, pidsPath)
+
+    // Act
+    const result = await runShardScript(
+      root,
+      ['--record', '--silence-seconds', '3'],
+      45_000,
+    )
+    const left = await waitUntilNoneExists(await readPids(pidsPath), 10_000)
+
+    // Assert
+    assert.deepEqual(
+      { code: result.code, stderr: result.stderr, processesLeft: left },
+      {
+        code: 1,
+        stderr:
+          '✖ The run sent nothing for 8 s and was ended; lingering.test.js started and did not end; timings were not recorded.\n',
+        processesLeft: [],
       },
     )
   },
@@ -3499,7 +3621,6 @@ test(
     )
   },
 )
-
 /** Ends a process by its id when the test ends, if it still runs. @example killProcessIdsAfter(context, 4242) */
 function killProcessIdsAfter(context, pid) {
   context.after(() => killProcessIds([pid]))
