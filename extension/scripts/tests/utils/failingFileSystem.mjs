@@ -64,12 +64,13 @@ export function failStatOf(isAwaited, code, swap) {
  * Asks the next `chmod` through a handle of a file that `isAwaited` names to fail with a system error, once, and change no mode: as a file system that keeps no mode answers it (`EPERM` on a FAT or exFAT volume mounted for another owner, `ENOTSUP` on some network shares, `ENOSYS` on a FUSE file system without the call), or as a disk that cannot be written answers it (`EIO`). Called by the publisher's tests before they publish with the copy that gets this module as its `node:fs/promises` (the loader hook of `markedCopyHooks.mjs`, by its mark); each calls the stop in its `finally`, so a failure the step never reached is not left for a later test of the process. A `chmod` and a `utimes` asked for the same file both fail on it ({@link failUtimesOf}): the first with its code, the second with its own.
  * @param {(path: string) => boolean} isAwaited - Whether a file `open` is asked for is the one whose `chmod` fails.
  * @param {string} code - The system error, such as `EIO`, `EPERM`, `ENOTSUP`.
+ * @param {(path: string) => Promise<void>} [swap] - Runs, with the file's path, when the `chmod` is called and before it fails, while the handle is still open and the bytes are written: as a look of another user at the copy before it has its final mode.
  * @returns {() => void} Drops this failure while it is still to come, without clearing a newer one ({@link stopHandleCallFailureOf}).
  * @example
  * const stop = failChmodOf((path) => path.endsWith('/next/manual.sh'), 'EIO'); stop()
  */
-export function failChmodOf(isAwaited, code) {
-  const failure = { isAwaited, call: 'chmod', code }
+export function failChmodOf(isAwaited, code, swap) {
+  const failure = { isAwaited, call: 'chmod', code, swap }
   pendingHandleCallFailures[failure.call] = failure
   return stopHandleCallFailureOf(failure)
 }

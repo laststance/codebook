@@ -21111,6 +21111,17 @@ for (const kept of [
     expected: { mode: '750' },
   },
   {
+    // Task 198: the copy is created with the original's bits, here without the write bit, and its bytes are still written through the handle that created it.
+    names: 'mode, with no write bit,',
+    isSkipped: process.platform === 'win32',
+    learnerMode: 0o444,
+    read: async (path) => {
+      const status = await lstat(path)
+      return { mode: (status.mode & 0o777).toString(8) }
+    },
+    expected: { mode: '444' },
+  },
+  {
     names: 'permission bits, but not the setuid bit,',
     isSkipped: process.platform === 'win32',
     learnerMode: 0o4755,
@@ -21275,6 +21286,68 @@ test(
   },
 )
 
+// Value: protects=the learner whose own file in the Wiki folder is private (mode 0600: notes, a token, a draft) and the other users of the machine: the copy is created with the original's permission bits, so it is never readable by others while it is copied, and where the volume refuses the copy's chmod with a code of a file system that keeps no mode it keeps them for good; fails_when=writeOwnFile creates the copy with the default mode (0o666 less the umask) and gives it the original's bits only with the chmod after its bytes, so a 0600 file is world-readable (0644 under umask 022) while copied and for good where the chmod is refused; why_new=Cycle 0048 task 198 (Red Team); seam=a copy of the shipped publisher whose `node:fs/promises` refuses the chmod of the learner's file in the candidate with EPERM and tells a test the copy's mode at the moment the chmod is called (scripts/tests/utils/markedCopyHooks.mjs, `?failing`, failChmodOf with its swap); no_claim=who may read the file on a volume that keeps no mode; Windows, which keeps only the read-only bit
+test(
+  'a publish creates the copy of a learner’s 0600 file with the original’s permission bits, so no wider mode shows while it is copied or where the chmod is refused',
+  { skip: process.platform === 'win32' },
+  async () => {
+    // Arrange: a published Wiki that holds a learner's file with mode 600; the copy's chmod is refused as a volume that keeps no mode refuses it, and the test reads the copy's mode at the moment the chmod is called, when its bytes are written and the publisher has set nothing yet.
+    const { publishWiki: publishWhoseChmodIsRefused } = await loadMarkedCopy(
+      'publish-wiki.mjs',
+      '?failing',
+    )
+    const wiki = await publishedWikiWithACandidate()
+    const learnerFile = join(wiki.output, 'notes.txt')
+    let modeWhileCopied
+    const stopFailing = failChmodOf(
+      (path) => path === join(wiki.next, 'notes.txt'),
+      'EPERM',
+      async (path) => {
+        modeWhileCopied = (await lstat(path)).mode & 0o777
+      },
+    )
+    try {
+      await writeFile(learnerFile, 'a private note\n')
+      await chmod(learnerFile, 0o600)
+      // The mode of a file made by the same exclusive open with the original's 600, in the same folder (the umask of this process can only narrow it), then removed so the candidate holds no stray file.
+      const referenceFile = join(wiki.next, 'mode-of-a-new-file.txt')
+      await writeFile(referenceFile, '', { flag: 'wx', mode: 0o600 })
+      const modeOfANewFile = (await lstat(referenceFile)).mode & 0o777
+      await rm(referenceFile)
+
+      // Act
+      const result = await publishWhoseChmodIsRefused({
+        projectRoot: wiki.root,
+        outputDirectory: wiki.output,
+        stageDirectory: wiki.next,
+      }).then(
+        ({ preservedManualFiles }) => ({ preservedManualFiles }),
+        (error) => error.message,
+      )
+      const modeKept = (await lstat(learnerFile)).mode & 0o777
+
+      // Assert
+      assert.deepEqual(
+        {
+          result,
+          modeWhileCopied: modeWhileCopied?.toString(8),
+          modeKept: modeKept.toString(8),
+        },
+        {
+          result: { preservedManualFiles: 1 },
+          modeWhileCopied: modeOfANewFile.toString(8),
+          modeKept: modeOfANewFile.toString(8),
+        },
+      )
+      // The mode of that reference is the original's bits less the umask, never wider than 600.
+      assert.equal(modeOfANewFile & ~0o600, 0)
+    } finally {
+      stopFailing()
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
 /**
  * What a test compares to tell that a Wiki folder and a learner's file in it are as they were: the manifest's and the home page's bytes, and the learner's file's bytes, mode and modification time.
  * @param {string} output - The Wiki folder.
@@ -21308,7 +21381,7 @@ for (const code of [
     `a publish whose copy of the learner’s file gets ${code} from its chmod is published with the mode of the copy’s write and the times of the original`,
     { skip: process.platform === 'win32' },
     async () => {
-      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; the copy's chmod fails as the row says, so the copy keeps the mode its creation gave, which a file the test creates the same way in the candidate's folder shows (666 less the umask, and what the folder passes on).
+      // Arrange: a published Wiki that holds a learner's file with mode 750 last changed on 2021-03-04; the copy's chmod fails as the row says, so the copy keeps the mode its creation gave, which a file the test creates the same way in the candidate's folder shows (the original's 750 less the umask, and what the folder passes on).
       const { publishWiki: publishWhoseCopyKeepsNoMode } = await loadMarkedCopy(
         'publish-wiki.mjs',
         '?failing',
@@ -21324,9 +21397,9 @@ for (const code of [
         await writeFile(learnerFile, '#!/bin/sh\necho notes\n')
         await chmod(learnerFile, 0o750)
         await utimes(learnerFile, changedAt, changedAt)
-        // The mode of a file made by the same exclusive open with the default mode, in the same folder, then removed so the candidate holds no stray file.
+        // The mode of a file made by the same exclusive open with the original's permission bits, in the same folder, then removed so the candidate holds no stray file.
         const referenceFile = join(wiki.next, 'mode-of-a-new-file.txt')
-        await writeFile(referenceFile, '', { flag: 'wx' })
+        await writeFile(referenceFile, '', { flag: 'wx', mode: 0o750 })
         const modeOfANewFile = (await lstat(referenceFile)).mode & 0o777
         await rm(referenceFile)
 
