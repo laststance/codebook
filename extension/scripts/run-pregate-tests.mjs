@@ -75,7 +75,7 @@ if (selected.length === 0) {
 }
 const runs = planPregateRuns(mapPregateTests(repositoryRoot, selected))
 
-/** Says in one line why a build that did not run to its end failed: it was ended at its limit, or it could not start. A build that ran and failed has printed its own reasons. @example reportBuildFailure({ timedOut: true }, 300) // prints 'run-pregate-tests: the build did not end within 300 s and was ended.' */
+/** Says in one line why a build that did not run to its end failed: it was ended at its limit, it could not start, or a signal this runner did not send ended it (an out-of-memory kill, a kill from outside), which leaves the build no word of its own. A build that exited with a failure code has printed its own reasons. @example reportBuildFailure({ timedOut: true }, 300) // prints 'run-pregate-tests: the build did not end within 300 s and was ended.' */
 function reportBuildFailure(build, limitSeconds) {
   if (build.timedOut)
     console.error(
@@ -85,6 +85,8 @@ function reportBuildFailure(build, limitSeconds) {
     console.error(
       `run-pregate-tests: the build could not start: ${build.error.message}`,
     )
+  else if (build.signal)
+    console.error(`run-pregate-tests: the build was ended by ${build.signal}.`)
 }
 
 // A hung build must not hold the pre-gate: at its limit the build is ended with everything it started (its tree: read from the process table on POSIX, `taskkill /T /F` on Windows).
@@ -100,7 +102,7 @@ if (build.status !== 0) {
   process.exit(build.status ?? 1)
 }
 
-/** Runs one planned `node --test` call, prints its output with its summary lines marked as the run's own, and answers its exit code, output and whether it was ended for its silence. @example await runTests({ files: ['/repo/extension/dist/tests/a.test.js'], args: [] }) // => { code: 0, output: '✔ …', timedOut: false } */
+/** Runs one planned `node --test` call, prints its output with its summary lines marked as the run's own, names a run ended for its silence or by a signal, and answers its exit code, output and whether it was ended for its silence. @example await runTests({ files: ['/repo/extension/dist/tests/a.test.js'], args: [] }) // => { code: 0, output: '✔ …', timedOut: false } */
 function runTests({ files, args }) {
   return new Promise((resolveRun) => {
     const child = spawn(process.execPath, ['--test', ...args, ...files], {
@@ -141,12 +143,17 @@ function runTests({ files, args }) {
         `run-pregate-tests: ${files.map((file) => relative(repositoryRoot, file)).join(', ')} could not start: ${error.message}`,
       )
     })
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       watch.stop()
       forwarder.end()
       if (watch.timedOut)
         console.error(
           `✖ ${files.map((file) => relative(repositoryRoot, file)).join(', ')} printed nothing for ${silenceTimeoutMs / 1000} s and was ended; the test after the last one printed above did not end.`,
+        )
+      // A signal this runner did not send (an out-of-memory kill, a kill from outside) leaves the run no word of its own.
+      else if (signal)
+        console.error(
+          `✖ ${files.map((file) => relative(repositoryRoot, file)).join(', ')} was ended by ${signal}.`,
         )
       resolveRun({
         code: code ?? 1,

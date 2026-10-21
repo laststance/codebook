@@ -1501,7 +1501,7 @@ test('a build that has ended, been ended for its limit or could not start leaves
       ],
     },
     {
-      finished: { status: 3, timedOut: false, error: undefined },
+      finished: { status: 3, signal: null, timedOut: false, error: undefined },
       limited: { status: null, timedOut: true },
       unstarted: { status: null, timedOut: false, errorCode: 'ENOENT' },
       handlersAfter: handlersBefore,
@@ -2295,9 +2295,9 @@ test(
   },
 )
 
-// Value: protects=the pre-gate from a lane that passes with no test run: a build that a signal ends (not its limit, not its own exit code) has no exit code, and the runner then ends with code 1 instead of 0, before any test runs; fails_when=the build's missing exit code is passed to process.exit() as it is (null ends the process with 0), so a killed build, an out-of-memory kill for one, reads as a green lane; why_new=the build tests cover an exit code (3), the limit and a start that fails, not a build that has no exit code; seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build sends SIGKILL to itself; no_claim=the sentence for such a build (the runner prints none), and Windows, where a killed process has an exit code
+// Value: protects=the pre-gate from a lane that passes with no test run, or fails with no word: a build that a signal ends (not its limit, not its own exit code) has no exit code and printed nothing, and the runner then ends with code 1 instead of 0, before any test runs, with one line that names the signal; fails_when=the build's missing exit code is passed to process.exit() as it is (null ends the process with 0), so a killed build, an out-of-memory kill for one, reads as a green lane, or the lane fails with no line that says why; why_new=Step 7 of the third /ship (the build tests cover an exit code (3), the limit and a start that fails, not a build that has no exit code); Cycle 0048 task 170 (the runner printed no line for such a build, where `reportBuildFailure`'s docstring said a build that ran and failed has printed its own reasons); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build sends SIGKILL to itself; no_claim=Windows, where a killed process has an exit code
 test(
-  'the pre-gate runner fails the lane with code 1 and runs no test when a signal ends its build',
+  'the pre-gate runner fails the lane with code 1, names the signal and runs no test when a signal ends its build',
   { skip: process.platform === 'win32' },
   async (context) => {
     // Arrange
@@ -2321,12 +2321,51 @@ test(
 
     // Assert
     assert.deepEqual(
+      { code: result.code, order: result.order, stderr: result.stderr },
+      {
+        code: 1,
+        order: ['build'],
+        stderr: 'run-pregate-tests: the build was ended by SIGKILL.\n',
+      },
+    )
+  },
+)
+
+// Value: protects=the reader of a failed pre-gate lane whose test run a signal ended that the runner did not send (an out-of-memory kill, a kill from outside): the lane fails and one line names the run and the signal, where the run's own output just stops; fails_when=the runner fails the lane with no line that says why, or passes it; why_new=Cycle 0048 task 170 (Step 7 of the third /ship found a killed build named by no line; a run was the same, while the shard script names the signal of such a call); seam=run-pregate-tests.mjs started as a process in a fixture repository whose product test file sends SIGKILL to the `node --test` process that runs it; no_claim=Windows, where a killed process has an exit code and no signal
+test(
+  'the pre-gate runner fails the lane and names the run and the signal when a signal it did not send ends a test run',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureRepository(context, {
+      'product.test.js': [
+        "const { test } = require('node:test')",
+        '// The file ends the `node --test` process that runs it, as an out-of-memory kill of that process would.',
+        "process.kill(process.ppid, 'SIGKILL')",
+        "test('outlives its runner', () => {})",
+        '',
+      ].join('\n'),
+    })
+
+    // Act
+    const result = await runPregateRunner(root, [
+      'extension/src/tests/product.test.ts',
+    ])
+
+    // Assert
+    assert.deepEqual(
       {
         code: result.code,
-        order: result.order,
-        claimsTheLimit: result.stderr.includes('did not end within'),
+        failureLines: result.stderr
+          .split('\n')
+          .filter((line) => line.startsWith('✖')),
       },
-      { code: 1, order: ['build'], claimsTheLimit: false },
+      {
+        code: 1,
+        failureLines: [
+          '✖ extension/dist/tests/product.test.js was ended by SIGKILL.',
+        ],
+      },
     )
   },
 )

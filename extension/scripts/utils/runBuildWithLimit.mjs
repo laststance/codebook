@@ -16,10 +16,10 @@ import { CALL_KILL_GRACE_MS } from './testShardConstants.mjs'
  * @param options.killGraceMs - On Windows, how long `taskkill` may take before the build is killed alone ({@link CALL_KILL_GRACE_MS} by default).
  * @param options.platform - A value of `process.platform`; a test passes `win32` to take the Windows path.
  * @param options.environment - The environment of the runner, for `SystemRoot` on Windows.
- * @returns `{ status, timedOut, error }` once the build has closed: its exit code (`null` when a signal ended it), whether it was ended for its time, and the error of a build that could not start.
+ * @returns `{ status, signal, timedOut, error }` once the build has closed: its exit code (`null` when a signal ended it), the signal that ended it (`null` when it exited), whether it was ended for its time, and the error of a build that could not start.
  * @example
  * await runBuildWithLimit({ command: process.execPath, args: ['scripts/build-fast.mjs'], cwd: '/repo/extension', timeoutMs: 300_000 })
- * // => { status: 0, timedOut: false, error: undefined }
+ * // => { status: 0, signal: null, timedOut: false, error: undefined }
  */
 export function runBuildWithLimit({
   command,
@@ -48,11 +48,11 @@ export function runBuildWithLimit({
     }
     child.on('error', (error) => {
       stop()
-      resolve({ status: null, timedOut, error })
+      resolve({ status: null, signal: null, timedOut, error })
     })
-    child.on('close', (status) => {
+    child.on('close', (status, signal) => {
       stop()
-      resolve({ status, timedOut, error: undefined })
+      resolve({ status, signal, timedOut, error: undefined })
     })
   })
 }
