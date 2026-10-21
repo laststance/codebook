@@ -108,7 +108,6 @@ function runTests({ files, args }) {
       // The summary lines are read as text (`ℹ tests 12`); FORCE_COLOR would put colour codes around them.
       env: plainOutputEnvironment(process.env),
     })
-    // Output on either stream shows that the run is alive.
     const silenceTimeoutMs = silenceLimitOfRun(
       files,
       silenceSeconds === undefined ? undefined : silenceSeconds * 1000,
@@ -121,6 +120,7 @@ function runTests({ files, args }) {
     let pending = ''
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk) => {
+      // Output on either stream shows that the run is alive.
       watch.keepAlive()
       output += chunk
       const lines = (pending + chunk).split('\n')
@@ -129,6 +129,7 @@ function runTests({ files, args }) {
         process.stdout.write(runSummaryLine(line) + '\n')
     })
     child.stderr.on('data', (chunk) => {
+      // Output on either stream shows that the run is alive.
       watch.keepAlive()
       process.stderr.write(chunk)
     })
