@@ -549,8 +549,8 @@ async function writeStandInRunner(context, afterSigterm) {
  * Runs {@link runTestInvocation} in a fresh Node process that runs nothing else, and answers what the call returned and how many timers that process held once the call had ended. A fresh process makes the timer count the call's own: another test's timer that ends in the meantime cannot change it, as it could change a count of the timers of the test process.
  * Called by the tests of {@link runTestInvocation}'s timers.
  * @param context - The running test, whose end removes the folder of the small script that makes the call.
- * @param options - `{ silenceTimeoutMs, killGraceMs?, runnerArguments?, execPath?, platform?, systemRoot? }`: the options of the call, a path to set as `process.execPath` before the call (a path that is no program makes the spawn fail), a value to set as `process.platform` (the call then plans the end of a silent runner for that system), and a folder to set as the `SystemRoot` variable (where the call looks for `System32/taskkill.exe` when `platform` is `win32`).
- * @returns `{ result, rejectionCode, timersLeft }`: the call's `{ timedOut, code, signal, output }` or `undefined` when it was rejected, the rejection's `code`, and the timers the process held after the call minus the timers before it.
+ * @param options - `{ silenceTimeoutMs, killGraceMs?, runnerArguments?, execPath?, platform?, systemRoot?, settleMs? }`: the options of the call, a path to set as `process.execPath` before the call (a path that is no program makes the spawn fail), a value to set as `process.platform` (the call then plans the end of a silent runner for that system), a folder to set as the `SystemRoot` variable (where the call looks for `System32/taskkill.exe` when `platform` is `win32`), and how long to wait after the call before the timers and handlers are counted (0 by default; a call ended by a program it started needs a moment for that program to exit).
+ * @returns `{ result, rejectionCode, timersLeft, handlersLeft }`: the call's `{ timedOut, code, signal, output }` or `undefined` when it was rejected, the rejection's `code`, the timers the process held after the call minus the timers before it, and the number of SIGINT, SIGTERM and SIGHUP listeners the process held after the call (`{ SIGINT: 0, SIGTERM: 0, SIGHUP: 0 }` once the call has ended and released its end).
  * @throws When the helper process printed no JSON result (it crashed or was ended), with its exit code, signal, output and error output in the message.
  * @example
  * const { timersLeft } = await runCallInFreshProcess(context, { silenceTimeoutMs: 2_500, runnerArguments: [runnerPath] })
@@ -564,7 +564,7 @@ async function runCallInFreshProcess(context, options) {
     [
       "import { tmpdir } from 'node:os'",
       `import { runTestInvocation } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/runTestInvocation.mjs')).href)}`,
-      'const { execPath, platform, systemRoot, ...callOptions } = JSON.parse(process.argv[2])',
+      'const { execPath, platform, systemRoot, settleMs = 0, ...callOptions } = JSON.parse(process.argv[2])',
       "const countTimers = () => process.getActiveResourcesInfo().filter((resource) => resource === 'Timeout').length",
       'if (execPath) process.execPath = execPath',
       "if (platform) Object.defineProperty(process, 'platform', { value: platform })",
@@ -572,7 +572,10 @@ async function runCallInFreshProcess(context, options) {
       'const timersBefore = countTimers()',
       'let rejectionCode',
       'const result = await runTestInvocation({ files: [] }, tmpdir(), callOptions).catch((error) => { rejectionCode = error.code })',
-      'console.log(JSON.stringify({ result, rejectionCode, timersLeft: countTimers() - timersBefore }))',
+      // A program the call started to end it (the `taskkill` stand-in) holds a time limit of its own until it has exited, a moment after the call's runner; the timers of the call are counted after this wait.
+      'await new Promise((resolve) => setTimeout(resolve, settleMs))',
+      "const handlersLeft = { SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM'), SIGHUP: process.listenerCount('SIGHUP') }",
+      'console.log(JSON.stringify({ result, rejectionCode, timersLeft: countTimers() - timersBefore, handlersLeft }))',
     ].join('\n'),
   )
   return await new Promise((resolve, reject) => {
@@ -1772,6 +1775,117 @@ test(
   },
 )
 
+// Value: protects=the Windows shard process from what a call ended by `taskkill` could leave behind: after the call settles no SIGINT, SIGTERM or SIGHUP handler and no timer (the grace's kill timer, the silence timer) is left, whether the stand-in `taskkill` ends the runner, fails or hangs at its first start; fails_when=`stop()` of the silence watch drops `releaseSignalEnd()` (three handlers stay) or `clearTimeout(killTimer)` (the kill timer of the grace, pending when the runner has ended early, holds the process for the rest of the grace), also after the forced step or the fallback; why_new=Cycle 0048 task 208 (state machines: the Windows ends of a call had assertions for the way it ended, none for its end state); seam=runTestInvocation in a fresh process per case with `process.platform` set to win32, `SystemRoot` set to a folder with a stand-in System32/taskkill.exe and a stand-in runner script; mutant=`clearTimeout(killTimer)` removed from `stop()` of watchCallSilence.mjs fails the cases whose runner ends before the grace (taskkill ends it, taskkill hangs once), `releaseSignalEnd()` removed fails every case; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started); a `taskkill` that cannot start (its failed spawn keeps the time limit of takeEndStep's spawn, half the grace, until it ends by itself)
+test(
+  'on Windows a call ended by taskkill leaves no signal handler and no timer, also when taskkill fails or hangs',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const ending = await writeStandInTaskkill(context, {
+      endsTheProcess: true,
+      exitCode: 0,
+    })
+    const failing = await writeStandInTaskkill(context, {
+      endsTheProcess: false,
+      exitCode: 1,
+    })
+    const hanging = await writeStandInTaskkill(context, {
+      endsTheProcess: true,
+      exitCode: 0,
+      hangsFirstTime: true,
+    })
+    const ignoresSigterm = await writeStandInRunner(context, '')
+    const windowsCall = (runner, systemRoot, killGraceMs) =>
+      runCallInFreshProcess(context, {
+        silenceTimeoutMs: 2_500,
+        killGraceMs,
+        runnerArguments: [runner.runnerPath],
+        platform: 'win32',
+        systemRoot,
+        settleMs: 500,
+      })
+
+    // Act
+    const [endsRunner, fails, hangs] = await Promise.all([
+      windowsCall(ignoresSigterm, ending.systemRoot, 8_000),
+      windowsCall(ignoresSigterm, failing.systemRoot, 1_500),
+      windowsCall(ignoresSigterm, hanging.systemRoot, 8_000),
+    ])
+
+    // Assert
+    const noHandlerNoTimer = {
+      timedOut: true,
+      handlersLeft: { SIGINT: 0, SIGTERM: 0, SIGHUP: 0 },
+      timersLeft: 0,
+    }
+    const endState = ({ result, handlersLeft, timersLeft }) => ({
+      timedOut: result.timedOut,
+      handlersLeft,
+      timersLeft,
+    })
+    assert.deepEqual([endsRunner, fails, hangs].map(endState), [
+      noHandlerNoTimer,
+      noHandlerNoTimer,
+      noHandlerNoTimer,
+    ])
+  },
+)
+
+// Value: protects=the shard process from a call that is ended although it ended by itself, or that leaves something behind: a runner that prints and exits 0 answers `timedOut: false`, no signal and code 0, starts no `taskkill` on the Windows path, and leaves no SIGINT, SIGTERM or SIGHUP handler and no timer (the silence timer of 30 s would hold the process); fails_when=`stop()` drops `silenceTimer.stop()` (one timer stays), `releaseSignalEnd()` (three handlers stay), or the call is ended for its silence after it exited (`timedOut` true, a signal or a `taskkill` started); why_new=Cycle 0048 task 208 (state machines: no test showed that a call that exits by itself is not ended and leaves nothing); seam=runTestInvocation in a fresh process per case, on the platform of the test and with `process.platform` set to win32 beside a stand-in System32/taskkill.exe that notes its arguments, with a stand-in runner script that prints a summary and exits 0; mutant=`silenceTimer.stop()` removed from `stop()` of watchCallSilence.mjs fails both cases (timersLeft 1), `releaseSignalEnd()` removed fails both (three handlers); no_claim=a runner that exits within the silence limit with a failure code (the shard script's own tests)
+test('a call whose runner exits by itself is not ended and leaves no signal handler and no timer, on POSIX and on the Windows path', async (context) => {
+  // Arrange
+  const runnerPath = await writeScript(
+    context,
+    "console.log('ℹ tests 1\\nℹ pass 1\\nℹ fail 0')",
+  )
+  const taskkill = await writeStandInTaskkill(context, {
+    endsTheProcess: true,
+    exitCode: 0,
+  })
+  const call = (extra) =>
+    runCallInFreshProcess(context, {
+      silenceTimeoutMs: 30_000,
+      runnerArguments: [runnerPath],
+      settleMs: 500,
+      ...extra,
+    })
+
+  // Act
+  const onThisSystem = await call({})
+  const onTheWindowsPath = await call({
+    platform: 'win32',
+    systemRoot: taskkill.systemRoot,
+  })
+
+  // Assert
+  const endState = ({ result, handlersLeft, timersLeft }) => ({
+    timedOut: result.timedOut,
+    signal: result.signal,
+    code: result.code,
+    handlersLeft,
+    timersLeft,
+  })
+  const passedAndLeftNothing = {
+    timedOut: false,
+    signal: null,
+    code: 0,
+    handlersLeft: { SIGINT: 0, SIGTERM: 0, SIGHUP: 0 },
+    timersLeft: 0,
+  }
+  assert.deepEqual(
+    {
+      onThisSystem: endState(onThisSystem),
+      onTheWindowsPath: endState(onTheWindowsPath),
+      taskkillStarts: await taskkill.taskkillArguments(),
+    },
+    {
+      onThisSystem: passedAndLeftNothing,
+      onTheWindowsPath: passedAndLeftNothing,
+      taskkillStarts: [],
+    },
+  )
+})
+
 /** Tells whether a process exists: `process.kill(pid, 0)` throws `ESRCH` for a process that is gone. @example processExists(4242) // => false */
 function processExists(pid) {
   try {
@@ -2758,110 +2872,132 @@ function signalHandlerCounts() {
   )
 }
 
+/** How many `Timeout` timers this process holds now, for a test that compares the count before and after a call. @example activeTimerCount() // => 0 */
+function activeTimerCount() {
+  return process
+    .getActiveResourcesInfo()
+    .filter((resource) => resource === 'Timeout').length
+}
+
 /**
- * The ways a call of {@link runTestInvocation} ends, one per entry: `name` words the way, `run(context)` makes the call in this process and answers when it has ended (a rejected call counts as ended too).
+ * The ways a call of {@link runTestInvocation} ends, one per entry: `name` words the way, `prepare(context)` lays out what the call needs (a fixture file, a stand-in runner, and the clean-up that samples processes with a timer of its own) and answers a function that makes the call in this process and answers when it has ended (a rejected call counts as ended too). The timers are counted around that function alone, so the test's own sampling timer is not taken for the call's.
  * Called by the test below, which compares the signal handlers before and after each way.
  */
 const CALL_ENDS = [
   {
     name: 'that exits by itself',
-    async run(context) {
+    async prepare(context) {
       const directory = await mkdtemp(join(tmpdir(), 'codebook-passing-file-'))
       context.after(() => rm(directory, { recursive: true, force: true }))
       await writeFile(
         join(directory, 'passing.test.js'),
         "require('node:test').test('passes', () => {})",
       )
-      return await runTestInvocation({ files: ['passing.test.js'] }, directory)
+      return () => runTestInvocation({ files: ['passing.test.js'] }, directory)
     },
   },
   {
     name: 'whose runner exits at the silence SIGTERM',
-    async run(context) {
+    async prepare(context) {
       const { runnerPath } = await writeStandInRunner(
         context,
         'process.exit(0)',
       )
-      return await runTestInvocation({ files: [] }, tmpdir(), {
-        silenceTimeoutMs: 2_500,
-        killGraceMs: 10_000,
-        runnerArguments: [runnerPath],
-      })
+      return () =>
+        runTestInvocation({ files: [] }, tmpdir(), {
+          silenceTimeoutMs: 2_500,
+          killGraceMs: 10_000,
+          runnerArguments: [runnerPath],
+        })
     },
   },
   {
     name: 'whose runner ignores the silence SIGTERM and is killed after the grace',
-    async run(context) {
+    async prepare(context) {
       const { runnerPath } = await writeStandInRunner(context, '')
-      return await runTestInvocation({ files: [] }, tmpdir(), {
-        silenceTimeoutMs: 2_500,
-        killGraceMs: 2_000,
-        runnerArguments: [runnerPath],
-      })
+      return () =>
+        runTestInvocation({ files: [] }, tmpdir(), {
+          silenceTimeoutMs: 2_500,
+          killGraceMs: 2_000,
+          runnerArguments: [runnerPath],
+        })
     },
   },
   {
     name: 'whose runner prints while it winds down after the silence SIGTERM',
-    async run(context) {
+    async prepare(context) {
       const { runnerPath } = await writeStandInRunner(
         context,
         'setTimeout(() => process.exit(0), 4_000)',
       )
-      return await runTestInvocation({ files: [] }, tmpdir(), {
-        silenceTimeoutMs: 2_500,
-        killGraceMs: 10_000,
-        runnerArguments: [runnerPath],
-      })
+      return () =>
+        runTestInvocation({ files: [] }, tmpdir(), {
+          silenceTimeoutMs: 2_500,
+          killGraceMs: 10_000,
+          runnerArguments: [runnerPath],
+        })
     },
   },
   {
     name: 'whose runner starts a process after the first look at its tree',
-    async run(context) {
+    async prepare(context) {
       const { runnerPath } = await writeStubbornChildRunner(context, {
         startsChildAt: 'sigterm',
         exitsAtSigterm: false,
       })
-      return await runTestInvocation({ files: [] }, tmpdir(), {
-        silenceTimeoutMs: 2_500,
-        killGraceMs: 2_000,
-        runnerArguments: [runnerPath],
-      })
+      return () =>
+        runTestInvocation({ files: [] }, tmpdir(), {
+          silenceTimeoutMs: 2_500,
+          killGraceMs: 2_000,
+          runnerArguments: [runnerPath],
+        })
     },
   },
   {
     name: 'whose runner cannot be started',
-    async run() {
-      const realExecPath = process.execPath
-      // The spawn of a path that is no program fails with ENOENT (as in the timer test above); the path is put back at once.
-      process.execPath = join(tmpdir(), 'codebook-no-such-node-program')
-      try {
-        return await runTestInvocation({ files: [] }, tmpdir(), {
-          silenceTimeoutMs: 30_000,
-        }).catch((error) => ({ rejectionCode: error.code }))
-      } finally {
-        process.execPath = realExecPath
+    prepare() {
+      return async () => {
+        const realExecPath = process.execPath
+        // The spawn of a path that is no program fails with ENOENT (as in the timer test above); the path is put back at once.
+        process.execPath = join(tmpdir(), 'codebook-no-such-node-program')
+        try {
+          return await runTestInvocation({ files: [] }, tmpdir(), {
+            silenceTimeoutMs: 30_000,
+          }).catch((error) => ({ rejectionCode: error.code }))
+        } finally {
+          process.execPath = realExecPath
+        }
       }
     },
   },
 ]
 
-for (const { name, run } of CALL_ENDS) {
-  // Value: protects=the signal handling of the shard script after a call has ended: a call leaves none of the SIGINT, SIGTERM and SIGHUP handlers of {@link endChildrenOnSignal} behind, so the next signal ends the script as Node does by default, and no ended call keeps its end registered; fails_when=`stop()` of the silence watch no longer releases the call's end (`releaseSignalEnd()` dropped), so one more handler of each signal stays after every call, or only after the ways of ending that skip it; why_new=Cycle 0048 task 188 (state machines: no test showed that a call leaves no signal handler once it ends, by itself, at its silence, in the forced step, while it winds down, with a process started after the first look, or when it cannot start); seam=runTestInvocation in this process, with the real runner and with stand-in runners (`runnerArguments`), comparing the listener counts of the three signals before and after each call; mutant=`releaseSignalEnd()` removed from `stop()` of watchCallSilence.mjs fails every one of these tests (the first call that leaves its end registered leaves the handlers, and every later way starts with them); no_claim=the Windows end by `taskkill` (`process.platform` decides it in watchCallSilence.mjs, and it is not reachable here): `stop()` releases the end on every platform, which this test shows on POSIX only
+for (const { name, prepare } of CALL_ENDS) {
+  // Value: protects=the signal handling of the shard script after a call has ended: a call leaves none of the SIGINT, SIGTERM and SIGHUP handlers of {@link endChildrenOnSignal} behind, so the next signal ends the script as Node does by default, and no ended call keeps its end registered; and none of its timers (Cycle 0048 task 208 compares them too); fails_when=`stop()` of the silence watch no longer releases the call's end (`releaseSignalEnd()` dropped), so one more handler of each signal stays after every call, or only after the ways of ending that skip it, or drops `clearTimeout(killTimer)` / `silenceTimer.stop()` / `clearInterval(lookTimer)`, so a timer of the call outlives it; why_new=Cycle 0048 task 188 (state machines: no test showed that a call leaves no signal handler once it ends, by itself, at its silence, in the forced step, while it winds down, with a process started after the first look, or when it cannot start); seam=runTestInvocation in this process, with the real runner and with stand-in runners (`runnerArguments`), comparing the listener counts of the three signals before and after each call; mutant=`releaseSignalEnd()` removed from `stop()` of watchCallSilence.mjs fails every one of these tests (the first call that leaves its end registered leaves the handlers, and every later way starts with them); no_claim=the Windows end by `taskkill` (`process.platform` decides it in watchCallSilence.mjs, and it is not reachable here): `stop()` releases the end on every platform, which this test shows on POSIX only
   test(
     `a call ${name} leaves no SIGINT, SIGTERM or SIGHUP handler behind`,
     { skip: process.platform === 'win32' },
     async (context) => {
       // Arrange
+      const makeCall = await prepare(context)
       const handlersBefore = signalHandlerCounts()
+      const timersBefore = activeTimerCount()
 
       // Act
-      await run(context)
+      await makeCall()
+      // gstack-timing-ok: lets a program that the call started to end it (ps, taskkill) clear its own time limit, which counts as a timer until the program has exited; the timers of the call itself last 2.5 s (silence) to 10 s (grace) or are an interval, so they are still pending after this wait.
+      await delay(500)
 
       // Assert
       // Both counts are zero: a call whose end stays registered leaves the handlers for every later call too, so the later ways fail as well.
+      // The timers are the call's own (the silence timer, the grace's kill timer, the look timer of its tree): none of them may be left once the call has ended.
       assert.deepEqual(
-        { before: handlersBefore, after: signalHandlerCounts() },
-        { before: [0, 0, 0], after: [0, 0, 0] },
+        {
+          before: handlersBefore,
+          after: signalHandlerCounts(),
+          timersLeft: activeTimerCount() - timersBefore,
+        },
+        { before: [0, 0, 0], after: [0, 0, 0], timersLeft: 0 },
       )
     },
   )
