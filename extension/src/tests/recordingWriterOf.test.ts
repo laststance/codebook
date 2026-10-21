@@ -552,7 +552,7 @@ test('a sealed recording has no writer any more, whatever its header names, and 
   })
 })
 
-// Value: protects=the finished recording of a run on another computer (same host name, same storage folder) whose writer record stands and cannot be read now, so that Delete asks the learner instead of moving the study; fails_when=a sealed recording whose record stands and gives nothing is judged by its header alone, whose process id no process of this computer has, so the writer is called gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 1); why_new=Cycle 0048 task 1 (S11-XC1): the header's gone answered for a record that stands unread; seam=the sealed recording's header, which names this host and a process id of no process, and its writer record, which stands as a file that is no JSON
+// Value: protects=the finished recording of a run on another computer (same host name, same storage folder) whose writer record stands and cannot be read now, so that Delete asks the learner instead of moving the study; fails_when=a sealed recording whose record stands and gives nothing is judged by its header alone, whose process id no process of this computer has, so the writer is called gone and Delete moves the study of the other computer without asking (data loss, Cycle 0048 task 1); why_new=Cycle 0048 task 1 (S11-XC1): the header's gone answered for a record that stands unread; seam=the sealed recording's header, which names this host and a process id of no process, and its writer record, which stands as a file that is no JSON; no_claim=what Delete does with an unreadable writer (the removal's own tests), and a record that is valid JSON but no owner record (task 75's test)
 test('a sealed recording whose writer record stands and cannot be read is unreadable, although its header names a process id that no process of this computer has', async (context) => {
   // Arrange: the other computer's header names this host and a process id of no process here; its writer record stands but gives nothing.
   const storage = await recordingStorage(context)
@@ -985,7 +985,7 @@ for (const sealing of ['an unsealed', 'a sealed'] as const)
     assert.deepEqual(writer, { kind: 'gone' })
   })
 
-// Value: protects=the finished recording of this very window, whose writer record failed one read and is valid at the next look; fails_when=the header's gone stands for a record that names this window, so the window's own sealed recording is judged as a gone writer's; why_new=Cycle 0048 task 124 (the sealed path tells its own window by the record it read, whichever read it was); seam=the file reader, which gives nothing at the second read of the record, and a header that names a process id of no process while the record names this process
+// Value: protects=the finished recording of this very window, whose writer record failed one read and is valid at the next look; fails_when=the header's gone stands for a record that names this window, so the window's own sealed recording is judged as a gone writer's; why_new=Cycle 0048 task 124 (the sealed path tells its own window by the record it read, whichever read it was); seam=the file reader, which gives nothing at the second read of the record, and a header that names a process id of no process while the record names this process; no_claim=an unsealed recording of this window, and a record that fails at the next look too (the unreadable tests)
 test('a sealed recording whose writer record failed one read and is valid at the next look, naming this very window, is this window’s: no other window holds it', async (context) => {
   // Arrange
   const storage = await recordingStorage(context)
@@ -1111,7 +1111,7 @@ for (const [code, expected] of [
     assert.deepEqual(writer, expected)
   })
 
-// Value: protects=the header's verdict for a file at the place of the folder of writer records, which holds no record by design; fails_when=the fix of task 130 takes every entry that fails the check of a real folder for an unreadable folder, so a plain file at the place makes Delete ask for good; why_new=Cycle 0048 task 130 (keeps none for a file); seam=a regular file at `recording-owners`, and a header that names this host and a process id of no process
+// Value: protects=the header's verdict for a file at the place of the folder of writer records, which holds no record by design; fails_when=the fix of task 130 takes every entry that fails the check of a real folder for an unreadable folder, so a plain file at the place makes Delete ask for good; why_new=Cycle 0048 task 130 (keeps none for a file); seam=a regular file at `recording-owners`, and a header that names this host and a process id of no process; no_claim=what Delete does with a gone writer (the removal's own tests), and a file that stands at that place for a moment only
 test('an unsealed recording whose header calls its writer gone and whose folder of writer records is a file has a gone writer', async (context) => {
   // Arrange: the header names this host and a process id of no process; a file stands where the folder of records would be.
   const storage = await recordingStorage(context)

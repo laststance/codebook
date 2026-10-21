@@ -1402,7 +1402,7 @@ test('a write whose lock the system refuses to remove still returns what the wri
   assert.deepEqual(outcome, { recordingWriter: 'started' })
 })
 
-// Value: protects=a write that threw and whose lock the system then refuses to remove: the caller learns why the write failed; fails_when=the release's failure replaces the write's own error, so a removal that was refused for another window's recording says that the lock could not be released; why_new=Cycle 0048 task 21 (S11-N17a); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release
+// Value: protects=a write that threw and whose lock the system then refuses to remove: the caller learns why the write failed; fails_when=the release's failure replaces the write's own error, so a removal that was refused for another window's recording says that the lock could not be released; why_new=Cycle 0048 task 21 (S11-N17a); seam=the removal of the lock in a loaded withStorageLock, which fails with EPERM for the whole first release; no_claim=a write that succeeds before a refused release, and the lock the refusal leaves, which the tests beside it cover
 test('a write that throws keeps its own error when the system also refuses to remove the lock', async (context) => {
   // Arrange: a window that may not remove its lock during its first release.
   const directory = await storageDirectory(context)

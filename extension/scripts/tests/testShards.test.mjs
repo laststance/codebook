@@ -1017,7 +1017,7 @@ test('the plain output environment leaves a nested child that sets FORCE_COLOR w
   assert.deepEqual(callerOwnNoColor, { NO_COLOR: '1', PATH: '/usr/bin' })
 })
 
-// Value: protects=the shard job's result: a failed call must fail the job; fails_when=test-shard.mjs ends with exit code 0 although a call failed, or prints no failure line; why_new=Cycle 0048 task 27 (test guide, 2026-10-02: the script's own exit code had no test); seam=test-shard.mjs started as a process on a fixture build
+// Value: protects=the shard job's result: a failed call must fail the job; fails_when=test-shard.mjs ends with exit code 0 although a call failed, or prints no failure line; why_new=Cycle 0048 task 27 (test guide, 2026-10-02: the script's own exit code had no test); seam=test-shard.mjs started as a process on a fixture build; no_claim=a failed call in one of several lanes or shards, and a call that fails for its silence or counts no test (their own tests)
 test('the shard script exits 1 and reports the failed call when a test fails, and 0 when every test passes', async (context) => {
   // Arrange
   const failing = await createFixtureExtension(context, {
