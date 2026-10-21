@@ -8,6 +8,7 @@
 // A run that prints nothing for the silence limit (120 s by default, as in test-shard.mjs; 300 s for a run that holds package.test.mjs, whose
 // `before` hook builds the package without output; --silence-seconds sets one limit for every run) is ended, named, and fails the lane.
 // The build is ended with everything it started, and the lane fails, when it takes longer than the build limit (300 s by default).
+// The build and the runs stay in this runner's process group (no session of their own), so whoever ends the group ends them; a SIGINT, SIGTERM or SIGHUP to the runner alone ends every live child's whole tree and exits with 128 plus the signal's number.
 // Each run's output is written as it comes and only its end is kept (for the combined summary), so a test that prints without end does not fill the runner's memory.
 import { spawn } from 'node:child_process'
 import { relative } from 'node:path'
@@ -86,7 +87,7 @@ function reportBuildFailure(build, limitSeconds) {
     )
 }
 
-// A hung build must not hold the pre-gate: at its limit the build is ended with everything it started (its process group, or its tree on Windows).
+// A hung build must not hold the pre-gate: at its limit the build is ended with everything it started (its tree: read from the process table on POSIX, `taskkill /T /F` on Windows).
 const build = await runBuildWithLimit({
   command: process.execPath,
   args: ['scripts/build-fast.mjs'],

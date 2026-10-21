@@ -8,7 +8,7 @@ const TREE_END_ATTEMPTS = 2
  *
  * A program that cannot start, or starts and exits with a failure (access denied, no process id), falls back to ending the child alone, so a call is never left running for want of `taskkill`. A program that hangs is stopped after half of `killGraceMs` and started once more, so the tree is still ended before the forced step of the plan (which ends the child alone) follows; a second start that hangs falls back to the child alone as well.
  *
- * Called by {@link watchCallSilence} for both steps of a silent call and by {@link runBuildWithLimit} for a build at its limit on Windows.
+ * Called by {@link watchCallSilence} for both steps of a silent call and by {@link endProcessTree} for the Windows end of a build at its limit and of every live child when the script gets SIGINT, SIGTERM or SIGHUP; on POSIX the plan's steps are signals, and the tree under the child is ended by {@link watchCallSilence} and {@link endProcessTree} themselves.
  * @param child - The spawned process.
  * @param step - `{ signal }` for `child.kill(signal)` or `{ command, args }` for a program to start.
  * @param killGraceMs - The time the caller leaves before its forced step; half of it bounds one start of the program.

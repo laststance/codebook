@@ -71,9 +71,10 @@ export function runTestInvocation(
         ),
       },
     )
-    // A call that prints nothing for the silence limit is ended by {@link watchCallSilence}: on POSIX the runner gets SIGTERM, ends the
-    // test-file processes it started and prints what it was running, and SIGKILL follows only for a runner that ignores it; on Windows the
-    // runner's whole process tree is ended at once, because `child.kill()` there ends the runner alone.
+    // A call that prints nothing for the silence limit is ended by {@link watchCallSilence}: on POSIX the runner gets SIGTERM first (it prints
+    // what it was running and passes the signal to its test files), and after the grace, or once the runner has exited, SIGKILL ends every process
+    // of the call's tree that still runs, also a test file that ignores SIGTERM; on Windows `taskkill /T /F` ends the runner's whole tree at once,
+    // because `child.kill()` there ends the runner alone. A SIGINT, SIGTERM or SIGHUP to this process ends the call's tree too.
     const watch = watchCallSilence(child, { silenceTimeoutMs, killGraceMs })
     // Only the end of the output is kept: a test that keeps printing keeps the silence watch alive, and must not fill the memory too.
     const output = createBoundedOutput(outputKeepChars)

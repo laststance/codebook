@@ -3,7 +3,7 @@
 //   node scripts/test-shard.mjs --shard 3/8 --lanes 2   one CI job's share
 //   node scripts/test-shard.mjs                         the whole suite on this machine
 //   node scripts/test-shard.mjs --shard 3/8 --lanes 2 --list   print that share's plan without running it
-//   node scripts/test-shard.mjs --record                run every file and rewrite test-timings.json; a test that takes longer than the silence limit fails the recording
+//   node scripts/test-shard.mjs --record                run every file and rewrite test-timings.json; a test or hook that takes longer than the silence limit, or a run that sends nothing for it, fails the recording
 //   node scripts/test-shard.mjs --whole-split-files     run the files the plan splits, whole and with Node's default exit; with none split it says so and passes
 //   --record takes no --whole-split-files, --list, --shard or --lanes: a recording runs every file and ignores them, so the pair is refused
 //   --silence-seconds 120                               end a call that prints nothing for this long (at most 2147483)
@@ -96,18 +96,32 @@ async function readTestFiles() {
   return files
 }
 
-/** Runs every test file once and rewrites the timings file from the observed durations; refuses to record a failing run, and ends a test that does not end within `silenceSeconds`. @example await recordTimings(files, 120) */
+/** Says in one sentence what in a recording did not end, or `undefined` when everything ended: a test that did not end within the limit, a hook that did not end (the runner failed the hook's tests for its time), or a run that sent nothing for the limit, with the files that started and did not end. @example describeUnendedRecording({ timedOutTests: [{ file: 'a.test.js', name: 'opens' }], hookTimedOutTests: [], stall: undefined }, 120) // => 'a.test.js: "opens" did not end within 120 s and was ended; timings were not recorded.' */
+function describeUnendedRecording(
+  { timedOutTests, hookTimedOutTests, stall },
+  silenceSeconds,
+) {
+  const [hung] = timedOutTests
+  if (hung)
+    return `${hung.file}: ${JSON.stringify(hung.name)} did not end within ${silenceSeconds} s and was ended; timings were not recorded.`
+  const [hungHook] = hookTimedOutTests
+  if (hungHook)
+    return `${hungHook.file}: a hook of ${JSON.stringify(hungHook.name)} did not end within ${silenceSeconds} s and was ended; timings were not recorded.`
+  if (stall)
+    return `the run sent nothing for ${silenceSeconds} s and was ended; ${stall.files.length > 0 ? `${stall.files.join(', ')} started and did not end` : 'no file was running'}; timings were not recorded.`
+  return undefined
+}
+
+/** Runs every test file once and rewrites the timings file from the observed durations; refuses to record a failing run, and ends a test or a hook that does not end within `silenceSeconds`, and a run that sends nothing for that long, with every process of the run. @example await recordTimings(files, 120) */
 async function recordTimings(files, silenceSeconds) {
-  const { results, timedOutTests } = await collectTestRun({
+  const recording = await collectTestRun({
     files: files.map((file) => join(testDirectory, file)),
     concurrency: TIMING_RECORD_CONCURRENCY,
     testTimeoutMs: silenceSeconds * 1000,
   })
-  const [hung] = timedOutTests
-  if (hung)
-    throw new Error(
-      `${hung.file}: ${JSON.stringify(hung.name)} did not end within ${silenceSeconds} s and was ended; timings were not recorded.`,
-    )
+  const { results } = recording
+  const unended = describeUnendedRecording(recording, silenceSeconds)
+  if (unended) throw new Error(unended)
   const failed = results.filter((result) => result.failed).length
   if (failed > 0)
     throw new Error(`${failed} tests failed; timings were not recorded.`)

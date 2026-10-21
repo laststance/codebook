@@ -8,18 +8,22 @@ import {
   readFile,
   rename,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { buildTestTimings } from '../utils/buildTestTimings.mjs'
+import { listProcessIdsUnder } from '../utils/listProcessIdsUnder.mjs'
 import { parseSilenceSeconds } from '../utils/parseSilenceSeconds.mjs'
 import { plainOutputEnvironment } from '../utils/plainOutputEnvironment.mjs'
 import { planCallEnd } from '../utils/planCallEnd.mjs'
 import { planTestShards } from '../utils/planTestShards.mjs'
+import { readProcessTable } from '../utils/readProcessTable.mjs'
 import { readRunSummary } from '../utils/readRunSummary.mjs'
 import { readTestTimings } from '../utils/readTestTimings.mjs'
 import { runTestInvocation } from '../utils/runTestInvocation.mjs'
@@ -503,7 +507,7 @@ test('a call whose test does not end is ended after its silence limit and report
  * Writes a stand-in for `node --test` into a fresh folder: a script that notes each SIGTERM it gets in `sigterms.log` beside it, prints a line at its start and at each SIGTERM, and then does what `afterSigterm` says. The real runner ends within milliseconds of a SIGTERM, so only a stand-in can stay alive long enough to show what the caller does with a runner that prints after its SIGTERM or ignores it. Called by the tests of {@link runTestInvocation}'s silence handling.
  * @param context - The running test, whose end removes the folder.
  * @param afterSigterm - Source of the SIGTERM handler's last statement: `setTimeout(() => process.exit(0), 4_000)` to end late, or `` to stay alive.
- * @returns `{ runnerPath, sigtermCount }`: the script to pass as `runnerArguments`, and a function that reads how many SIGTERMs it got.
+ * @returns `{ runnerPath, sigtermCount, hasStarted }`: the script to pass as `runnerArguments`, a function that reads how many SIGTERMs it got, and a function that tells whether the script has started (its SIGTERM handler is installed then).
  * @example
  * const { runnerPath, sigtermCount } = await writeStandInRunner(context, '')
  */
@@ -517,6 +521,7 @@ async function writeStandInRunner(context, afterSigterm) {
       "const { appendFileSync } = require('node:fs')",
       "const { join } = require('node:path')",
       "const marks = join(__dirname, 'sigterms.log')",
+      "require('node:fs').writeFileSync(join(__dirname, 'started.log'), 'started')",
       "process.on('SIGTERM', () => {",
       "  appendFileSync(marks, 'SIGTERM\\n')",
       "  console.log('winding down')",
@@ -530,7 +535,10 @@ async function writeStandInRunner(context, afterSigterm) {
     (await readFile(join(directory, 'sigterms.log'), 'utf8').catch(() => ''))
       .split('\n')
       .filter(Boolean).length
-  return { runnerPath, sigtermCount }
+  const hasStarted = async () =>
+    (await readFile(join(directory, 'started.log'), 'utf8').catch(() => '')) ===
+    'started'
+  return { runnerPath, sigtermCount, hasStarted }
 }
 
 /**
@@ -1499,7 +1507,7 @@ test(
   },
 )
 
-// Value: protects=the Windows shard job from a `taskkill` that hangs on both of its starts: each start is stopped after half the grace, the program is started twice and no more, and then the runner is ended alone, so a call is never left running for want of a taskkill that answers; fails_when=a third start is made, or no fallback follows the second hang, or the second hang is waited for without a bound; why_new=the test above hangs the first start only, so the second start's own hang (the last attempt, which falls back) has no test; seam=none; no_claim=the real taskkill.exe on Windows; a stand-in program that never ends and a stand-in child that notes its kill stand in for them
+// Value: protects=the Windows shard job from a `taskkill` that hangs on both of its starts: each start is stopped after half the grace, the program is started twice and no more, and then the runner is ended alone, so a call is never left running for want of a taskkill that answers; fails_when=a third start is made, or no fallback follows the second hang, or the second hang is waited for without a bound; why_new=the test above hangs the first start only, so the second start's own hang (the last attempt, which falls back) has no test; Cycle 0048 task 152 gave each start 3 s (half of a 6 s grace) so a loaded runner does not stop the stand-in before it notes its start; seam=none; no_claim=the real taskkill.exe on Windows; a stand-in program that never ends and a stand-in child that notes its kill stand in for them
 test(
   'a taskkill that hangs on both starts is started twice and then the runner is ended alone',
   { skip: process.platform === 'win32' },
@@ -1526,18 +1534,606 @@ test(
     }
 
     // Act
-    takeEndStep(runner, { command: programPath, args: [logPath] }, 1_000)
+    // Each start gets 3 s (half of the 6 s grace): a loaded machine needs far less than that to start the stand-in and let it note its start.
+    takeEndStep(runner, { command: programPath, args: [logPath] }, 6_000)
     const startedAt = Date.now()
-    while (kills.length === 0 && Date.now() - startedAt < 8_000)
-      await new Promise((resolve) => setTimeout(resolve, 50))
-    // A third start would come within one more half grace; wait for it.
-    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    // gstack-timing-ok: a poll with a generous bound, not a fixed wait: the runner is ended alone after the second start was stopped (about 6 s after the call); 30 s only ends the poll of a run that never gets there.
+    while (kills.length === 0 && Date.now() - startedAt < 30_000)
+      await delay(50)
+    // gstack-timing-ok: a third start would come within one more half grace (3 s) after the second one was stopped; the wait is that half grace and 0.5 s, and a load only delays a start, so a third start under load is still seen after the wait or not at all, and a missed one does not fail a correct implementation.
+    await delay(3_500)
 
     // Assert
     const starts = (await readFile(logPath, 'utf8')).split('\n').filter(Boolean)
     assert.deepEqual(
       { starts, kills },
       { starts: ['started', 'started'], kills: [[]] },
+    )
+  },
+)
+
+/** Tells whether a process exists: `process.kill(pid, 0)` throws `ESRCH` for a process that is gone. @example processExists(4242) // => false */
+function processExists(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code !== 'ESRCH'
+  }
+}
+
+/** Waits until none of the processes exists or the wait is over; a killed process is seen gone a moment after the kill. @example await waitUntilNoneExists([4242, 4243], 10_000) // => [] (the pids that still exist) */
+async function waitUntilNoneExists(pids, waitMs) {
+  const until = Date.now() + waitMs
+  while (pids.some(processExists) && Date.now() < until) await delay(50)
+  return pids.filter(processExists)
+}
+
+/** Reads the process ids a fixture noted, one per line, in the file; none when the file is not there. @example await readPids(join(root, 'pids.log')) // => [4242] */
+async function readPids(path) {
+  return (await readFile(path, 'utf8').catch(() => ''))
+    .split('\n')
+    .filter(Boolean)
+    .map(Number)
+}
+
+/** Waits until a fixture has noted at least `count` process ids, and answers them; fewer when the wait is over. @example await waitForPids(join(root, 'pids.log'), 1, 20_000) // => [4242] */
+async function waitForPids(path, count, waitMs) {
+  const until = Date.now() + waitMs
+  let pids = await readPids(path)
+  while (pids.length < count && Date.now() < until) {
+    await delay(50)
+    pids = await readPids(path)
+  }
+  return pids
+}
+
+/** Ends every process a fixture noted that still runs when the test ends, also when the code under test was wrong, so a red run leaves nothing behind. @example killNotedProcessesAfter(context, join(root, 'pids.log')) */
+function killNotedProcessesAfter(context, path) {
+  context.after(async () => {
+    for (const pid of await readPids(path)) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // It is gone already, which is what the test wants.
+      }
+    }
+  })
+}
+
+/** Starts a process that starts a grandchild, both waiting, and answers their ids; both are ended when the test ends. @example const { childPid, grandchildPid } = await startTwoProcesses(context) */
+async function startTwoProcesses(context, command = process.execPath) {
+  const child = spawn(
+    command,
+    [
+      '-e',
+      [
+        "const grandchild = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], { stdio: 'ignore' })",
+        'console.log(grandchild.pid)',
+        'setInterval(() => {}, 1_000)',
+      ].join('\n'),
+    ],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  )
+  const grandchildPid = await new Promise((resolve) =>
+    child.stdout.once('data', (chunk) => resolve(Number(String(chunk)))),
+  )
+  context.after(() => {
+    for (const pid of [child.pid, grandchildPid]) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // It is gone already.
+      }
+    }
+  })
+  return { childPid: child.pid, grandchildPid }
+}
+
+// Value: protects=the end of a call's whole process tree on POSIX: the ids under a process are read from the system's process table (`/proc` on Linux, `ps` elsewhere), so a test file and what it started are found before the runner's end hides them; fails_when=only the children are listed (a process that a test file started is left running), a system without `/proc` gets no answer, or an unreadable table gives an error instead of an empty answer (the call must then fall back to the runner alone); why_new=Cycle 0048 task 148 (native adversarial: a silent call ended the runner alone); seam=listProcessIdsUnder on a real tree (a child that starts a grandchild) read natively, through `ps` (platform `darwin`) and with the platform `win32`, which has no table; no_claim=Windows trees (`taskkill /T /F` ends them)
+test(
+  'the process ids under a process are its children and their children, from the native table and from ps, and none when the table cannot be read',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { childPid, grandchildPid } = await startTwoProcesses(context)
+
+    // Act
+    const native = listProcessIdsUnder(childPid)
+    const viaPs = listProcessIdsUnder(childPid, { platform: 'darwin' })
+    const unreadable = listProcessIdsUnder(childPid, { platform: 'win32' })
+    const ofTheGrandchild = listProcessIdsUnder(grandchildPid)
+    const underThisProcess = listProcessIdsUnder(process.pid)
+    const parentOfGrandchild = readProcessTable({ platform: 'darwin' })?.get(
+      grandchildPid,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        native,
+        viaPs,
+        unreadable,
+        ofTheGrandchild,
+        thisProcessHoldsBoth:
+          underThisProcess.includes(childPid) &&
+          underThisProcess.includes(grandchildPid),
+        parentOfGrandchild,
+      },
+      {
+        native: [grandchildPid],
+        viaPs: [grandchildPid],
+        unreadable: [],
+        ofTheGrandchild: [],
+        thisProcessHoldsBoth: true,
+        parentOfGrandchild: childPid,
+      },
+    )
+  },
+)
+
+// Value: protects=the Linux table reader from a program name that holds spaces and parentheses (the second field of `/proc/<pid>/stat` is that name in parentheses): the parent id is counted from the last `)`, so the children of such a process are found; fails_when=the line is split on spaces from its start, so a process named `a) 1 2 (b` reads a wrong parent and its grandchild is lost; why_new=Cycle 0048 task 148 (the format of the stat file is the reason for the "after the last )" rule); seam=listProcessIdsUnder with a copy of the Node program under the name `a) 1 2 (b`; no_claim=systems without `/proc`
+test(
+  'the children of a process whose program name holds spaces and parentheses are found on Linux',
+  { skip: process.platform !== 'linux' },
+  async (context) => {
+    // Arrange
+    const folder = await mkdtemp(join(tmpdir(), 'codebook-odd-name-'))
+    context.after(() => rm(folder, { recursive: true, force: true }))
+    const oddProgram = join(folder, 'a) 1 2 (b')
+    await symlink(process.execPath, oddProgram)
+    const { childPid, grandchildPid } = await startTwoProcesses(
+      context,
+      oddProgram,
+    )
+
+    // Act
+    const found = listProcessIdsUnder(childPid)
+
+    // Assert
+    assert.deepEqual(found, [grandchildPid])
+  },
+)
+
+// Value: protects=this process and its parents from the kill of a tree: ids a look found are ended with SIGKILL, but the process that kills and the process that started it are never hit, whatever the list holds; fails_when=the guard is missing, so a list that holds the caller's own pid or its parent's ends the script (or the test run) that is ending a tree; why_new=Cycle 0048 task 148 (the brief: kill only pids found under the child, never this process or its parents); seam=killProcessIds in a helper process that is the child of a middle process, given its own pid, its parent's pid and a victim's pid; no_claim=a pid that was reused by another program since the look
+test(
+  'ending process ids ends the others and never the process that ends them or the one that started it',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { grandchildPid: victimPid } = await startTwoProcesses(context)
+    const helperSource = [
+      `import { killProcessIds } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/killProcessIds.mjs')).href)}`,
+      'killProcessIds([process.pid, process.ppid, Number(process.argv[1])])',
+      "console.log('alive')",
+    ].join('\n')
+    const middleSource = [
+      "const { spawnSync } = require('node:child_process')",
+      `const helper = spawnSync(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(helperSource)}, String(${victimPid})], { encoding: 'utf8' })`,
+      'console.log(JSON.stringify({ status: helper.status, output: helper.stdout.trim() }))',
+    ].join('\n')
+
+    // Act
+    const middle = spawnSync(process.execPath, ['-e', middleSource], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    const victimsLeft = await waitUntilNoneExists([victimPid], 10_000)
+
+    // Assert
+    assert.deepEqual(
+      { middle: JSON.parse(middle.stdout), victimsLeft },
+      { middle: { status: 0, output: 'alive' }, victimsLeft: [] },
+    )
+  },
+)
+
+// Value: protects=the shard and pre-gate jobs from a test file that ignores SIGTERM and hangs: the call is ended with its whole process tree and no process of it is left, where the SIGTERM reached the runner and its file kept running; fails_when=the end of a silent call signals the runner alone (on POSIX the runner passes SIGTERM on and the file's process ignores it, and the forced SIGKILL reaches only the runner), so the file's process runs on after the call was reported as ended; why_new=Cycle 0048 task 148 (native adversarial: the call ended at its limit and the file's process was still running); seam=runTestInvocation with the real `node --test` runner and a test file that records its pid, ignores SIGTERM and hangs, a 4 s silence limit and a 1.5 s grace; no_claim=Windows (taskkill ends the tree there) and the default limits
+test(
+  'a call ended for its silence leaves no process of a test file that ignores SIGTERM and hangs',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const directory = await mkdtemp(join(tmpdir(), 'codebook-stubborn-file-'))
+    context.after(() => rm(directory, { recursive: true, force: true }))
+    const pidsPath = join(directory, 'pids.log')
+    killNotedProcessesAfter(context, pidsPath)
+    await writeFile(
+      join(directory, 'stubborn.test.js'),
+      [
+        "const { appendFileSync } = require('node:fs')",
+        "const { join } = require('node:path')",
+        "const { test } = require('node:test')",
+        "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+        "process.on('SIGTERM', () => {})",
+        "test('finishes first', () => {})",
+        "test('never ends', () => new Promise(() => setInterval(() => {}, 1_000)))",
+      ].join('\n'),
+    )
+
+    // Act
+    // The call is raced with a bound of its own: a call that is not ended would otherwise wait for a test file that never ends.
+    // gstack-timing-ok: the 4 s limit is the contract that ends the call (it is also the time the first test has to print after the spawn); the 1.5 s grace follows it; 40 s only ends the wait for a call that is never ended.
+    const outcome = await Promise.race([
+      runTestInvocation({ files: ['stubborn.test.js'] }, directory, {
+        silenceTimeoutMs: 4_000,
+        killGraceMs: 1_500,
+      }),
+      delay(40_000, 'the call was not ended'),
+    ])
+    const stubbornPids = await readPids(pidsPath)
+    const left = await waitUntilNoneExists(stubbornPids, 10_000)
+
+    // Assert
+    assert.deepEqual(
+      {
+        timedOut: outcome.timedOut,
+        recordedPids: stubbornPids.length,
+        processesLeft: left,
+      },
+      { timedOut: true, recordedPids: 1, processesLeft: [] },
+    )
+  },
+)
+
+/**
+ * Writes a stand-in for the `node --test` runner that starts a child process which ignores SIGTERM and notes its id in `child.pids`, either at its start or in its SIGTERM handler, and then stays alive or exits at the SIGTERM. The real runner cannot show the cases of a process that is started after the first look at the tree, or that outlives a runner that has exited.
+ * Called by the tests of {@link watchCallSilence}'s end of the tree.
+ * @param context - The running test, whose end removes the folder and ends the children.
+ * @param options.startsChildAt - `start` for a child started when the runner starts, `sigterm` for one started when the runner gets its SIGTERM (after the first look at the tree).
+ * @param options.exitsAtSigterm - Whether the runner exits at its SIGTERM (leaving the child without a parent) or ignores it.
+ * @returns `{ runnerPath, childPidsPath }`: the script to pass as `runnerArguments`, and the file that holds the id of the child.
+ * @example
+ * const { runnerPath, childPidsPath } = await writeStubbornChildRunner(context, { startsChildAt: 'start', exitsAtSigterm: true })
+ */
+async function writeStubbornChildRunner(
+  context,
+  { startsChildAt, exitsAtSigterm },
+) {
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-stubborn-runner-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const runnerPath = join(directory, 'runner.cjs')
+  const childPidsPath = join(directory, 'child.pids')
+  killNotedProcessesAfter(context, childPidsPath)
+  await writeFile(
+    runnerPath,
+    [
+      "const { spawn } = require('node:child_process')",
+      "const { appendFileSync } = require('node:fs')",
+      "const { join } = require('node:path')",
+      'const startChild = () => {',
+      "  const child = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1_000)\"], { stdio: 'ignore' })",
+      "  appendFileSync(join(__dirname, 'child.pids'), `${child.pid}\\n`)",
+      '}',
+      `if (${JSON.stringify(startsChildAt)} === 'start') startChild()`,
+      "process.on('SIGTERM', () => {",
+      `  if (${JSON.stringify(startsChildAt)} === 'sigterm') startChild()`,
+      "  console.log('winding down')",
+      `  if (${exitsAtSigterm}) process.exit(0)`,
+      '})',
+      "console.log('started')",
+      'setInterval(() => {}, 1_000)',
+    ].join('\n'),
+  )
+  return { runnerPath, childPidsPath }
+}
+
+// Value: protects=the shard and pre-gate jobs from the processes a runner leaves when it exits at the silence SIGTERM: they lose their parent then, so the tree is read before the signal and its processes are killed as soon as the runner has exited; fails_when=the tree is read after the runner's end (nothing is found) or never, so the process the runner started keeps running with no parent; why_new=Cycle 0048 task 148 (the brief: the tree is read before the first signal, because the runner's processes lose their parent when it exits); seam=runTestInvocation with a stand-in runner that starts a SIGTERM-ignoring child at its start and exits at its SIGTERM, a 2.5 s limit and a 10 s grace the exit comes long before; no_claim=what the real runner does with its files at SIGTERM
+test(
+  'a call whose runner exits at the silence SIGTERM leaves no process the runner started',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { runnerPath, childPidsPath } = await writeStubbornChildRunner(
+      context,
+      { startsChildAt: 'start', exitsAtSigterm: true },
+    )
+
+    // Act
+    const result = await runTestInvocation({ files: [] }, tmpdir(), {
+      silenceTimeoutMs: 2_500,
+      killGraceMs: 10_000,
+      runnerArguments: [runnerPath],
+    })
+    const left = await waitUntilNoneExists(
+      await readPids(childPidsPath),
+      10_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { timedOut: result.timedOut, code: result.code, processesLeft: left },
+      { timedOut: true, code: 0, processesLeft: [] },
+    )
+  },
+)
+
+// Value: protects=the shard and pre-gate jobs from a process that a runner starts after the first look at its tree (its SIGTERM handler starts one) and then stays alive: the tree is read again before the forced step, so that process is found and killed with the runner; fails_when=the tree is read only once, before the SIGTERM, so a process started afterwards survives the runner's SIGKILL; why_new=Cycle 0048 task 148 (the brief: also those started under them after the first look); seam=runTestInvocation with a stand-in runner that ignores SIGTERM, starts a SIGTERM-ignoring child in its handler, a 2.5 s limit and a 2 s grace; no_claim=what the real runner does at SIGTERM
+test(
+  'a call ended for its silence also kills a process that was started after the first look at its tree',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const { runnerPath, childPidsPath } = await writeStubbornChildRunner(
+      context,
+      { startsChildAt: 'sigterm', exitsAtSigterm: false },
+    )
+
+    // Act
+    const result = await runTestInvocation({ files: [] }, tmpdir(), {
+      silenceTimeoutMs: 2_500,
+      killGraceMs: 2_000,
+      runnerArguments: [runnerPath],
+    })
+    const left = await waitUntilNoneExists(
+      await readPids(childPidsPath),
+      10_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { timedOut: result.timedOut, signal: result.signal, processesLeft: left },
+      { timedOut: true, signal: 'SIGKILL', processesLeft: [] },
+    )
+  },
+)
+
+/** Starts the fixture's shard script and answers the child and a promise of how it ends, for a test that signals the script while it runs; the script is killed when the test ends. @example const { child, ended } = startShardScript(context, root, ['--record']) */
+function startShardScript(context, root, args) {
+  const child = spawn(
+    process.execPath,
+    [join(root, 'scripts/test-shard.mjs'), ...args],
+    {
+      cwd: root,
+      stdio: 'ignore',
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([name]) => name !== 'NODE_TEST_CONTEXT' && name !== 'NO_COLOR',
+        ),
+      ),
+    },
+  )
+  context.after(() => child.kill('SIGKILL'))
+  const ended = new Promise((resolve) =>
+    child.on('close', (code, signal) => resolve({ code, signal })),
+  )
+  return { child, ended }
+}
+
+/** The source of a fixture test file that notes its process id in `pids.log` beside it and then hangs; `ignoresSigterm` makes it ignore SIGTERM. @example hangingFileNotingItsPid({ ignoresSigterm: true }) */
+function hangingFileNotingItsPid({ ignoresSigterm }) {
+  return [
+    "const { appendFileSync } = require('node:fs')",
+    "const { join } = require('node:path')",
+    "const { test } = require('node:test')",
+    "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+    ...(ignoresSigterm ? ["process.on('SIGTERM', () => {})"] : []),
+    "test('never ends', () => new Promise(() => setInterval(() => {}, 1_000)))",
+  ].join('\n')
+}
+
+// Value: protects=the shard job from a script that is ended by a signal while a call runs (a cancelled job, a closed terminal): every process of the call goes with it, and the script exits with 128 plus the signal's number; fails_when=the script has no handler, so the `node --test` runner and its test file keep running (the file ignores SIGTERM here), or the handler exits with another code; why_new=Cycle 0048 task 150 (Red Team, Codex adversarial: the test runs have no signal handler; a SIGTERM to the runner alone leaves `node --test` running); seam=test-shard.mjs started as a process on a fixture build whose test file hangs and ignores SIGTERM, sent SIGTERM to its pid alone; no_claim=SIGINT and SIGHUP (the pre-gate runner's tests cover each number)
+test(
+  'the shard script that gets SIGTERM during a call ends the call’s whole tree and exits with 143',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureExtension(context, {
+      tests: {
+        'stubborn.test.js': hangingFileNotingItsPid({ ignoresSigterm: true }),
+      },
+      timings: { files: { 'stubborn.test.js': { totalMs: 100 } } },
+    })
+    killNotedProcessesAfter(context, join(root, 'dist/tests/pids.log'))
+    const { child, ended } = startShardScript(context, root, [
+      '--shard',
+      '1/1',
+      '--lanes',
+      '1',
+    ])
+    await waitForPids(join(root, 'dist/tests/pids.log'), 1, 30_000)
+    const treeBefore = listProcessIdsUnder(child.pid)
+
+    // Act
+    child.kill('SIGTERM')
+    const result = await ended
+    const left = await waitUntilNoneExists(treeBefore, 10_000)
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        signal: result.signal,
+        treeHadRunnerAndFile: treeBefore.length >= 2,
+        processesLeft: left,
+      },
+      {
+        code: 143,
+        signal: null,
+        treeHadRunnerAndFile: true,
+        processesLeft: [],
+      },
+    )
+  },
+)
+
+// Value: protects=the timings recording from a script that is ended by a signal: the file processes of the run go with it and the script exits with 128 plus the signal's number; fails_when=the recording has no handler, so the runner's file processes (one ignores SIGTERM here) keep running; why_new=Cycle 0048 task 150 (the class: every process the test scripts start ends with its tree); seam=test-shard.mjs --record started as a process on a fixture build whose test file hangs, sent SIGHUP to its pid alone; no_claim=the other signals
+test(
+  'the timings recording that gets SIGHUP ends the file processes of its run and exits with 129',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureExtension(context, {
+      tests: {
+        'stubborn.test.js': hangingFileNotingItsPid({ ignoresSigterm: true }),
+      },
+    })
+    killNotedProcessesAfter(context, join(root, 'dist/tests/pids.log'))
+    const { child, ended } = startShardScript(context, root, ['--record'])
+    const [filePid] = await waitForPids(
+      join(root, 'dist/tests/pids.log'),
+      1,
+      30_000,
+    )
+
+    // Act
+    child.kill('SIGHUP')
+    const result = await ended
+    const left = await waitUntilNoneExists([filePid], 10_000)
+
+    // Assert
+    assert.deepEqual(
+      { code: result.code, signal: result.signal, processesLeft: left },
+      { code: 129, signal: null, processesLeft: [] },
+    )
+  },
+)
+
+/** Runs the recording on a fixture build of one test file and answers what it printed and which of the file's processes still ran after it ended; the file notes its pid in `pids.log`. @example const { result, left } = await recordFixtureFile(context, 'a.test.js', source) */
+async function recordFixtureFile(context, file, source) {
+  const root = await createFixtureExtension(context, {
+    tests: { [file]: source },
+  })
+  const pidsPath = join(root, 'dist/tests/pids.log')
+  killNotedProcessesAfter(context, pidsPath)
+  const startedAt = Date.now()
+  const result = await runShardScript(
+    root,
+    ['--record', '--silence-seconds', '3'],
+    45_000,
+  )
+  const elapsedMs = Date.now() - startedAt
+  const left = await waitUntilNoneExists(await readPids(pidsPath), 10_000)
+  const timings = await readFile(join(root, 'test-timings.json'), 'utf8').catch(
+    () => 'no file',
+  )
+  return { result, left, elapsedMs, timings }
+}
+
+// Value: protects=the timings recording from a `before` hook that does not end: the runner fails the hook's tests as `hookFailed` (for its time) and the file's process keeps running, so the recording used to wait for the job's end; it now ends with the hook's test named and no process left; fails_when=only a test the runner failed for its time ends the recording, so a hung hook is waited for until the job is cancelled, or the file's process is left running; why_new=Cycle 0048 task 149 (native adversarial: still running 15 s after a 1 s limit); seam=test-shard.mjs --record on a fixture build whose file has a `before` hook that holds a timer, with a 3 s limit; no_claim=an `after` hook (the same failure type)
+test(
+  'the timings recording ends a before hook that does not end, names its test and leaves no process',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const source = [
+      "const { appendFileSync } = require('node:fs')",
+      "const { join } = require('node:path')",
+      "const { before, test } = require('node:test')",
+      "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+      'before(() => new Promise(() => setInterval(() => {}, 1_000)))',
+      "test('first', () => {})",
+    ].join('\n')
+
+    // Act
+    const { result, left, elapsedMs, timings } = await recordFixtureFile(
+      context,
+      'hook.test.js',
+      source,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        sentence:
+          /hook\.test\.js: a hook of "first" did not end within 3 s and was ended; timings were not recorded\./.test(
+            result.stderr,
+          ),
+        // gstack-timing-ok: the 3 s limit ends the hook; the recording must end long before the 45 s bound of the script, which a recording that waits for the file would reach.
+        endedInTime: elapsedMs < 30_000,
+        processesLeft: left,
+        timings,
+      },
+      {
+        code: 1,
+        sentence: true,
+        endedInTime: true,
+        processesLeft: [],
+        timings: 'no file',
+      },
+    )
+  },
+)
+
+// Value: protects=the timings recording from a file whose process does not exit after its tests passed (a timer left at the top level): the file sends nothing more, so the recording used to wait for it for ever; it now ends after the limit with the file named and no process left; fails_when=the recording ends only at a failed test, so a file that passed its tests and holds the process open holds the recording; why_new=Cycle 0048 task 149 (native adversarial: a file process that does not exit sends nothing more); seam=test-shard.mjs --record on a fixture build whose file passes its test and leaves a timer, with a 3 s limit (the run's silence bound is that and 5 s more); no_claim=the margin value
+test(
+  'the timings recording ends a run that sends nothing for the limit, names the file that did not end and leaves no process',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const source = [
+      "const { appendFileSync } = require('node:fs')",
+      "const { join } = require('node:path')",
+      "const { test } = require('node:test')",
+      "appendFileSync(join(__dirname, 'pids.log'), `${process.pid}\\n`)",
+      "test('passes', () => {})",
+      'setInterval(() => {}, 1_000)',
+    ].join('\n')
+
+    // Act
+    const { result, left, elapsedMs, timings } = await recordFixtureFile(
+      context,
+      'lingering.test.js',
+      source,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        sentence:
+          /the run sent nothing for 3 s and was ended; lingering\.test\.js started and did not end; timings were not recorded\./.test(
+            result.stderr,
+          ),
+        // gstack-timing-ok: the run's silence bound is the 3 s limit and 5 s of margin; the recording must end long before the 45 s bound of the script.
+        endedInTime: elapsedMs < 30_000,
+        processesLeft: left,
+        timings,
+      },
+      {
+        code: 1,
+        sentence: true,
+        endedInTime: true,
+        processesLeft: [],
+        timings: 'no file',
+      },
+    )
+  },
+)
+
+// Value: protects=the timings recording from a hung test whose file ignores SIGTERM: the runner's abort sends SIGTERM to the file, which keeps running; the recording waits for the file within the grace and then kills every process under it with SIGKILL; fails_when=the recording ends at the abort and leaves the file's process (it was running 15 s after the recording ended), or the kill is missing after the grace; why_new=Cycle 0048 task 149 (after an abort, a test file that ignores SIGTERM keeps running); seam=test-shard.mjs --record on a fixture build whose test ignores SIGTERM and hangs, with a 3 s limit and the 5 s grace; no_claim=a file that ends at SIGTERM (the recording above covers the hung test's sentence)
+test(
+  'the timings recording ends a hung test whose file ignores SIGTERM, names the test and leaves no process',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Act
+    const { result, left, elapsedMs, timings } = await recordFixtureFile(
+      context,
+      'stubborn.test.js',
+      hangingFileNotingItsPid({ ignoresSigterm: true }),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        sentence:
+          /stubborn\.test\.js: "never ends" did not end within 3 s and was ended; timings were not recorded\./.test(
+            result.stderr,
+          ),
+        // gstack-timing-ok: the 3 s limit and the 5 s grace end the recording; it must end long before the 45 s bound of the script.
+        endedInTime: elapsedMs < 30_000,
+        processesLeft: left,
+        timings,
+      },
+      {
+        code: 1,
+        sentence: true,
+        endedInTime: true,
+        processesLeft: [],
+        timings: 'no file',
+      },
     )
   },
 )

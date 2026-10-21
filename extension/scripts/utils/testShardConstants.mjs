@@ -12,6 +12,8 @@ export const TEST_INVOCATION_OVERHEAD_MS = 500
 export const TEST_FILE_OVERHEAD_MS = 400
 /** Number of test files a recording run executes at the same time; low enough that durations stay close to an uncontended run. */
 export const TIMING_RECORD_CONCURRENCY = 4
+/** How much longer than the test limit the timings recording waits for any event of its run before it ends the run as stalled: a test that does not end is failed by the runner at the limit, and that event comes first. */
+export const RECORD_STALL_MARGIN_MS = 5_000
 /** A `node --test` call that prints nothing for this long is hung and is ended with its output so far. The longest single product test waits for a 20 s deadline, and a job has a 10-minute limit. */
 export const CALL_SILENCE_TIMEOUT_MS = 120_000
 /** How long a call ended for silence may take to stop on SIGTERM before it is killed. */

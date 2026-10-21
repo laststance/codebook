@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process'
 
-import { planCallEnd } from './planCallEnd.mjs'
-import { takeEndStep } from './takeEndStep.mjs'
+import { endChildrenOnSignal } from './endChildrenOnSignal.mjs'
+import { endProcessTree } from './endProcessTree.mjs'
 import { CALL_KILL_GRACE_MS } from './testShardConstants.mjs'
 
 /**
- * Runs the build and ends it, with everything it started, when it takes longer than its limit.
+ * Runs the build and ends it, with everything it started, when it takes longer than its limit or when the runner itself is ended by SIGINT, SIGTERM or SIGHUP.
  *
- * Why: a kill of the build's own process (`spawnSync`'s `killSignal`) leaves the processes the build started running. On POSIX the build gets a process group of its own, so one SIGKILL to the group ends the whole tree, also at a SIGINT or SIGTERM of the runner (the build is not in the terminal's group, so the signal would not reach it). On Windows the system's `taskkill /T /F` ends the tree ({@link planCallEnd}, {@link takeEndStep}).
+ * Why: a kill of the build's own process (`spawnSync`'s `killSignal`) leaves the processes the build started running. The build stays in the runner's process group (it gets no session of its own), so whoever ends that group ends the build too: the pre-gate's supervisor kills a lane's group, a terminal's Ctrl-C reaches it. The runner's own ends go through {@link endProcessTree}: on POSIX the build and every process under it at that moment, read from the process table, get SIGKILL; on Windows the system's `taskkill /T /F` ends the tree, with its second start and the forced step ({@link planCallEnd}, {@link takeEndStep}), and the runner waits for those steps before it exits with 128 plus the signal's number ({@link endChildrenOnSignal}).
  * Called by `scripts/run-pregate-tests.mjs` before any test runs.
  * @param options.command - The program to start.
  * @param options.args - Its arguments.
@@ -31,53 +31,20 @@ export function runBuildWithLimit({
   environment = process.env,
 }) {
   return new Promise((resolve) => {
-    const ownGroup = platform !== 'win32'
-    const child = spawn(command, args, {
-      cwd,
-      stdio: 'inherit',
-      // A group of its own on POSIX: the whole tree is one target for a signal.
-      detached: ownGroup,
-    })
+    // Inside the runner's process group: a signal to the group reaches the build.
+    const child = spawn(command, args, { cwd, stdio: 'inherit' })
     let timedOut = false
-    let forceTimer
-    const stillRuns = () => child.exitCode === null && child.signalCode === null
-
-    /** Ends the build's whole tree now: SIGKILL to the group, or taskkill on Windows with the forced step after the grace. */
-    const endTree = () => {
-      if (child.pid === undefined) return
-      if (ownGroup) {
-        try {
-          process.kill(-child.pid, 'SIGKILL')
-        } catch {
-          // The group is gone already, or the system refused; the build alone is still ended.
-          child.kill('SIGKILL')
-        }
-        return
-      }
-      const { terminate, force } = planCallEnd(platform, child.pid, environment)
-      takeEndStep(child, terminate, killGraceMs)
-      forceTimer = setTimeout(() => {
-        if (stillRuns()) takeEndStep(child, force, killGraceMs)
-      }, killGraceMs)
-    }
-
+    const endTree = () =>
+      endProcessTree(child, { platform, environment, killGraceMs })
     const limitTimer = setTimeout(() => {
       timedOut = true
       endTree()
     }, timeoutMs)
-
-    // The runner's own end by signal ends the build too: the build is not in the terminal's group.
-    const endWithRunner = (signal) => {
-      endTree()
-      process.exit(signal === 'SIGINT' ? 130 : 143)
-    }
-    process.once('SIGINT', endWithRunner)
-    process.once('SIGTERM', endWithRunner)
+    // The runner's own end by a signal ends the build's tree, and waits for it, before the runner exits.
+    const releaseSignalEnd = endChildrenOnSignal(endTree)
     const stop = () => {
       clearTimeout(limitTimer)
-      clearTimeout(forceTimer)
-      process.removeListener('SIGINT', endWithRunner)
-      process.removeListener('SIGTERM', endWithRunner)
+      releaseSignalEnd()
     }
     child.on('error', (error) => {
       stop()
