@@ -308,6 +308,8 @@ interface StudyRecordState {
   nodeHistoryReason?: string
   /** The SHA-256 of the sealed test journal ({@link NodeTestHistoryWriter.finish}); the run resource's `recording.contextHash`. */
   nodeHistoryHash?: string
+  /** How many entries the sealed test journal holds ({@link NodeTestHistoryWriter.entryCount}); a sealed history without one has nothing to replay. */
+  nodeHistoryEntryCount?: number
   /** The test run's continuation in flight ({@link StudyService.continue}); a stop settles it, with its journal writes, before it seals the history. */
   nodeContinuation?: Promise<void>
   /** The learning material this window last saved for the run's history, so the seal counts it when it came first. */
@@ -2287,7 +2289,7 @@ export class StudyService {
       record.profile === NODE_TEST_PROFILE
         ? projectNodeTestOutcome({
             history: this.nodeHistoryState(record),
-            entryCount: record.nodeHistoryWriter?.entryCount ?? 0,
+            entryCount: record.nodeHistoryEntryCount ?? 0,
             completed: record.nodePhase === 'completed',
             result: record.nodeResult,
             hasError: Boolean(record.error),
@@ -3475,6 +3477,7 @@ export class StudyService {
         reason,
       )
       record.nodeHistoryStatus = complete ? 'complete' : 'partial'
+      record.nodeHistoryEntryCount = writer.entryCount
       record.nodeHistoryReason = reason
       record.nodeLearning = this.nodeLearningOf(
         writer.learningNeeds(),

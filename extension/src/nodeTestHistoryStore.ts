@@ -545,13 +545,7 @@ export class NodeTestHistoryStore {
       return { historySignal, materialSignal, summary }
     }
     const citable = citableEvents(history)
-    const material = await this.readLearningMaterialFile(studyId)
-      .then((saved) => {
-        // A material that cites what the journal does not hold explains nothing.
-        if (saved) assertLearningCitations(saved.content, citable)
-        return saved
-      })
-      .catch(() => undefined)
+    const material = await this.readCitedLearningMaterial(studyId, citable)
     const missing = listMissingNodeLearning(history, material?.content)
     const result = history.entries.find((entry) => entry.type === 'result')
     const stops = history.entries.filter((entry) => entry.type === 'stop')
@@ -594,12 +588,7 @@ export class NodeTestHistoryStore {
     citable: ReadonlyMap<number, CitableEvent>,
     needs: NodeLearningNeeds,
   ): Promise<NodeTestHistorySummary> {
-    const material = await this.readLearningMaterialFile(studyId)
-      .then((saved) => {
-        if (saved) assertLearningCitations(saved.content, citable)
-        return saved
-      })
-      .catch(() => undefined)
+    const material = await this.readCitedLearningMaterial(studyId, citable)
     const { missing, coverage } = listMissingNodeExplanations(
       needs,
       material?.content,
@@ -613,6 +602,25 @@ export class NodeTestHistoryStore {
       learningMissing: missing,
       materialRevision: material?.revision ?? 0,
     }
+  }
+
+  /**
+   * Reads a history's learning material for its summary and keeps it only when every step cites an event the journal holds; called by {@link readSummary} and {@link summaryWithMaterial}.
+   * @param studyId - The history's study id.
+   * @param citable - The journal's citable events.
+   * @returns The material, or `undefined` for none, one that does not parse, or one that cites what the journal does not hold, which explains nothing.
+   * @example await this.readCitedLearningMaterial(studyId, citableEvents(history)) // => the saved material, or undefined
+   */
+  private readCitedLearningMaterial(
+    studyId: string,
+    citable: ReadonlyMap<number, CitableEvent>,
+  ): Promise<NodeTestLearningMaterial | undefined> {
+    return this.readLearningMaterialFile(studyId)
+      .then((saved) => {
+        if (saved) assertLearningCitations(saved.content, citable)
+        return saved
+      })
+      .catch(() => undefined)
   }
 
   /** Verifies a sealed journal or returns only its valid crash-recovery prefix. @example await store.read(studyId) */
@@ -1042,7 +1050,7 @@ export class NodeTestHistoryWriter {
   }
 
   /**
-   * Counts the entries this writer confirmed, the journal's entry count once sealed; read by {@link StudyService.state}, whose outcome needs at least one entry for a replay.
+   * Counts the entries this writer confirmed, the journal's entry count once sealed; read by {@link StudyService.sealNodeHistory}, which keeps it for the run's outcome: a replay needs at least one entry.
    * @example writer.entryCount // => 4
    */
   get entryCount(): number {
