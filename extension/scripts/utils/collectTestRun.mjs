@@ -8,6 +8,7 @@ import { killProcessIds } from './killProcessIds.mjs'
 import { listProcessIdsUnder } from './listProcessIdsUnder.mjs'
 import {
   CALL_KILL_GRACE_MS,
+  MAX_TIMER_DELAY_MS,
   RECORD_STALL_MARGIN_MS,
 } from './testShardConstants.mjs'
 
@@ -55,7 +56,7 @@ function endProcessesUnderThisOne() {
 }
 
 /**
- * Runs test files with Node's `run()` and collects every finished top-level test. The run is aborted, and its file processes ended, as soon as a test does not end within `testTimeoutMs` (the runner fails it with its timeout), a hook does not end within it (the runner fails the hook's tests as `hookFailed` for its time), or the run sends no event for the limit (plus {@link RECORD_STALL_MARGIN_MS}, so the runner's own timeout event comes first), as a file whose process does not exit after its tests ends.
+ * Runs test files with Node's `run()` and collects every finished top-level test. The run is aborted, and its file processes ended, as soon as a test does not end within `testTimeoutMs` (the runner fails it with its timeout), a hook does not end within it (the runner fails the hook's tests as `hookFailed` for its time), or the run sends no event for the limit plus {@link RECORD_STALL_MARGIN_MS} (so the runner's own timeout event comes first; the sum is capped at {@link MAX_TIMER_DELAY_MS}, the longest wait a timer keeps), as a file whose process does not exit after its tests ends.
  *
  * An abort makes the runner send SIGTERM to its file processes, which a test file may ignore; the recording therefore waits for them within `killGraceMs` and then ends every process that still runs under this one with SIGKILL (it starts nothing else), so nothing of the run outlives it. A SIGINT, SIGTERM or SIGHUP to this process, from the start of the run until its file processes have ended (that wait included), ends them the same way ({@link endChildrenOnSignal}).
  *
@@ -64,8 +65,8 @@ function endProcessesUnderThisOne() {
  * @param options.concurrency - How many files run at the same time.
  * @param options.testTimeoutMs - How long one test, or a hook, may take before it is failed, and the base of the silence bound of the whole run.
  * @param options.killGraceMs - How long the file processes get to end after an abort before they are killed ({@link CALL_KILL_GRACE_MS} by default).
- * @param options.stallMarginMs - The time added to `testTimeoutMs` for the run's silence bound ({@link RECORD_STALL_MARGIN_MS} by default).
- * @returns `{ results, timedOutTests, hookTimedOutTests, stall }`: one `{ file, name, ms, failed, timedOut, hookTimedOut }` per finished top-level test, the `{ file, name }` of each test that was ended for its time, the `{ file, name }` of each test whose hook did not end, and `{ files }` (the names of the files that started and did not end) when the run sent nothing for the limit plus `stallMarginMs`, `undefined` otherwise. The files that were still running at an abort end as failed results of the runner's own.
+ * @param options.stallMarginMs - The time added to `testTimeoutMs` for the run's silence bound, which stays within {@link MAX_TIMER_DELAY_MS} ({@link RECORD_STALL_MARGIN_MS} by default).
+ * @returns `{ results, timedOutTests, hookTimedOutTests, stall }`: one `{ file, name, ms, failed, timedOut, hookTimedOut }` per finished top-level test, the `{ file, name }` of each test that was ended for its time, the `{ file, name }` of each test whose hook did not end, and `{ files, silentMs }` (the names of the files that started and did not end, and the silence bound the timer had in milliseconds: the limit plus `stallMarginMs`, or {@link MAX_TIMER_DELAY_MS} when the sum is above it) when the run sent nothing for that long, `undefined` otherwise. The files that were still running at an abort end as failed results of the runner's own.
  * @example
  * const { results } = await collectTestRun({ files: ['/repo/dist/tests/a.test.js'], concurrency: 4, testTimeoutMs: 120_000 })
  */
@@ -91,8 +92,10 @@ export async function collectTestRun({
     // The abort ends the stream even when a file process ignores SIGTERM; this timer kills such a process when the grace has passed.
     forceTimer = setTimeout(endProcessesUnderThisOne, killGraceMs)
   }
-  const stallTimer = createResettingTimer(testTimeoutMs + stallMarginMs, () => {
-    stall = { files: [...runningFiles] }
+  // A timer longer than {@link MAX_TIMER_DELAY_MS} fires at once, and the limit (at most that, by the option's check) plus the margin can pass it.
+  const silentMs = Math.min(testTimeoutMs + stallMarginMs, MAX_TIMER_DELAY_MS)
+  const stallTimer = createResettingTimer(silentMs, () => {
+    stall = { files: [...runningFiles], silentMs }
     abortRun()
   })
   const releaseSignalEnd = endChildrenOnSignal(endProcessesUnderThisOne)

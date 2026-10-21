@@ -18,6 +18,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { buildTestTimings } from '../utils/buildTestTimings.mjs'
+import { describeUnendedRecording } from '../utils/describeUnendedRecording.mjs'
 import { killProcessIds } from '../utils/killProcessIds.mjs'
 import { listProcessIdsUnder } from '../utils/listProcessIdsUnder.mjs'
 import { parseSilenceSeconds } from '../utils/parseSilenceSeconds.mjs'
@@ -2366,6 +2367,54 @@ test(
     )
   },
 )
+
+// Value: protects=the timings recording with the longest silence limit the option accepts: the run's silence bound is the limit plus 5 s capped at what a timer can wait, so the recording of a passing run is not ended at once by a timer that Node fires immediately (`--silence-seconds 2147483` plus 5 s passed the timer's limit of 2,147,483,647 ms: it printed TimeoutOverflowWarning and ended a run as silent that had just started); fails_when=the bound is the limit plus the margin without a cap, so the recording of one passing test is refused with `✖ The run sent nothing for 2147488 s` and a TimeoutOverflowWarning on stderr; why_new=Cycle 0048 task 177 (native adversarial: the probe `--record --silence-seconds 2147483` exited 1); seam=test-shard.mjs --record --silence-seconds 2147483 started as a process on a fixture build of one passing test; no_claim=the refusal's wording for a silent run at that limit (the sentence's own test below)
+test('the timings recording with the longest silence limit the option accepts records a passing test and prints no timer warning', async (context) => {
+  // Arrange
+  const root = await createFixtureExtension(context, {
+    tests: { 'passing.test.js': loggingTestSource(['opens']) },
+  })
+
+  // Act
+  const result = await runShardScript(
+    root,
+    ['--record', '--silence-seconds', '2147483'],
+    30_000,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { code: result.code, stdout: result.stdout, stderr: result.stderr },
+    { code: 0, stdout: 'Recorded 1 tests in test-timings.json.\n', stderr: '' },
+  )
+})
+
+// Value: protects=the reader of a recording that was ended for its silence: the sentence names the silence bound the timer had, in seconds as a person writes them, from the milliseconds {@link collectTestRun} answers; fails_when=the sentence adds the margin itself (so it names a bound the timer did not have once the bound is capped), or prints binary-fraction noise (`5.007000000000001 s`); why_new=Cycle 0048 task 177 (the bound is capped at what a timer can wait, and the refusal names the capped bound); seam=describeUnendedRecording with hard-coded stalls; no_claim=the stall's value for a real run (the recording tests above and below cover it through test-shard.mjs)
+test('the refusal of a run that sent nothing names the silence bound in seconds, without binary-fraction noise, also for the timer limit', () => {
+  // Arrange
+  const sentenceOf = (silentMs) =>
+    describeUnendedRecording(
+      {
+        timedOutTests: [],
+        hookTimedOutTests: [],
+        stall: { files: ['a.test.js'], silentMs },
+      },
+      3,
+    )
+
+  // Act
+  const sentences = [8_000, 5_007, 5_007.000000000001, 2_147_483_647].map(
+    sentenceOf,
+  )
+
+  // Assert
+  assert.deepEqual(sentences, [
+    'The run sent nothing for 8 s and was ended; a.test.js started and did not end; timings were not recorded.',
+    'The run sent nothing for 5.007 s and was ended; a.test.js started and did not end; timings were not recorded.',
+    'The run sent nothing for 5.007 s and was ended; a.test.js started and did not end; timings were not recorded.',
+    'The run sent nothing for 2147483.647 s and was ended; a.test.js started and did not end; timings were not recorded.',
+  ])
+})
 
 // Value: protects=the timings recording from a hung test whose file ignores SIGTERM: the runner's abort sends SIGTERM to the file, which keeps running; the recording waits for the file within the grace and then kills every process under it with SIGKILL; fails_when=the recording ends at the abort and leaves the file's process (it was running 15 s after the recording ended), or the kill is missing after the grace; why_new=Cycle 0048 task 149 (after an abort, a test file that ignores SIGTERM keeps running); Cycle 0048 task 166 pins the refusal as the one line `✖ <sentence>` on stderr, with no stack frame and no `Error:` prefix; seam=test-shard.mjs --record on a fixture build whose test ignores SIGTERM and hangs, with a 3 s limit and the 5 s grace; no_claim=a file that ends at SIGTERM (the recording above covers the hung test's sentence)
 test(
