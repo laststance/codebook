@@ -10,6 +10,7 @@ import {
 import { join } from 'node:path'
 
 import {
+  NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_LIMIT_BYTES,
   NODE_TEST_HISTORY_MAX_ENTRIES,
@@ -22,6 +23,7 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
 } from './constants'
+import { StudyError } from './errors'
 import {
   nodeTestHistoryEntrySchema,
   nodeTestHistoryHeaderSchema,
@@ -42,7 +44,26 @@ import {
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import {
+  describeNodeTestResult,
+  type NodeTestVerdict,
+} from './utils/describeNodeTestResult'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import {
+  listMissingNodeExplanations,
+  type NodeLearningCoverage,
+  type NodeLearningExplanationPart,
+  type NodeLearningNeeds,
+} from './utils/listMissingNodeExplanations'
+import {
+  listMissingNodeLearning,
+  type NodeLearningCapturePart,
+} from './utils/listMissingNodeLearning'
+import { mapWithConcurrencyLimit } from './utils/mapWithConcurrencyLimit'
+import {
+  nodeTestResultKind,
+  type NodeTestResultKind,
+} from './utils/nodeTestResultKind'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 type NodeTestHistoryEntryInput = NodeTestHistoryEntry extends infer Entry
@@ -62,6 +83,160 @@ const REASON_LIMIT_CHARS = 1_024
 /** The name of a history's folder: its study id. Any other entry of the history directory (a `.DS_Store`, a stray folder) is nobody's history. */
 const HISTORY_IDENTITY = /^[0-9a-f-]{36}_[0-9a-f-]{36}$/
 
+/** A journal event a learning step can cite, as the store keeps it to check a learning material without reading the journal again. */
+type CitableEvent =
+  | { type: 'stop'; sourceHash: string; path: string; line: number }
+  | { type: 'output'; channel: 'stdout' | 'stderr' }
+  | { type: 'result' }
+
+/**
+ * One test history as Saved studies, the `codebook://node-history` resources and Save read it: one projection per history, so the three agree (plan version 7, Design 13).
+ * A history whose journal does not verify reads `unavailable` with its header's identity and the reason; its learning fields then say nothing was checked.
+ */
+export type NodeTestHistorySummary = {
+  studyId: string
+  createdAt: string
+  profile: 'node-test'
+  status: NodeTestHistoryIndex['status']
+  reason?: string
+  verification: 'verified' | 'unavailable'
+  /** The cited test file and its title path, as the header names them, for labels such as a failed open's notification. */
+  testFile: string
+  testTitles?: string[]
+  verdict: NodeTestVerdict
+  testResult: NodeTestResultKind
+  stopCount: number
+  explainedStopCount: number
+  hasResult: boolean
+  learningCoverage: NodeLearningCoverage
+  learningMissing: NodeLearningExplanationPart[]
+  captureMissing: NodeLearningCapturePart[]
+  /** The revision of the learning material the summary counted; 0 before the first save. */
+  materialRevision: number
+}
+
+/** What {@link NodeTestHistoryStore.summarize} remembers of one history, so a refresh that finds its files unchanged reads none of them. */
+type SummaryMemo = {
+  /** The size, time and identity of the journal and seal files, and whether this window writes the history: when any changes, the history is read again. */
+  historySignal: string
+  /** The same of the learning material file: when only it changes, only the material is read again. */
+  materialSignal: string
+  summary: NodeTestHistorySummary
+  /** Present for a verified history: what a material may cite, and what it is asked to explain. */
+  citable?: Map<number, CitableEvent>
+  needs?: NodeLearningNeeds
+}
+
+/**
+ * Lists the events of a verified history a learning step may cite, by sequence.
+ * @param history - The verified history.
+ * @returns The stops, outputs and result by sequence.
+ * @example citableEvents(history).get(2) // => { type: 'stop', sourceHash: '…', path: 'src/scheduler.ts', line: 3 }
+ */
+function citableEvents(
+  history: Pick<NodeTestHistoryIndex, 'entries'>,
+): Map<number, CitableEvent> {
+  const events = new Map<number, CitableEvent>()
+  for (const entry of history.entries)
+    events.set(
+      entry.sequence,
+      entry.type === 'stop'
+        ? {
+            type: 'stop',
+            sourceHash: entry.source.hash,
+            path: entry.source.path,
+            line: entry.source.line,
+          }
+        : entry.type === 'output'
+          ? { type: 'output', channel: entry.channel }
+          : { type: 'result' },
+    )
+  return events
+}
+
+/**
+ * Words what a sequence is in the sealed history, for the step refusal of {@link assertLearningCitations}.
+ * @param event - The cited event, or `undefined` for a sequence the history does not have.
+ * @returns The event's words.
+ * @example describeCitedEvent({ type: 'output', channel: 'stderr' }) // => 'an output on stderr'
+ */
+function describeCitedEvent(event: CitableEvent | undefined): string {
+  if (!event) return 'no event'
+  if (event.type === 'stop') return `a stop at ${event.path}:${event.line}`
+  return event.type === 'output'
+    ? `an output on ${event.channel}`
+    : 'the result'
+}
+
+/**
+ * Refuses a learning material whose step cites an event the sealed history does not hold as cited, naming the step, the sequence, what that sequence is and what the step claims (X19), so the agent can correct the one step; called by {@link NodeTestHistoryStore} for every material it saves or reads.
+ * @param content - The material's content.
+ * @param citable - The history's citable events ({@link citableEvents}).
+ * @throws An `INVALID_REFERENCE` {@link StudyError} for the first step whose reference does not match.
+ * @example assertLearningCitations(content, citableEvents(history)) // returns for a material whose every reference matches
+ */
+function assertLearningCitations(
+  content: NodeTestLearningMaterialContent,
+  citable: ReadonlyMap<number, CitableEvent>,
+): void {
+  for (const step of content.steps) {
+    const reference = step.reference
+    if (!reference) continue
+    const event = citable.get(reference.sequence)
+    const valid =
+      reference.type === 'stop'
+        ? event?.type === 'stop' && event.sourceHash === reference.sourceHash
+        : reference.type === 'output'
+          ? event?.type === 'output' && event.channel === reference.channel
+          : event?.type === 'result'
+    if (valid) continue
+    const claim =
+      reference.type === 'stop'
+        ? `a stop with sourceHash ${reference.sourceHash}`
+        : reference.type === 'output'
+          ? `an output on ${reference.channel}`
+          : 'the result'
+    // A stop cited with another hash is told the hash the journal holds.
+    const expectedHash =
+      reference.type === 'stop' && event?.type === 'stop'
+        ? `; expected sourceHash ${event.sourceHash}`
+        : ''
+    throw new StudyError(
+      'INVALID_REFERENCE',
+      `codebook_explain_node_history refused step ${step.id}: sequence ${reference.sequence} is ${describeCitedEvent(event)} in the sealed history, but the step claims ${claim}${expectedHash}. Read the history's events again and cite each event by its sequence, type and source hash.`,
+    )
+  }
+}
+
+/**
+ * Starts a history's summary from its header, with nothing counted yet; {@link NodeTestHistoryStore} fills in what the verified journal says, and an unavailable history keeps these values.
+ * @param header - The history's header.
+ * @returns A summary with the header's identity, the cited test, no result and no learning.
+ * @example emptySummary(header).verdict // => 'No result recorded'
+ */
+function emptySummary(header: NodeTestHistoryHeader): NodeTestHistorySummary {
+  return {
+    studyId: header.studyId,
+    createdAt: header.createdAt,
+    profile: header.profile,
+    status: 'partial',
+    verification: 'unavailable',
+    testFile: header.configuration.testFile,
+    ...(header.configuration.testTitles
+      ? { testTitles: header.configuration.testTitles }
+      : {}),
+    verdict: 'No result recorded',
+    testResult: 'none',
+    stopCount: 0,
+    explainedStopCount: 0,
+    hasResult: false,
+    learningCoverage: 'none',
+    learningMissing: [],
+    captureMissing: [],
+    materialRevision: 0,
+  }
+}
+
 /** Appends bounded, workspace-bound Node execution evidence before test input and seals it after owned cleanup. @example const writer = await store.start(header); await writer.appendStop(stop); await writer.finish('complete') */
 export class NodeTestHistoryStore {
   private readonly directory: string
@@ -71,9 +246,12 @@ export class NodeTestHistoryStore {
     string,
     Promise<NodeTestLearningMaterial>
   >()
+  /** The last summary of each listed history with the file signals it was made from ({@link summarize}). */
+  private readonly summaries = new Map<string, SummaryMemo>()
 
   constructor(
-    private readonly learningDirectory: string,
+    /** The learning directory the histories live in; a private storage root that no cause shown to the learner or the agent names ({@link sanitizeCause}). */
+    readonly learningDirectory: string,
     readonly workspaceKey: string,
     private readonly capacity: () => number = () => 64,
     private readonly savedArtifactCount: () => Promise<number> = async () => 0,
@@ -246,55 +424,195 @@ export class NodeTestHistoryStore {
     }
   }
 
-  /** Lists histories for the current workspace without exposing the private storage directory: a history whose journal verifies, and one whose header alone can be read ({@link listedHeader}), as partial. @example await store.list() */
-  async list(): Promise<
-    Array<
-      Pick<NodeTestHistoryIndex, 'status' | 'reason'> & {
-        studyId: string
-        createdAt: string
-        profile: 'node-test'
-        verification: 'verified' | 'unavailable'
-      }
-    >
-  > {
+  /**
+   * Lists the histories of the current workspace, newest first, without exposing the private storage directory: one summary per history ({@link summarize}), a history whose journal verifies and one whose header alone can be read ({@link listedHeader}) as unavailable; called by the Study workspace's refresh every 250 ms and by the `codebook://node-history` catalog.
+   * A history whose files did not change since the last list is not read again: only a new folder, a history this window still writes, a journal or seal that changed and a changed learning material are read, at most {@link NODE_HISTORY_SUMMARY_READ_CONCURRENCY} at a time.
+   * @returns The summaries of the listed histories.
+   * @example await store.list() // => [{ studyId, status: 'complete', verdict: 'Test passed · exit code 0', learningCoverage: 'partial', … }]
+   */
+  async list(): Promise<NodeTestHistorySummary[]> {
     const names = await readdir(this.directory).catch((error) => {
       if (error.code === 'ENOENT') return []
       throw error
     })
-    const results = await Promise.all(
-      names
-        .filter((name) => !name.startsWith('.'))
-        .map(async (studyId) => {
-          try {
-            const index = await this.read(studyId)
-            return {
-              studyId,
-              createdAt: index.header.createdAt,
-              profile: index.header.profile,
-              status: index.status,
-              reason: index.reason,
-              verification: 'verified' as const,
-            }
-          } catch (error) {
-            const header = await this.listedHeader(studyId)
-            return (
-              header && {
-                studyId,
-                createdAt: header.createdAt,
-                profile: header.profile,
-                status: 'partial' as const,
-                reason: `History integrity check failed: ${String(error).slice(0, REASON_LIMIT_CHARS)}`,
-                verification: 'unavailable' as const,
-              }
-            )
-          }
-        }),
+    const studyIds = names.filter((name) => HISTORY_IDENTITY.test(name))
+    // A memo of a history whose folder is gone would keep a summary nobody lists.
+    for (const studyId of this.summaries.keys())
+      if (!studyIds.includes(studyId)) this.summaries.delete(studyId)
+    const summaries = await mapWithConcurrencyLimit(
+      studyIds,
+      NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
+      (studyId) => this.summarize(studyId),
     )
-    return results
+    return summaries
       .filter(
-        (entry): entry is NonNullable<typeof entry> => entry !== undefined,
+        (summary): summary is NodeTestHistorySummary => summary !== undefined,
       )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+  }
+
+  /**
+   * Says whether a study id names a test history the last {@link list} found, without reading anything; read by {@link StudyService.playback}, which refuses a test replay before any load.
+   * @param studyId - A study id an agent sent.
+   * @returns `true` for a listed test history.
+   * @example store.isListedHistory(studyId) // => true after a refresh listed it
+   */
+  isListedHistory(studyId: string): boolean {
+    return this.summaries.has(studyId)
+  }
+
+  /**
+   * Summarizes one history for Saved studies, the history resource and Save, reading its files only when they changed since its last summary; called by {@link list} for each history and by {@link StudyService} and {@link NodeLearningSave} for one.
+   * A sealed journal is immutable, so an unchanged journal and seal keep their summary; a changed learning material alone is read and checked against the citable events the summary keeps, without reading the journal again.
+   * @param studyId - The history's study id.
+   * @returns The history's summary, or `undefined` for a folder that holds no history of this workspace.
+   * @example await store.summarize(studyId) // => { status: 'complete', learningCoverage: 'complete', learningMissing: [], … }
+   */
+  async summarize(
+    studyId: string,
+  ): Promise<NodeTestHistorySummary | undefined> {
+    const [historySignal, materialSignal] = await this.fileSignals(studyId)
+    const memo = this.summaries.get(studyId)
+    if (memo?.historySignal === historySignal) {
+      if (memo.materialSignal === materialSignal) return memo.summary
+      // Only the material changed: its citations are checked against the kept events.
+      if (memo.citable && memo.needs) {
+        const summary = await this.summaryWithMaterial(
+          studyId,
+          memo.summary,
+          memo.citable,
+          memo.needs,
+        )
+        this.summaries.set(studyId, { ...memo, materialSignal, summary })
+        return summary
+      }
+    }
+    const next = await this.readSummary(studyId, historySignal, materialSignal)
+    if (next) this.summaries.set(studyId, next)
+    else this.summaries.delete(studyId)
+    return next?.summary
+  }
+
+  /**
+   * Reads the signals {@link summarize} compares: the size, modification time and identity of a history's files.
+   * @param studyId - The history's study id.
+   * @returns The history signal (journal, seal, whether this window writes it) and the material signal.
+   * @example await this.fileSignals(studyId) // => ['812:1792590603000:44|none|active', '1203:1792590700000:45']
+   */
+  private async fileSignals(studyId: string): Promise<[string, string]> {
+    const directory = this.path(studyId)
+    const signal = (file: string): Promise<string> =>
+      lstat(join(directory, file)).then(
+        (entry) => `${entry.size}:${entry.mtimeMs}:${entry.ino}`,
+        (error: unknown) => `missing:${systemErrorCode(error) ?? 'unknown'}`,
+      )
+    const [journal, seal, material] = await Promise.all([
+      signal(JOURNAL_FILE),
+      signal(SEAL_FILE),
+      signal(LEARNING_MATERIAL_FILE),
+    ])
+    return [
+      `${journal}|${seal}|${this.active.has(studyId) ? 'active' : 'closed'}`,
+      material,
+    ]
+  }
+
+  /**
+   * Reads a history and its learning material into a new memo; the slow path of {@link summarize}.
+   * @param studyId - The history's study id.
+   * @param historySignal - The history signal the read belongs to.
+   * @param materialSignal - The material signal the read belongs to.
+   * @returns The memo, an unavailable summary for a journal that does not verify, or `undefined` without a header of this workspace.
+   * @example await this.readSummary(studyId, historySignal, materialSignal)
+   */
+  private async readSummary(
+    studyId: string,
+    historySignal: string,
+    materialSignal: string,
+  ): Promise<SummaryMemo | undefined> {
+    let history: NodeTestHistoryIndex
+    try {
+      history = await this.read(studyId)
+    } catch (error) {
+      const header = await this.listedHeader(studyId)
+      if (!header) return undefined
+      const summary: NodeTestHistorySummary = {
+        ...emptySummary(header),
+        status: 'partial',
+        reason: `History integrity check failed: ${String(error).slice(0, REASON_LIMIT_CHARS)}`,
+        verification: 'unavailable',
+      }
+      return { historySignal, materialSignal, summary }
+    }
+    const citable = citableEvents(history)
+    const material = await this.readLearningMaterialFile(studyId)
+      .then((saved) => {
+        // A material that cites what the journal does not hold explains nothing.
+        if (saved) assertLearningCitations(saved.content, citable)
+        return saved
+      })
+      .catch(() => undefined)
+    const missing = listMissingNodeLearning(history, material?.content)
+    const result = history.entries.find((entry) => entry.type === 'result')
+    const stops = history.entries.filter((entry) => entry.type === 'stop')
+    const needs: NodeLearningNeeds = {
+      stopSequences: stops.map((stop) => stop.sequence),
+      ...(result ? { resultSequence: result.sequence } : {}),
+    }
+    const summary: NodeTestHistorySummary = {
+      ...emptySummary(history.header),
+      status: history.status,
+      ...(history.reason ? { reason: history.reason } : {}),
+      verification: 'verified',
+      verdict: describeNodeTestResult(result),
+      testResult: nodeTestResultKind(result),
+      stopCount: stops.length,
+      explainedStopCount:
+        stops.length -
+        missing.explanations.filter((part) => part.kind === 'stop').length,
+      hasResult: result !== undefined,
+      learningCoverage: missing.coverage,
+      learningMissing: missing.explanations,
+      captureMissing: missing.capture,
+      materialRevision: material?.revision ?? 0,
+    }
+    return { historySignal, materialSignal, summary, citable, needs }
+  }
+
+  /**
+   * Counts a changed learning material against the events a memo keeps, without reading the journal; the fast path of {@link summarize}.
+   * @param studyId - The history's study id.
+   * @param summary - The history's last summary, made from its verified journal.
+   * @param citable - The journal's citable events, kept with that summary.
+   * @param needs - The stops and the result the journal asks the material to explain.
+   * @returns The summary with the new material's coverage; a material that does not parse or cites what the journal does not hold counts as none.
+   * @example await this.summaryWithMaterial(studyId, memo.summary, memo.citable, memo.needs)
+   */
+  private async summaryWithMaterial(
+    studyId: string,
+    summary: NodeTestHistorySummary,
+    citable: ReadonlyMap<number, CitableEvent>,
+    needs: NodeLearningNeeds,
+  ): Promise<NodeTestHistorySummary> {
+    const material = await this.readLearningMaterialFile(studyId)
+      .then((saved) => {
+        if (saved) assertLearningCitations(saved.content, citable)
+        return saved
+      })
+      .catch(() => undefined)
+    const { missing, coverage } = listMissingNodeExplanations(
+      needs,
+      material?.content,
+    )
+    return {
+      ...summary,
+      explainedStopCount:
+        summary.stopCount -
+        missing.filter((part) => part.kind === 'stop').length,
+      learningCoverage: coverage,
+      learningMissing: missing,
+      materialRevision: material?.revision ?? 0,
+    }
   }
 
   /** Verifies a sealed journal or returns only its valid crash-recovery prefix. @example await store.read(studyId) */
@@ -490,6 +808,25 @@ export class NodeTestHistoryStore {
   async readLearningMaterial(
     studyId: string,
   ): Promise<NodeTestLearningMaterial | undefined> {
+    const material = await this.readLearningMaterialFile(studyId)
+    if (!material) return undefined
+    assertLearningCitations(
+      material.content,
+      citableEvents(await this.read(studyId)),
+    )
+    return material
+  }
+
+  /**
+   * Reads and parses a history's learning material without checking its citations; {@link readLearningMaterial} checks them against the journal it reads, {@link summarize} against the events its summary keeps.
+   * @param studyId - The history's study id.
+   * @returns The saved material, or `undefined` before the first save.
+   * @throws When the file is no bounded regular file, does not parse, or belongs to another history.
+   * @example await this.readLearningMaterialFile(studyId) // => { revision: 2, content: { … } }
+   */
+  private async readLearningMaterialFile(
+    studyId: string,
+  ): Promise<NodeTestLearningMaterial | undefined> {
     const bytes = await this.readPrivateFile(
       join(this.path(studyId), LEARNING_MATERIAL_FILE),
       NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES,
@@ -505,7 +842,6 @@ export class NodeTestHistoryStore {
       throw new Error(
         'Saved Node learning material belongs to another history.',
       )
-    this.assertLearningReferences(material.content, await this.read(studyId))
     return material
   }
 
@@ -549,7 +885,7 @@ export class NodeTestHistoryStore {
         `Node learning material revision changed; expected ${expectedRevision}, current ${currentRevision}.`,
       )
     const parsedContent = nodeTestLearningMaterialContentSchema.parse(content)
-    this.assertLearningReferences(parsedContent, history)
+    assertLearningCitations(parsedContent, citableEvents(history))
     const material = nodeTestLearningMaterialSchema.parse({
       version: NODE_TEST_LEARNING_MATERIAL_VERSION,
       studyId,
@@ -563,29 +899,6 @@ export class NodeTestHistoryStore {
       NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES,
     )
     return material
-  }
-
-  private assertLearningReferences(
-    content: NodeTestLearningMaterialContent,
-    history: NodeTestHistoryIndex,
-  ): void {
-    for (const step of content.steps) {
-      const reference = step.reference
-      if (!reference) continue
-      const entry = history.entries.find(
-        (candidate) => candidate.sequence === reference.sequence,
-      )
-      const valid =
-        reference.type === 'stop'
-          ? entry?.type === 'stop' && entry.source.hash === reference.sourceHash
-          : reference.type === 'output'
-            ? entry?.type === 'output' && entry.channel === reference.channel
-            : entry?.type === 'result'
-      if (!valid)
-        throw new Error(
-          `Node learning step ${step.id} does not match its sealed history reference.`,
-        )
-    }
   }
 
   /** Atomically remembers one selected event without changing the sealed execution journal. Called on every reader selection, including playback steps.
@@ -664,7 +977,12 @@ export class NodeTestHistoryWriter {
   private stopCount = 0
   private resultWritten = false
   private resultPassed = false
-  private finishOperation?: Promise<void>
+  /** The journal sequence of each stop entry this writer confirmed, in stop order, and of its result entry. */
+  private readonly stopSequences: number[] = []
+  private resultSequence?: number
+  private finishOperation?: Promise<string>
+  /** The SHA-256 of the journal this writer sealed; `undefined` before the seal and after an abandoned one. */
+  private sealedHash?: string
 
   constructor(
     private readonly directory: string,
@@ -723,9 +1041,41 @@ export class NodeTestHistoryWriter {
     })
   }
 
-  /** Fsyncs and seals complete evidence only when the caller verified all ordered stops and a passing result; after a failed entry only the verified prefix can be sealed, as partial. @example await writer.finish('partial', 'Cancelled by the learner.') */
-  finish(status: 'complete' | 'partial', reason?: string): Promise<void> {
-    if (this.closed) return Promise.resolve()
+  /**
+   * Counts the entries this writer confirmed, the journal's entry count once sealed; read by {@link StudyService.state}, whose outcome needs at least one entry for a replay.
+   * @example writer.entryCount // => 4
+   */
+  get entryCount(): number {
+    return this.entries
+  }
+
+  /**
+   * Gives what the sealed journal asks a learning material to explain, from the sequences this writer assigned, so {@link StudyService} caches the run's learning coverage at the seal without reading the journal again (EN2).
+   * @returns The sequence of each stop entry in stop order, and of the result entry when one was written.
+   * @example writer.learningNeeds() // => { stopSequences: [2, 5], resultSequence: 7 }
+   */
+  learningNeeds(): NodeLearningNeeds {
+    return {
+      stopSequences: [...this.stopSequences],
+      ...(this.resultSequence === undefined
+        ? {}
+        : { resultSequence: this.resultSequence }),
+    }
+  }
+
+  /**
+   * Fsyncs and seals complete evidence only when the caller verified all ordered stops and a passing result; after a failed entry only the verified prefix can be sealed, as partial; called by {@link StudyService.stopRecord}.
+   * @param status - `complete` for a run with every declared stop and a passing result, else `partial`.
+   * @param reason - Why a partial history ended.
+   * @returns The SHA-256 of the sealed journal, the run's `recording.contextHash`; `undefined` for a writer that was abandoned before.
+   * @throws When `complete` is asked without every stop and a passing result, the journal holds bytes no entry confirmed, or the seal cannot be written.
+   * @example await writer.finish('partial', 'Cancelled by the learner.') // => 'a3f…'
+   */
+  finish(
+    status: 'complete' | 'partial',
+    reason?: string,
+  ): Promise<string | undefined> {
+    if (this.closed) return Promise.resolve(this.sealedHash)
     if (this.finishOperation) return this.finishOperation
     const operation = (async () => {
       this.closing = true
@@ -762,9 +1112,11 @@ export class NodeTestHistoryWriter {
         reason: reason?.slice(0, REASON_LIMIT_CHARS),
       })
       await atomicPrivateWrite(join(this.directory, SEAL_FILE), seal, 16_384)
+      this.sealedHash = seal.journalHash
       this.closed = true
       this.onClosed()
-    })().catch((error) => {
+      return seal.journalHash
+    })().catch((error: unknown) => {
       this.closing = false
       this.finishOperation = undefined
       throw error
@@ -830,10 +1182,14 @@ export class NodeTestHistoryWriter {
       this.lastElapsedMs = entry.elapsedMs
       this.entries++
       this.confirmedBytes += line.byteLength
-      if (entry.type === 'stop') this.stopCount++
+      if (entry.type === 'stop') {
+        this.stopCount++
+        this.stopSequences.push(entry.sequence)
+      }
       if (entry.type === 'result') {
         this.resultWritten = true
         this.resultPassed = entry.exitCode === 0 && entry.signal === null
+        this.resultSequence = entry.sequence
       }
     })
     // Later entries and the seal wait for this one without inheriting its rejection.

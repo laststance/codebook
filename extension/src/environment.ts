@@ -29,8 +29,10 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
+import { readVitestPrerequisite } from './utils/readVitestPrerequisite'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 
 export interface StudyPresentation {
@@ -257,7 +259,7 @@ export async function createEnvironment(
         }
         if (ownedConfiguredLock) break
       }
-      const [{ ready, missing, nodeMissing }, checkedConfigured] =
+      const [{ ready, missing, nodeMissing }, checkedConfigured, vitest] =
         await Promise.all([
           resolvePrerequisites(),
           // Even during a run, recheck dependencies and directories; only its exact live lock is permitted.
@@ -269,6 +271,11 @@ export async function createEnvironment(
             () => [],
             (error) => [String(error)],
           ),
+          // node-test runs the root Vitest: a missing or older one is named before any start (X9).
+          readVitestPrerequisite(workspace).catch((error: unknown) => ({
+            ready: false as const,
+            reason: `node-test could not read the repository's root Vitest: ${String(error)}`,
+          })),
         ])
       // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
       const configured = releasingConfiguredRun
@@ -296,8 +303,8 @@ export async function createEnvironment(
         profiles: {
           'repository-browser': check(configured),
           'node-test': {
-            ready: nodeMissing.length === 0,
-            missing: nodeMissing,
+            ready: nodeMissing.length === 0 && vitest.ready,
+            missing: [...nodeMissing, ...(vitest.ready ? [] : [vitest.reason])],
           },
         },
       }
@@ -360,6 +367,11 @@ export async function createEnvironment(
       })
       runs.set(run.id, run)
       return run
+    },
+    async checkNodeTestFiles(
+      configuration: NodeTestConfiguration,
+    ): Promise<void> {
+      await checkNodeTestFiles(workspace, configuration)
     },
     async createNodeTestRun(
       configuration: NodeTestConfiguration,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { CONFIGURED_PROFILE } from './configuredProfile'
@@ -45,6 +46,7 @@ import {
   type LearningSummary,
 } from './learningSummarySchemas'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
+import type { NodeTestLearningMaterialContent } from './nodeTestHistorySchemas'
 import type {
   NodeTestHistoryStore,
   NodeTestHistoryWriter,
@@ -89,13 +91,17 @@ import {
 } from './schemas'
 import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
+import { configuredStops } from './utils/configuredStops'
+import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
 import { describeMissingBookNode } from './utils/describeMissingBookNode'
+import { describeNodeTestResult } from './utils/describeNodeTestResult'
 import {
   explanationPlace,
   type ExplanationPlace,
 } from './utils/explanationPlace'
+import type { CodebookDiagnostic } from './utils/formatCodebookDiagnostic'
 import {
   fullLibraryMessage,
   type StudyRemovalAvailability,
@@ -107,12 +113,25 @@ import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
 import { isStudyRemovalExclusion } from './utils/isStudyRemovalExclusion'
 import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import {
+  listMissingNodeExplanations,
+  type NodeLearningCoverage,
+  type NodeLearningExplanationPart,
+  type NodeLearningNeeds,
+} from './utils/listMissingNodeExplanations'
 import { namesLineNumber } from './utils/namesLineNumber'
+import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import {
+  projectNodeTestOutcome,
+  type NodeTestHistoryState,
+} from './utils/projectNodeTestOutcome'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
+import { sanitizeCause, type CauseRoots } from './utils/sanitizeCause'
+import { sanitizedStack } from './utils/sanitizedStack'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
 import { thrownMessage } from './utils/thrownMessage'
@@ -205,11 +224,15 @@ export type StudyRecord = StudyRecordState &
  * Why the reader must not checkpoint a retained run and why its state reports no saved history.
  * - `awaiting-admission`: the study library has not answered yet whether it can keep this run's study.
  * - `refused-at-admission`: the library was full or its limit setting invalid, so the run never started.
+ * - `refused-at-preparation`: a node-test run whose preparation refused it before its history began (a changed source or test file, a path that is not a file, a missing prerequisite), so nothing was recorded and its slot and start key are free.
  * - `removed-by-learner`: the learner moved the run's saved study to the system Trash with this window's delete.
  * - `archive-removed`: the run's saved study left the library without a removal of this window, so its archive is gone: its files were removed by hand (a window without a Trash offers nothing else), or another window removed it.
  */
 export type HistoryExclusion =
-  'awaiting-admission' | 'refused-at-admission' | StudyRemovalExclusion
+  | 'awaiting-admission'
+  | 'refused-at-admission'
+  | 'refused-at-preparation'
+  | StudyRemovalExclusion
 /** The two exclusions that say a run's saved study was removed; each has its own sentence for the agent that reads the run, see {@link historyExclusionReason}. */
 export type StudyRemovalExclusion = 'removed-by-learner' | 'archive-removed'
 interface StudyRecordState {
@@ -279,7 +302,28 @@ interface StudyRecordState {
   nodePhase?: 'preparing' | 'paused' | 'advancing' | 'completed' | 'failed'
   nodeHistoryWriter?: NodeTestHistoryWriter
   nodeHistoryStatus?: 'recording' | 'complete' | 'partial' | 'failed'
+  /** Why the test history could not be sealed, sanitized when it was assigned ({@link sanitizeCause}). */
   nodeHistoryFailure?: string
+  /** Why a sealed partial test history ended, sanitized when it was assigned; the run resource's `recording.reason`. */
+  nodeHistoryReason?: string
+  /** The SHA-256 of the sealed test journal ({@link NodeTestHistoryWriter.finish}); the run resource's `recording.contextHash`. */
+  nodeHistoryHash?: string
+  /** The test run's continuation in flight ({@link StudyService.continue}); a stop settles it, with its journal writes, before it seals the history. */
+  nodeContinuation?: Promise<void>
+  /** The learning material this window last saved for the run's history, so the seal counts it when it came first. */
+  nodeLearningMaterial?: {
+    revision: number
+    content: NodeTestLearningMaterialContent
+  }
+  /** The run's learning coverage, cached at the seal and after each saved material, so {@link StudyService.state} reads it without a store read (EN2). */
+  nodeLearning?: {
+    needs: NodeLearningNeeds
+    materialRevision: number
+    missing: NodeLearningExplanationPart[]
+    coverage: NodeLearningCoverage
+  }
+  /** Why a browser recording's finish or read-back failed at the run's stop, sanitized when it was assigned; a `codebook_stop` of the run answers `HISTORY_SEAL_FAILED` with it. */
+  recordingSealFailure?: string
 }
 
 /**
@@ -328,12 +372,59 @@ export class StudyService {
     anchorIndex: number
     sourceUri: string
   }>
+  /** Receives one entry per unexpected failure on a test replay's path for the Output › Codebook channel; the extension sets it at activation. */
+  diagnostics?: (entry: CodebookDiagnostic) => void
+  /** The extension's own storage folders beside {@link storageRoot}, which the extension adds at activation; no shown cause names them. */
+  readonly extraStorageRoots: string[] = []
   private readonly repositoryRetirement = new AbortController()
   private readonly repositoryOpens = new Set<Promise<unknown>>()
   private readonly startKeys = new Map<string, StudyRecord>()
   private readonly maintenance: ReturnType<typeof setInterval>
   private stopping = false
   private shutdownPromise?: Promise<void>
+
+  /**
+   * Gives the private roots no cause shown to the learner or the agent may name: the service's storage root, the learning directory, the extension's other storage folders, the opened repository and the home directory; read wherever a cause is assigned ({@link sanitizeCause}), by the service and by {@link NodeLearningSave}.
+   * @returns The roots for {@link sanitizeCause}.
+   * @example sanitizeCause(error, service.causeRoots)
+   */
+  get causeRoots(): CauseRoots {
+    return {
+      storage: [
+        this.storageRoot,
+        ...(this.nodeHistoryStore
+          ? [this.nodeHistoryStore.learningDirectory]
+          : []),
+        ...this.extraStorageRoots,
+      ],
+      workspace: this.environment.workspace,
+      home: homedir(),
+    }
+  }
+
+  /**
+   * Reports one unexpected failure of a run to the Output › Codebook channel with its sanitized cause and stack; called where a test history's seal or a browser recording's finish fails at a stop.
+   * @param surface - The error code or the surface that failed.
+   * @param record - The run.
+   * @param error - What was thrown.
+   * @param cause - The sanitized cause, as the run keeps it.
+   * @example this.diagnose('HISTORY_SEAL_FAILED', record, error, record.nodeHistoryFailure)
+   */
+  private diagnose(
+    surface: string,
+    record: StudyRecord,
+    error: unknown,
+    cause: string,
+  ): void {
+    const stack = sanitizedStack(error, this.causeRoots)
+    this.diagnostics?.({
+      surface,
+      studyId: `${this.instanceId}_${record.id}`,
+      profile: record.profile,
+      cause,
+      ...(stack ? { stack } : {}),
+    })
+  }
 
   /** Lets editor shutdown retire only physically released owners when final evidence persistence fails. @example service.resourcesReleased // true after all release checks */
   get resourcesReleased(): boolean {
@@ -464,9 +555,9 @@ export class StudyService {
           },
           prerequisites: nodeTestAdapter,
           recording: {
-            available: false,
+            available: true,
             reason:
-              'Node test application video and synchronized application replay are unavailable. Agent-authored learning material is stored separately with the durable evidence journal.',
+              'Test output, executed source and recorded debugger stops; no application video',
           },
         },
       ],
@@ -644,9 +735,21 @@ export class StudyService {
     }
   }
 
-  /** Routes a typed historical control to the workspace's shared controller, never to a live runtime operation. @example service.playback({...identity,action:'pause',expectedRevision:2}) */
+  /**
+   * Routes a typed historical control to the workspace's shared controller, never to a live runtime operation; the handler of `codebook_playback`.
+   * A test replay's study id is refused before anything else is checked or loaded: the browser replay's controller cannot present a test history, and the learner opens one from Saved studies or Open replay.
+   * @param input - The control with its study id and expected revision.
+   * @returns The playback state after the control.
+   * @throws `PLAYBACK_PROFILE_UNSUPPORTED` for a test replay; what {@link playbackRefusal} words for a refused control.
+   * @example service.playback({...identity,action:'pause',expectedRevision:2})
+   */
   playback(input: PlaybackCommand) {
     this.assertMutable(input.instanceId)
+    if (this.isTestReplay(input.studyId))
+      throw new StudyError(
+        'PLAYBACK_PROFILE_UNSUPPORTED',
+        `codebook_playback cannot control study ${input.studyId}: it is a node-test replay, which the learner opens from Saved studies or Open replay.`,
+      )
     this.presentationController?.assertPresentationIdle()
     if (!this.playbackController)
       throw new StudyError(
@@ -675,6 +778,22 @@ export class StudyService {
       const readerClosed = !this.playbackController.state().readerOpen
       throw this.playbackRefusal(error, readerClosed, input)
     }
+  }
+
+  /**
+   * Says whether a study id names a test replay: a node-test run of this service, or a test history the store listed; read by {@link playback} before any other check.
+   * @param studyId - The study id an agent sent.
+   * @returns `true` for a test replay's study id.
+   * @example this.isTestReplay(`${service.instanceId}_${record.id}`) // => true for a node-test run
+   */
+  private isTestReplay(studyId: string): boolean {
+    return (
+      [...this.records.values()].some(
+        (record) =>
+          record.profile === NODE_TEST_PROFILE &&
+          `${this.instanceId}_${record.id}` === studyId,
+      ) || Boolean(this.nodeHistoryStore?.isListedHistory(studyId))
+    )
   }
 
   /**
@@ -956,7 +1075,7 @@ export class StudyService {
 
   /**
    * Reads what a start key already names; called first by {@link StudyService.start}.
-   * A run the study library refused and that has ended had no effect, so its key is free: it is returned apart from `previous`, no conflict check applies to it, and {@link StudyService.reserveRunSlot} forgets it once every guard of the repeat has passed. A repeat that a guard rejects therefore leaves the refused run and its receipt as they were.
+   * A run the study library refused, or a node-test run its preparation refused before its history began, had no effect once it ended, so its key is free: it is returned apart from `previous`, no conflict check applies to it, and {@link StudyService.reserveRunSlot} forgets it once every guard of the repeat has passed. A repeat that a guard rejects therefore leaves the refused run and its receipt as they were.
    * @param key - The start key of the incoming start.
    * @returns
    * - No retained run for the key: both undefined
@@ -970,8 +1089,11 @@ export class StudyService {
     refusal: StudyRecord | undefined
   } {
     const named = this.startKeys.get(key)
+    // A run the library or its preparation refused had no effect once it ended.
     const isStoppedRefusal =
-      named?.historyExcluded === 'refused-at-admission' && named.stopped
+      (named?.historyExcluded === 'refused-at-admission' ||
+        named?.historyExcluded === 'refused-at-preparation') &&
+      named.stopped
     return isStoppedRefusal
       ? { previous: undefined, refusal: named }
       : { previous: named, refusal: undefined }
@@ -1224,28 +1346,13 @@ export class StudyService {
           'The Node test cannot resume this historical or changed source pause.',
         )
       record.nodePhase = 'advancing'
-      try {
-        if (record.nodeRun.hasNextStop()) {
-          const next = await record.nodeRun.advance()
-          await record.nodeHistoryWriter?.appendStop(next)
-          record.nodeStops!.push(next)
-          record.nodePhase = 'paused'
-        } else {
-          record.nodeResult = await record.nodeRun.complete()
-          await record.nodeHistoryWriter?.appendResult(
-            record.nodeResult,
-            record.nodeResult.elapsedMs,
-          )
-          record.nodePhase = 'completed'
-        }
-      } catch (error) {
-        record.error = studyErrorNamingCause(domainError(error))
-        record.nodePhase = 'failed'
-        queueMicrotask(() => {
-          void this.stopRecord(record).catch(() => undefined)
-        })
-        throw record.error
-      }
+      const continuation = this.continueNodeTest(record, record.nodeRun)
+      // The run owns its continuation: a stop settles it, with its journal writes, before the seal (EN5).
+      record.nodeContinuation = continuation.then(
+        () => undefined,
+        () => undefined,
+      )
+      await continuation
       return { accepted: true, runUri: this.uri(record.id) }
     }
     // A reveal accepted for this pause finishes first: resuming under it would retire the pause its reader is still presenting.
@@ -1280,11 +1387,124 @@ export class StudyService {
     return { accepted: true, runUri: this.uri(record.id) }
   }
 
+  /**
+   * Runs a test run's continuation to its next declared stop or to its result, with the journal entry each writes; called by {@link StudyService.continue}, which keeps the promise on the run so a stop settles it before the seal (EN5).
+   * A result whose exit says the test did not pass is recorded even when Vitest's report could not confirm the cited test, and the run's error names the report ({@link OwnedNodeTestRun.complete}); an exit 0 without a confirming report rejects, so no result entry claims a pass nothing confirmed.
+   * @param record - The test run.
+   * @param run - Its owned Node test runtime.
+   * @throws A `STALE_PAUSE` {@link StudyError} when a stop cancelled the continuation, which leaves the run without an error of its own; the run's error, naming its cause, for any other failure, after which the run is stopped.
+   * @example await this.continueNodeTest(record, record.nodeRun)
+   */
+  private async continueNodeTest(
+    record: StudyRecord,
+    run: NodeTestRuntime,
+  ): Promise<void> {
+    try {
+      if (run.hasNextStop()) {
+        const next = await run.advance()
+        await record.nodeHistoryWriter?.appendStop(next)
+        record.nodeStops?.push(next)
+        record.nodePhase = 'paused'
+        return
+      }
+      const result = await run.complete()
+      record.nodeResult = result
+      await record.nodeHistoryWriter?.appendResult(result, result.elapsedMs)
+      record.nodePhase = 'completed'
+      // The exit already says the test did not pass; the run's error names why Vitest's report could not confirm the cited test.
+      if (result.reportFailure !== undefined) {
+        record.error = new StudyError(
+          'RUNTIME_FAILED',
+          `${describeNodeTestResult(result)}, and Vitest's test report could not confirm the cited test: ${result.reportFailure}`,
+        )
+        queueMicrotask(() => {
+          void this.stopRecord(record).catch(() => undefined)
+        })
+      }
+    } catch (error) {
+      // A stop cancelled this continuation: the run ends as stopped, without an error of its own.
+      if (record.stopping || record.stopped)
+        throw new StudyError(
+          'STALE_PAUSE',
+          'The run was stopped during this continuation; read the run resource.',
+          String(error),
+        )
+      record.error = studyErrorNamingCause(domainError(error))
+      record.nodePhase = 'failed'
+      queueMicrotask(() => {
+        void this.stopRecord(record).catch(() => undefined)
+      })
+      throw record.error
+    }
+  }
+
   /** Stops a run through its shared cleanup barrier; historical resources remain available. @example await service.stop({instanceId,runId}) */
   async stop(input: RunInput) {
     const record = this.record(input)
     await this.stopRecord(record)
     return this.state(record)
+  }
+
+  /**
+   * Stops a run for the `codebook_stop` tool and tells the tool whether the run's history could not be sealed, so the agent never reads a failed seal as a successful stop (X1); the status item's Save calls {@link StudyService.stop} instead and keeps its own paths.
+   * A repeated stop of the same run answers the same without a second seal: the run keeps its seal's failure.
+   * @param input - The run's identity.
+   * @returns The run's state, and the `HISTORY_SEAL_FAILED` error when a history existed and its seal (a test journal's, a browser recording's finish or read-back) failed.
+   * @throws What {@link StudyService.stop} throws for a release that failed.
+   * @example
+   * const { state, sealFailure } = await service.stopForTool({ instanceId, runId })
+   * sealFailure?.code // => 'HISTORY_SEAL_FAILED' after a full disk at the seal
+   */
+  async stopForTool(input: RunInput): Promise<{
+    state: ReturnType<StudyService['state']>
+    sealFailure?: StudyError
+  }> {
+    const record = this.record(input)
+    await this.stopRecord(record)
+    const state = this.state(record)
+    const sealFailure = this.sealFailure(record, state.finalOutcome)
+    return sealFailure ? { state, sealFailure } : { state }
+  }
+
+  /**
+   * Makes the `HISTORY_SEAL_FAILED` error of a stopped run whose existing history could not be sealed; read by {@link StudyService.stopForTool}.
+   * Never for a run without a history, a browser recording that failed before input, or a study the learner removed.
+   * @param record - The stopped run.
+   * @param finalOutcome - The run's runtime outcome, named for a run without a test result.
+   * @returns The error with the run, its result or outcome and the stops reached, and the sanitized cause cut for display; `undefined` for a run whose history sealed.
+   * @example this.sealFailure(record, 'demonstrated')?.message // => 'codebook_stop released run 5d… (Test passed · exit code 0, 2 of 2 stops reached) but could not seal its history.'
+   */
+  private sealFailure(
+    record: StudyRecord,
+    finalOutcome: string,
+  ): StudyError | undefined {
+    const failure =
+      record.profile === NODE_TEST_PROFILE
+        ? record.nodeHistoryStatus === 'failed'
+          ? record.nodeHistoryFailure
+          : undefined
+        : isStudyRemovalExclusion(record.historyExcluded)
+          ? undefined
+          : record.recordingSealFailure
+    if (failure === undefined) return undefined
+    const reached =
+      record.profile === NODE_TEST_PROFILE
+        ? (record.nodeStops?.length ?? 0)
+        : (record.runtime?.view().snapshots.length ?? 0)
+    const declared =
+      record.profile === NODE_TEST_PROFILE
+        ? 1 + (record.nodePrepared?.configuration.additionalStops?.length ?? 0)
+        : record.definition
+          ? configuredStops(record.definition.configuration).length
+          : reached
+    const outcome = record.nodeResult
+      ? describeNodeTestResult(record.nodeResult)
+      : finalOutcome
+    return new StudyError(
+      'HISTORY_SEAL_FAILED',
+      `codebook_stop released run ${record.id} (${outcome}, ${reached} of ${declared} stops reached) but could not seal its history.`,
+      cutCauseForDisplay(failure),
+    )
   }
 
   /**
@@ -1559,6 +1779,7 @@ export class StudyService {
         parsed.expectedRevision,
         parsed.content,
       )
+      this.cacheNodeLearning(parsed.studyId, material)
       this.presentationController?.nodeHistoryLearningMaterialSaved(
         parsed.studyId,
         material,
@@ -1571,14 +1792,35 @@ export class StudyService {
           'Node learning material changed; read the latest material and retry with its revision.',
           String(error),
         )
-      if (String(error).includes('does not match its sealed history'))
-        throw new StudyError(
-          'INVALID_REFERENCE',
-          'A learning sequence step does not match the selected sealed Node history.',
-          String(error),
-        )
+      // A step that cites another event is the store's own INVALID_REFERENCE, which names the step and the event (X19).
       throw error
     }
+  }
+
+  /**
+   * Keeps the material this window saved for a test run's history on the run, and counts the run's learning coverage again once its history is sealed, so the run resource reads the coverage of its own window's latest material without a store read (EN2); called by {@link StudyService.explainNodeHistory} after the store saved it.
+   * @param studyId - The history the material explains.
+   * @param material - The saved material, with its revision.
+   * @example this.cacheNodeLearning(studyId, material)
+   */
+  private cacheNodeLearning(
+    studyId: string,
+    material: { revision: number; content: NodeTestLearningMaterialContent },
+  ): void {
+    const record = [...this.records.values()].find(
+      (candidate) => `${this.instanceId}_${candidate.id}` === studyId,
+    )
+    if (!record) return
+    record.nodeLearningMaterial = {
+      revision: material.revision,
+      content: material.content,
+    }
+    // Before the seal the needs are not final; the seal counts this material then.
+    if (record.nodeLearning)
+      record.nodeLearning = this.nodeLearningOf(
+        record.nodeLearning.needs,
+        record.nodeLearningMaterial,
+      )
   }
 
   /** Reveals only the source bound to a committed snapshot; the editor adapter checks file/document hashes. @example await service.reveal({...run, snapshotUri}) */
@@ -2040,16 +2282,17 @@ export class StudyService {
           },
         }
       : undefined
+    // A test run's outcomes come from its run and history facts (plan version 7, Design 1); a browser run's from its runtime and saved study.
     const nodeOutcome =
       record.profile === NODE_TEST_PROFILE
-        ? record.error ||
-          (record.nodeResult &&
-            (record.nodeResult.exitCode !== 0 ||
-              record.nodeResult.signal !== null))
-          ? 'not-demonstrated'
-          : record.nodePhase === 'completed'
-            ? 'partial'
-            : 'pending'
+        ? projectNodeTestOutcome({
+            history: this.nodeHistoryState(record),
+            entryCount: record.nodeHistoryWriter?.entryCount ?? 0,
+            completed: record.nodePhase === 'completed',
+            result: record.nodeResult,
+            hasError: Boolean(record.error),
+            stopped: record.stopped,
+          })
         : undefined
     const participantView = (name: 'server' | 'browser') => {
       const participant = runtime?.participants[name],
@@ -2093,7 +2336,7 @@ export class StudyService {
       browser: participantView('browser'),
     }
     const finalOutcome =
-      nodeOutcome ??
+      nodeOutcome?.finalOutcome ??
       (terminalReason
         ? 'not-demonstrated'
         : (runtime?.finalOutcome ?? 'pending-teardown'))
@@ -2126,6 +2369,10 @@ export class StudyService {
       !explanationBudgetSpent &&
       stoppedEvidenceFailure === undefined
         ? 'save-learning-summary'
+        : undefined,
+      // A sealed test history whose learning material does not yet explain every stop and the result asks for codebook_explain_node_history.
+      record.nodeLearning && record.nodeLearning.coverage !== 'complete'
+        ? 'save-node-learning'
         : undefined,
       holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
@@ -2189,8 +2436,12 @@ export class StudyService {
                 record.nodeHistoryStatus ??
                 (record.nodeHistoryWriter ? 'recording' : 'unavailable'),
               historyReason: record.nodeHistoryFailure,
-              recordingAvailable: false,
-              replayAvailable: false,
+              testResult: nodeTestResultKind(record.nodeResult),
+              // Present once the history is sealed: how much the saved learning material explains, read from the run's cache (EN2).
+              learningCoverage: record.nodeLearning?.coverage,
+              learningMissing: record.nodeLearning?.missing,
+              recordingAvailable: nodeOutcome?.replayAvailable ?? false,
+              replayAvailable: nodeOutcome?.replayAvailable ?? false,
             }
           : undefined,
       // Dispatch and ACK change recoverable evidence even while the runtime remains in the same acting state.
@@ -2325,7 +2576,8 @@ export class StudyService {
     }
     const terminal = record.stopped || material.resourcesReleased
     const studyOutcome =
-      material.finalOutcome === 'not-demonstrated'
+      nodeOutcome?.studyOutcome ??
+      (material.finalOutcome === 'not-demonstrated'
         ? 'not-demonstrated'
         : material.finalOutcome === 'partial'
           ? 'partial'
@@ -2335,7 +2587,7 @@ export class StudyService {
               ? 'demonstrated'
               : historyOutcome.status === 'pending'
                 ? 'pending'
-                : 'partial'
+                : 'partial')
     const recordingReceipt = historyExcluded
       ? undefined
       : record.recordingReceipt
@@ -2347,52 +2599,50 @@ export class StudyService {
     const recordingRemoved =
       isStudyRemovalExclusion(record.historyExcluded) &&
       record.recording !== undefined
-    const recording = {
-      capture,
-      status:
-        record.profile === NODE_TEST_PROFILE
-          ? ('unavailable' as const)
-          : record.recordingFailure || recordingRemoved
-            ? ('failed' as const)
-            : record.recordingSeal
-              ? record.recordingSeal.status === 'complete'
-                ? ('finalized' as const)
-                : ('partial' as const)
-              : capture?.status === 'partial'
-                ? ('partial' as const)
-                : record.recording
-                  ? ('recording' as const)
-                  : ('unavailable' as const),
-      reason:
-        record.profile === NODE_TEST_PROFILE
-          ? 'Node test application video and synchronized replay are unavailable; inspect nodeTest.historyUri for its separate durable evidence journal.'
-          : recordingRemoved
+    const recording = nodeOutcome
+      ? this.nodeRecording(record, nodeOutcome.recordingStatus)
+      : {
+          capture,
+          status:
+            record.recordingFailure || recordingRemoved
+              ? ('failed' as const)
+              : record.recordingSeal
+                ? record.recordingSeal.status === 'complete'
+                  ? ('finalized' as const)
+                  : ('partial' as const)
+                : capture?.status === 'partial'
+                  ? ('partial' as const)
+                  : record.recording
+                    ? ('recording' as const)
+                    : ('unavailable' as const),
+          reason: recordingRemoved
             ? exclusionReason
             : (record.recordingFailure ??
               record.recordingSeal?.reason ??
               capture?.reason),
-      endMs: record.recordingSeal?.endMs,
-      contextStatus: recordingCurrent
-        ? recordingReceipt.status
-        : recordingReceipt
-          ? ('pending' as const)
-          : ('unavailable' as const),
-      contextHash:
-        recordingCurrent && recordingReceipt?.status === 'saved'
-          ? recordingReceipt.contextHash
-          : undefined,
-      studyHash:
-        recordingCurrent && recordingReceipt?.status === 'saved'
-          ? recordingReceipt.studyHash
-          : undefined,
-      contextReason: historyExcluded
-        ? exclusionReason
-        : recordingCurrent
-          ? recordingReceipt?.reason
-          : undefined,
-    }
+          endMs: record.recordingSeal?.endMs,
+          contextStatus: recordingCurrent
+            ? recordingReceipt.status
+            : recordingReceipt
+              ? ('pending' as const)
+              : ('unavailable' as const),
+          contextHash:
+            recordingCurrent && recordingReceipt?.status === 'saved'
+              ? recordingReceipt.contextHash
+              : undefined,
+          studyHash:
+            recordingCurrent && recordingReceipt?.status === 'saved'
+              ? recordingReceipt.studyHash
+              : undefined,
+          contextReason: historyExcluded
+            ? exclusionReason
+            : recordingCurrent
+              ? recordingReceipt?.reason
+              : undefined,
+        }
     const recordedStudyOutcome =
-      studyOutcome === 'not-demonstrated'
+      nodeOutcome?.recordedStudyOutcome ??
+      (studyOutcome === 'not-demonstrated'
         ? 'not-demonstrated'
         : studyOutcome === 'partial'
           ? 'partial'
@@ -2404,7 +2654,7 @@ export class StudyService {
               : recording.status === 'recording' ||
                   recording.contextStatus === 'pending'
                 ? 'pending'
-                : 'partial'
+                : 'partial')
     // A fresh clock reading guides preparation polling without changing durable evidence identity.
     const observedAtMs =
       record.profile === REPOSITORY_BROWSER_PROFILE &&
@@ -2439,6 +2689,57 @@ export class StudyService {
       studyOutcome,
       recording,
       recordedStudyOutcome,
+    }
+  }
+
+  /**
+   * Says where a test run's history stands for {@link projectNodeTestOutcome}; read by {@link StudyService.state}.
+   * @param record - The test run.
+   * @returns `none` before the history began, else the history's own status.
+   * @example this.nodeHistoryState(record) // => 'recording'
+   */
+  private nodeHistoryState(record: StudyRecord): NodeTestHistoryState {
+    if (!record.nodeHistoryWriter) return 'none'
+    return record.nodeHistoryStatus ?? 'recording'
+  }
+
+  /**
+   * Projects a test run's `recording` for the run resource: its status from the run's outcome, why a history is partial, failed or not begun, and the sealed journal's hash as its context; read by {@link StudyService.state}.
+   * @param record - The test run.
+   * @param status - The recording status of the run's outcome ({@link projectNodeTestOutcome}).
+   * @returns The run resource's `recording` of a test run.
+   * @example this.nodeRecording(record, 'finalized').contextHash // => the sealed journal's SHA-256
+   */
+  private nodeRecording(
+    record: StudyRecord,
+    status: ReturnType<typeof projectNodeTestOutcome>['recordingStatus'],
+  ) {
+    const sealed = status === 'finalized' || status === 'partial'
+    const reason =
+      status === 'failed'
+        ? record.nodeHistoryFailure
+        : status === 'partial'
+          ? record.nodeHistoryReason
+          : status === 'unavailable'
+            ? (historyExclusionReason(record.historyExcluded) ??
+              (record.stopped || record.error
+                ? 'The test run ended before its history began; nothing was recorded.'
+                : 'Preparing: the test history starts when preparation passes.'))
+            : undefined
+    return {
+      capture: undefined,
+      status,
+      reason,
+      endMs: undefined,
+      contextStatus: sealed
+        ? ('saved' as const)
+        : status === 'recording'
+          ? ('pending' as const)
+          : ('unavailable' as const),
+      contextHash: sealed ? record.nodeHistoryHash : undefined,
+      studyHash: undefined,
+      contextReason:
+        status === 'failed' ? record.nodeHistoryFailure : undefined,
     }
   }
 
@@ -2557,14 +2858,16 @@ export class StudyService {
   /**
    * Says whether a run ended before its whole-run deadline could apply, so the deadline's error is never added to it; the guard of {@link StudyService.expireAtDeadline} for both of its callers.
    * @param record - The run whose deadline passed.
-   * @returns `true` for a run that is stopped or being stopped, and for one whose runtime completed (its result was observed and only the release is left); `false` for a run that is still on its way.
+   * @returns `true` for a run that is stopped or being stopped, and for one whose runtime or test completed (its result was observed and only the release is left); `false` for a run that is still on its way.
    * @example this.hasRunEnded(record) // => true once record.runtime.view().status === 'completed'
    */
   private hasRunEnded(record: StudyRecord): boolean {
     return (
       record.stopped ||
       record.stopping ||
-      record.runtime?.view().status === 'completed'
+      record.runtime?.view().status === 'completed' ||
+      // A test run's result was observed: only its release is left.
+      record.nodePhase === 'completed'
     )
   }
 
@@ -2659,6 +2962,11 @@ export class StudyService {
             'PREREQUISITE_MISSING',
             'The owned Node test adapter or durable history store is unavailable.',
           )
+        // Every deterministic check refuses before the history exists, so a refused run records nothing and holds no slot (EN1).
+        await this.environment.checkNodeTestFiles?.(
+          record.nodePrepared.configuration,
+        )
+        if (this.stopping || record.stopping) return
         const studyId = `${this.instanceId}_${record.id}`
         record.nodeHistoryWriter = await this.nodeHistoryStore.start({
           profile: NODE_TEST_PROFILE,
@@ -2917,6 +3225,9 @@ export class StudyService {
       // A failure before the admission answered is saved as an ordinary preparation failure only where the library has room for it.
       if (record.historyExcluded === 'awaiting-admission')
         record.historyExcluded = await this.exclusionAfterEarlyFailure(record)
+      // A test run refused before its history began recorded nothing: it gives up its slot and its start key (EN1).
+      if (record.profile === NODE_TEST_PROFILE && !record.nodeHistoryWriter)
+        record.historyExcluded = 'refused-at-preparation'
       record.error = this.preparationError(record, error)
       record.runtime?.fail(record.error.message)
       if (record.nodePhase) record.nodePhase = 'failed'
@@ -3089,43 +3400,33 @@ export class StudyService {
                 0,
                 MAX_UI_TEXT_CHARS,
               )
+              // A recording whose finish or read-back failed at the stop is a history that could not be sealed: codebook_stop answers HISTORY_SEAL_FAILED.
+              record.recordingSealFailure = sanitizeCause(
+                error,
+                this.causeRoots,
+              )
+              this.diagnose(
+                'HISTORY_SEAL_FAILED',
+                record,
+                error,
+                record.recordingSealFailure,
+              )
             }
           }
         }
       }
       if (record.nodeRun && record.nodeRun !== cancellingNodeRun)
         await record.nodeRun.stop()
-      if (
-        record.nodeHistoryWriter &&
-        record.nodeHistoryStatus === 'recording'
-      ) {
-        const expectedStops = record.nodePrepared
-          ? 1 + (record.nodePrepared.configuration.additionalStops?.length ?? 0)
-          : Number.POSITIVE_INFINITY
-        const complete =
-          record.nodePhase === 'completed' &&
-          record.nodeResult?.exitCode === 0 &&
-          record.nodeResult.signal === null &&
-          record.nodeStops?.length === expectedStops &&
-          !record.error
-        const reason =
-          record.nodeHistoryFailure ??
-          (complete
-            ? undefined
-            : (record.error?.message ??
-              'Node test was interrupted or did not produce every declared stop and a passing result.'))
-        try {
-          await record.nodeHistoryWriter.finish(
-            complete ? 'complete' : 'partial',
-            reason,
-          )
-          record.nodeHistoryStatus = complete ? 'complete' : 'partial'
-        } catch (error) {
-          record.nodeHistoryWriter.abandon()
-          record.nodeHistoryFailure = String(error).slice(0, MAX_UI_TEXT_CHARS)
-          record.nodeHistoryStatus = 'failed'
-        }
+      // The continuation in flight settles first: its stop or result entry is written, or it failed (EN5).
+      await record.nodeContinuation
+      // A release that failed at an earlier stop is no error of the run once this stop released it (EN4).
+      if (record.nodeRun && record.errorSource?.kind === 'release') {
+        record.error = undefined
+        record.errorSource = undefined
+        record.releaseError = undefined
       }
+      if (record.nodeHistoryWriter && record.nodeHistoryStatus === 'recording')
+        await this.sealNodeHistory(record, record.nodeHistoryWriter)
       // What the evidence failed with by the end is the run's; a later write's failure is not (row 699).
       record.evidenceFailureAtStop = record.runtime?.evidence.failure
       record.stopped = true
@@ -3143,6 +3444,86 @@ export class StudyService {
       throw failure
     } finally {
       record.stopping = false
+    }
+  }
+
+  /**
+   * Seals a test run's history once its release and its continuation have ended; called by {@link StudyService.stopRecord}.
+   * The seal is `complete` from the test's own facts (EN4): its last continuation completed, every declared stop was captured and the result verifiably passed. Then the run's learning coverage is counted from the stops and the result the writer wrote and the material this window saved (EN2). A seal that throws leaves the journal as an interrupted prefix and the run's `HISTORY_SEAL_FAILED`, with its sanitized cause and one Output › Codebook entry.
+   * @param record - The test run.
+   * @param writer - Its history writer, still recording.
+   * @example await this.sealNodeHistory(record, record.nodeHistoryWriter)
+   */
+  private async sealNodeHistory(
+    record: StudyRecord,
+    writer: NodeTestHistoryWriter,
+  ): Promise<void> {
+    const expectedStops = record.nodePrepared
+      ? 1 + (record.nodePrepared.configuration.additionalStops?.length ?? 0)
+      : Number.POSITIVE_INFINITY
+    const passed =
+      nodeTestResultKind(record.nodeResult) === 'passed' &&
+      record.nodeResult?.reportFailure === undefined
+    const complete =
+      record.nodePhase === 'completed' &&
+      passed &&
+      record.nodeStops?.length === expectedStops
+    const reason = complete ? undefined : this.partialHistoryReason(record)
+    try {
+      record.nodeHistoryHash = await writer.finish(
+        complete ? 'complete' : 'partial',
+        reason,
+      )
+      record.nodeHistoryStatus = complete ? 'complete' : 'partial'
+      record.nodeHistoryReason = reason
+      record.nodeLearning = this.nodeLearningOf(
+        writer.learningNeeds(),
+        record.nodeLearningMaterial,
+      )
+    } catch (error) {
+      writer.abandon()
+      record.nodeHistoryFailure = sanitizeCause(error, this.causeRoots)
+      record.nodeHistoryStatus = 'failed'
+      this.diagnose(
+        'HISTORY_SEAL_FAILED',
+        record,
+        error,
+        record.nodeHistoryFailure,
+      )
+    }
+  }
+
+  /**
+   * Says why a test run's history ends partial, for its seal and the run resource's `recording.reason`; called by {@link StudyService.sealNodeHistory}.
+   * @param record - The test run.
+   * @returns The run's error, the result that did not pass, or that the run ended before its result, sanitized ({@link sanitizeCause}).
+   * @example this.partialHistoryReason(record) // => 'The test did not pass: Test failed · exit code 1.'
+   */
+  private partialHistoryReason(record: StudyRecord): string {
+    const kind = nodeTestResultKind(record.nodeResult)
+    const reason = record.error
+      ? record.error
+      : kind === 'failed' || kind === 'signal'
+        ? `The test did not pass: ${describeNodeTestResult(record.nodeResult)}.`
+        : 'Node test was interrupted or did not produce every declared stop and a passing result.'
+    return sanitizeCause(reason, this.causeRoots)
+  }
+
+  /**
+   * Counts a test run's learning coverage from what its sealed journal asks to explain and the material this window saved; called at the seal and by {@link StudyService.explainNodeHistory} after each saved material, so {@link StudyService.state} only reads the result (EN2).
+   * @param needs - The stops and the result the journal holds.
+   * @param material - The material this window last saved, if any.
+   * @returns The cache the run keeps.
+   * @example this.nodeLearningOf({ stopSequences: [2] }, undefined).coverage // => 'none'
+   */
+  private nodeLearningOf(
+    needs: NodeLearningNeeds,
+    material: StudyRecord['nodeLearningMaterial'],
+  ): NonNullable<StudyRecord['nodeLearning']> {
+    return {
+      needs,
+      materialRevision: material?.revision ?? 0,
+      ...listMissingNodeExplanations(needs, material?.content),
     }
   }
 

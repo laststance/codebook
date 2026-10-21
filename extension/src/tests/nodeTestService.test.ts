@@ -16,7 +16,8 @@ import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSource
 import { createHarness } from './helpers'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
-test('public Node test start exposes cited ordered pauses, actual result, and the recording limitation', async () => {
+// Value: protects=a natural test run's whole loop on the run resource: cited ordered pauses, the actual passing result, the sealed journal as a demonstrated test replay with its hash, the agent's coverage fields and the neutral help; fails_when=a passing run with every declared stop reads partial or unavailable, the contextHash differs from the sealed journal, coverage or nextActions are missing, or the help keeps a removed sentence or a development-target title; why_new=API 1.8 makes a test run a learning replay (C49-1, AC1, AC8); seam=the owned Node test runtime is a fake; no_claim=the native debugger and Vitest (ownedNodeTestRun tests, N49)
+test('a passing Node test run with every declared stop is demonstrated and sealed as a test replay', async () => {
   // Arrange
   const harness = await createHarness(),
     { service } = harness
@@ -218,11 +219,28 @@ test('public Node test start exposes cited ordered pauses, actual result, and th
       signal: null,
       output: 'Tests 1 passed',
     })
-    assert.equal(state.finalOutcome, 'partial')
-    assert.equal(state.studyOutcome, 'partial')
-    assert.equal(state.recording.status, 'unavailable')
-    assert.equal(nodeTest.replayAvailable, false)
+    assert.equal(state.finalOutcome, 'demonstrated')
+    assert.equal(state.studyOutcome, 'demonstrated')
+    assert.equal(state.recordedStudyOutcome, 'demonstrated')
+    assert.equal(state.recording.status, 'finalized')
+    assert.equal(state.recording.contextStatus, 'saved')
+    assert.equal(
+      state.recording.contextHash,
+      restartedHistory.seal?.journalHash,
+    )
+    assert.equal(state.recording.reason, undefined)
+    assert.equal(nodeTest.recordingAvailable, true)
+    assert.equal(nodeTest.replayAvailable, true)
     assert.equal(nodeTest.historyStatus, 'complete')
+    assert.equal(nodeTest.testResult, 'passed')
+    assert.equal(nodeTest.learningCoverage, 'none')
+    assert.deepEqual(nodeTest.learningMissing, [
+      { kind: 'summary' },
+      { kind: 'stop', stop: 1 },
+      { kind: 'stop', stop: 2 },
+      { kind: 'result' },
+    ])
+    assert.ok(state.nextActions.includes('save-node-learning'))
     assert.deepEqual(
       restartedHistory.entries.map((entry) => entry.type),
       ['output', 'stop', 'stop', 'result'],
@@ -259,24 +277,26 @@ test('public Node test start exposes cited ordered pauses, actual result, and th
     )
     assert.ok('text' in help)
     assert.match(help.text, /history journal/i)
-    assert.match(
+    assert.doesNotMatch(
       help.text,
       /not application video or synchronized application replay/i,
     )
+    assert.doesNotMatch(help.text, /replay (is |are )?unavailable/i)
     assert.match(
       help.text,
-      /\[\\"invoice data queries\\", \\"converts stored invoice cents to dollars for the edit form\\"\]/,
+      /\[\\"job scheduler\\", \\"runs a delayed job after its timer\\"\]/,
       'help shows a nested test cited by its title path',
+    )
+    assert.doesNotMatch(
+      help.text,
+      /invoice data queries/,
+      'help quotes no title of the development target',
     )
     assert.match(help.text, /testName is retired and refused for new runs/)
     assert.match(
       help.text,
       /Codebook does not resume it.*node-test\.learner-paused.*continue it in the native debugger/,
       'help tells the agent a learner pause waits for the learner',
-    )
-    assert.match(
-      state.recording.reason!,
-      /application video and synchronized replay are unavailable/i,
     )
     assert.equal(releases, 1)
   } finally {

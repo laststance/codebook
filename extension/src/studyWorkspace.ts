@@ -10344,17 +10344,22 @@ export class StudyWorkspace {
             )?.id ?? selected.itemId,
         })
       }
+      // A selected test replay owns its source, Application view and debugger: the refresh updates the catalog and the status only (EN9).
+      const testReplaySelected = this.selectedNodeHistory !== undefined
       // Playback owns recorded source presentation; background checkpoints cannot reveal it over the returned Wiki.
       if (
         this.opened &&
         !this.closing &&
         !this.recordingActive &&
+        !testReplaySelected &&
         this.repositoryNavigation === undefined &&
         !this.presentationTransition &&
         // A saved study chosen with the editor area hidden is shown by showStudyAwaitingEditorArea once the area is back.
         !this.studyAwaitsEditorArea()
       )
         await this.renderSelection(true, false, signal)
+      else if (testReplaySelected && this.opened && !this.closing)
+        this.publish()
     })()
     this.refreshing = attempt
     try {

@@ -53,7 +53,7 @@ export const nodeTestConfigSchema = z
       .max(NODE_TEST_TITLE_PATH_LIMIT)
       .optional()
       .describe(
-        'Required for a new run: every enclosing describe title, outermost first, then the test title, exactly as Vitest reports them. Example: ["invoice data queries", "converts stored invoice cents to dollars for the edit form"].',
+        'Required for a new run: every enclosing describe title, outermost first, then the test title, exactly as Vitest reports them. Example: ["job scheduler", "runs a delayed job after its timer"].',
       ),
     source: repositorySourceStopSchema,
     inspections: nodeTestStopInspectionsSchema,
