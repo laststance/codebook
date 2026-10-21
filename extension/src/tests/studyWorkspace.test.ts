@@ -209,6 +209,11 @@ test('saved Node history is selectable in the reader without entering browser pl
       26,
     )
     await writer.finish('complete')
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      header.studyId,
+      1,
+    )
     await harness.reader.open()
     await waitUntil(
       () =>
@@ -226,7 +231,7 @@ test('saved Node history is selectable in the reader without entering browser pl
       1_000,
     )
 
-    // Assert: the library exposes the journal as a distinct artifact and discloses missing replay media.
+    // Assert: the library lists the journal as a test replay with its verdict, capture and explained stops (DS14).
     const libraryMessage = harness.postedMessages().slice(-1)[0]!
     const libraryEntry = libraryMessage.studies.find(
       (entry) => entry.id === header.studyId,
@@ -234,8 +239,9 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.equal(libraryEntry.profile, 'node-test')
     assert.equal(
       libraryEntry.outcome,
-      'Node test complete; application video and synchronized replay unavailable',
+      'Test replay · Test passed · exit code 0 · capture complete · 0 of 2 stops explained',
     )
+    assert.doesNotMatch(libraryEntry.outcome, /replay (is |are )?unavailable/i)
     assert.equal(libraryEntry.metadata, 'validated')
 
     // Act: selecting the catalog entry routes to the Node journal while preserving browser-study selection.
@@ -281,8 +287,9 @@ test('saved Node history is selectable in the reader without entering browser pl
         .html ?? ''
     assert.match(
       applicationHtml,
-      /Node test history · application video unavailable/,
+      /Recorded test output for this test replay is in the Study pane\./,
     )
+    assert.doesNotMatch(applicationHtml, /application video unavailable/)
     assert.doesNotMatch(
       applicationHtml,
       /<img alt="Application pixels captured/,
@@ -933,6 +940,11 @@ test('Node journal time seeking restores exact stops and clears debugger across 
       500,
     )
     await writer.finish('complete')
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     const initial = harness.postedMessages().slice(-1)[0]!
     harness.receiveContext({
@@ -1084,6 +1096,9 @@ test('time seeking in a second opened Node history presents its own stop instead
     }
     const firstHistory = await saveHistory('"dark"'),
       secondHistory = await saveHistory('"light"')
+    // The test starts each history at its first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    for (const history of [firstHistory, secondHistory])
+      await store.saveReaderPosition(history.studyId, 1)
     await harness.reader.open()
     for (const history of [firstHistory, secondHistory]) {
       harness.receiveContext({
@@ -1189,6 +1204,11 @@ test('reopening a Node history after the learner stops its historical debugger r
       300,
     )
     await writer.finish('complete')
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -1299,7 +1319,7 @@ test('returning to the current run leaves a selected Node history so its missing
     )
     assert.doesNotMatch(
       applicationPanel.webview.html,
-      /Node test history · application video unavailable/,
+      /Recorded test output for this test replay is in the Study pane/,
     )
     assert.equal(
       harness.groups.flatMap((group) => group.tabs).includes(preview),
@@ -1367,6 +1387,11 @@ test('selecting a Node stop after the learner stops its historical debugger rest
   try {
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
+    )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
     )
     await harness.reader.open()
     harness.receiveContext({
@@ -1448,6 +1473,11 @@ test('seeking a Node history onto a stop after the learner stops its historical 
   try {
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
+    )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
     )
     await harness.reader.open()
     harness.receiveContext({
@@ -1532,6 +1562,11 @@ test('moving to another Node history event while a stop still loads its native v
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -1594,6 +1629,11 @@ test('a Node history stop whose native presentation fails while still selected r
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -1655,6 +1695,11 @@ test('a saved Node stop whose values Run and Debug has not loaded tells the lear
       harness.service.nodeHistoryStore!,
     )
     harness.setHistoricalDebugInspection('uninspected')
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -1706,6 +1751,11 @@ test('opening a recording while a Node history stop still loads its native value
   try {
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
+    )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
     )
     await harness.reader.open()
     harness.receiveContext({
@@ -1759,6 +1809,11 @@ test('closing the reader drops the Run and Debug hint of a saved Node stop', asy
       harness.service.nodeHistoryStore!,
     )
     harness.setHistoricalDebugInspection('uninspected')
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -2141,6 +2196,11 @@ test('a shown Node stop whose captured text no longer matches its hash is report
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -2203,6 +2263,11 @@ test('a saved Node stop shown in Run and Debug before the reader closed offers I
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -2259,6 +2324,11 @@ test('native values loading for a saved Node stop drops its Run and Debug hint a
       harness.service.nodeHistoryStore!,
     )
     harness.setHistoricalDebugInspection('uninspected')
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -2309,6 +2379,11 @@ test('a refused recording open lets a loading Node history stop finish its selec
   try {
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
+    )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
     )
     await harness.reader.open()
     harness.receiveContext({
@@ -3755,6 +3830,11 @@ test('opening a recording drops the Run and Debug hint of a saved Node stop and 
       harness.service.nodeHistoryStore!,
     )
     harness.setHistoricalDebugInspection('uninspected')
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -3806,6 +3886,11 @@ test('a Node stop still loading when a recording opens never becomes the Node ti
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -3854,6 +3939,11 @@ test('closing the reader stops Node Play at once, so no Node stop starts while c
   try {
     const history = await saveOneStopNodeHistory(store)
     harness.setHistoricalDebugInspection('uninspected')
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -3932,6 +4022,11 @@ test('ending the historical session re-enables Inspect for the selected Node sto
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -4001,6 +4096,11 @@ test('a Node stop selection that was waiting for the stopped historical debugger
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -4064,6 +4164,11 @@ test('a Node stop selected before the reader closed keeps its matching captured 
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
     )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
+    )
     await harness.reader.open()
     harness.receiveContext({
       type: 'node-history',
@@ -4124,6 +4229,11 @@ test('pressing Inspect again while the editor is still stopping the ended histor
   try {
     const history = await saveOneStopNodeHistory(
       harness.service.nodeHistoryStore!,
+    )
+    // The test starts at the history's first event: a saved reader position there wins over landing on the first verified stop (DS1).
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      1,
     )
     await harness.reader.open()
     harness.receiveContext({

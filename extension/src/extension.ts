@@ -14,6 +14,7 @@ import * as vscode from 'vscode'
 
 import {
   AGENT_STORAGE_DIRECTORY,
+  API_VERSION,
   CONNECTION_DESCRIPTOR_SUFFIX,
   EXTENSION_VERSION,
   PRIVATE_DIRECTORY_MODE,
@@ -91,6 +92,10 @@ import {
   type FolderChangeCleanupFailure,
   type FolderChangeCleanupStep,
 } from './utils/folderChangeCleanupNotice'
+import {
+  formatCodebookDiagnostic,
+  type CodebookDiagnostic,
+} from './utils/formatCodebookDiagnostic'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import type { WikiLeftover } from './utils/isAcknowledgedWikiLeftover'
 import { isWikiManifestOf } from './utils/isWikiManifestOf'
@@ -183,6 +188,22 @@ export function activate(
     handler: Parameters<typeof registerPlainCommand>[2],
   ): vscode.Disposable =>
     registerPlainCommand(vscode.commands, command, handler)
+  // Unexpected failures on a test replay's paths, which the learner can read and copy (X5): one LogOutputChannel for the window.
+  const output = vscode.window.createOutputChannel?.('Codebook', { log: true })
+  if (output) context.subscriptions.push(output)
+  const diagnostics = {
+    log: (entry: CodebookDiagnostic): void => {
+      output?.error(
+        formatCodebookDiagnostic(entry, {
+          extensionVersion: EXTENSION_VERSION,
+          apiVersion: API_VERSION,
+          hostName: vscode.env?.appName ?? 'unknown host',
+          hostVersion: vscode.version ?? 'unknown version',
+        }),
+      )
+    },
+    show: (): void => output?.show(true),
+  }
   const isCursorHost =
     vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
   const setupMatchesCurrentWorkspace = () => {
@@ -375,6 +396,7 @@ export function activate(
       },
       [...unsavedStudies],
     )
+    reader.diagnostics = diagnostics
     // Only a reader that was made has taken them: a constructor that throws leaves them for the next reader.
     unsavedStudies.length = 0
     return reader
@@ -440,6 +462,9 @@ export function activate(
         // js-debug canonicalizes executed paths; source-map allowlists and seals must use the same identity.
         const storageRoot = await realpath(directory)
         service = new StudyService(environment, storageRoot)
+        service.diagnostics = diagnostics.log
+        // Every storage folder of the extension stays out of the causes the learner and the agent read (EN12).
+        service.extraStorageRoots.push(context.globalStorageUri.fsPath)
         await workspace().attach(service)
         service.repository = await repository().storage()
         service.repositoryReader = (input, signal) =>

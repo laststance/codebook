@@ -3410,7 +3410,7 @@ async function check(page, options, collected) {
           JSON.stringify(nodeAfterApplicationReplay) ===
             JSON.stringify({
               status:
-                'complete · 2 verified events. Test output is the recorded surface; application video and synchronized application replay are unavailable.',
+                'complete · 2 verified events. Test output, executed source and recorded debugger stops; no application video.',
               nodePlayVisible: true,
               nodePlayEnabled: true,
               nodeTimelineVisible: true,

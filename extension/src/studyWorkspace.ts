@@ -99,6 +99,7 @@ import {
   type NamedUnconfirmedWriters,
   type StudyRemoval,
 } from './learningLibrary'
+import { NodeLearningSave } from './nodeLearningSave'
 import type {
   NodeTestHistoryIndex,
   NodeTestHistoryLearningDecision,
@@ -202,6 +203,8 @@ import { captureStudy } from './utils/captureStudy'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
 import { createRecordingObserver } from './utils/createRecordingObserver'
+import { describeNodeLearningSave } from './utils/describeNodeLearningSave'
+import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
 import { describeStudy } from './utils/describeStudy'
 import {
   describeViewportDelivery,
@@ -216,9 +219,11 @@ import { editorTabInputKinds } from './utils/editorTabInputKinds'
 import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
 import { emptyGroupsGoneSince } from './utils/emptyGroupsGoneSince'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
+import { firstVerifiedStopSequence } from './utils/firstVerifiedStopSequence'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
 import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
+import type { CodebookDiagnostic } from './utils/formatCodebookDiagnostic'
 import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
 import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
 import { hasRowAtMinimumHeight } from './utils/hasRowAtMinimumHeight'
@@ -264,6 +269,8 @@ import {
 } from './utils/recordedLeftoverGroups'
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
+import { sanitizeCause } from './utils/sanitizeCause'
+import { sanitizedStack } from './utils/sanitizedStack'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
 import { settledWithin } from './utils/settledWithin'
@@ -616,6 +623,20 @@ export class StudyWorkspace {
     signature?: string
   }
   private learningSaveOperation?: Promise<void>
+  /** Where unexpected failures of a test replay's paths are reported, the Output › Codebook channel; the extension sets it at activation. */
+  diagnostics?: { log: (entry: CodebookDiagnostic) => void; show: () => void }
+  /** Saves a test run's learning replay from the status item (EN14); this workspace only wires the item and its commands to it. */
+  private readonly nodeLearningSave = new NodeLearningSave({
+    service: () => this.service,
+    store: () => this.nodeHistoryStore,
+    ask: async (text, actions) =>
+      vscode.window.showWarningMessage(text, { modal: true }, ...actions),
+    notify: async (severity, text, actions) =>
+      showPlainNotice(vscode.window, severity, text, ...actions),
+    open: (studyId) => this.openLearningReplay(studyId),
+    log: (entry) => this.diagnostics?.log(entry),
+    changed: () => this.publish(),
+  })
 
   private library?: LearningLibrary
   private recordings?: RecordingStore
@@ -10735,6 +10756,17 @@ export class StudyWorkspace {
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
       record = this.currentRecord()
+    // A test run's Save belongs to NodeLearningSave; a delayed click for another run is refused as for a browser save.
+    if (service && record?.profile === NODE_TEST_PROFILE) {
+      if (
+        expectedStudyId !== undefined &&
+        expectedStudyId !== `${service.instanceId}_${record.id}`
+      )
+        throw new Error(
+          'The recorded session changed. Use the current Save learning replay control.',
+        )
+      return this.nodeLearningSave.save(record)
+    }
     // A refused run recorded nothing, and the recording of a removed study went to the Trash with it.
     if (!service || !record || !record.recording || record.historyExcluded)
       throw new Error(
@@ -10839,20 +10871,21 @@ export class StudyWorkspace {
             this.learningSave.signature))
         ? this.learningSave
         : undefined
+    // A test run's item shows what NodeLearningSave says of it.
+    if (record?.profile === NODE_TEST_PROFILE) {
+      const view = this.nodeLearningSave.item(record)
+      if (!view || !studyId) {
+        this.learningSaveItem?.hide()
+        return
+      }
+      this.showLearningSaveItem(view.text, view.tooltip, view.command, studyId)
+      return
+    }
     if (!record?.recording || !studyId || record.historyExcluded) {
       this.learningSaveItem?.hide()
       return
     }
-    if (!this.learningSaveItem) {
-      this.learningSaveItem = vscode.window.createStatusBarItem(
-        'codebook.learningSave',
-        vscode.StatusBarAlignment.Right,
-      )
-      this.learningSaveItem.name = 'Codebook learning replay'
-      this.disposables.push(this.learningSaveItem)
-    }
-    const item = this.learningSaveItem
-    item.text =
+    const text =
       saved?.status === 'saving'
         ? '$(sync~spin) Saving learning…'
         : saved?.status === 'saved'
@@ -10862,7 +10895,7 @@ export class StudyWorkspace {
             : saved?.status === 'failed'
               ? '$(error) Learning save failed · Retry'
               : `${record.stopped ? '$(save) Recording finished' : '$(record) Recording explanation'} · Save learning replay`
-    item.tooltip =
+    const tooltip =
       saved?.detail ??
       'Finish this Codebook recording and save learning replay. This stops only its owned runtime; missing history or summary is reported as partial.'
     const opensReplay = saved?.status === 'saved' || saved?.status === 'partial'
@@ -10878,6 +10911,34 @@ export class StudyWorkspace {
               : 'codebook.saveLearningReplay',
             arguments: [studyId],
           }
+    this.showLearningSaveItem(text, tooltip, command, studyId)
+  }
+
+  /**
+   * Shows the status bar's learning replay item with its text, tooltip and command, creating it once; called by {@link publishLearningSave} for a browser run and for a test run.
+   * @param text - The item's text.
+   * @param tooltip - Its tooltip, a plain string.
+   * @param command - What a click runs; none while a save runs.
+   * @param studyId - The study the command names.
+   * @example this.showLearningSaveItem('$(save) Recording finished · Save learning replay', tooltip, command, studyId)
+   */
+  private showLearningSaveItem(
+    text: string,
+    tooltip: string,
+    command: vscode.Command | undefined,
+    studyId: string,
+  ): void {
+    if (!this.learningSaveItem) {
+      this.learningSaveItem = vscode.window.createStatusBarItem(
+        'codebook.learningSave',
+        vscode.StatusBarAlignment.Right,
+      )
+      this.learningSaveItem.name = 'Codebook learning replay'
+      this.disposables.push(this.learningSaveItem)
+    }
+    const item = this.learningSaveItem
+    item.text = text
+    item.tooltip = tooltip
     const commandKey = JSON.stringify([command?.command, studyId])
     // The host makes a new internal command of every assigned object and disposes the one before, so an entry still drawn with the earlier one fails on a click ("Actual command not found"): assign only a changed command or study.
     if (commandKey !== this.learningSaveCommandKey) {
@@ -10939,6 +11000,9 @@ export class StudyWorkspace {
    * @example await workspace.openLearningReplay(studyId)
    */
   async openLearningReplay(studyId: string): Promise<void> {
+    // A test replay opens in the Study pane, not through the browser replay's controller.
+    if (this.isTestReplayStudy(studyId))
+      return this.openNodeHistoryFromHost(studyId)
     await this.openRecording(studyId)
     const playback = this.playback!
     const resultWaitEndsAtMs = performance.now() + OPEN_REPLAY_RESULT_WAIT_MS
@@ -10966,6 +11030,228 @@ export class StudyWorkspace {
       'error',
       `Codebook could not open the learning replay: ${withoutErrorName(state.reason)}`,
     )
+  }
+
+  /**
+   * Says whether a study id names a test replay: a test history the last refresh listed, or a node-test run of this window's service; read by {@link openLearningReplay}.
+   * @param studyId - The study id the status item or a command names.
+   * @returns `true` for a test replay.
+   * @example this.isTestReplayStudy(studyId) // => true for a sealed test history
+   */
+  private isTestReplayStudy(studyId: string): boolean {
+    return (
+      this.nodeHistoryCatalog.some((history) => history.studyId === studyId) ||
+      [...(this.service?.records.values() ?? [])].some(
+        (record) =>
+          record.profile === NODE_TEST_PROFILE &&
+          `${this.service?.instanceId}_${record.id}` === studyId,
+      )
+    )
+  }
+
+  /**
+   * Opens a test replay for the status item's Open replay and Open retained history: the Study pane is opened first when it is closed, then the shared open runs ({@link openNodeHistory}); called by {@link openLearningReplay}.
+   * During a browser replay the learner is told that one replay shows at a time and may close it first (DS10). A failed open raises the load-failure notification with Show details and writes one Output › Codebook entry; the Study pane stays open on Saved studies (X4).
+   * @param studyId - The test replay's study id.
+   * @returns Once the replay is shown, the learner declined to close a browser replay, or the failure was told.
+   * @example await workspace.openNodeHistoryFromHost(studyId)
+   */
+  async openNodeHistoryFromHost(studyId: string): Promise<void> {
+    if (this.recordingActive) {
+      const refusal = describeNodeLearningSave({ kind: 'open-refused' })
+      const action = await showPlainNotice(
+        vscode.window,
+        'warning',
+        refusal.text,
+        ...(refusal.actions ?? []),
+      )
+      if (action !== 'Close browser replay') return
+      await this.returnCurrentSelection('learner')
+      if (this.recordingActive) return
+    }
+    if (!this.opened) await this.open()
+    const outcome = await this.openNodeHistory(studyId, this.revision)
+    if (outcome.status !== 'failed') return
+    const roots = this.service?.causeRoots ?? { storage: [] }
+    const cause = sanitizeCause(outcome.error, roots)
+    const stack = sanitizedStack(outcome.error, roots)
+    this.diagnostics?.log({
+      surface: 'open:test-replay',
+      studyId,
+      profile: NODE_TEST_PROFILE,
+      cause,
+      ...(stack ? { stack } : {}),
+    })
+    const summary = this.nodeHistoryCatalog.find(
+      (history) => history.studyId === studyId,
+    )
+    const failure = describeNodeLearningSave({
+      kind: 'open-failed',
+      title: summary
+        ? [summary.testFile, ...(summary.testTitles ?? [])].join(' › ')
+        : studyId,
+      cause,
+    })
+    const action = await showPlainNotice(
+      vscode.window,
+      'error',
+      failure.text,
+      ...(failure.actions ?? []),
+    )
+    if (action === 'Show details') this.diagnostics?.show()
+  }
+
+  /**
+   * Opens a saved test history in the Study pane, the Application pane and the replay debugger at its saved reader position, or without one on its first stop whose source verifies, or on its first event when none does (DS1); the open the Study pane's `node-history` message and {@link openNodeHistoryFromHost} share.
+   * Each open takes a request token from the same counter as the pane's history requests (EN19), so a host open and a pane open never interleave their writes: a later request supersedes this one.
+   * @param studyId - The test history's study id.
+   * @param revision - The reader revision the open belongs to; a newer revision supersedes it.
+   * @returns `opened`, `superseded` by a newer request, revision or close, or `failed` with the error, which the reader also shows.
+   * @example await this.openNodeHistory(studyId, this.revision) // => { status: 'opened' }
+   */
+  private async openNodeHistory(
+    studyId: string,
+    revision: number,
+  ): Promise<
+    { status: 'opened' | 'superseded' } | { status: 'failed'; error: unknown }
+  > {
+    const request = ++this.historyRequest
+    this.studyChoices++
+    this.pendingNodeHistory = request
+    this.loading = true
+    this.publish()
+    try {
+      await this.replaceUnavailableReplayDebugger()
+      const history = await this.nodeHistoryStore!.read(studyId)
+      if (
+        request !== this.historyRequest ||
+        revision !== this.revision ||
+        this.closing
+      )
+        return { status: 'superseded' }
+      let learningDecision: NodeTestHistoryLearningDecision | undefined
+      try {
+        learningDecision =
+          await this.nodeHistoryStore!.readLearningDecision(studyId)
+      } catch (error) {
+        this.report('progress', error)
+      }
+      if (
+        request !== this.historyRequest ||
+        revision !== this.revision ||
+        this.closing
+      )
+        return { status: 'superseded' }
+      let learningMaterial: NodeTestLearningMaterial | undefined
+      try {
+        learningMaterial =
+          await this.nodeHistoryStore!.readLearningMaterial(studyId)
+      } catch (error) {
+        this.report('history-learning', error)
+      }
+      if (
+        request !== this.historyRequest ||
+        revision !== this.revision ||
+        this.closing
+      )
+        return { status: 'superseded' }
+      let savedSequence: number | undefined, positionError: unknown
+      try {
+        savedSequence = await this.nodeHistoryStore!.readReaderPosition(studyId)
+      } catch (error) {
+        positionError = error
+      }
+      if (
+        request !== this.historyRequest ||
+        revision !== this.revision ||
+        this.closing
+      )
+        return { status: 'superseded' }
+      this.nodeHistoryPlaybackController?.dispose()
+      this.replayDebugger?.invalidate()
+      this.selectedNodeHistoryRequest++
+      this.selectedNodeHistory = history
+      // Admitting another history permanently retires the prior exact Wiki visit; refused reads leave it intact.
+      this.repositoryObservation = undefined
+      this.selectedNodeHistoryLearningDecision = learningDecision
+      this.selectedNodeHistoryLearningMaterial = learningMaterial
+      this.selectedNodeHistoryPage = 0
+      this.selectedNodeHistorySequence = undefined
+      this.selectedNodeHistoryDebugAvailable = false
+      this.selectedNodeHistoryValuesUninspected = false
+      // A Node history has no application frames; replace pixels from the prior browser study immediately.
+      this.presentApplication(this.message())
+      // Each opened history gets its own controller; the present callback is bound to this study.
+      this.nodeHistoryPlaybackController = new NodeHistoryPlaybackController({
+        present: async (sequence) => {
+          const selectedHistory = this.selectedNodeHistory
+          if (!selectedHistory || selectedHistory.header.studyId !== studyId)
+            throw new Error(
+              'The selected Node history changed during playback.',
+            )
+          await this.selectNodeHistoryEvent(
+            selectedHistory,
+            sequence,
+            false,
+            false,
+            false,
+          )
+        },
+        changed: () => this.publish(),
+        failed: (error) => this.report('control', error),
+      })
+      this.nodeHistoryPlaybackController.open(
+        history.entries.map((entry) => ({
+          sequence: entry.sequence,
+          elapsedMs: entry.elapsedMs,
+        })),
+        savedSequence ??
+          firstVerifiedStopSequence(history) ??
+          history.entries[0]?.sequence,
+      )
+      if (positionError) this.report('history-position', positionError)
+      const initialSequence =
+        savedSequence ??
+        firstVerifiedStopSequence(history) ??
+        history.entries[0]?.sequence
+      if (initialSequence !== undefined)
+        await this.selectNodeHistoryEvent(
+          history,
+          initialSequence,
+          false,
+          false,
+          false,
+        )
+      if (
+        request !== this.historyRequest ||
+        revision !== this.revision ||
+        this.closing
+      )
+        return { status: 'superseded' }
+      this.loading = false
+      this.publish()
+      return { status: 'opened' }
+    } catch (error) {
+      if (
+        request !== this.historyRequest ||
+        revision !== this.revision ||
+        this.closing
+      )
+        return { status: 'superseded' }
+      this.loading = false
+      this.report('archive', error)
+      this.publish()
+      return { status: 'failed', error }
+    } finally {
+      // A newer Node history request owns the marker by then.
+      if (this.pendingNodeHistory === request)
+        this.pendingNodeHistory = undefined
+      // A request discarded only because the reader's revision changed is still the latest; nothing else ends the loading state it set.
+      if (this.loading && this.isLatestHistoryRequest(request)) {
+        this.loading = false
+        this.publish()
+      }
+    }
   }
 
   /**
@@ -11864,7 +12150,10 @@ export class StudyWorkspace {
         savedAt: history.createdAt,
         profile: 'node-test' as const,
         format: 'node-test-history' as const,
-        outcome: `Node test ${history.status}; application video and synchronized replay unavailable`,
+        outcome: describeNodeTestReplay({
+          kind: 'saved-row',
+          summary: history,
+        }),
         metadata:
           history.verification === 'verified'
             ? ('validated' as const)
@@ -21175,143 +21464,7 @@ export class StudyWorkspace {
         throw new Error(
           'Close browser replay before opening a separate Node test history.',
         )
-      const request = ++this.historyRequest
-      this.studyChoices++
-      this.pendingNodeHistory = request
-      this.loading = true
-      this.publish()
-      try {
-        await this.replaceUnavailableReplayDebugger()
-        const history = await this.nodeHistoryStore!.read(message.studyId)
-        if (
-          request !== this.historyRequest ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        let learningDecision: NodeTestHistoryLearningDecision | undefined
-        try {
-          learningDecision = await this.nodeHistoryStore!.readLearningDecision(
-            message.studyId,
-          )
-        } catch (error) {
-          this.report('progress', error)
-        }
-        if (
-          request !== this.historyRequest ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        let learningMaterial: NodeTestLearningMaterial | undefined
-        try {
-          learningMaterial = await this.nodeHistoryStore!.readLearningMaterial(
-            message.studyId,
-          )
-        } catch (error) {
-          this.report('history-learning', error)
-        }
-        if (
-          request !== this.historyRequest ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        let savedSequence: number | undefined, positionError: unknown
-        try {
-          savedSequence = await this.nodeHistoryStore!.readReaderPosition(
-            message.studyId,
-          )
-        } catch (error) {
-          positionError = error
-        }
-        if (
-          request !== this.historyRequest ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        this.nodeHistoryPlaybackController?.dispose()
-        this.replayDebugger?.invalidate()
-        this.selectedNodeHistoryRequest++
-        this.selectedNodeHistory = history
-        // Admitting another history permanently retires the prior exact Wiki visit; refused reads leave it intact.
-        this.repositoryObservation = undefined
-        this.selectedNodeHistoryLearningDecision = learningDecision
-        this.selectedNodeHistoryLearningMaterial = learningMaterial
-        this.selectedNodeHistoryPage = 0
-        this.selectedNodeHistorySequence = undefined
-        this.selectedNodeHistoryDebugAvailable = false
-        this.selectedNodeHistoryValuesUninspected = false
-        // A Node history has no application frames; replace pixels from the prior browser study immediately.
-        this.presentApplication(this.message())
-        // Each opened history gets its own controller; the present callback is bound to this study.
-        this.nodeHistoryPlaybackController = new NodeHistoryPlaybackController({
-          present: async (sequence) => {
-            const selectedHistory = this.selectedNodeHistory
-            if (
-              !selectedHistory ||
-              selectedHistory.header.studyId !== message.studyId
-            )
-              throw new Error(
-                'The selected Node history changed during playback.',
-              )
-            await this.selectNodeHistoryEvent(
-              selectedHistory,
-              sequence,
-              false,
-              false,
-              false,
-            )
-          },
-          changed: () => this.publish(),
-          failed: (error) => this.report('control', error),
-        })
-        this.nodeHistoryPlaybackController.open(
-          history.entries.map((entry) => ({
-            sequence: entry.sequence,
-            elapsedMs: entry.elapsedMs,
-          })),
-          savedSequence ?? history.entries[0]?.sequence,
-        )
-        if (positionError) this.report('history-position', positionError)
-        const initialSequence = savedSequence ?? history.entries[0]?.sequence
-        if (initialSequence !== undefined)
-          await this.selectNodeHistoryEvent(
-            history,
-            initialSequence,
-            false,
-            false,
-            false,
-          )
-        if (
-          request !== this.historyRequest ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        this.loading = false
-        this.publish()
-      } catch (error) {
-        if (
-          request !== this.historyRequest ||
-          message.revision !== this.revision ||
-          this.closing
-        )
-          return
-        this.loading = false
-        this.report('archive', error)
-        this.publish()
-      } finally {
-        // A newer Node history request owns the marker by then.
-        if (this.pendingNodeHistory === request)
-          this.pendingNodeHistory = undefined
-        // A request discarded only because the reader's revision changed is still the latest; nothing else ends the loading state it set.
-        if (this.loading && this.isLatestHistoryRequest(request)) {
-          this.loading = false
-          this.publish()
-        }
-      }
+      await this.openNodeHistory(message.studyId, message.revision)
     }
     if (message.type === 'node-history-understanding') {
       if (this.recordingActive)
