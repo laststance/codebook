@@ -18,6 +18,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { buildTestTimings } from '../utils/buildTestTimings.mjs'
+import { killProcessIds } from '../utils/killProcessIds.mjs'
 import { listProcessIdsUnder } from '../utils/listProcessIdsUnder.mjs'
 import { parseSilenceSeconds } from '../utils/parseSilenceSeconds.mjs'
 import { plainOutputEnvironment } from '../utils/plainOutputEnvironment.mjs'
@@ -1588,16 +1589,26 @@ async function waitForPids(path, count, waitMs) {
   return pids
 }
 
-/** Ends every process a fixture noted that still runs when the test ends, also when the code under test was wrong, so a red run leaves nothing behind. @example killNotedProcessesAfter(context, join(root, 'pids.log')) */
-function killNotedProcessesAfter(context, path) {
+/**
+ * Ends every process a test started that still runs when the test ends, also when the code under test was wrong, so a red run leaves nothing behind. The processes are collected while the test runs, from the fixture's file of noted pids and from the tree under this process (a test of a file runs one at a time, so what runs under this process belongs to the test), because the fixture's folder may be removed before this clean-up runs and a runner that lost its parent can no longer be found from it.
+ * @param context - The running test.
+ * @param pidsPath - The file in which the fixture notes process ids, one per line, if it has one.
+ * @example
+ * killNotedProcessesAfter(context, join(root, 'pids.log'))
+ */
+function killNotedProcessesAfter(context, pidsPath) {
+  const found = new Set()
+  const look = async () => {
+    for (const pid of pidsPath === undefined ? [] : await readPids(pidsPath))
+      found.add(pid)
+    for (const pid of listProcessIdsUnder(process.pid)) found.add(pid)
+  }
+  // gstack-timing-ok: a sampling interval of the clean-up, not a wait of the test; a process that starts and ends between two samples has ended by itself.
+  const timer = setInterval(() => look().catch(() => {}), 200)
   context.after(async () => {
-    for (const pid of await readPids(path)) {
-      try {
-        process.kill(pid, 'SIGKILL')
-      } catch {
-        // It is gone already, which is what the test wants.
-      }
-    }
+    clearInterval(timer)
+    await look().catch(() => {})
+    killProcessIds([...found])
   })
 }
 
@@ -1615,18 +1626,10 @@ async function startTwoProcesses(context, command = process.execPath) {
     ],
     { stdio: ['ignore', 'pipe', 'ignore'] },
   )
+  killNotedProcessesAfter(context)
   const grandchildPid = await new Promise((resolve) =>
     child.stdout.once('data', (chunk) => resolve(Number(String(chunk)))),
   )
-  context.after(() => {
-    for (const pid of [child.pid, grandchildPid]) {
-      try {
-        process.kill(pid, 'SIGKILL')
-      } catch {
-        // It is gone already.
-      }
-    }
-  })
   return { childPid: child.pid, grandchildPid }
 }
 
@@ -1893,6 +1896,7 @@ function startShardScript(context, root, args) {
       ),
     },
   )
+  killNotedProcessesAfter(context)
   context.after(() => child.kill('SIGKILL'))
   const ended = new Promise((resolve) =>
     child.on('close', (code, signal) => resolve({ code, signal })),

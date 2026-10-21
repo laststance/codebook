@@ -14,10 +14,13 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { setTimeout as delay } from 'node:timers/promises'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { createBoundedOutput } from '../utils/createBoundedOutput.mjs'
 import { createRunLineForwarder } from '../utils/createRunLineForwarder.mjs'
+import { killProcessIds } from '../utils/killProcessIds.mjs'
+import { listProcessIdsUnder } from '../utils/listProcessIdsUnder.mjs'
 import { mapPregateTests } from '../utils/mapPregateTests.mjs'
 import {
   combinedSummary,
@@ -1454,12 +1457,13 @@ test('the line forwarder writes a line that passes its limit in pieces without m
   ])
 })
 
-// Value: protects=the pre-gate runner from a signal handler that outlives its build: once the build has ended (by its own exit, by its limit, or because it could not start) the runner holds no SIGINT or SIGTERM handler for it, so a later Ctrl-C does not send SIGKILL to the process group of a process id the system may have given to another program; fails_when=the handlers are not removed when the build closes or fails to start, or a build that cannot start is not answered with its error; why_new=the tests of the build limit run the runner as a process and see its exit, never the handlers it leaves in a runner that goes on; seam=none; no_claim=the Windows path and a signal that arrives during the build (the tests beside it); a program name that does not exist stands in for a build that cannot start
-test('a build that has ended, been ended for its limit or could not start leaves no SIGINT or SIGTERM handler of the runner behind', async () => {
+// Value: protects=the pre-gate runner from a signal handler that outlives its build: once the build has ended (by its own exit, by its limit, or because it could not start) the runner holds no SIGINT, SIGTERM or SIGHUP handler for it, so a later Ctrl-C does not end the tree of a process id the system may have given to another program; fails_when=the handlers are not removed when the build closes or fails to start, or a build that cannot start is not answered with its error; why_new=the tests of the build limit run the runner as a process and see its exit, never the handlers it leaves in a runner that goes on; seam=none; no_claim=the Windows path and a signal that arrives during the build (the tests beside it); a program name that does not exist stands in for a build that cannot start
+test('a build that has ended, been ended for its limit or could not start leaves no SIGINT, SIGTERM or SIGHUP handler of the runner behind', async () => {
   // Arrange
   const handlersBefore = [
     process.listenerCount('SIGINT'),
     process.listenerCount('SIGTERM'),
+    process.listenerCount('SIGHUP'),
   ]
   const build = (options) =>
     runBuildWithLimit({
@@ -1493,6 +1497,7 @@ test('a build that has ended, been ended for its limit or could not start leaves
       handlersAfter: [
         process.listenerCount('SIGINT'),
         process.listenerCount('SIGTERM'),
+        process.listenerCount('SIGHUP'),
       ],
     },
     {
@@ -1763,28 +1768,60 @@ test('the pre-gate runner survives a test that prints about 100 MB, as lines and
   )
 })
 
-/** The source of a stand-in `build-fast.mjs` that starts a process of its own (which the build's tree holds), notes its id in the file `GRANDCHILD_PID_FILE` names, and then never ends. @example await writeFile(path, buildThatStartsAProcess()) */
-function buildThatStartsAProcess() {
+/** The source of a stand-in `build-fast.mjs` that starts a process of its own (which the build's tree holds; `ignoresSigterm` makes that process ignore SIGTERM), notes its id in the file `GRANDCHILD_PID_FILE` names and the build's own process group id in `BUILD_PGID_FILE`, and then never ends. @example await writeFile(path, buildThatStartsAProcess()) */
+function buildThatStartsAProcess({ ignoresSigterm = false } = {}) {
+  const grandchildSource = `${ignoresSigterm ? "process.on('SIGTERM', () => {}); " : ''}setInterval(() => {}, 1_000)`
   return [
-    "import { spawn } from 'node:child_process'",
+    "import { execFileSync, spawn } from 'node:child_process'",
     "import { writeFileSync } from 'node:fs'",
-    "const started = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], { stdio: 'ignore' })",
+    `const started = spawn(process.execPath, ['-e', ${JSON.stringify(grandchildSource)}], { stdio: 'ignore' })`,
+    "if (process.env.BUILD_PGID_FILE) writeFileSync(process.env.BUILD_PGID_FILE, execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf8' }).trim())",
     'writeFileSync(process.env.GRANDCHILD_PID_FILE, String(started.pid))',
     'setInterval(() => {}, 1_000)',
     '',
   ].join('\n')
 }
 
-// Value: protects=the pre-gate from a build that leaves a process behind: the build is ended at its limit together with everything it started, so no process of the build holds the checkout or the CPU after the lane has failed; fails_when=only the build's own process is killed (`spawnSync`'s `killSignal` ends one process), so the process it started runs on; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial: the build's SIGKILL ended build-fast.mjs and not what it started); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build starts a second process and never ends; no_claim=Windows (the Windows path is the next test), and what the real build starts (it starts nothing today)
+/** Ends a process when the test ends, if it still runs. @example killAfter(context, 4242) */
+function killAfter(context, pid) {
+  context.after(() => {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // It is gone already, which is what the test wants.
+    }
+  })
+}
+
+/**
+ * Ends every process that runs under this process when the test ends, also when the code under test was wrong, so a red run leaves nothing behind. The processes are collected while the test runs, because a runner that lost its parent can no longer be found from it; a test of a file runs one at a time, so what runs under this process belongs to the test.
+ * @param context - The running test.
+ * @example
+ * killTreeAfter(context)
+ */
+function killTreeAfter(context) {
+  const found = new Set()
+  // gstack-timing-ok: a sampling interval of the clean-up, not a wait of the test; a process that starts and ends between two samples has ended by itself.
+  const timer = setInterval(() => {
+    for (const pid of listProcessIdsUnder(process.pid)) found.add(pid)
+  }, 200)
+  context.after(() => {
+    clearInterval(timer)
+    for (const pid of listProcessIdsUnder(process.pid)) found.add(pid)
+    killProcessIds([...found])
+  })
+}
+
+// Value: protects=the pre-gate from a build that leaves a process behind: the build is ended at its limit together with everything it started, also a process that ignores SIGTERM, so no process of the build holds the checkout or the CPU after the lane has failed; fails_when=only the build's own process is killed (`spawnSync`'s `killSignal` ends one process), or the tree gets a SIGTERM that a process ignores, so the process the build started runs on; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial: the build's SIGKILL ended build-fast.mjs and not what it started), extended by task 150 (the build no longer has a group of its own, so its tree is read from the process table); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build starts a second process that ignores SIGTERM and never ends; no_claim=Windows (the Windows path is covered below), and what the real build starts (it starts nothing today)
 test(
-  'the pre-gate runner ends a build that never ends together with the process the build started',
+  'the pre-gate runner ends a build that never ends together with the process the build started, also one that ignores SIGTERM',
   { skip: process.platform === 'win32' },
   async (context) => {
     // Arrange
     const root = await createFixtureRepository(context, {})
     await writeFile(
       join(root, 'extension/scripts/build-fast.mjs'),
-      buildThatStartsAProcess(),
+      buildThatStartsAProcess({ ignoresSigterm: true }),
     )
     const pidFile = join(root, 'grandchild.pid')
 
@@ -1795,13 +1832,7 @@ test(
       { GRANDCHILD_PID_FILE: pidFile },
     )
     const startedPid = Number(await readFile(pidFile, 'utf8'))
-    context.after(() => {
-      try {
-        process.kill(startedPid, 'SIGKILL')
-      } catch {
-        // It is gone already, which is what the test wants.
-      }
-    })
+    killAfter(context, startedPid)
     const gone = await waitUntilGone(startedPid, 5_000)
 
     // Assert
@@ -1812,9 +1843,43 @@ test(
   },
 )
 
-// Value: protects=the pre-gate from a runner that is ended while its build runs (Ctrl-C, a time limit of the caller): the build has its own process group, so the signal does not reach it, and the runner ends the build's tree before it exits; fails_when=the runner exits at SIGTERM and leaves the build and the process it started running; why_new=Cycle 0048 task 134 (a build in its own process group needs this, or Ctrl-C leaves it); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build starts a second process and never ends, then sent SIGTERM; no_claim=SIGINT (the same handler) and Windows
+/** Starts the fixture's runner as a process (not waited for) with the given selection and the given variables, and answers it with a promise of how it ends; the runner is killed when the test ends. @example const { runner, ended } = startPregateRunner(context, root, ['extension/src/tests/product.test.ts'], { GRANDCHILD_PID_FILE: pidFile }) */
+function startPregateRunner(context, root, selection, extraEnvironment) {
+  const runner = spawn(
+    process.execPath,
+    [join(root, 'extension/scripts/run-pregate-tests.mjs'), ...selection],
+    {
+      cwd: root,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([name]) => name !== 'NODE_TEST_CONTEXT',
+          ),
+        ),
+        ORDER_LOG: join(root, 'order.log'),
+        ...extraEnvironment,
+      },
+    },
+  )
+  killTreeAfter(context)
+  context.after(() => runner.kill('SIGKILL'))
+  let stderr = ''
+  runner.stderr.on('data', (chunk) => (stderr += chunk))
+  // The runner's exit is what ends it. Its output closes with it, unless a process that outlives the runner (a build that was not ended) holds the pipe: the wait for the output is bounded.
+  const ended = new Promise((resolve) => {
+    runner.on('close', (code, signal) => resolve({ code, signal, stderr }))
+    // gstack-timing-ok: the bound of the wait for the output pipe after the runner has exited, not a wait for a result; the output is complete long before.
+    runner.on('exit', (code, signal) =>
+      setTimeout(() => resolve({ code, signal, stderr }), 2_000),
+    )
+  })
+  return { runner, ended }
+}
+
+// Value: protects=the pre-gate from a build in a session of its own: the build stays in the runner's process group, so the pre-gate's cancel, which kills a lane's whole group with SIGKILL, ends it too, and a terminal's Ctrl-C reaches it; fails_when=the build is started with `detached: true`, so its process group is its own id and a kill of the runner's group leaves the build running and writing `dist`; why_new=Cycle 0048 task 150 (Red Team, Codex adversarial: task 134's group of its own for the build leaves it running at the cancel); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build notes its process group id; no_claim=that gstack's supervisor kills the group (read-only, covered by gstack)
 test(
-  'the pre-gate runner that gets SIGTERM during the build ends the build and the process it started',
+  'the pre-gate runner keeps its build in the runner’s process group',
   { skip: process.platform === 'win32' },
   async (context) => {
     // Arrange
@@ -1824,47 +1889,363 @@ test(
       buildThatStartsAProcess(),
     )
     const pidFile = join(root, 'grandchild.pid')
-    const runner = spawn(
-      process.execPath,
-      [
-        join(root, 'extension/scripts/run-pregate-tests.mjs'),
-        'extension/src/tests/product.test.ts',
-      ],
-      {
-        cwd: root,
-        stdio: 'ignore',
-        env: {
-          ...Object.fromEntries(
-            Object.entries(process.env).filter(
-              ([name]) => name !== 'NODE_TEST_CONTEXT',
-            ),
-          ),
-          ORDER_LOG: join(root, 'order.log'),
-          GRANDCHILD_PID_FILE: pidFile,
-        },
-      },
+    const groupFile = join(root, 'build.pgid')
+    const { runner } = startPregateRunner(
+      context,
+      root,
+      ['extension/src/tests/product.test.ts'],
+      { GRANDCHILD_PID_FILE: pidFile, BUILD_PGID_FILE: groupFile },
     )
-    const runnerEnded = new Promise((resolve) => runner.on('close', resolve))
-    // The build writes the id of the process it started once it runs.
-    const startedPid = await waitForProcessId(pidFile, 10_000)
-    context.after(() => {
-      runner.kill('SIGKILL')
-      try {
-        process.kill(startedPid, 'SIGKILL')
-      } catch {
-        // It is gone already, which is what the test wants.
-      }
+    const startedPid = await waitForProcessId(pidFile, 20_000)
+    killAfter(context, startedPid)
+    const runnerGroup = execFileSync(
+      'ps',
+      ['-o', 'pgid=', '-p', String(runner.pid)],
+      { encoding: 'utf8' },
+    ).trim()
+
+    // Act
+    const buildGroup = await readFile(groupFile, 'utf8')
+
+    // Assert
+    assert.equal(buildGroup, runnerGroup)
+  },
+)
+
+/** The signals the runner handles with the exit code a shell reports for each: 128 plus the signal's number. */
+const SIGNALS_WITH_EXIT_CODES = [
+  ['SIGTERM', 143],
+  ['SIGINT', 130],
+  ['SIGHUP', 129],
+]
+
+for (const [signal, exitCode] of SIGNALS_WITH_EXIT_CODES) {
+  // Value: protects=the pre-gate from a runner that is ended while its build runs (a cancelled lane, Ctrl-C, a closed terminal): the signal to the runner alone ends the build and the process it started (one ignores SIGTERM), and the runner exits with 128 plus the signal's number; fails_when=the runner has no handler for the signal (SIGHUP had none), exits with another code (SIGINT 130 had no test), or leaves the build running; why_new=Cycle 0048 tasks 150 and 151 (Red Team, Codex adversarial, Testing: the SIGTERM test did not check the exit code 143 and SIGINT had no test); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build starts a SIGTERM-ignoring process and never ends, sent the signal to the runner's pid alone; no_claim=Windows (the test of the handler's waits below)
+  test(
+    `the pre-gate runner that gets ${signal} during the build ends the build and the process it started and exits with ${exitCode}`,
+    { skip: process.platform === 'win32' },
+    async (context) => {
+      // Arrange
+      const root = await createFixtureRepository(context, {})
+      await writeFile(
+        join(root, 'extension/scripts/build-fast.mjs'),
+        buildThatStartsAProcess({ ignoresSigterm: true }),
+      )
+      const pidFile = join(root, 'grandchild.pid')
+      const { runner, ended } = startPregateRunner(
+        context,
+        root,
+        ['extension/src/tests/product.test.ts'],
+        { GRANDCHILD_PID_FILE: pidFile },
+      )
+      // The build writes the id of the process it started once it runs.
+      const startedPid = await waitForProcessId(pidFile, 20_000)
+      killAfter(context, startedPid)
+      const buildPids = listProcessIdsUnder(runner.pid)
+      for (const pid of buildPids) killAfter(context, pid)
+
+      // Act
+      runner.kill(signal)
+      const { code, signal: endingSignal } = await ended
+      const startedProcessGone = await waitUntilGone(startedPid, 5_000)
+
+      // Assert
+      assert.deepEqual(
+        {
+          startedPidSeen: startedPid !== undefined,
+          buildAndStartedProcessSeen: buildPids.length >= 2,
+          startedProcessGone,
+          buildGone: buildPids.every((pid) => !processRuns(pid)),
+          code,
+          endingSignal,
+        },
+        {
+          startedPidSeen: true,
+          buildAndStartedProcessSeen: true,
+          startedProcessGone: true,
+          buildGone: true,
+          code: exitCode,
+          endingSignal: null,
+        },
+      )
+    },
+  )
+}
+
+// Value: protects=the pre-gate from a runner that is ended while a test run goes on: a SIGTERM to the runner alone ends the `node --test` process and the test file that ignores SIGTERM, and the runner exits with 143 (the package build of package.test.mjs would otherwise go on writing dist); fails_when=the test runs have no signal handler, so the runner exits at once and leaves `node --test` and its file running; why_new=Cycle 0048 task 150 (Codex adversarial: the test runs after the build have no handler); seam=run-pregate-tests.mjs started as a process in a fixture repository whose product test records its pid, ignores SIGTERM and hangs, sent SIGTERM to the runner's pid alone; no_claim=SIGINT and SIGHUP (the build's tests above cover each number)
+test(
+  'the pre-gate runner that gets SIGTERM during a test run ends the run’s whole tree and exits with 143',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureRepository(context, {
+      'product.test.js': hangingTestNotingItsPid(),
     })
+    const pidFile = join(root, 'file.pid')
+    const { runner, ended } = startPregateRunner(
+      context,
+      root,
+      ['extension/src/tests/product.test.ts'],
+      { GRANDCHILD_PID_FILE: pidFile },
+    )
+    const filePid = await waitForProcessId(pidFile, 30_000)
+    killAfter(context, filePid)
+    const runTree = listProcessIdsUnder(runner.pid)
+    for (const pid of runTree) killAfter(context, pid)
 
     // Act
     runner.kill('SIGTERM')
-    await runnerEnded
-    const gone = await waitUntilGone(startedPid, 5_000)
+    const { code, signal } = await ended
+    const left = runTree.filter((pid) => processRuns(pid))
 
     // Assert
     assert.deepEqual(
-      { startedPidSeen: startedPid !== undefined, startedProcessGone: gone },
-      { startedPidSeen: true, startedProcessGone: true },
+      {
+        filePidSeen: filePid !== undefined,
+        treeHadRunnerAndFile: runTree.length >= 2,
+        left,
+        code,
+        signal,
+      },
+      {
+        filePidSeen: true,
+        treeHadRunnerAndFile: true,
+        left: [],
+        code: 143,
+        signal: null,
+      },
+    )
+  },
+)
+
+/** The source of a fixture product test that notes its process id in the file `GRANDCHILD_PID_FILE` names, ignores SIGTERM and hangs. @example 'product.test.js': hangingTestNotingItsPid() */
+function hangingTestNotingItsPid() {
+  return [
+    "const { writeFileSync } = require('node:fs')",
+    "const { test } = require('node:test')",
+    'writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid))',
+    "process.on('SIGTERM', () => {})",
+    "test('never ends', () => new Promise(() => setInterval(() => {}, 1_000)))",
+    '',
+  ].join('\n')
+}
+
+// Value: protects=the pre-gate lane from a run that goes silent: it is ended with its whole tree, and a test file that ignores SIGTERM and hangs leaves no process, where the SIGTERM reached `node --test` alone and its file kept running; fails_when=the silence end signals the runner alone (the pre-gate's runs use the same watch as the shard calls); why_new=Cycle 0048 task 148 (native adversarial: the pre-gate runner's runs use the same watch); seam=run-pregate-tests.mjs started as a process in a fixture repository whose product test records its pid, ignores SIGTERM and hangs, with a 3 s silence limit; no_claim=the shard script's calls (testShards.test.mjs)
+test(
+  'the pre-gate runner ends a silent run with a test file that ignores SIGTERM and leaves no process',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureRepository(context, {
+      'product.test.js': hangingTestNotingItsPid(),
+    })
+    const pidFile = join(root, 'file.pid')
+
+    // Act
+    // gstack-timing-ok: the 3 s limit is the contract that ends the run (the file has to start and note its pid inside it, which a slow start-up still does in 3 s); the 60 s bound only ends a runner that is never ended.
+    const { ended } = startPregateRunner(
+      context,
+      root,
+      ['--silence-seconds', '3', 'extension/src/tests/product.test.ts'],
+      { GRANDCHILD_PID_FILE: pidFile },
+    )
+    const result = await Promise.race([
+      ended,
+      delay(60_000, { code: 'the runner was not ended', stderr: '' }),
+    ])
+    const filePid = await waitForProcessId(pidFile, 5_000)
+    const gone = await waitUntilGone(filePid, 10_000)
+
+    // Assert
+    assert.deepEqual(
+      {
+        code: result.code,
+        named: /product\.test\.js printed nothing for 3 s and was ended/.test(
+          result.stderr,
+        ),
+        fileProcessGone: gone,
+      },
+      { code: 1, named: true, fileProcessGone: true },
+    )
+  },
+)
+
+/** Writes a stand-in `taskkill.exe` into `<folder>/System32/` that notes its arguments in `taskkill.log` beside it and then hangs (`hangs`) or exits with 1 as an access denied does; it ends nothing. @example const systemRoot = await writeFailingTaskkill(context, { hangs: true }) */
+async function writeFailingTaskkill(context, { hangs }) {
+  const systemRoot = await mkdtemp(join(tmpdir(), 'codebook-stand-in-root-'))
+  context.after(() => rm(systemRoot, { recursive: true, force: true }))
+  await mkdir(join(systemRoot, 'System32'))
+  await writeFile(
+    join(systemRoot, 'System32', 'taskkill.exe'),
+    [
+      `#!${process.execPath}`,
+      "const { appendFileSync } = require('node:fs')",
+      "const { join } = require('node:path')",
+      "appendFileSync(join(__dirname, '..', 'taskkill.log'), process.argv.slice(2).join(' ') + '\\n')",
+      hangs ? 'setTimeout(() => {}, 15_000)' : 'process.exitCode = 1',
+    ].join('\n'),
+    { mode: 0o755 },
+  )
+  return systemRoot
+}
+
+/** The source of a build that ignores SIGTERM, notes its id in the file `argv[1]` names and never ends, so only the forced step of a Windows end can stop it. */
+const SIGTERM_IGNORING_BUILD_SOURCE =
+  "process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1_000)"
+
+// Value: protects=the Windows lane from a runner that exits before its end steps are done: on SIGTERM the runner starts `taskkill` and waits for its second start and for the forced step before it exits with 143, because Node ends the processes it started when it exits, `taskkill` among them; the build that ignores SIGTERM is gone after the forced step; fails_when=the handler starts `taskkill` and exits at once (the second start and the forced step never run, the build is left), or exits with another code; why_new=Cycle 0048 tasks 150 and 151 (Codex adversarial: on Windows the handler exits at once; Testing: the forced step after a `taskkill` that fails or hangs had no test); seam=runBuildWithLimit in fresh processes with `platform` set to win32 and `SystemRoot` set to a folder with a stand-in System32/taskkill.exe that hangs or fails, and a build that ignores SIGTERM, sent SIGTERM; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started)
+test(
+  'on Windows a runner that gets SIGTERM during the build waits for the second taskkill start and the forced step, then exits with 143',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const scriptDirectory = await mkdtemp(
+      join(tmpdir(), 'codebook-windows-signal-'),
+    )
+    context.after(() => rm(scriptDirectory, { recursive: true, force: true }))
+    const scriptPath = join(scriptDirectory, 'build.mjs')
+    await writeFile(
+      scriptPath,
+      [
+        "import { tmpdir } from 'node:os'",
+        `import { runBuildWithLimit } from ${JSON.stringify(pathToFileURL(join(fileURLToPath(new URL('../', import.meta.url)), 'utils/runBuildWithLimit.mjs')).href)}`,
+        'const { systemRoot, buildPidFile, killGraceMs, source } = JSON.parse(process.argv[2])',
+        "await runBuildWithLimit({ command: process.execPath, args: ['-e', source, buildPidFile], cwd: tmpdir(), timeoutMs: 600_000, killGraceMs, platform: 'win32', environment: { SystemRoot: systemRoot } })",
+      ].join('\n'),
+    )
+    const windowsBuildSignalled = async (taskkillHangs) => {
+      const systemRoot = await writeFailingTaskkill(context, {
+        hangs: taskkillHangs,
+      })
+      const buildPidFile = join(scriptDirectory, `build-${taskkillHangs}.pid`)
+      const helper = spawn(
+        process.execPath,
+        [
+          scriptPath,
+          JSON.stringify({
+            systemRoot,
+            buildPidFile,
+            killGraceMs: 4_000,
+            source: SIGTERM_IGNORING_BUILD_SOURCE,
+          }),
+        ],
+        { stdio: 'ignore' },
+      )
+      context.after(() => helper.kill('SIGKILL'))
+      const ended = new Promise((resolve) =>
+        helper.on('close', (code, signal) => resolve({ code, signal })),
+      )
+      const buildPid = await waitForProcessId(buildPidFile, 20_000)
+      killAfter(context, buildPid)
+      const signalledAt = Date.now()
+      helper.kill('SIGTERM')
+      const { code, signal } = await ended
+      const waitedMs = Date.now() - signalledAt
+      const starts = (
+        await readFile(join(systemRoot, 'taskkill.log'), 'utf8').catch(() => '')
+      )
+        .split('\n')
+        .filter(Boolean).length
+      return {
+        code,
+        signal,
+        waitedMs,
+        starts,
+        buildGone: await waitUntilGone(buildPid, 5_000),
+      }
+    }
+
+    // Act
+    const hanging = await windowsBuildSignalled(true)
+    const failing = await windowsBuildSignalled(false)
+
+    // Assert
+    // gstack-timing-ok: the forced step comes at the end of the 4 s grace and the runner waits for it; a runner that exits at once is gone within a fraction of a second, so 3.5 s tells a wait from no wait, and a timer never fires early (a load only makes the wait longer).
+    const waited = (answer) => answer.waitedMs >= 3_500
+    assert.deepEqual(
+      {
+        hanging: {
+          code: hanging.code,
+          signal: hanging.signal,
+          starts: hanging.starts,
+          waited: waited(hanging),
+          buildGone: hanging.buildGone,
+        },
+        failing: {
+          code: failing.code,
+          signal: failing.signal,
+          starts: failing.starts,
+          waited: waited(failing),
+          buildGone: failing.buildGone,
+        },
+      },
+      {
+        // The first start hangs and is stopped after 2 s, the second one is stopped at the end of the grace; the forced step kills the build.
+        hanging: {
+          code: 143,
+          signal: null,
+          starts: 2,
+          waited: true,
+          buildGone: true,
+        },
+        // The start that fails ends the build alone with SIGTERM, which it ignores; the forced step at the end of the grace kills it.
+        failing: {
+          code: 143,
+          signal: null,
+          starts: 1,
+          waited: true,
+          buildGone: true,
+        },
+      },
+    )
+  },
+)
+
+// Value: protects=the Windows lane from a build that survives a `taskkill` that fails or hangs: at the limit the build that ignores SIGTERM is killed by the forced step after the grace, and a `taskkill` that hangs is started a second time; fails_when=the forced step is missing or runs before the grace, or a hanging `taskkill` is started once only; why_new=Cycle 0048 task 151 (Testing: the forced step after a `taskkill` that fails or hangs had no test for the build); seam=runBuildWithLimit in the test process with `platform` set to win32, `SystemRoot` set to a folder with a stand-in System32/taskkill.exe that hangs or fails, and a build that ignores SIGTERM; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started)
+test(
+  'on Windows a build that ignores SIGTERM is killed by the forced step at its limit when taskkill fails or hangs',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const run = async (taskkillHangs) => {
+      const systemRoot = await writeFailingTaskkill(context, {
+        hangs: taskkillHangs,
+      })
+      const buildPidFile = join(systemRoot, 'build.pid')
+      const result = await runBuildWithLimit({
+        command: process.execPath,
+        args: ['-e', SIGTERM_IGNORING_BUILD_SOURCE, buildPidFile],
+        cwd: systemRoot,
+        timeoutMs: 1_500,
+        killGraceMs: 4_000,
+        platform: 'win32',
+        environment: { SystemRoot: systemRoot },
+      })
+      const buildPid = Number(await readFile(buildPidFile, 'utf8'))
+      killAfter(context, buildPid)
+      const log = await readFile(
+        join(systemRoot, 'taskkill.log'),
+        'utf8',
+      ).catch(() => '')
+      return {
+        timedOut: result.timedOut,
+        status: result.status,
+        starts: log.split('\n').filter(Boolean).length,
+        buildGone: await waitUntilGone(buildPid, 5_000),
+      }
+    }
+
+    // Act
+    const hanging = await run(true)
+    const failing = await run(false)
+
+    // Assert
+    assert.deepEqual(
+      { hanging, failing },
+      {
+        hanging: { timedOut: true, status: null, starts: 2, buildGone: true },
+        failing: { timedOut: true, status: null, starts: 1, buildGone: true },
+      },
     )
   },
 )
