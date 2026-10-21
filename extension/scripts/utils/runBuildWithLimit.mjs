@@ -19,7 +19,7 @@ import { CALL_KILL_GRACE_MS } from './testShardConstants.mjs'
  * @param options.killGraceMs - On Windows, how long `taskkill` may take before the build is killed alone ({@link CALL_KILL_GRACE_MS} by default).
  * @param options.platform - A value of `process.platform`; a test passes `win32` to take the Windows path.
  * @param options.environment - The environment of the runner, for `SystemRoot` on Windows.
- * @returns `{ status, signal, timedOut, error }` once the build has closed (never while a signal ends the runner): its exit code (`null` when a signal ended it), the signal that ended it (`null` when it exited), whether it was ended for its time, and the error of a build that could not start.
+ * @returns `{ status, signal, timedOut, error }` once the build has closed (never while a signal ends the runner): its exit code (`null` when a signal ended it), the signal that ended it (`null` when it exited), whether it was ended for its time, and the error of a build that could not start: the spawn's `error` event, or what the spawn threw for a start the system refused at once.
  * @example
  * await runBuildWithLimit({ command: process.execPath, args: ['scripts/build-fast.mjs'], cwd: '/repo/extension', timeoutMs: 300_000 })
  * // => { status: 0, signal: null, timedOut: false, error: undefined }
@@ -34,8 +34,15 @@ export function runBuildWithLimit({
   environment = process.env,
 }) {
   return new Promise((resolve) => {
-    // Inside the runner's process group: a signal to the group reaches the build.
-    const child = spawn(command, args, { cwd, stdio: 'inherit' })
+    let child
+    try {
+      // Inside the runner's process group: a signal to the group reaches the build.
+      child = spawn(command, args, { cwd, stdio: 'inherit' })
+    } catch (error) {
+      // Node throws at once, and emits no `error` event, for a start the system refuses (E2BIG for a long environment, ENOMEM): the build could not start, as when its `error` event comes, and nothing was set up for it yet (Cycle 0048 task 216).
+      resolve({ status: null, signal: null, timedOut: false, error })
+      return
+    }
     let timedOut = false
     const endTree = () =>
       endProcessTree(child, { platform, environment, killGraceMs })

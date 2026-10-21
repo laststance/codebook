@@ -2618,6 +2618,54 @@ test('the pre-gate runner fails the lane with code 1, says the build could not s
   )
 })
 
+// Value: protects=the reader of a failed pre-gate lane whose build the system refuses to start at once (Node throws from `spawn`, with no `error` event, for E2BIG on a long environment and for ENOMEM): the runner fails the lane with code 1 before any test runs, with the line of a build that could not start; fails_when=the throw rejects `runBuildWithLimit`, so the runner ends with a stack trace of the script instead of its line; why_new=Cycle 0048 task 216 (fixer C, task 204's class: the build's start had only the `error` event's answer); seam=run-pregate-tests.mjs started as a process in a fixture repository, with a module loaded first that makes `spawn` throw E2BIG for the build in the runner's own process only (as task 204's test does for a run); no_claim=a real E2BIG or ENOMEM
+test('the pre-gate runner fails the lane with code 1, says the build could not start and runs no test when the system refuses to start its build at once', async (context) => {
+  // Arrange
+  const root = await createFixtureRepository(context, {
+    'product.test.js': notingTest('product', true),
+  })
+  const spawnThatRefusesTheBuild = join(
+    root,
+    'spawn-that-refuses-the-build.mjs',
+  )
+  await writeFile(
+    spawnThatRefusesTheBuild,
+    [
+      "import { createRequire, syncBuiltinESMExports } from 'node:module'",
+      "const childProcess = createRequire(import.meta.url)('node:child_process')",
+      // Only the pre-gate runner's own process changes spawn; the processes it would start never run.
+      "if (process.argv[1]?.endsWith('run-pregate-tests.mjs')) {",
+      '  const realSpawn = childProcess.spawn',
+      '  childProcess.spawn = (command, args, options) => {',
+      "    if (args.some((argument) => argument.endsWith('build-fast.mjs')))",
+      "      throw Object.assign(new Error('spawn E2BIG'), { code: 'E2BIG' })",
+      '    return realSpawn(command, args, options)',
+      '  }',
+      '  syncBuiltinESMExports()',
+      '}',
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runPregateRunner(
+    root,
+    ['extension/src/tests/product.test.ts'],
+    {
+      NODE_OPTIONS: `--import=${pathToFileURL(spawnThatRefusesTheBuild).href}`,
+    },
+  )
+
+  // Assert
+  assert.deepEqual(
+    { code: result.code, order: result.order, stderr: result.stderr },
+    {
+      code: 1,
+      order: [],
+      stderr: 'run-pregate-tests: the build could not start: spawn E2BIG\n',
+    },
+  )
+})
+
 // Value: protects=the reader of a failed pre-gate lane whose test run a signal ended that the runner did not send (an out-of-memory kill, a kill from outside): the lane fails and one line names the run and the signal, where the run's own output just stops; fails_when=the runner fails the lane with no line that says why, or passes it; why_new=Cycle 0048 task 170 (Step 7 of the third /ship found a killed build named by no line; a run was the same, while the shard script names the signal of such a call); seam=run-pregate-tests.mjs started as a process in a fixture repository whose product test file sends SIGKILL to the `node --test` process that runs it; no_claim=Windows, where a killed process has an exit code and no signal
 test(
   'the pre-gate runner fails the lane and names the run and the signal when a signal it did not send ends a test run',
