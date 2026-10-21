@@ -37,7 +37,7 @@ function readLinuxTable() {
   return table
 }
 
-/** Reads the table from `ps -A -o pid=,ppid=` (macOS, other POSIX systems). @example readPsTable() // => Map { 1 => 0, 4242 => 1 } */
+/** Reads the table from `ps -A -o pid=,ppid=` (macOS, other POSIX systems); the `ps` that reads it is a child of this process and is left out of the table, so a process with no child of its own has none in the table. @example readPsTable() // => Map { 1 => 0, 4242 => 1 } */
 function readPsTable() {
   const answer = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], {
     encoding: 'utf8',
@@ -51,6 +51,8 @@ function readPsTable() {
     if (Number.isInteger(pid) && Number.isInteger(parentId))
       table.set(pid, parentId)
   }
+  // The `ps` that printed the table was running while it read it: it is no process of the caller's tree, and the caller would wait for it or end its pid.
+  table.delete(answer.pid)
   return table
 }
 
@@ -58,6 +60,7 @@ function readPsTable() {
  * Reads the system's process table as a map from each process id to its parent's id.
  *
  * Why: the scripts that run tests end a call's whole process tree on POSIX, and a tree can only be read from the table; a process loses its parent link when the parent exits, so the tree has to be read before the first signal. Linux reads `/proc/<pid>/stat`; other POSIX systems (macOS) read `ps -A -o pid=,ppid=`; Windows has `taskkill /T /F` for its trees and answers `undefined`.
+ * The table never lists the helper that read it: the `ps` of the `ps` path is a child of this process while it runs, and is left out; the `/proc` reader runs in this process and starts no helper.
  * Called by {@link listProcessIdsUnder} and {@link killProcessIds}.
  * @param options.platform - A value of `process.platform`; a test passes `darwin` to take the `ps` path on Linux.
  * @returns The table, or `undefined` when it cannot be read (Windows, no `/proc`, no `ps`, `ps` failing or stopped at its time).

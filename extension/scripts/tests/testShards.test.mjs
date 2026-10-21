@@ -1817,6 +1817,36 @@ test(
   },
 )
 
+// Value: protects=the recording's wait after an abort and the end of a call's tree on systems that read the table with `ps` (macOS, other POSIX systems): the `ps` this process starts to read the table is a child of this process for as long as it runs, and the table lists it, so a process with no child of its own would always be told it has one, and the wait would last its whole grace and kill a pid that is already gone; fails_when=the table keeps the `ps` that read it, so the processes under a process that has no child are not empty on the `ps` path; why_new=Cycle 0048 task 175 (native adversarial: `[282605]` on darwin, `[]` on the Linux path); seam=listProcessIdsUnder with the platform `darwin` (the `ps` path, which exists on Linux too) in a fresh helper process that has no child of its own, because a test process may have children of its own; no_claim=the `/proc` reader, which runs in this process and starts no helper, and the output format of a `ps` of another system
+test(
+  'a process with no child of its own has no process under it on the ps path, whose own ps is not counted',
+  { skip: process.platform === 'win32' },
+  () => {
+    // Arrange
+    const helperSource = [
+      `import { listProcessIdsUnder } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/listProcessIdsUnder.mjs')).href)}`,
+      `import { readProcessTable } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/readProcessTable.mjs')).href)}`,
+      'const table = readProcessTable({ platform: "darwin" })',
+      'const childrenInTable = [...table].filter(([, parentId]) => parentId === process.pid).map(([pid]) => pid)',
+      'console.log(JSON.stringify({ viaPs: listProcessIdsUnder(process.pid, { platform: "darwin" }), childrenInTable, ownPidListed: table.has(process.pid) }))',
+    ].join('\n')
+
+    // Act
+    const helper = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', helperSource],
+      { encoding: 'utf8', timeout: 30_000 },
+    )
+
+    // Assert
+    assert.deepEqual(JSON.parse(helper.stdout), {
+      viaPs: [],
+      childrenInTable: [],
+      ownPidListed: true,
+    })
+  },
+)
+
 // Value: protects=the Linux table reader from a program name that holds spaces and parentheses (the second field of `/proc/<pid>/stat` is that name in parentheses): the parent id is counted from the last `)`, so the children of such a process are found; fails_when=the line is split on spaces from its start, so a process named `a) 1 2 (b` reads a wrong parent and its grandchild is lost; why_new=Cycle 0048 task 148 (the format of the stat file is the reason for the "after the last )" rule); seam=listProcessIdsUnder with a copy of the Node program under the name `a) 1 2 (b`; no_claim=systems without `/proc`
 test(
   'the children of a process whose program name holds spaces and parentheses are found on Linux',
