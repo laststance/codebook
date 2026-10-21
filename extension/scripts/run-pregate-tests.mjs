@@ -7,21 +7,21 @@
 // and, after them, the other tests four at a time (the package tests rebuild dist), and prints one summary of both.
 // A run that prints nothing for the silence limit (120 s by default, as in test-shard.mjs; 300 s for a run that holds package.test.mjs, whose
 // `before` hook builds the package without output; --silence-seconds sets one limit for every run) is ended, named, and fails the lane.
-// The build is ended, and the lane fails, when it takes longer than the build limit (300 s by default).
-import { spawn, spawnSync } from 'node:child_process'
+// The build is ended with everything it started, and the lane fails, when it takes longer than the build limit (300 s by default).
+// Each run's output is written as it comes and only its end is kept (for the combined summary), so a test that prints without end does not fill the runner's memory.
+import { spawn } from 'node:child_process'
 import { relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
+import { createBoundedOutput } from './utils/createBoundedOutput.mjs'
+import { createRunLineForwarder } from './utils/createRunLineForwarder.mjs'
 import { mapPregateTests } from './utils/mapPregateTests.mjs'
 import { parseSecondsOption } from './utils/parseSecondsOption.mjs'
 import { parseSilenceSeconds } from './utils/parseSilenceSeconds.mjs'
 import { plainOutputEnvironment } from './utils/plainOutputEnvironment.mjs'
-import {
-  combinedSummary,
-  planPregateRuns,
-  runSummaryLine,
-} from './utils/planPregateRuns.mjs'
+import { combinedSummary, planPregateRuns } from './utils/planPregateRuns.mjs'
+import { runBuildWithLimit } from './utils/runBuildWithLimit.mjs'
 import { silenceLimitOfRun } from './utils/silenceLimitOfRun.mjs'
 import {
   CALL_KILL_GRACE_MS,
@@ -74,9 +74,9 @@ if (selected.length === 0) {
 }
 const runs = planPregateRuns(mapPregateTests(repositoryRoot, selected))
 
-/** Says in one line why a build that did not run to its end failed: it was ended at its limit, or it could not start. A build that ran and failed has printed its own reasons. @example reportBuildFailure({ error: { code: 'ETIMEDOUT' } }, 300) // prints 'run-pregate-tests: the build did not end within 300 s and was ended.' */
+/** Says in one line why a build that did not run to its end failed: it was ended at its limit, or it could not start. A build that ran and failed has printed its own reasons. @example reportBuildFailure({ timedOut: true }, 300) // prints 'run-pregate-tests: the build did not end within 300 s and was ended.' */
 function reportBuildFailure(build, limitSeconds) {
-  if (build.error?.code === 'ETIMEDOUT')
+  if (build.timedOut)
     console.error(
       `run-pregate-tests: the build did not end within ${limitSeconds} s and was ended.`,
     )
@@ -86,12 +86,12 @@ function reportBuildFailure(build, limitSeconds) {
     )
 }
 
-const build = spawnSync(process.execPath, ['scripts/build-fast.mjs'], {
+// A hung build must not hold the pre-gate: at its limit the build is ended with everything it started (its process group, or its tree on Windows).
+const build = await runBuildWithLimit({
+  command: process.execPath,
+  args: ['scripts/build-fast.mjs'],
   cwd: extension,
-  stdio: 'inherit',
-  // A hung build must not hold the pre-gate; SIGKILL, because a build that handles SIGTERM could outlive its limit.
-  timeout: buildSeconds * 1000,
-  killSignal: 'SIGKILL',
+  timeoutMs: buildSeconds * 1000,
 })
 // A failed build leaves no current dist to test.
 if (build.status !== 0) {
@@ -116,17 +116,17 @@ function runTests({ files, args }) {
       silenceTimeoutMs,
       killGraceMs: CALL_KILL_GRACE_MS,
     })
-    let output = ''
-    let pending = ''
+    // The output is written as it comes; only its end is kept, for the combined summary. A test that keeps printing keeps the silence watch alive, and must not fill the memory.
+    const output = createBoundedOutput()
+    const forwarder = createRunLineForwarder((text) =>
+      process.stdout.write(text),
+    )
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk) => {
       // Output on either stream shows that the run is alive.
       watch.keepAlive()
-      output += chunk
-      const lines = (pending + chunk).split('\n')
-      pending = lines.pop() ?? ''
-      for (const line of lines)
-        process.stdout.write(runSummaryLine(line) + '\n')
+      output.append(chunk)
+      forwarder.push(chunk)
     })
     child.stderr.on('data', (chunk) => {
       // Output on either stream shows that the run is alive.
@@ -142,13 +142,16 @@ function runTests({ files, args }) {
     })
     child.on('close', (code) => {
       watch.stop()
-      // The last line may come without its line end.
-      if (pending) process.stdout.write(runSummaryLine(pending) + '\n')
+      forwarder.end()
       if (watch.timedOut)
         console.error(
           `✖ ${files.map((file) => relative(repositoryRoot, file)).join(', ')} printed nothing for ${silenceTimeoutMs / 1000} s and was ended; the test after the last one printed above did not end.`,
         )
-      resolveRun({ code: code ?? 1, output, timedOut: watch.timedOut })
+      resolveRun({
+        code: code ?? 1,
+        output: output.text(),
+        timedOut: watch.timedOut,
+      })
     })
   })
 }

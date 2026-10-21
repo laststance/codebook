@@ -24,3 +24,7 @@ export const MIN_TIMER_DELAY_MS = 1
 export const PREGATE_BUILD_TIMEOUT_MS = 300_000
 /** How often a long silent step of a test (the package build in the `before` hook of `package.test.mjs`) writes a line, so the silence watch sees the test alive; it stays well under {@link CALL_SILENCE_TIMEOUT_MS}. */
 export const PROGRESS_LINE_INTERVAL_MS = 30_000
+/** How much of one call's output the runners keep: the end of it, which holds the failing tests and the summary. A test that prints without end must not grow the memory of the runner that reads it; {@link createBoundedOutput} drops the rest. */
+export const TEST_OUTPUT_KEEP_CHARS = 4_000_000
+/** How long a line of a run's output may grow in the pre-gate runner before it is written in pieces. A test that prints without a line break must not grow the runner's memory either. */
+export const TEST_LINE_FLUSH_CHARS = 100_000

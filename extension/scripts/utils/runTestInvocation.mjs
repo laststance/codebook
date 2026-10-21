@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 
+import { createBoundedOutput } from './createBoundedOutput.mjs'
 import { plainOutputEnvironment } from './plainOutputEnvironment.mjs'
 import {
   CALL_KILL_GRACE_MS,
   CALL_SILENCE_TIMEOUT_MS,
+  TEST_OUTPUT_KEEP_CHARS,
 } from './testShardConstants.mjs'
 import { watchCallSilence } from './watchCallSilence.mjs'
 
@@ -15,6 +17,7 @@ import { watchCallSilence } from './watchCallSilence.mjs'
  * @param options.silenceTimeoutMs - How long the call may print nothing before it is ended as hung; the reporter prints each test when it ends, so a quiet call is one test that does not end.
  * @param options.killGraceMs - How long a call ended for silence may take to stop on SIGTERM before it is killed; {@link CALL_KILL_GRACE_MS} by default, so a test of the kill does not wait 5 s.
  * @param options.runnerArguments - The arguments that start the runner, before the call's own flags; `['--test']` (Node's test runner) by default. A test passes the path of a stand-in script, because the real runner exits within milliseconds of SIGTERM and cannot show how a slow or stubborn runner is treated.
+ * @param options.outputKeepChars - How much of the end of the call's output to keep ({@link TEST_OUTPUT_KEEP_CHARS} by default); a call that prints more keeps its last lines, which hold the failing tests and the summary, with a first line that says how much was left out ({@link createBoundedOutput}).
  * @returns `{ code, signal, output, elapsedMs, timedOut }` once the process and its streams have closed. `code` is the runner's exit code when it exits by itself and `null` when a signal ended it (`signal` then names it); a runner that winds down after the SIGTERM of a silence end exits with its own code, 0 or not, so a caller reads `timedOut`, never `code`, to know that the call was ended for its silence. Coverage is collected through the inherited `NODE_V8_COVERAGE`.
  * @example
  * await runTestInvocation({ files: ['service.test.js'] }, 'dist/tests')
@@ -27,6 +30,7 @@ export function runTestInvocation(
     silenceTimeoutMs = CALL_SILENCE_TIMEOUT_MS,
     killGraceMs = CALL_KILL_GRACE_MS,
     runnerArguments = ['--test'],
+    outputKeepChars = TEST_OUTPUT_KEEP_CHARS,
   } = {},
 ) {
   const selection = [
@@ -71,11 +75,14 @@ export function runTestInvocation(
     // test-file processes it started and prints what it was running, and SIGKILL follows only for a runner that ignores it; on Windows the
     // runner's whole process tree is ended at once, because `child.kill()` there ends the runner alone.
     const watch = watchCallSilence(child, { silenceTimeoutMs, killGraceMs })
-    const chunks = []
+    // Only the end of the output is kept: a test that keeps printing keeps the silence watch alive, and must not fill the memory too.
+    const output = createBoundedOutput(outputKeepChars)
     const keep = (chunk) => {
-      chunks.push(chunk)
+      output.append(chunk)
       watch.keepAlive()
     }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
     child.stdout.on('data', keep)
     child.stderr.on('data', keep)
     child.on('error', (error) => {
@@ -88,7 +95,7 @@ export function runTestInvocation(
       resolve({
         code,
         signal,
-        output: Buffer.concat(chunks).toString('utf8'),
+        output: output.text(),
         elapsedMs: performance.now() - startedAt,
         timedOut: watch.timedOut,
       })

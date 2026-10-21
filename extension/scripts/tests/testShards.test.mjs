@@ -1275,11 +1275,15 @@ test('a silent call is ended through its whole process tree by the system taskki
  * @param context - The running test, whose end removes the folder.
  * @param options.endsTheProcess - Whether the stand-in ends the process of the `/pid` argument with SIGKILL, as the real `taskkill /T /F` does.
  * @param options.exitCode - The exit code of the stand-in: 0 as the real program does when it succeeded, 1 as it does for an access denied.
+ * @param options.hangsFirstTime - Whether the first start of the stand-in only notes its arguments and then waits for 60 s without ending anything (a `taskkill` that hangs); the second start does what the other options say.
  * @returns `{ systemRoot, taskkillArguments }`: the folder to set as `SystemRoot`, and a function that reads the argument lines the stand-in noted.
  * @example
  * const { systemRoot, taskkillArguments } = await writeStandInTaskkill(context, { endsTheProcess: false, exitCode: 1 })
  */
-async function writeStandInTaskkill(context, { endsTheProcess, exitCode }) {
+async function writeStandInTaskkill(
+  context,
+  { endsTheProcess, exitCode, hangsFirstTime = false },
+) {
   const systemRoot = await mkdtemp(join(tmpdir(), 'codebook-stand-in-root-'))
   context.after(() => rm(systemRoot, { recursive: true, force: true }))
   await mkdir(join(systemRoot, 'System32'))
@@ -1290,7 +1294,12 @@ async function writeStandInTaskkill(context, { endsTheProcess, exitCode }) {
       `#!${process.execPath}`,
       "const { appendFileSync } = require('node:fs')",
       "const { join } = require('node:path')",
-      "appendFileSync(join(__dirname, '..', 'taskkill.log'), process.argv.slice(2).join(' ') + '\\n')",
+      "const log = join(__dirname, '..', 'taskkill.log')",
+      "const first = !require('node:fs').existsSync(log)",
+      "appendFileSync(log, process.argv.slice(2).join(' ') + '\\n')",
+      ...(hangsFirstTime
+        ? ['if (first) { setTimeout(() => {}, 60_000); return }']
+        : []),
       ...(endsTheProcess
         ? ["process.kill(Number(process.argv[3]), 'SIGKILL')"]
         : []),
@@ -1384,6 +1393,88 @@ test(
     )
   },
 )
+
+// Value: protects=the Windows shard job from a `taskkill` that hangs: it is stopped after half the grace and started again, so the runner's whole tree is still ended, instead of the forced step ending the runner alone and leaving the test-file processes it started; fails_when=a taskkill that does not end is waited for until the forced step (`child.kill('SIGKILL')`, TerminateProcess on the runner alone), so the program is started once and the tree survives; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial: a taskkill that times out leaves the forced step to end the runner alone); seam=runTestInvocation in a fresh process with `process.platform` set to win32, a stand-in System32/taskkill.exe that hangs at its first start and ends the runner at its second, and a stand-in runner script; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started)
+test(
+  'on Windows a taskkill that hangs is stopped and started again, so the runner is still ended through its tree',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const runner = await writeStandInRunner(context, '')
+    const taskkill = await writeStandInTaskkill(context, {
+      endsTheProcess: true,
+      exitCode: 0,
+      hangsFirstTime: true,
+    })
+
+    // Act
+    const { result } = await runCallInFreshProcess(context, {
+      silenceTimeoutMs: 2_500,
+      killGraceMs: 8_000,
+      runnerArguments: [runner.runnerPath],
+      platform: 'win32',
+      systemRoot: taskkill.systemRoot,
+    })
+
+    // Assert
+    assert.deepEqual(
+      {
+        timedOut: result.timedOut,
+        signal: result.signal,
+        sigterms: await runner.sigtermCount(),
+        taskkill: (await taskkill.taskkillArguments()).map((line) =>
+          line.replace(/\d+/, '<pid>'),
+        ),
+      },
+      {
+        timedOut: true,
+        signal: 'SIGKILL',
+        sigterms: 0,
+        // The first start hung and was stopped at 4 s (half the grace); the second one ended the runner.
+        taskkill: ['/pid <pid> /T /F', '/pid <pid> /T /F'],
+      },
+    )
+  },
+)
+
+/** Writes a script that prints text and then ends, into a fresh folder, for the tests that need a runner with a known amount of output. @example const path = await writeScript(context, "console.log('hello')") */
+async function writeScript(context, source) {
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-printing-script-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'script.cjs')
+  await writeFile(path, source)
+  return path
+}
+
+// Value: protects=the memory of the shard script: a call that prints far more than the bound keeps the end of its output (the failing tests and the summary come last) with a note of what was left out, never every byte; fails_when=runTestInvocation keeps the whole output of a call, so a test that prints without end makes the runner run out of memory; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial); seam=runTestInvocation with a stand-in runner script that prints 20 000 numbered lines and a summary, and a bound of 2 000 characters; no_claim=the bound of the shard script itself (TEST_OUTPUT_KEEP_CHARS), whose size is a constant
+test('a call that prints more than the output bound keeps the end of its output and a note of what was left out', async (context) => {
+  // Arrange
+  const runnerPath = await writeScript(
+    context,
+    [
+      'for (let line = 1; line <= 20_000; line += 1) console.log(`printed line ${line}`)',
+      "console.log('ℹ tests 3\\nℹ pass 3\\nℹ fail 0')",
+    ].join('\n'),
+  )
+
+  // Act
+  const result = await runTestInvocation({ files: [] }, tmpdir(), {
+    runnerArguments: [runnerPath],
+    outputKeepChars: 2_000,
+  })
+
+  // Assert
+  const lines = result.output.split('\n')
+  assert.equal(result.code, 0)
+  assert.equal(result.output.length < 2_400, true)
+  assert.match(
+    lines[0],
+    /^\[… \d+ characters of earlier output left out; at most the last 2000 are kept\]$/,
+  )
+  assert.equal(result.output.includes('printed line 1\n'), false)
+  assert.deepEqual(lines.slice(-4), ['ℹ tests 3', 'ℹ pass 3', 'ℹ fail 0', ''])
+  assert.equal(lines.at(-5), 'printed line 20000')
+})
 
 // Value: protects=the timings recording from a test that never ends: the recording ends with that test named and failed, and writes no timings file; fails_when=`--record` runs with no limit, so one hung test holds the recording until the job is cancelled; why_new=Cycle 0048 task 57 (Red Team: task 25's limit covered one entry point of three); seam=test-shard.mjs --record started as a process on a fixture build with a 3 s limit; no_claim=the default limit (120 s) and the timings of a recording that passes
 test('the timings recording ends a test that never ends, names it and writes no timings file', async (context) => {

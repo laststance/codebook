@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import {
   cp,
   copyFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rm,
   writeFile,
@@ -15,12 +16,15 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { createBoundedOutput } from '../utils/createBoundedOutput.mjs'
+import { createRunLineForwarder } from '../utils/createRunLineForwarder.mjs'
 import { mapPregateTests } from '../utils/mapPregateTests.mjs'
 import {
   combinedSummary,
   planPregateRuns,
   runSummaryLine,
 } from '../utils/planPregateRuns.mjs'
+import { runBuildWithLimit } from '../utils/runBuildWithLimit.mjs'
 import { silenceLimitOfRun } from '../utils/silenceLimitOfRun.mjs'
 import {
   CALL_SILENCE_TIMEOUT_MS,
@@ -1190,3 +1194,290 @@ test('the pre-gate runner writes its whole output, the combined summary last, to
     'ℹ todo 0',
   ])
 })
+
+/** Tells whether a process still runs; a zombie that nobody has reaped yet counts as gone. @example processRuns(4242) // => false */
+function processRuns(pid) {
+  try {
+    const state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+      encoding: 'utf8',
+    }).trim()
+    return state !== '' && !state.startsWith('Z')
+  } catch {
+    // `ps` exits with 1 when no process has this id.
+    return false
+  }
+}
+
+/** Waits until the file holds a process id, which the stand-in build writes once it has started its process. @example await waitForProcessId('/tmp/x/grandchild.pid', 10_000) // => 4242 */
+async function waitForProcessId(pidFile, waitMs) {
+  const until = Date.now() + waitMs
+  for (;;) {
+    const pid = Number(await readFile(pidFile, 'utf8').catch(() => ''))
+    if (pid > 0 || Date.now() > until) return pid > 0 ? pid : undefined
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+}
+
+/** Waits until a process is gone or the wait is over; the end of a killed process is seen a moment after the kill. @example await waitUntilGone(4242, 5_000) // => true */
+async function waitUntilGone(pid, waitMs) {
+  const until = Date.now() + waitMs
+  while (processRuns(pid) && Date.now() < until)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  return !processRuns(pid)
+}
+
+// Value: protects=the memory of the output keeper: the end of a long output stays (the failing tests and the summary come last) with a note of what was left out, cut at a line start, and an output within the bound is kept whole with no note; fails_when=the keeper holds every chunk, or cuts a line in two so that a half of a summary line could be read as a summary; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial); seam=createBoundedOutput alone; no_claim=the bound of the runners (TEST_OUTPUT_KEEP_CHARS), a constant
+test('the output keeper keeps the end of an output longer than its bound from a line start, with a note of what it left out, and keeps a short output whole', () => {
+  // Arrange
+  const long = createBoundedOutput(50)
+  const short = createBoundedOutput(50)
+  const lines = Array.from({ length: 30 }, (_, index) => `line number ${index}`)
+
+  // Act
+  for (const line of lines) long.append(`${line}\n`)
+  short.append('one\n')
+  short.append('two\n')
+
+  // Assert
+  const longText = long.text()
+  assert.equal(
+    longText,
+    '[… 395 characters of earlier output left out; at most the last 50 are kept]\nline number 27\nline number 28\nline number 29\n',
+  )
+  assert.equal(short.text(), 'one\ntwo\n')
+})
+
+// Value: protects=the memory of the pre-gate runner for a line that never ends: the part of a line that passes the limit is written at once and never held, and a part is written as it is (a piece that looks like a summary line is not marked as the run's own); the lines that end are still marked; fails_when=the forwarder holds a line until its end, so a test that prints without a line break grows the runner's memory without end, or marks a piece of a long line as a summary; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial: `pending` grew without a bound); seam=createRunLineForwarder alone with a limit of 10 characters; no_claim=the limit of the runner (TEST_LINE_FLUSH_CHARS), a constant
+test('the line forwarder writes a line that passes its limit in pieces without marking a piece as a summary, and marks the summary lines that end', () => {
+  // Arrange
+  const written = []
+  const forwarder = createRunLineForwarder((text) => written.push(text), 10)
+
+  // Act
+  forwarder.push('ℹ tests 1\nabcdefghijkl')
+  forwarder.push('mnop\nℹ tests 2')
+  forwarder.push('\nℹ pass 3')
+  forwarder.end()
+
+  // Assert
+  assert.deepEqual(written, [
+    'ℹ run tests 1\n',
+    'abcdefghijkl',
+    'mnop\n',
+    'ℹ run tests 2\n',
+    'ℹ run pass 3\n',
+  ])
+})
+
+// Value: protects=the pre-gate runner's memory: a product test that prints about 100 MB, as lines and then as one line with no break, is run by a runner that may use 64 MB of heap, and the combined summary still counts the test; fails_when=the runner keeps every byte of a run's output (`output += chunk`) or holds a line without a break until it ends, so its heap passes the limit and it aborts; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial: the runner kept every byte, and a test that kept printing kept the silence watch alive); seam=run-pregate-tests.mjs started as a process with `--max-old-space-size=64` (the flag of the runner only, not of the `node --test` it starts) in a fixture repository with a stand-in build; no_claim=the memory of the `node --test` process the runner starts, and a consumer of the runner's output that reads more slowly than the test writes
+test('the pre-gate runner survives a test that prints about 100 MB, as lines and as one line, within 64 MB of heap, and still counts it', async (context) => {
+  // Arrange
+  const printingProduct = [
+    "import { test } from 'node:test'",
+    "test('prints a lot', () => {",
+    "  const lines = 'a line of output of the product test\\n'.repeat(30_000)",
+    '  for (let part = 0; part < 50; part += 1) process.stdout.write(lines)',
+    "  for (let part = 0; part < 50; part += 1) process.stdout.write('x'.repeat(1_048_576))",
+    "  process.stdout.write('\\n')",
+    '})',
+    '',
+  ].join('\n')
+  const root = await createFixtureRepository(context, {
+    'product.test.js': printingProduct,
+  })
+  const outputPath = join(root, 'runner-output.txt')
+  const outputFile = await open(outputPath, 'w')
+  context.after(() => outputFile.close())
+
+  // Act
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--max-old-space-size=64',
+      join(root, 'extension/scripts/run-pregate-tests.mjs'),
+      'extension/src/tests/product.test.ts',
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 120_000,
+      stdio: ['ignore', outputFile.fd, 'pipe'],
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([name]) => name !== 'NODE_TEST_CONTEXT' && name !== 'NO_COLOR',
+          ),
+        ),
+        ORDER_LOG: join(root, 'order.log'),
+      },
+    },
+  )
+
+  // Assert
+  const written = await readFile(outputPath, 'utf8')
+  assert.deepEqual(
+    {
+      stderr: result.stderr,
+      code: result.status,
+      counted: written
+        .split('\n')
+        .filter((line) => /^ℹ (tests|pass|fail) \d+$/.test(line)),
+    },
+    {
+      stderr: '',
+      code: 0,
+      counted: ['ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0'],
+    },
+  )
+})
+
+/** The source of a stand-in `build-fast.mjs` that starts a process of its own (which the build's tree holds), notes its id in the file `GRANDCHILD_PID_FILE` names, and then never ends. @example await writeFile(path, buildThatStartsAProcess()) */
+function buildThatStartsAProcess() {
+  return [
+    "import { spawn } from 'node:child_process'",
+    "import { writeFileSync } from 'node:fs'",
+    "const started = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], { stdio: 'ignore' })",
+    'writeFileSync(process.env.GRANDCHILD_PID_FILE, String(started.pid))',
+    'setInterval(() => {}, 1_000)',
+    '',
+  ].join('\n')
+}
+
+// Value: protects=the pre-gate from a build that leaves a process behind: the build is ended at its limit together with everything it started, so no process of the build holds the checkout or the CPU after the lane has failed; fails_when=only the build's own process is killed (`spawnSync`'s `killSignal` ends one process), so the process it started runs on; why_new=Cycle 0048 task 134 (Codex adversarial, native adversarial: the build's SIGKILL ended build-fast.mjs and not what it started); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build starts a second process and never ends; no_claim=Windows (the Windows path is the next test), and what the real build starts (it starts nothing today)
+test(
+  'the pre-gate runner ends a build that never ends together with the process the build started',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureRepository(context, {})
+    await writeFile(
+      join(root, 'extension/scripts/build-fast.mjs'),
+      buildThatStartsAProcess(),
+    )
+    const pidFile = join(root, 'grandchild.pid')
+
+    // Act
+    const result = await runPregateRunner(
+      root,
+      ['--build-seconds', '2', 'extension/src/tests/product.test.ts'],
+      { GRANDCHILD_PID_FILE: pidFile },
+    )
+    const startedPid = Number(await readFile(pidFile, 'utf8'))
+    context.after(() => {
+      try {
+        process.kill(startedPid, 'SIGKILL')
+      } catch {
+        // It is gone already, which is what the test wants.
+      }
+    })
+    const gone = await waitUntilGone(startedPid, 5_000)
+
+    // Assert
+    assert.deepEqual(
+      { code: result.code, startedProcessGone: gone },
+      { code: 1, startedProcessGone: true },
+    )
+  },
+)
+
+// Value: protects=the pre-gate from a runner that is ended while its build runs (Ctrl-C, a time limit of the caller): the build has its own process group, so the signal does not reach it, and the runner ends the build's tree before it exits; fails_when=the runner exits at SIGTERM and leaves the build and the process it started running; why_new=Cycle 0048 task 134 (a build in its own process group needs this, or Ctrl-C leaves it); seam=run-pregate-tests.mjs started as a process in a fixture repository whose stand-in build starts a second process and never ends, then sent SIGTERM; no_claim=SIGINT (the same handler) and Windows
+test(
+  'the pre-gate runner that gets SIGTERM during the build ends the build and the process it started',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const root = await createFixtureRepository(context, {})
+    await writeFile(
+      join(root, 'extension/scripts/build-fast.mjs'),
+      buildThatStartsAProcess(),
+    )
+    const pidFile = join(root, 'grandchild.pid')
+    const runner = spawn(
+      process.execPath,
+      [
+        join(root, 'extension/scripts/run-pregate-tests.mjs'),
+        'extension/src/tests/product.test.ts',
+      ],
+      {
+        cwd: root,
+        stdio: 'ignore',
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([name]) => name !== 'NODE_TEST_CONTEXT',
+            ),
+          ),
+          ORDER_LOG: join(root, 'order.log'),
+          GRANDCHILD_PID_FILE: pidFile,
+        },
+      },
+    )
+    const runnerEnded = new Promise((resolve) => runner.on('close', resolve))
+    // The build writes the id of the process it started once it runs.
+    const startedPid = await waitForProcessId(pidFile, 10_000)
+    context.after(() => {
+      runner.kill('SIGKILL')
+      try {
+        process.kill(startedPid, 'SIGKILL')
+      } catch {
+        // It is gone already, which is what the test wants.
+      }
+    })
+
+    // Act
+    runner.kill('SIGTERM')
+    await runnerEnded
+    const gone = await waitUntilGone(startedPid, 5_000)
+
+    // Assert
+    assert.deepEqual(
+      { startedPidSeen: startedPid !== undefined, startedProcessGone: gone },
+      { startedPidSeen: true, startedProcessGone: true },
+    )
+  },
+)
+
+// Value: protects=the Windows lane from a build that leaves its tree: at the limit the build is ended through the system's taskkill.exe with `/T /F`, as a silent call is; fails_when=the build is ended with a kill of its own process only, or by the bare name `taskkill`; why_new=Cycle 0048 task 134 (on Windows a build's tree needs taskkill as a call's does); seam=runBuildWithLimit in the test process with `platform` set to win32 and `SystemRoot` set to a folder with a stand-in System32/taskkill.exe that ends the build's process; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started)
+test(
+  'on Windows a build that never ends is ended through taskkill with its whole tree',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const systemRoot = await mkdtemp(join(tmpdir(), 'codebook-stand-in-root-'))
+    context.after(() => rm(systemRoot, { recursive: true, force: true }))
+    await mkdir(join(systemRoot, 'System32'))
+    await writeFile(
+      join(systemRoot, 'System32', 'taskkill.exe'),
+      [
+        `#!${process.execPath}`,
+        "const { appendFileSync } = require('node:fs')",
+        "const { join } = require('node:path')",
+        "appendFileSync(join(__dirname, '..', 'taskkill.log'), process.argv.slice(2).join(' ') + '\\n')",
+        "process.kill(Number(process.argv[3]), 'SIGKILL')",
+      ].join('\n'),
+      { mode: 0o755 },
+    )
+
+    // Act
+    const result = await runBuildWithLimit({
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1_000)'],
+      cwd: systemRoot,
+      timeoutMs: 1_000,
+      platform: 'win32',
+      environment: { SystemRoot: systemRoot },
+    })
+
+    // Assert
+    const log = await readFile(join(systemRoot, 'taskkill.log'), 'utf8').catch(
+      () => '',
+    )
+    assert.deepEqual(
+      {
+        timedOut: result.timedOut,
+        taskkill: log.trim().replace(/\d+/, '<pid>'),
+      },
+      { timedOut: true, taskkill: '/pid <pid> /T /F' },
+    )
+  },
+)
