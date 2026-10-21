@@ -1871,6 +1871,28 @@ test(
   },
 )
 
+// Value: protects=the event loop of a script that ends a call's tree: every look of an end walks the process table, and the silence end, the signal handlers and the recording's abort wait while it runs; the map of children is built in time linear in the table, so a process with tens of thousands of children is walked in milliseconds; fails_when=the map copies a parent's list for each child it adds (quadratic in the children of one process: 30,000 children took 3.7 s per look, 40,000 take about 6.6 s here); why_new=Cycle 0048 task 203 (Red Team: listProcessIdsUnder.mjs:21); seam=listProcessIdsUnder with the `table` option: a root and 40,000 children, no process started; no_claim=the time of reading the real table, and a table of deep chains (the walk of those is linear in the queue)
+test('the process ids under a process with 40,000 children are listed in milliseconds, all of them', async () => {
+  // Arrange
+  const rootPid = 1
+  const childCount = 40_000
+  const table = new Map([[rootPid, 0]])
+  for (let pid = 2; pid <= childCount + 1; pid += 1) table.set(pid, rootPid)
+
+  // Act
+  const startedAt = performance.now()
+  const found = listProcessIdsUnder(rootPid, { table })
+  const elapsedMs = performance.now() - startedAt
+
+  // Assert
+  // gstack-timing-ok: the bound is the contract (a linear walk of this table takes about 10 ms here, the quadratic map about 6.6 s); 2 s leaves the linear walk a margin of 200 times on a loaded machine and the quadratic map still fails it at a third of its time.
+  assert.equal(elapsedMs < 2_000, true)
+  assert.deepEqual(
+    { count: found.length, first: found[0], last: found.at(-1) },
+    { count: 40_000, first: 2, last: 40_001 },
+  )
+})
+
 // Value: protects=this process and its parents from the kill of a tree: ids a look found are ended with SIGKILL, but the process that kills and the process that started it are never hit, whatever the list holds; fails_when=the guard is missing, so a list that holds the caller's own pid or its parent's ends the script (or the test run) that is ending a tree; why_new=Cycle 0048 task 148 (the brief: kill only pids found under the child, never this process or its parents); seam=killProcessIds in a helper process that is the child of a middle process, given its own pid, its parent's pid and a victim's pid; no_claim=a pid that was reused by another program since the look
 test(
   'ending process ids ends the others and never the process that ends them or the one that started it',

@@ -17,14 +17,19 @@ export function listProcessIdsUnder(
 ) {
   if (table === undefined) return []
   const childrenOf = new Map()
-  for (const [pid, parentId] of table)
-    childrenOf.set(parentId, [...(childrenOf.get(parentId) ?? []), pid])
+  // The parent's list is appended to, never copied: a copy for each child makes the map quadratic in the children of one process (30,000 children took 3.7 s), and every look of an end blocks the event loop for as long.
+  for (const [pid, parentId] of table) {
+    const siblings = childrenOf.get(parentId)
+    if (siblings === undefined) childrenOf.set(parentId, [pid])
+    else siblings.push(pid)
+  }
   const roots = [rootPids].flat()
   const found = []
   const seen = new Set(roots)
-  // A breadth-first walk from the roots; `seen` also keeps a table that changed while it was read from looping.
-  for (const queue = [...roots]; queue.length > 0;) {
-    for (const pid of childrenOf.get(queue.shift()) ?? []) {
+  // A breadth-first walk from the roots; `seen` also keeps a table that changed while it was read from looping. The queue is read by position: `shift()` of a long array moves the rest of it each time.
+  const queue = [...roots]
+  for (let next = 0; next < queue.length; next += 1) {
+    for (const pid of childrenOf.get(queue[next]) ?? []) {
       if (seen.has(pid)) continue
       seen.add(pid)
       found.push(pid)
