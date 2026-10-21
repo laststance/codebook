@@ -10650,7 +10650,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Forgets a study whose save the library refused because it left the library with its recording ({@link StudyRemovedWithItsRecordingError}: another window removed it, or its files were removed by hand), and takes the line of a failed save ("History not saved: …", the reader's `history-not-saved` line) from the pane once no other archive waits, as a save that succeeds does; called by {@link persistArchive} (Cycle 0047 rows 162 and 256). The `archive` line, which the study list, the refresh and the Node history failures use, is left as it is (Cycle 0048 task 19).
+   * Forgets a study whose save the library refused because it left the library with its recording ({@link StudyRemovedWithItsRecordingError}: another window removed it, or its files were removed by hand), and takes the line of a failed save ("History not saved: …", the reader's `history-not-saved` line) from the pane once no other history is unsaved ({@link hasUnsavedHistory}: no archive waits, and no run of this window has a failed receipt), as a save that succeeds does; called by {@link persistArchive} (Cycle 0047 rows 162 and 256). The `archive` line, which the study list, the refresh and the Node history failures use, is left as it is (Cycle 0048 task 19).
    * Why: the study no longer waits for a save, so a line left from one of its earlier failed saves would offer Retry storage / refresh for a study that is gone.
    * @param studyId - The study whose save was refused.
    * @example await this.forgetStudyRemovedWithItsRecording(studyId) // the study is forgotten and no "History not saved" line is left for it
@@ -10658,7 +10658,7 @@ export class StudyWorkspace {
   private async forgetStudyRemovedWithItsRecording(
     studyId: string,
   ): Promise<void> {
-    // {@link forgetRemovedStudy} takes the line before it reads the list, so a failed read of the list reports anew; the line stays while another archive waits.
+    // {@link forgetRemovedStudy} takes the line before it reads the list, so a failed read of the list reports anew; the line stays while other history is unsaved ({@link hasUnsavedHistory}).
     await this.forgetRemovedStudy(studyId, 'archive-removed')
     this.leaveStudyThatLeftLibrary(studyId)
     this.publish()
