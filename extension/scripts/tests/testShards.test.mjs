@@ -1775,9 +1775,37 @@ test(
   },
 )
 
-// Value: protects=the Windows shard process from what a call ended by `taskkill` could leave behind: after the call settles no SIGINT, SIGTERM or SIGHUP handler and no timer (the grace's kill timer, the silence timer) is left, whether the stand-in `taskkill` ends the runner, fails or hangs at its first start; fails_when=`stop()` of the silence watch drops `releaseSignalEnd()` (three handlers stay) or `clearTimeout(killTimer)` (the kill timer of the grace, pending when the runner has ended early, holds the process for the rest of the grace), also after the forced step or the fallback; why_new=Cycle 0048 task 208 (state machines: the Windows ends of a call had assertions for the way it ended, none for its end state); seam=runTestInvocation in a fresh process per case with `process.platform` set to win32, `SystemRoot` set to a folder with a stand-in System32/taskkill.exe and a stand-in runner script; mutant=`clearTimeout(killTimer)` removed from `stop()` of watchCallSilence.mjs fails the cases whose runner ends before the grace (taskkill ends it, taskkill hangs once), `releaseSignalEnd()` removed fails every case; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started); a `taskkill` that cannot start (its failed spawn keeps the time limit of takeEndStep's spawn, half the grace, until it ends by itself)
+// Value: protects=the shard script and the pre-gate runner from an end step that crashes them: a `taskkill` that the system refuses to start at once (Node throws from `spawn`, with no `error` event, for ENOMEM, as for any start it refuses before the program exists) ends the runner alone, as a `taskkill` that cannot start does, and nothing is thrown into the timer that took the step; fails_when=the throw of `spawn` escapes `takeEndStep` (the silence end's timer, or the signal handler, then ends the script with a stack trace and the call's tree runs on); why_new=Cycle 0048 task 216 (fixer C, task 204's class: a start the system refuses at once is thrown, not emitted); seam=a stand-in runner object and a command with a NUL byte, which Node's spawn refuses at once for every system, as it refuses ENOMEM, which no test can make on demand; no_claim=a real ENOMEM, and the real taskkill.exe
+test('a taskkill that the system refuses to start at once ends the runner alone and throws nothing', () => {
+  // Arrange
+  const kills = []
+  const runner = {
+    exitCode: null,
+    signalCode: null,
+    kill: (...signal) => kills.push(signal),
+  }
+
+  // Act
+  const thrown = (() => {
+    try {
+      takeEndStep(
+        runner,
+        { command: 'C:\\Windows\\System32\\task\u0000kill.exe', args: [] },
+        6_000,
+      )
+      return undefined
+    } catch (error) {
+      return error.code
+    }
+  })()
+
+  // Assert
+  assert.deepEqual({ thrown, kills }, { thrown: undefined, kills: [[]] })
+})
+
+// Value: protects=the Windows shard process from what a call ended by `taskkill` could leave behind: after the call settles no SIGINT, SIGTERM or SIGHUP handler and no timer (the grace's kill timer, the silence timer) is left, whether the stand-in `taskkill` ends the runner, fails or hangs at its first start, or cannot start at all (no `taskkill.exe` under `SystemRoot`); fails_when=`stop()` of the silence watch drops `releaseSignalEnd()` (three handlers stay) or `clearTimeout(killTimer)` (the kill timer of the grace, pending when the runner has ended early, holds the process for the rest of the grace), also after the forced step or the fallback, or the start of a `taskkill` that cannot start leaves its time bound running (spawn's own `timeout` timer, which Node clears only at an `exit` that a failed start never emits: one timer is left); why_new=Cycle 0048 task 208 (state machines: the Windows ends of a call had assertions for the way it ended, none for its end state), and task 217 (fixer C: the failed start's timer); seam=runTestInvocation in a fresh process per case with `process.platform` set to win32, `SystemRoot` set to a folder with a stand-in System32/taskkill.exe and a stand-in runner script; mutant=`clearTimeout(killTimer)` removed from `stop()` of watchCallSilence.mjs fails the cases whose runner ends before the grace (taskkill ends it, taskkill hangs once), `releaseSignalEnd()` removed fails every case, and spawn's `timeout` put back in place of takeEndStep's own timer fails the case of a `taskkill` that cannot start; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started)
 test(
-  'on Windows a call ended by taskkill leaves no signal handler and no timer, also when taskkill fails or hangs',
+  'on Windows a call ended by taskkill leaves no signal handler and no timer, also when taskkill fails, hangs or cannot start',
   { skip: process.platform === 'win32' },
   async (context) => {
     // Arrange
@@ -1795,6 +1823,12 @@ test(
       hangsFirstTime: true,
     })
     const ignoresSigterm = await writeStandInRunner(context, '')
+    // A `taskkill` that cannot start falls back to ending the runner alone; a runner that exits at that SIGTERM closes the call long before half of its 8 s grace, while the failed start's own time bound would still run.
+    const exitsAtSigterm = await writeStandInRunner(context, 'process.exit(0)')
+    const withoutTaskkill = await mkdtemp(
+      join(tmpdir(), 'codebook-no-taskkill-root-'),
+    )
+    context.after(() => rm(withoutTaskkill, { recursive: true, force: true }))
     const windowsCall = (runner, systemRoot, killGraceMs) =>
       runCallInFreshProcess(context, {
         silenceTimeoutMs: 2_500,
@@ -1806,10 +1840,11 @@ test(
       })
 
     // Act
-    const [endsRunner, fails, hangs] = await Promise.all([
+    const [endsRunner, fails, hangs, cannotStart] = await Promise.all([
       windowsCall(ignoresSigterm, ending.systemRoot, 8_000),
       windowsCall(ignoresSigterm, failing.systemRoot, 1_500),
       windowsCall(ignoresSigterm, hanging.systemRoot, 8_000),
+      windowsCall(exitsAtSigterm, withoutTaskkill, 8_000),
     ])
 
     // Assert
@@ -1823,7 +1858,8 @@ test(
       handlersLeft,
       timersLeft,
     })
-    assert.deepEqual([endsRunner, fails, hangs].map(endState), [
+    assert.deepEqual([endsRunner, fails, hangs, cannotStart].map(endState), [
+      noHandlerNoTimer,
       noHandlerNoTimer,
       noHandlerNoTimer,
       noHandlerNoTimer,

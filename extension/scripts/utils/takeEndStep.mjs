@@ -31,13 +31,28 @@ export function takeEndStep(child, step, killGraceMs) {
     child.kill()
   }
   const start = (attemptsLeft) => {
-    const ender = spawn(step.command, step.args, {
-      stdio: 'ignore',
-      windowsHide: true,
-      timeout: Math.max(1, Math.floor(killGraceMs / 2)),
+    let ender
+    try {
+      ender = spawn(step.command, step.args, {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+    } catch {
+      // Node throws at once, and emits no `error` event, for a start the system refuses (ENOMEM): the child is ended alone, as for a program that cannot start, and the throw never reaches the timer that took this step (Cycle 0048 task 216).
+      endChildAlone()
+      return
+    }
+    // The program's time is bounded by this timer, not by spawn's `timeout`: Node emits no `exit` for a start that fails, so spawn's own timer would stay and hold this process for the rest of half the grace (Cycle 0048 task 217).
+    const enderTimer = setTimeout(
+      () => ender.kill(),
+      Math.max(1, Math.floor(killGraceMs / 2)),
+    )
+    ender.on('error', () => {
+      clearTimeout(enderTimer)
+      endChildAlone()
     })
-    ender.on('error', endChildAlone)
     ender.on('exit', (code, signal) => {
+      clearTimeout(enderTimer)
       if (code === 0) return
       // A program stopped for its time (a signal ended it) gets one more start while the child runs.
       if (signal !== null && attemptsLeft > 1 && childStillRuns(child)) {
