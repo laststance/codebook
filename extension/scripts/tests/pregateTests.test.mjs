@@ -2201,6 +2201,54 @@ test(
   },
 )
 
+// Value: protects=the exit code of a pre-gate runner that a signal ends during its build on Windows: the runner exits with 128 plus the signal's number, as on POSIX, once the build's tree has ended; fails_when=the build's close, which comes with its exit while the handler still waits for that exit, answers the runner first, and the runner exits with the build's code (`process.exit(build.status ?? 1)`), 1 where 143 was due; why_new=Cycle 0048 task 171 (the parent's probe: exit code 1 after SIGTERM, twice; the test above awaits the build and exits with nothing of its own, so the race never showed there); seam=runBuildWithLimit in a fresh process with `platform` set to win32, `SystemRoot` set to a folder with a stand-in System32/taskkill.exe that fails and a build that ignores SIGTERM, followed by the runner's own exit with the build's code, sent SIGTERM; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started), and the Ctrl-C that a build on the same console gets too
+test(
+  'on Windows a runner that gets SIGTERM during the build exits with 143, not with the code of the build it ended',
+  { skip: process.platform === 'win32' },
+  async (context) => {
+    // Arrange
+    const scriptDirectory = await mkdtemp(
+      join(tmpdir(), 'codebook-windows-exit-code-'),
+    )
+    context.after(() => rm(scriptDirectory, { recursive: true, force: true }))
+    const systemRoot = await writeFailingTaskkill(context, { hangs: false })
+    const buildPidFile = join(scriptDirectory, 'build.pid')
+    const scriptPath = join(scriptDirectory, 'runner.mjs')
+    await writeFile(
+      scriptPath,
+      [
+        "import { tmpdir } from 'node:os'",
+        `import { runBuildWithLimit } from ${JSON.stringify(pathToFileURL(join(fileURLToPath(new URL('../', import.meta.url)), 'utils/runBuildWithLimit.mjs')).href)}`,
+        `const build = await runBuildWithLimit({ command: process.execPath, args: ['-e', ${JSON.stringify(SIGTERM_IGNORING_BUILD_SOURCE)}, ${JSON.stringify(buildPidFile)}], cwd: tmpdir(), timeoutMs: 600_000, killGraceMs: 2_000, platform: 'win32', environment: { SystemRoot: ${JSON.stringify(systemRoot)} } })`,
+        '// What run-pregate-tests.mjs does after a build that did not pass.',
+        'process.exit(build.status ?? 1)',
+      ].join('\n'),
+    )
+    const runner = spawn(process.execPath, [scriptPath], { stdio: 'ignore' })
+    context.after(() => runner.kill('SIGKILL'))
+    const ended = new Promise((resolve) =>
+      runner.on('close', (code, signal) => resolve({ code, signal })),
+    )
+    const buildPid = await waitForProcessId(buildPidFile, 20_000)
+    killAfter(context, buildPid)
+
+    // Act
+    runner.kill('SIGTERM')
+    const { code, signal } = await ended
+
+    // Assert
+    assert.deepEqual(
+      {
+        buildStarted: buildPid !== undefined,
+        code,
+        signal,
+        buildGone: await waitUntilGone(buildPid, 5_000),
+      },
+      { buildStarted: true, code: 143, signal: null, buildGone: true },
+    )
+  },
+)
+
 // Value: protects=the Windows lane from a build that survives a `taskkill` that fails or hangs: at the limit the build that ignores SIGTERM is killed by the forced step after the grace, and a `taskkill` that hangs is started a second time; fails_when=the forced step is missing or runs before the grace, or a hanging `taskkill` is started once only; why_new=Cycle 0048 task 151 (Testing: the forced step after a `taskkill` that fails or hangs had no test for the build); seam=runBuildWithLimit in the test process with `platform` set to win32, `SystemRoot` set to a folder with a stand-in System32/taskkill.exe that hangs or fails, and a build that ignores SIGTERM; no_claim=the real taskkill.exe and a Windows process tree (no Windows process is started)
 test(
   'on Windows a build that ignores SIGTERM is killed by the forced step at its limit when taskkill fails or hangs',

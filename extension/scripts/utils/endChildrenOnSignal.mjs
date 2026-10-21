@@ -40,3 +40,18 @@ export function endChildrenOnSignal(end) {
         process.removeListener(signal, handleSignal)
   }
 }
+
+/**
+ * Tells whether a signal is ending this process: a handler of {@link endChildrenOnSignal} is ending every live child's tree and exits with 128 plus the signal's number once those ends are done.
+ *
+ * Why: on Windows the handler waits for a child's own exit, and a child with no pipes closes together with that exit, before the handler has exited; a caller that got an answer then would go on first, and exit with the child's code. Called by {@link runBuildWithLimit}, whose build closes that way, so the pre-gate runner's `process.exit(build.status ?? 1)` never comes before the handler's exit.
+ * @returns `true` from the first SIGINT, SIGTERM or SIGHUP that came while a child was registered; `false` before.
+ * @example
+ * child.on('close', (status) => {
+ *   if (isEndingForSignal()) return
+ *   resolve(status)
+ * })
+ */
+export function isEndingForSignal() {
+  return isEnding
+}
