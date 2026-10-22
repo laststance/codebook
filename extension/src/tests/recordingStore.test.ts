@@ -7,6 +7,7 @@ import fsPromises, {
   open,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   symlink,
@@ -641,7 +642,8 @@ test('a recording start whose storage lock cannot be released after it made the 
     slots: 2,
   })
   await mkdir(directory, { recursive: true })
-  const lockPath = join(directory, 'writer.lock')
+  // The store names its lock under the directory's real path: on macOS the temporary folder's /var is /private/var.
+  const lockPath = join(await realpath(directory), 'writer.lock')
   const unlinkBefore = fsPromises.unlink
   const blockedRelease = context.mock.method(
     fsPromises,

@@ -60,6 +60,8 @@ async function nodeRunHarness({
   reportFailure,
   reportStatus = 'passed',
   exitCode = 0,
+  exitSignal = null,
+  reportRead,
   firstPause,
   neverReachStop,
   budgetMs,
@@ -73,6 +75,8 @@ async function nodeRunHarness({
   typedWhileRunning,
   closeFailures = 0,
   stopFailures = 0,
+  outputRefusesOnceClosed = false,
+  unansweredRequest,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -81,7 +85,11 @@ async function nodeRunHarness({
   exitAfterEntry?: boolean
   reportFailure?: Error
   reportStatus?: 'passed' | 'failed'
-  exitCode?: number
+  exitCode?: number | null
+  /** The signal that ended the test process, as the process's exit reports it. */
+  exitSignal?: NodeJS.Signals | null
+  /** Holds the check of Vitest's report until it settles, as a slow read of a large report would. */
+  reportRead?: Promise<void>
   firstPause?: {
     line: number
     file?: string
@@ -116,6 +124,13 @@ async function nodeRunHarness({
   typedWhileRunning?: { continueRequest: number; text: string }
   closeFailures?: number
   stopFailures?: number
+  /** The output terminal refuses a reveal or a write once the run released it or the learner closed it, as the real terminal does ("Owned Node test output terminal was closed."). */
+  outputRefusesOnceClosed?: boolean
+  /** The adapter never answers the `nth` request of this command (1 is the first), as an adapter that hangs; a `continue` held this way also never resumes the test. */
+  unansweredRequest?: {
+    command: 'continue' | 'stackTrace' | 'scopes'
+    nth: number
+  }
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -194,6 +209,13 @@ async function nodeRunHarness({
   const bindingReadStarted = new Promise<void>((resolve) => {
     bindingReadAsked = resolve
   })
+  // How many requests of the unanswered command the run has sent.
+  let unansweredCommandRequests = 0
+  let unansweredRequestAsked = (): void => {}
+  /** Settles when the run sends the request the adapter never answers. */
+  const unansweredRequestStarted = new Promise<void>((resolve) => {
+    unansweredRequestAsked = resolve
+  })
   const stopped = (reason: string, hitBreakpointIds?: number[]) =>
     tracker?.onDidSendMessage?.({
       type: 'event',
@@ -250,6 +272,15 @@ async function nodeRunHarness({
     async customRequest(command: string): Promise<unknown> {
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
+      // A hung adapter leaves this one request unanswered for as long as the caller waits.
+      if (
+        command === unansweredRequest?.command &&
+        ++unansweredCommandRequests === unansweredRequest.nth
+      ) {
+        if (command === 'continue') calls.push('continue')
+        unansweredRequestAsked()
+        return new Promise<never>(() => {})
+      }
       if (command === 'continue') {
         calls.push('continue')
         // The test runs again: a learner who types now does so between the resume and the next stop.
@@ -427,12 +458,36 @@ async function nodeRunHarness({
     // The adapter resolved the pending breakpoint right after it answered.
     if (verifiedByNews?.when === 'after the reply') announceVerified()
   }
+  const outputSurfaces: { closeByLearner(): void }[] = []
   class OutputTerminal {
     readonly terminal = { name: 'Codebook · Test output' }
+    private closed = false
+    constructor(
+      _runId: string,
+      _editor: unknown,
+      private readonly onUnexpectedClose?: () => void,
+    ) {
+      outputSurfaces.push(this)
+    }
     async ready(): Promise<void> {}
-    write(): void {}
-    reveal(): void {}
-    dispose(): void {}
+    write(): void {
+      this.refuseOnceClosed()
+    }
+    reveal(): void {
+      this.refuseOnceClosed()
+    }
+    dispose(): void {
+      this.closed = true
+    }
+    /** The learner closes the tab: the real terminal marks itself closed and tells the run, which aborts. */
+    closeByLearner(): void {
+      this.closed = true
+      this.onUnexpectedClose?.()
+    }
+    private refuseOnceClosed(): void {
+      if (outputRefusesOnceClosed && this.closed)
+        throw new Error('Owned Node test output terminal was closed.')
+    }
   }
   const editor = {
     Uri: { file: (fsPath: string) => ({ fsPath }) },
@@ -577,7 +632,7 @@ async function nodeRunHarness({
             calls.push('result')
             return {
               exitCode,
-              signal: null,
+              signal: exitSignal,
               output:
                 reportStatus === 'failed' ? 'Tests 1 failed' : 'Tests 1 passed',
             }
@@ -599,6 +654,7 @@ async function nodeRunHarness({
         verifyVitestTestResult: async (...request: unknown[]) => {
           calls.push('verify')
           verified.push(request)
+          await reportRead
           if (reportFailure) throw reportFailure
           return reportStatus
         },
@@ -646,6 +702,8 @@ async function nodeRunHarness({
     run,
     calls,
     verified,
+    /** The learner closes the run's test output tab. */
+    closeOutputAsLearner: (): void => outputSurfaces.at(-1)?.closeByLearner(),
     events,
     debugStartOptions,
     launchPreparations: (): number => launchPreparations,
@@ -673,6 +731,7 @@ async function nodeRunHarness({
     reportDirectory,
     sourceFile,
     bindingReadStarted,
+    unansweredRequestStarted,
     cleanup: async (): Promise<void> => {
       await rm(directory, { recursive: true, force: true })
       await rm(reportDirectory, { recursive: true, force: true })
@@ -1145,6 +1204,213 @@ test('a failed cited assertion with a failing process exit preserves its observe
       true,
     )
   } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the result of a test that a signal ended after its last stop, kept although Vitest wrote no report, with the report's problem beside it; fails_when=complete() throws before it returns the exit facts, so the run records no result and no verdict; why_new=verifyVitestTestResult throws on a missing report and complete() threw with it (EN5, AC19); seam=the owned launch and the report check are fakes; no_claim=how real Vitest behaves under each signal
+test('a test that a signal ended after its last stop keeps its result and names the missing report beside it', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    exitCode: null,
+    exitSignal: 'SIGTERM',
+    reportFailure: new Error(
+      'Vitest wrote no test report, so Codebook cannot confirm that the cited test ran.',
+    ),
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const result = await harness.run.complete()
+
+    // Assert
+    assert.equal(result.exitCode, null)
+    assert.equal(result.signal, 'SIGTERM')
+    assert.equal(
+      result.reportFailure,
+      'Vitest wrote no test report, so Codebook cannot confirm that the cited test ran.',
+    )
+    assert.equal(
+      harness.events.some((event) => event.type === 'node-test.result'),
+      true,
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a failing exit kept with its report's problem; fails_when=a non-zero exit whose report is missing loses its exit code; why_new=the same branch as the signal, for an exit code (EN5); seam=the owned launch and the report check are fakes; no_claim=none beyond protects
+test('a test that exited with a failing code keeps its result when its report is missing', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    exitCode: 1,
+    reportFailure: new Error('Vitest wrote an unreadable test report.'),
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const result = await harness.run.complete()
+
+    // Assert
+    assert.equal(result.exitCode, 1)
+    assert.equal(
+      result.reportFailure,
+      'Vitest wrote an unreadable test report.',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=that an exit 0 without a report confirming the cited test returns no result; fails_when=a passing-shaped result reaches the history although nothing confirmed that the cited test ran; why_new=the exit-facts branch must not cover a passing exit (EN5); seam=the owned launch and the report check are fakes; no_claim=none beyond protects
+test('an exit 0 whose report is missing returns no result', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    reportFailure: new Error(
+      'Vitest wrote no test report, so Codebook cannot confirm that the cited test ran.',
+    ),
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const completing = harness.run.complete()
+
+    // Assert
+    await assert.rejects(completing, /Vitest wrote no test report/)
+    assert.equal(
+      harness.events.some((event) => event.type === 'node-test.result'),
+      false,
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the private Vitest report while the result check reads it; fails_when=a stop removes the report folder during the check, so the check reports a missing report for a test that passed; why_new=releaseOwned removed the report at once (ownedNodeTestRun.ts:907, EN5, AC19); seam=the report check is held by the test; no_claim=the service's seal (service tests)
+test('a stop while the report is being checked removes the report only after the check read it', async () => {
+  // Arrange
+  let finishRead!: () => void
+  const reportRead = new Promise<void>((resolve) => {
+    finishRead = resolve
+  })
+  const harness = await nodeRunHarness({ reportRead })
+  try {
+    await harness.run.prepare()
+    await writeFile(harness.launch.report.file, '{}')
+    const completing = harness.run.complete()
+    await waitUntil(
+      () => harness.calls.includes('verify'),
+      'the report check',
+      1_000,
+    )
+
+    // Act
+    const stopping = harness.run.stop()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const reportKeptDuringCheck = await stat(harness.launch.report.file).then(
+      () => true,
+      () => false,
+    )
+    finishRead()
+    const result = await completing
+    await stopping
+
+    // Assert
+    assert.equal(reportKeptDuringCheck, true)
+    assert.equal(result.exitCode, 0)
+    assert.equal(
+      await stat(harness.launch.report.file).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    )
+  } finally {
+    finishRead()
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a passing test's result when a stop lands while the final continuation checks Vitest's report: the result is returned although the stop disposed the output terminal; fails_when=the end of the check reveals the terminal the stop disposed, so the continuation fails and the run seals partial without its result; why_new=the stop-during-check test's terminal stand-in reveals after its release, and the real terminal refuses (Step 9 pass 2 red team, EN5, AC19); seam=the report check is held by the test; no_claim=the service's seal (service tests) and VS Code's terminal
+test('a stop while the report is being checked keeps the passing result although it released the output terminal', async () => {
+  // Arrange
+  let finishRead!: () => void
+  const reportRead = new Promise<void>((resolve) => {
+    finishRead = resolve
+  })
+  const harness = await nodeRunHarness({
+    reportRead,
+    outputRefusesOnceClosed: true,
+  })
+  try {
+    await harness.run.prepare()
+    await writeFile(harness.launch.report.file, '{}')
+    const completing = harness.run.complete()
+    await waitUntil(
+      () => harness.calls.includes('verify'),
+      'the report check',
+      1_000,
+    )
+
+    // Act
+    const stopping = harness.run.stop()
+    finishRead()
+    const outcome = await completing.then(
+      (result) => result.exitCode,
+      (error: unknown) => (error instanceof Error ? error.message : 'failed'),
+    )
+    await stopping
+
+    // Assert
+    assert.equal(outcome, 0)
+  } finally {
+    finishRead()
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a passing test's result when the learner closes the test output tab while the final continuation checks Vitest's report: the result is returned although the closed tab aborted the run; fails_when=the end of the check reveals the tab the learner closed, so the continuation fails and the run seals partial without its result; why_new=the stop-during-check test closes the tab by a release only, and a learner's close aborts the run without one (Step 9 pass 3 red team, the sibling of F62); seam=the report check is held by the test; no_claim=VS Code's terminal (a stand-in that refuses a reveal once closed)
+test('closing the test output tab while the report is being checked keeps the passing result', async () => {
+  // Arrange
+  let finishRead!: () => void
+  const reportRead = new Promise<void>((resolve) => {
+    finishRead = resolve
+  })
+  const harness = await nodeRunHarness({
+    reportRead,
+    outputRefusesOnceClosed: true,
+  })
+  try {
+    await harness.run.prepare()
+    await writeFile(harness.launch.report.file, '{}')
+    const completing = harness.run.complete()
+    await waitUntil(
+      () => harness.calls.includes('verify'),
+      'the report check',
+      1_000,
+    )
+
+    // Act
+    harness.closeOutputAsLearner()
+    finishRead()
+    const outcome = await completing.then(
+      (result) => result.exitCode,
+      (error: unknown) => (error instanceof Error ? error.message : 'failed'),
+    )
+
+    // Assert
+    assert.equal(outcome, 0)
+  } finally {
+    finishRead()
     await harness.run.stop()
     await harness.cleanup()
   }
@@ -1720,6 +1986,214 @@ test('a run cancelled while the adapter does not answer the breakpoint read ends
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
   } finally {
     await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=Stop, Save and the next start while the debug adapter never answers the final continue: the stop ends the run instead of waiting for the adapter; fails_when=the final continuation awaits its continue without the run's cancellation, so the release waits on that continuation for good; why_new=/ship Step 11 Codex adversarial review (P1); seam=the harness adapter holds the second continue; no_claim=a real js-debug hang, and the 20 s bound of an answer that never comes while nobody stops the run
+test('a stop while the debug adapter never answers the final continue ends the run instead of waiting for the adapter', async () => {
+  // Arrange: the first continue leaves the entry pause; the adapter never answers the second, the final continuation's.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'continue', nth: 2 },
+  })
+  try {
+    await harness.run.prepare()
+    const completing = harness.run.complete().then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.equal(await completing, 'Error: Cancelled the final continuation')
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the final continuation re-reads the paused frame of a refreshed pause from an adapter that never answers: the stop ends the run; fails_when=the pause check awaits its stack read without the run's cancellation, so the final continuation and the release wait for good; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1); seam=the harness adapter holds the stack read after a native stack refresh; no_claim=a real js-debug hang
+test('a stop while the debug adapter never answers the paused-frame read of a refreshed pause ends the run', async () => {
+  // Arrange: the first stack read finds the declared stop; after a native stack refresh the final continuation reads the paused frame again, and the adapter never answers.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'stackTrace', nth: 2 },
+  })
+  try {
+    await harness.run.prepare()
+    harness.refreshPause()
+    const completing = harness.run.complete().then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.equal(await completing, 'Error: Cancelled the paused frame')
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the adapter never answers the continue toward the next declared stop: that continuation ends, so the service's stop, which waits for the run's continuation, ends too; fails_when=the continuation awaits its continue without the run's cancellation; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1 and the Claude adversarial review's finding 5); seam=the harness adapter holds the second continue of a two-stop run; no_claim=the service's own wait for the continuation (nodeTestRunLifecycle tests)
+test('a stop while the debug adapter never answers the continue to the next declared stop ends that continuation', async () => {
+  // Arrange: the first continue leaves the entry pause; the adapter never answers the second, the continuation from stop 1 toward stop 2.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    unansweredRequest: { command: 'continue', nth: 2 },
+  })
+  try {
+    await harness.run.prepare()
+    const advancing = harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    await harness.run.stop()
+    const outcome = await Promise.race([
+      advancing,
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(
+      outcome,
+      'Error: Cancelled the continuation to the next declared stop',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the adapter never answers the continue from the entry pause: the preparation ends, so the stop, which waits for it, ends; fails_when=the preparation awaits that continue without the run's cancellation; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1); seam=the harness adapter holds the first continue; no_claim=a real js-debug hang
+test('a stop while the debug adapter never answers the continue from the entry pause ends the preparation', async () => {
+  // Arrange: the adapter never answers the first continue, the one that leaves the entry pause.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'continue', nth: 1 },
+  })
+  try {
+    const preparing = harness.run.prepare().then(
+      () => 'prepared',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.match(await preparing, /Cancelled the entry continuation/)
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the adapter never answers the stack read that checks whether a pause is the declared stop: the preparation ends, so the stop ends; fails_when=the stop check awaits its stack read without the run's cancellation; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1); seam=the harness adapter holds the first stack read; no_claim=a real js-debug hang
+test('a stop while the debug adapter never answers the stack read of a pause ends the preparation', async () => {
+  // Arrange: the test reaches the declared stop, and the adapter never answers the stack read that checks it.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'stackTrace', nth: 1 },
+  })
+  try {
+    const preparing = harness.run.prepare().then(
+      () => 'prepared',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.match(await preparing, /Cancelled the paused stack/)
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the adapter never answers the scopes read of the declared stop's frame: the preparation ends, so the stop ends; fails_when=the capture awaits its scopes read without the run's cancellation; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1 and the Claude adversarial review's finding 5); seam=the harness adapter holds the first scopes read; no_claim=a real js-debug hang
+test('a stop while the debug adapter never answers the scopes read of the declared stop ends the preparation', async () => {
+  // Arrange: the declared stop is checked, and the adapter never answers the scopes read of its frame.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'scopes', nth: 1 },
+  })
+  try {
+    const preparing = harness.run.prepare().then(
+      () => 'prepared',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.match(await preparing, /Cancelled the stop's scopes/)
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
     await harness.cleanup()
   }
 })

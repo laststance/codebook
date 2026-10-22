@@ -119,6 +119,94 @@ test('a trusted file workspace opened in WSL is accepted and its prerequisites a
   assert.equal(prerequisites.ready, true)
 })
 
+// Value: protects=codebook_status naming an older root Vitest under profiles['node-test'] before any start, while the shared prerequisites stay ready; fails_when=the node-test profile reads ready with Vitest 3, or the Vitest sentence leaks into the browser profile's prerequisites; why_new=the Vitest check ran only inside the launch (X9, EN11, AC18); seam=the editor and its settings are fakes, the repository's node_modules is real; no_claim=package-root Vitest (a later candidate)
+test('a workspace whose root Vitest is older than 4 makes the node-test profile name it before any start', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-vitest-status-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
+  )
+  await mkdir(join(directory, 'dist'))
+  await writeFile(
+    join(directory, 'dist/build.json'),
+    JSON.stringify({
+      revision: 'fixture',
+      dirty: false,
+      sourceHash: 'fixture',
+    }),
+  )
+  await mkdir(join(directory, 'node_modules', 'vitest'), { recursive: true })
+  await writeFile(
+    join(directory, 'node_modules', 'vitest', 'package.json'),
+    JSON.stringify({ name: 'vitest', version: '3.2.4' }),
+  )
+  const chromeExecutable = join(directory, 'chrome')
+  await writeFile(chromeExecutable, '#!/bin/sh\n', { mode: 0o755 })
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': {},
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/external/node',
+      },
+      'node:util': {
+        promisify: () => async () => ({ stdout: 'Google Chrome 140.0' }),
+      },
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          getConfiguration: () => ({
+            get: (key: string, fallback: string) =>
+              key === 'chromeExecutable' ? chromeExecutable : fallback,
+          }),
+        },
+        env: {
+          appRoot: directory,
+          appName: 'Visual Studio Code',
+          remoteName: 'wsl',
+        },
+        version: '1.140.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: () => disposable,
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+  )
+  const environment = await boundary.createEnvironment({
+    extensionPath: directory,
+  })
+  context.after(() => environment.dispose())
+
+  // Act
+  const prerequisites = await environment.prerequisites()
+
+  // Assert
+  assert.equal(prerequisites.ready, true)
+  const nodeTest = prerequisites.profiles?.['node-test']
+  // The module runs in its own context: its objects are copied into this one before they are compared.
+  assert.deepEqual(
+    { ready: nodeTest?.ready, missing: [...(nodeTest?.missing ?? [])] },
+    {
+      ready: false,
+      missing: [
+        'node-test needs Vitest 4 or later at the repository root; this repository has 3.2.4 (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.',
+      ],
+    },
+  )
+  assert.ok(
+    !prerequisites.profiles?.['repository-browser']?.missing.some((sentence) =>
+      sentence.includes('Vitest'),
+    ),
+  )
+})
+
 // Value: protects=a Linux or WSL learner who never set codebook.chromeExecutable; fails_when=the unset setting still names the macOS bundle path and status answers only "configure an installed executable Chrome"; why_new=the prerequisite test configured an absent path on every platform (Cycle 0044 row N-6); seam=the package.json default read as VS Code applies it
 for (const scenario of [
   { name: 'google-chrome on PATH is used', installed: true },

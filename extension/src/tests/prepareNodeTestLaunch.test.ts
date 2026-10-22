@@ -458,6 +458,7 @@ test('a repository whose Vitest is older than 4 is refused before any Vitest pro
   }
 })
 
+// Value: protects=a launch that re-checks the cited files right before Vitest is asked anything, with the typed refusals of preparation; fails_when=a symlink out of the repository, a changed source or a changed test file reaches the Vitest listing, or a refusal reads otherwise than the Error contract; why_new=the checks are shared with preparation and their messages changed (EN1, X7); seam=none; no_claim=the run resource's channel (service tests)
 test('a changed source or a symlink escaping the repository cannot start a Node test', async () => {
   // Arrange
   const root = await mkdtemp(join(tmpdir(), 'codebook-node-test-root-'))
@@ -509,7 +510,7 @@ test('a changed source or a symlink escaping the repository cannot start a Node 
     await writeFile(join(root, 'src', 'subscribable.test.ts'), 'local test\n')
     await assert.rejects(
       prepareNodeTestLaunch(root, configuration, vitest.list),
-      /source changed/,
+      /^Error: node-test preparation refused: declared stop 1 cites src\/subscribable\.ts with SHA-256 0{64}, but the file now has [0-9a-f]{64}\./,
     )
     await assert.rejects(
       prepareNodeTestLaunch(
@@ -523,7 +524,7 @@ test('a changed source or a symlink escaping the repository cannot start a Node 
         },
         vitest.list,
       ),
-      /test file changed/,
+      /^Error: node-test preparation refused: testHash 0{64} does not match src\/subscribable\.test\.ts, which now has SHA-256 [0-9a-f]{64}\./,
     )
     assert.equal(
       vitest.requests.length,
@@ -536,6 +537,7 @@ test('a changed source or a symlink escaping the repository cannot start a Node 
   }
 })
 
+// Value: protects=every declared stop checked against its own hash before a process is acquired; fails_when=a changed second stop is not refused or the refusal does not name stop 2; why_new=the refusal's words changed with the shared checks (EN1, X7); seam=none; no_claim=the debugger binding of each stop
 test('a Node test seals every declared source stop before acquiring a process', async () => {
   // Arrange
   const root = await realpath(
@@ -610,7 +612,7 @@ test('a Node test seals every declared source stop before acquiring a process', 
         },
         scriptedVitestList([]).list,
       ),
-      /source changed; declared stop 2/,
+      /declared stop 2 cites src\/target\.ts with SHA-256 0{64}/,
     )
   } finally {
     await rm(root, { recursive: true, force: true })

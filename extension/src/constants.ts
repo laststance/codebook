@@ -5,9 +5,10 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 /**
  * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
-export const API_VERSION = '1.7'
-export const EXTENSION_VERSION = '0.2.32'
+export const API_VERSION = '1.8'
+export const EXTENSION_VERSION = '0.2.33'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -651,6 +652,8 @@ export const STUDY_PRESENTATIONS = {
 // Allow native pixel rounding, not learner-selected split ratios.
 export const EDITOR_LAYOUT_ROUNDING_FRACTION = 0.005
 export const MAX_UI_TEXT_CHARS = 8_192
+/** The most characters of a failure's cause a tooltip, a notification or an MCP message of the test replay shows; the Output › Codebook entry keeps the whole sanitized cause ({@link sanitizeCause}). */
+export const UI_CAUSE_MAX_CHARS = 300
 export const STUDY_SOURCE_SCHEME = 'codebook-source'
 /** Registered view types of the editor panes Codebook creates: Application, Study and Repository Wiki. */
 export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
@@ -974,6 +977,8 @@ export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
+/** How many test histories {@link NodeTestHistoryStore.list} reads at a time when a refresh finds new, still recording or changed ones; a sealed journal it already summarized is not read again. */
+export const NODE_HISTORY_SUMMARY_READ_CONCURRENCY = 4
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256
 /** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */
@@ -990,6 +995,11 @@ export const VITEST_FILE_LIST_SHUTDOWN_TIMEOUT_MS = 1_000
 export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048
 /** Largest Vitest JSON report read to confirm which test ran. */
 export const VITEST_REPORT_LIMIT_BYTES = 8_388_608
+/** Largest `node_modules/vitest/package.json` read for its version; Vitest's own file is a few kilobytes, and a larger one is reported as an unreadable version. */
+export const VITEST_PACKAGE_JSON_LIMIT_BYTES = 65_536
+/** The version the root Vitest's package must name before it is printed to the agent: a short semantic version, so a package's `version` field cannot carry other text into `codebook_status` ({@link readVitestPrerequisite}). */
+export const PRINTABLE_VITEST_VERSION =
+  /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]{1,64})?$/
 /** Wait for the owned test process to report its exit after its debugger session ended early. */
 export const NODE_TEST_EXIT_GRACE_MS = 2_000
 /** Budget for each owned Node test phase: attach through the entry pause, reaching a declared stop while the test runs, and capturing it. */

@@ -367,6 +367,7 @@ test('Node history understanding is an explicit private decision that survives s
   }
 })
 
+// Value: protects=learning material that restores by revision and cites only exact sealed events, refused with a step-level INVALID_REFERENCE; fails_when=a step citing the result as a stop is accepted, or its refusal does not name the step, the sequence, what it is and what the step claims; why_new=the step refusal named nothing the agent could correct (X19); seam=none; no_claim=the service's MCP answer (service tests)
 test('Node learning explanation restores by revision and accepts only exact sealed stop and result events', async () => {
   // Arrange
   const directory = await mkdtemp(
@@ -506,7 +507,11 @@ test('Node learning explanation restores by revision and accepts only exact seal
           resultStep,
         ],
       }),
-      /does not match its sealed history reference/i,
+      {
+        code: 'INVALID_REFERENCE',
+        message:
+          /^codebook_explain_node_history refused step [\w-]+: sequence 3 is the result in the sealed history, but the step claims a stop with sourceHash [0-9a-f]{64}\. Read the history's events again and cite each event by its sequence, type and source hash\.$/,
+      },
     )
     assert.deepEqual(
       await restarted.readLearningMaterial(header.studyId),

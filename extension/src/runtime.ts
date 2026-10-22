@@ -28,6 +28,8 @@ export interface NodeTestRuntime {
     signal: NodeJS.Signals | null
     output: string
     elapsedMs: number
+    /** Why Vitest's report could not confirm the cited test, for a run whose non-zero exit or signal already says it did not pass; the run's error names it beside the recorded result. */
+    reportFailure?: string
   }>
   stop(): Promise<void>
 }
@@ -153,6 +155,11 @@ export interface StudyEnvironment {
     definition: RuntimeDefinition,
     control?: RuntimeControl,
   ): Promise<StudyRuntime>
+  /**
+   * Checks the files a node-test configuration names against the opened repository before the run's history begins ({@link checkNodeTestFiles}); a refusal ends the run with its typed error and records nothing.
+   * @throws The typed refusal of a path that is not a file, a changed source or a changed test file.
+   */
+  checkNodeTestFiles?(configuration: NodeTestConfiguration): Promise<void>
   createNodeTestRun?(
     configuration: NodeTestConfiguration,
     record: (type: string, detail?: unknown) => unknown,

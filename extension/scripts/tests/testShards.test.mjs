@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -2227,7 +2228,10 @@ async function runHelperModule(
   context,
   { standIns = [], main, args = [], env = process.env },
 ) {
-  const folder = await mkdtemp(join(tmpdir(), 'codebook-helper-'))
+  // The stand-ins are named by the folder's real path: Node loads a module under its real path (on macOS the temporary folder's /var is /private/var), and a hook that answered with the other spelling would load a second copy whose counters the helper never reads.
+  const folder = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-helper-')),
+  )
   context.after(() => rm(folder, { recursive: true, force: true }))
   const hooks = []
   for (const [index, standIn] of standIns.entries()) {
@@ -3539,11 +3543,16 @@ async function collectInHelper(directory, file) {
     [
       `import { collectTestRun } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/collectTestRun.mjs')).href)}`,
       `import { listProcessIdsUnder } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/listProcessIdsUnder.mjs')).href)}`,
+      `import { readProcessStates } from ${JSON.stringify(pathToFileURL(join(scriptsDirectory, 'utils/readProcessStates.mjs')).href)}`,
       // gstack-timing-ok: the limit of a test (and of a hook) is the contract of the hung cases: they must end by it, 1 s after their start, and well before the silence bound below (6 s later), which a loaded runner needs for the events that follow the start.
       // gstack-timing-ok: the silence bound is 1 s + 6 s = 7 s: far above the 2 s a loaded runner needs to start a file (the fixtures busy-wait 2 s at their start) and send its first event, so only the silent case, whose file sends nothing after its tests, ends by it.
       `const run = await collectTestRun({ files: [${JSON.stringify(join(directory, file))}], concurrency: 1, testTimeoutMs: 1_000, stallMarginMs: 6_000, killGraceMs: 2_000 })`,
       "const outcome = run.stall ? 'silent' : run.hookTimedOutTests.length > 0 ? 'hook-hung' : run.timedOutTests.length > 0 ? 'test-hung' : 'passed'",
-      "console.log(JSON.stringify({ outcome, SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM'), SIGHUP: process.listenerCount('SIGHUP'), under: listProcessIdsUnder(process.pid) }))",
+      // A file process killed at the end of the call runs nothing, but stays in the table as a zombie (Z) until this process reaps it a moment later (macOS lists it at once); only a process that still runs counts.
+      'const found = listProcessIdsUnder(process.pid)',
+      'const states = readProcessStates(found)',
+      "const running = found.filter((pid) => states?.get(pid) !== 'Z')",
+      "console.log(JSON.stringify({ outcome, SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM'), SIGHUP: process.listenerCount('SIGHUP'), under: running }))",
     ].join('\n'),
   )
   const helper = spawn(process.execPath, [helperPath], {

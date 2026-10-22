@@ -156,7 +156,7 @@ test('new server credentials discover and replay a stored recording with no live
     )
     await controller.settle()
     // Assert
-    assert.equal(discovery.apiVersion, '1.7')
+    assert.equal(discovery.apiVersion, '1.8')
     assert.equal(discovery.runs.length, 0)
     assert.equal(entry.studyId, studyId)
     assert.equal(recording.status, 'finalized')

@@ -22,11 +22,13 @@ import type * as ExtensionModule from '../extension'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 import type { StudyService } from '../service'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 import {
   captureOwnedCursorMcpCatalogGeneration,
   refreshCursorMcpCatalog,
   removeOwnedCursorMcpCatalog,
 } from '../utils/refreshCursorMcpCatalog'
+import { sanitizeCause } from '../utils/sanitizeCause'
 
 import { createHarness } from './helpers'
 import {
@@ -1618,6 +1620,151 @@ test('a failed physical release keeps its owner and rejects starting or copying 
     if (restore) harness.runtimes[0]!.stop = restore
     await boundary.deactivate()
     await harness.close()
+  }
+})
+
+// Value: protects=the one Codebook Output channel the failure texts point to, shared by the service and the Study reader, each entry naming surface, study, version, host, cause; fails_when=the service or the reader reports to no channel, a second channel appears, Show details does not reveal it or the extension's storage folder is named; why_new=the sink is built in activate() and the tests assign their own (X5, AC17); seam=none; no_claim=the host's log levels (a fake window API, Study reader and server start stand in)
+test('activation gives the service and the Study reader one sink that writes unexpected failures to the Codebook Output channel', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    globalStorage = await mkdtemp(join(tmpdir(), 'codebook-global-storage-')),
+    services: StudyService[] = [],
+    readers: {
+      diagnostics?: {
+        log: (entry: CodebookDiagnostic) => void
+        show: () => void
+      }
+    }[] = [],
+    commands = new Map<string, () => Promise<string | void>>(),
+    subscriptions: { dispose(): void }[] = [],
+    channels: { name: string; log: boolean | undefined; dispose(): void }[] =
+      [],
+    entries: string[] = [],
+    shows: (boolean | undefined)[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<string | void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          createOutputChannel(name: string, options: { log?: boolean }) {
+            const channel = {
+              name,
+              log: options.log,
+              error(text: string): void {
+                entries.push(text)
+              },
+              show(preserveFocus?: boolean): void {
+                shows.push(preserveFocus)
+              },
+              dispose(): void {},
+            }
+            channels.push(channel)
+            return channel
+          },
+        },
+        env: { appName: 'Visual Studio Code' },
+        version: '1.143.0',
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage() {
+            return undefined
+          }
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          diagnostics?: {
+            log: (entry: CodebookDiagnostic) => void
+            show: () => void
+          }
+          constructor() {
+            readers.push(this)
+          }
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './environment': {
+        requireWorkspace: () => harness.directory,
+        createEnvironment: async () => ({
+          ...harness.service.environment,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async (service: StudyService) => {
+          service.repository = harness.service.repository
+          services.push(service)
+          return startServer(service)
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: globalStorage },
+    subscriptions,
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    await commands.get('codebook.startAgentServer')!()
+    const service = services[0]!,
+      reader = readers[0]!
+
+    // Act
+    service.diagnostics?.({
+      surface: 'HISTORY_SEAL_FAILED',
+      studyId: 'a_b',
+      profile: 'node-test',
+      cause: 'EIO: i/o error',
+    })
+    reader.diagnostics?.log({
+      surface: 'open:test-replay',
+      studyId: 'a_b',
+      profile: 'node-test',
+      cause: 'Sealed Node history journal is corrupt.',
+    })
+    reader.diagnostics?.show()
+
+    // Assert
+    assert.equal(channels.length, 1)
+    assert.equal(channels[0]!.name, 'Codebook')
+    assert.equal(channels[0]!.log, true)
+    assert.ok(subscriptions.includes(channels[0]!))
+    assert.equal(entries.length, 2)
+    assert.match(
+      entries[0]!,
+      /^HISTORY_SEAL_FAILED · study a_b · profile node-test\nCodebook \d+\.\d+\.\d+ \(API 1\.8\) · Visual Studio Code 1\.143\.0\nCause: EIO: i\/o error$/,
+    )
+    assert.match(
+      entries[1]!,
+      /^open:test-replay · study a_b · profile node-test\n/,
+    )
+    assert.deepEqual(shows, [true])
+    assert.equal(
+      sanitizeCause(
+        `EACCES: permission denied, open '${globalStorage}/state.json'`,
+        service.causeRoots,
+      ),
+      "EACCES: permission denied, open '<storage>/state.json'",
+    )
+  } finally {
+    await boundary.deactivate()
+    await harness.close()
+    await rm(globalStorage, { recursive: true, force: true })
   }
 })
 

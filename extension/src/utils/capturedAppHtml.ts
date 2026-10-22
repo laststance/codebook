@@ -4,6 +4,7 @@ import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus
 import { STUDY_STYLES, STUDY_UI_OPTIONS } from '../ui/constants'
 import type { StudyViewMessage } from '../ui/studyHtml'
 
+import { describeNodeTestReplay } from './describeNodeTestReplay'
 import { escapeHtml } from './escapeHtml'
 
 /** Renders a labeled historical PNG or explicit absence without granting a runtime paint receipt. @example capturedAppHtml(message) */
@@ -14,7 +15,7 @@ export function capturedAppHtml(message: StudyViewMessage): string {
   const failedRecording = message.recording?.readiness === 'failed'
   const nodeHistorySelected = Boolean(message.nodeHistory)
   const label = nodeHistorySelected
-    ? 'Node test history · application video unavailable'
+    ? 'Recorded test output'
     : failedRecording
       ? 'Recorded playback unavailable'
       : message.loading
@@ -23,8 +24,9 @@ export function capturedAppHtml(message: StudyViewMessage): string {
           ? `Captured ${message.model.selectedItem.title} observation · ${observation.capturedAt}`
           : 'No application observation yet'
   // Lead with recovery; retain escaped diagnostics behind an explicit disclosure for the learner's agent.
+  // Until the Application pane shows the recorded output itself, it points to where it is (PR-A's interim sentence).
   const content = nodeHistorySelected
-    ? '<p>This saved test history has recorded output, source and debugger stops, but no application video. Select an event in Study to inspect its recorded evidence.</p>'
+    ? `<p>${escapeHtml(describeNodeTestReplay({ kind: 'application-interim' }))}</p>`
     : failedRecording
       ? `<p>${STUDY_UI_OPTIONS.playbackFailureRecovery}</p><details><summary>Recording error details</summary><p>${escapeHtml(message.recording?.reason ?? 'The selected recording could not be read.')}</p></details>`
       : !message.loading && image?.status === 'captured'

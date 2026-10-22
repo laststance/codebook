@@ -47,6 +47,10 @@ export const ERROR_RECOVERY = {
     'Use the exact snapshot URI, source hash and value paths returned by the selected run.',
   INVALID_CONFIGURATION:
     'Correct the named configuration field against the selected immutable article and supported bounds before a new deliberate start. Reuse an accepted key only with identical input.',
+  HISTORY_SEAL_FAILED:
+    'The run is stopped and its resources are released; nothing reruns. Do not call codebook_stop again and do not claim saved learning. Tell the learner the save failed; its recorded part, when readable, opens from Saved studies. Start a new run only if the learner asks.',
+  PLAYBACK_PROFILE_UNSUPPORTED:
+    'codebook_playback controls browser recordings only. Do not start, continue or stop a run to open a test replay; ask the learner to open it.',
 } as const
 export type ErrorCode = keyof typeof ERROR_RECOVERY
 
