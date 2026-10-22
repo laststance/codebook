@@ -11228,26 +11228,42 @@ export class StudyWorkspace {
         })
       if (this.historyOpenSuperseded(request, revision))
         return { status: 'superseded' }
+      this.endNodeHistoryOpening(request)
       this.loading = false
       this.publish()
       return { status: 'opened' }
     } catch (error) {
       if (this.historyOpenSuperseded(request, revision))
         return { status: 'superseded' }
+      this.endNodeHistoryOpening(request)
       this.loading = false
       this.report('archive', error)
       this.publish()
       return { status: 'failed', error }
     } finally {
-      // A newer Node history request owns the marker by then.
-      if (this.pendingNodeHistory === request)
-        this.pendingNodeHistory = undefined
+      const endedHere = this.endNodeHistoryOpening(request)
       // A request discarded only because the reader's revision changed is still the latest; nothing else ends the loading state it set.
       if (this.loading && this.isLatestHistoryRequest(request)) {
         this.loading = false
         this.publish()
+      } else if (endedHere && !this.closing) {
+        // A render that ended the loading state meanwhile leaves the panes on this open's loading line until they are published again.
+        this.publish()
       }
     }
+  }
+
+  /**
+   * Ends a test replay open's own marker, which alone says that a test replay is opening ({@link nodeHistoryViews}): a render that ends the shared loading state meanwhile never ends it; called by {@link openNodeHistory} before its last publish and in its `finally`.
+   * @param request - The open's request token.
+   * @returns `true` when this call ended the open's marker; `false` when a newer open owns it or it was already ended.
+   * @example this.endNodeHistoryOpening(request) // => true
+   */
+  private endNodeHistoryOpening(request: number): boolean {
+    // A newer Node history request owns the marker by then.
+    if (this.pendingNodeHistory !== request) return false
+    this.pendingNodeHistory = undefined
+    return true
   }
 
   /**
@@ -12099,8 +12115,8 @@ export class StudyWorkspace {
         history,
         index: indexNodeTestOutput(history.entries),
       }
-    // Only a test replay that is opening reads as loading; a background selection's render never does.
-    const opening = this.loading && this.pendingNodeHistory !== undefined
+    // Only a test replay that is opening reads as loading, by its own marker: a background render's loading state, which may end in the middle of the open, never does.
+    const opening = this.pendingNodeHistory !== undefined
     const key = JSON.stringify([
       history.header.studyId,
       history.entries.length,

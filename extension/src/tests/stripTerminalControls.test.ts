@@ -31,7 +31,7 @@ test('recorded test output loses bidirectional and other invisible controls', ()
   assert.equal(shown, 'bell evil done x\nbackfeed ok\n')
 })
 
-// Value: protects=recorded output loses DEL and the C1 controls too, and an 8-bit color sequence (CSI written as U+009B) goes whole, so the Application pane keeps the README's promise that control characters are removed; fails_when=DEL, NEL or another C1 control reaches the pane, or an 8-bit sequence leaves its parameters, such as `31m`, as text; why_new=Step 9 pass 2's maintainability review: the class lost DEL and C1, which sanitizeCause removes, and only the 7-bit ESC form of CSI was recognized; seam=none; no_claim=the C1 escapes other than CSI, whose following text stays as printed
+// Value: protects=recorded output loses DEL and the C1 controls too, and an 8-bit color sequence (CSI written as U+009B) goes whole, so the Application pane keeps the README's promise that control characters are removed; fails_when=DEL, NEL or another C1 control reaches the pane, or an 8-bit sequence leaves its parameters, such as `31m`, as text; why_new=Step 9 pass 2's maintainability review: the class lost DEL and C1, which sanitizeCause removes, and only the 7-bit ESC form of CSI was recognized; seam=none; no_claim=the C1 string escapes other than OSC (DCS, SOS, PM and APC), whose introducers alone are removed
 test('recorded test output loses DEL, C1 controls and 8-bit color sequences', () => {
   // Arrange
   const printed = 'a\u007Fb\u0085c\u009B31md\u009B0m ok\n'
@@ -41,4 +41,18 @@ test('recorded test output loses DEL, C1 controls and 8-bit color sequences', ()
 
   // Assert
   assert.equal(shown, 'abcd ok\n')
+})
+
+// Value: protects=an OSC sequence ended by the 8-bit string terminator (U+009C), and an 8-bit OSC (U+009D … U+009C), goes whole: the text printed after it and its line feed stay, and a window title or a link's address is not shown as output; fails_when=the OSC body runs past U+009C to the next escape or the chunk's end and deletes the printed text and line feeds after it, or an 8-bit OSC leaves its payload as text; why_new=Step 9 pass 3's testing review and red team: pass 2 recognized the 8-bit CSI but not the 8-bit string forms; seam=none; no_claim=DCS, SOS, PM and APC strings, whose C1 introducers alone are removed
+test('recorded test output loses an OSC ended by the 8-bit string terminator and an 8-bit OSC, and keeps the text after them', () => {
+  // Arrange
+  const printed =
+    '\u001b]8;;https://example.test\u009clink\u001b]8;;\u009c done\n' +
+    '\u009d0;title\u009cvisible line\n'
+
+  // Act
+  const shown = stripTerminalControls(printed)
+
+  // Assert
+  assert.equal(shown, 'link done\nvisible line\n')
 })

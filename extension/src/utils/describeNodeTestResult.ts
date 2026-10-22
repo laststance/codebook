@@ -11,7 +11,7 @@ export type NodeTestVerdict =
   | 'No result recorded'
 
 /**
- * Words a test run's result for the learner, so the status item's tooltips, the partial-save notification, Saved studies rows and the `HISTORY_SEAL_FAILED` message say the same thing about one result; called by {@link describeNodeLearningSave}, {@link NodeLearningSave} and {@link StudyService}.
+ * Words a test run's result for the learner, so the status item's tooltips, the partial-save notification, Saved studies rows, the `HISTORY_SEAL_FAILED` message, the Application pane's last line at the result and the Study section's status and Result locator say the same thing about one result; called by {@link describeNodeLearningSave}, {@link NodeLearningSave}, {@link StudyService}, {@link projectNodeTestApplication} and {@link projectNodeTestSection}.
  * @param result - The result's process facts; `undefined` when the run recorded no result.
  * @returns
  * - `'Test passed · exit code 0'` for a passing exit

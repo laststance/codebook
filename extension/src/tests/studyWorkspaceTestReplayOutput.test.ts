@@ -825,6 +825,60 @@ test('a step action overtaken before its stop is shown leaves the step the learn
   }
 })
 
+// Value: protects=a test replay that is opening keeps its loading line in the Application pane while a background render (Retry storage / refresh) settles in the middle of the open, and the pane ends on the replay's first moment; fails_when=the render's end reads as the open's end, so the pane says "No test output recorded up to this moment." of a replay whose first moment is still being shown, or keeps a loading line after the open; why_new=Step 9 pass 3's state-machines review (wrong row: the opening state read from the loading flag that renders share); seam=the workspace harness's held historical debug presentation, which keeps the open at its first stop; no_claim=the Study pane's own loading line
+test('a render that settles while a test replay opens keeps its loading line until its first moment is shown', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const held = harness.holdHistoricalDebugPresentation(true)
+    const opening = harness.reader.openLearningReplay(history.studyId)
+    await held.started
+    const outputsBefore = harness.applicationOutputs().length
+
+    // Act: a background render settles while the open waits for its first stop's debugger, then the open goes on.
+    await harness.reader.action('retry')
+    held.release()
+    await opening
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+
+    // Assert
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    const posted = harness.applicationOutputs().slice(outputsBefore)
+    assert.ok(
+      posted.every(
+        (update) =>
+          update.view.placeholder !==
+          'No test output recorded up to this moment.',
+      ),
+    )
+    assert.doesNotMatch(
+      application?.webview.html ?? '',
+      /No test output recorded up to this moment\./,
+    )
+    assert.equal(
+      posted.at(-1)?.view.time ??
+        /Recorded test output · 0\.20 s/.exec(
+          application?.webview.html ?? '',
+        )?.[0],
+      'Recorded test output · 0.20 s',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a background render while a test replay is selected (Retry storage / refresh writes the Application document again) keeps the selected moment's output in the pane: the document is written with that moment and no loading view is posted; fails_when=the render's loading flag reads as the replay opening, so the pane shows "Loading recorded test output…" and loses its lines, the learner's scroll position and selection; why_new=Step 9 pass 2's state-machines review (source render × pending and settled): the opening flag's reason was untested; seam=none; no_claim=a render that fails or is superseded, which ends the same way and is carried as a task
 test('a background render while a test replay is selected keeps its Application output', async () => {
   // Arrange

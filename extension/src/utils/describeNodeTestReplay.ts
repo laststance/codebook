@@ -1,3 +1,4 @@
+import { MILLISECONDS_PER_SECOND } from '../constants'
 import type { NodeTestHistorySummary } from '../nodeTestHistoryStore'
 
 /**
@@ -214,5 +215,5 @@ function testName(test: NodeTestReplayTestName): string {
  * @example seconds(1234) // => '1.23'
  */
 function seconds(elapsedMs: number): string {
-  return (elapsedMs / 1_000).toFixed(2)
+  return (elapsedMs / MILLISECONDS_PER_SECOND).toFixed(2)
 }

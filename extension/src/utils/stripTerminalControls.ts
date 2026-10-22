@@ -1,6 +1,6 @@
-/** ANSI escape sequences: CSI (`ESC [`, or its 8-bit form U+009B, then parameters, intermediates and a final byte), OSC (`ESC ]` up to BEL or `ESC \`, or the text's end) and the other escapes (intermediates such as the `(` of a character-set choice, then one final character, as in `ESC 7` or `ESC M`). */
+/** ANSI escape sequences: CSI (`ESC [`, or its 8-bit form U+009B, then parameters, intermediates and a final byte), OSC (`ESC ]`, or its 8-bit form U+009D, up to BEL, `ESC \` or the 8-bit string terminator U+009C, or the text's end) and the other escapes (intermediates such as the `(` of a character-set choice, then one final character, as in `ESC 7` or `ESC M`). */
 const ANSI_ESCAPES =
-  /\u009B[0-?]*[ -/]*[@-~]|\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001B]*(?:\u0007|\u001B\\)?|[ -/]*[0-~])/g
+  /\u009B[0-?]*[ -/]*[@-~]|(?:\u001B\]|\u009D)[^\u0007\u001B\u009C]*(?:\u0007|\u001B\\|\u009C)?|\u001B(?:\[[0-?]*[ -/]*[@-~]|[ -/]*[0-~])/g
 
 /** C0 controls other than tab and line feed, DEL and the C1 controls, and the bidirectional controls that can reorder what a reader sees (the set {@link sanitizeCause} removes, with tab and line feed kept). */
 const UNREADABLE_CONTROLS =

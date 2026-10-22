@@ -45,7 +45,7 @@ type SelectedEvent = NodeTestHistoryIndex['entries'][number]
  * @param history - The selected history, all its entries, and its status: a history still recording has no early end yet.
  * @param index - Its output read once ({@link indexNodeTestOutput}).
  * @param selected - The selected event, absent before one is selected.
- * @param generation - The workspace's count of selections, so a document ignores an update older than the one it shows.
+ * @param generation - The Application view's generation, which changes only when the shown moment (the history, its entry count, the selected event or the opening state) does, so a document ignores an update older than the one it shows.
  * @param loading - Whether the replay is still opening.
  * @returns The view.
  * @example

@@ -2721,6 +2721,73 @@ async function check(page, options, collected) {
             keptGeneration: 21,
           }),
       })
+      // Value: protects=moments posted one by one, as the host posts them during Play, are joined into one state write per TEST_OUTPUT_STATE_WRITE_INTERVAL_MS (500 ms), and the joined last moment is written when the interval ends, without the document being left; fails_when=the interval is dropped or zero (a write per moment, each copying the whole output), or the timer forgets the moments joined during the interval, so a document reloaded later shows an older moment; why_new=Step 9 pass 3's testing review: the stream case posts every moment in one task and flushes by pagehide, so neither the interval nor the timer's write was tested; seam=the page's setTimeout, replaced to hold the document's timers of 100 ms or more until the case runs them; no_claim=the real passage of time, which the held timer stands in for
+      // Arrange: a document whose state writes are counted, with its long timers held.
+      const timerPage = await page.context().newPage()
+      await timerPage.setViewportSize({ width: 760, height: 360 })
+      await timerPage.goto(options.url)
+      await timerPage.evaluate(() => {
+        window.savedState = undefined
+        window.stateWrites = 0
+        window.heldTimers = []
+        const realSetTimeout = window.setTimeout.bind(window)
+        window.setTimeout = (callback, delay) => {
+          if (delay === undefined || delay >= 100) {
+            window.heldTimers.push({ callback, delay })
+            return window.heldTimers.length
+          }
+          return realSetTimeout(callback, delay)
+        }
+        window.acquireVsCodeApi = () => ({
+          getState: () => window.savedState,
+          setState(next) {
+            window.stateWrites += 1
+            window.savedState = structuredClone(next)
+          },
+          postMessage() {},
+        })
+      })
+      await timerPage.setContent(options.html.application)
+      // Act: three moments, each posted in its own task.
+      for (const generation of [2, 3, 4])
+        await timerPage.evaluate(
+          ({ generation, view }) =>
+            window.dispatchEvent(
+              new MessageEvent('message', {
+                data: {
+                  type: 'node-history-output',
+                  generation,
+                  view: { ...view, generation },
+                },
+              }),
+            ),
+          { generation, view: options.testReplayViews.result },
+        )
+      const beforeInterval = await timerPage.evaluate(() => ({
+        writes: window.stateWrites,
+        stateTimers: window.heldTimers
+          .filter((timer) => timer.delay === 500)
+          .map((timer) => timer.delay),
+      }))
+      const afterInterval = await timerPage.evaluate(() => {
+        window.heldTimers.find((timer) => timer.delay === 500)?.callback()
+        return {
+          writes: window.stateWrites,
+          kept: window.savedState?.testOutputView?.generation,
+        }
+      })
+      await timerPage.close()
+      // Assert
+      cases.push({
+        name: 'moments posted one by one are joined into one state write per interval, and the joined moment is written when the interval ends (DS20, EN3)',
+        actual: { beforeInterval, afterInterval },
+        passed:
+          JSON.stringify({ beforeInterval, afterInterval }) ===
+          JSON.stringify({
+            beforeInterval: { writes: 1, stateTimers: [500] },
+            afterInterval: { writes: 2, kept: 4 },
+          }),
+      })
       await applicationPage.close()
       // Assert
       cases.push({
