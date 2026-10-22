@@ -75,7 +75,7 @@ async function nodeRunHarness({
   typedWhileRunning,
   closeFailures = 0,
   stopFailures = 0,
-  outputClosesOnRelease = false,
+  outputRefusesOnceClosed = false,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -123,8 +123,8 @@ async function nodeRunHarness({
   typedWhileRunning?: { continueRequest: number; text: string }
   closeFailures?: number
   stopFailures?: number
-  /** The output terminal refuses a reveal or a write once the run released it, as the real terminal does ("Owned Node test output terminal was closed."). */
-  outputClosesOnRelease?: boolean
+  /** The output terminal refuses a reveal or a write once the run released it or the learner closed it, as the real terminal does ("Owned Node test output terminal was closed."). */
+  outputRefusesOnceClosed?: boolean
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -436,21 +436,34 @@ async function nodeRunHarness({
     // The adapter resolved the pending breakpoint right after it answered.
     if (verifiedByNews?.when === 'after the reply') announceVerified()
   }
+  const outputSurfaces: { closeByLearner(): void }[] = []
   class OutputTerminal {
     readonly terminal = { name: 'Codebook · Test output' }
-    private released = false
+    private closed = false
+    constructor(
+      _runId: string,
+      _editor: unknown,
+      private readonly onUnexpectedClose?: () => void,
+    ) {
+      outputSurfaces.push(this)
+    }
     async ready(): Promise<void> {}
     write(): void {
-      this.refuseOnceReleased()
+      this.refuseOnceClosed()
     }
     reveal(): void {
-      this.refuseOnceReleased()
+      this.refuseOnceClosed()
     }
     dispose(): void {
-      this.released = true
+      this.closed = true
     }
-    private refuseOnceReleased(): void {
-      if (outputClosesOnRelease && this.released)
+    /** The learner closes the tab: the real terminal marks itself closed and tells the run, which aborts. */
+    closeByLearner(): void {
+      this.closed = true
+      this.onUnexpectedClose?.()
+    }
+    private refuseOnceClosed(): void {
+      if (outputRefusesOnceClosed && this.closed)
         throw new Error('Owned Node test output terminal was closed.')
     }
   }
@@ -667,6 +680,8 @@ async function nodeRunHarness({
     run,
     calls,
     verified,
+    /** The learner closes the run's test output tab. */
+    closeOutputAsLearner: (): void => outputSurfaces.at(-1)?.closeByLearner(),
     events,
     debugStartOptions,
     launchPreparations: (): number => launchPreparations,
@@ -1310,7 +1325,7 @@ test('a stop while the report is being checked keeps the passing result although
   })
   const harness = await nodeRunHarness({
     reportRead,
-    outputClosesOnRelease: true,
+    outputRefusesOnceClosed: true,
   })
   try {
     await harness.run.prepare()
@@ -1330,6 +1345,44 @@ test('a stop while the report is being checked keeps the passing result although
       (error: unknown) => (error instanceof Error ? error.message : 'failed'),
     )
     await stopping
+
+    // Assert
+    assert.equal(outcome, 0)
+  } finally {
+    finishRead()
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a passing test's result when the learner closes the test output tab while the final continuation checks Vitest's report: the result is returned although the closed tab aborted the run; fails_when=the end of the check reveals the tab the learner closed, so the continuation fails and the run seals partial without its result; why_new=the stop-during-check test closes the tab by a release only, and a learner's close aborts the run without one (Step 9 pass 3 red team, the sibling of F62); seam=the report check is held by the test; no_claim=VS Code's terminal (a stand-in that refuses a reveal once closed)
+test('closing the test output tab while the report is being checked keeps the passing result', async () => {
+  // Arrange
+  let finishRead!: () => void
+  const reportRead = new Promise<void>((resolve) => {
+    finishRead = resolve
+  })
+  const harness = await nodeRunHarness({
+    reportRead,
+    outputRefusesOnceClosed: true,
+  })
+  try {
+    await harness.run.prepare()
+    await writeFile(harness.launch.report.file, '{}')
+    const completing = harness.run.complete()
+    await waitUntil(
+      () => harness.calls.includes('verify'),
+      'the report check',
+      1_000,
+    )
+
+    // Act
+    harness.closeOutputAsLearner()
+    finishRead()
+    const outcome = await completing.then(
+      (result) => result.exitCode,
+      (error: unknown) => (error instanceof Error ? error.message : 'failed'),
+    )
 
     // Assert
     assert.equal(outcome, 0)

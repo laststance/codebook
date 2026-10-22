@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { StudyError } from '../errors'
 import {
   NodeLearningSave,
   type NodeLearningSaveHost,
@@ -564,4 +565,102 @@ test('Save now while a test run prepares, whose stop seals no entry, ends as for
   assert.equal(recorder.summaryCalls(), 0)
   assert.deepEqual(recorder.notified, [])
   assert.equal(save.item(record), undefined)
+})
+
+// Value: protects=the Retry of a Save whose stop was rejected before the result: it stops the run again without asking again, as its tooltip says ("click to stop it again"), since the rejected stop began the run's release and the run can no longer reach its result; fails_when=the Retry asks "Save now?" again, so a Cancel leaves a run that can neither continue nor be saved; why_new=the only Retry of a rejected stop uses a run past its result, which takes no question (Step 9 pass 3 state-machines, wrong row; Issue #107 F54); seam=none; no_claim=the real release (the stop is a stand-in that keeps the release's failure on the run as the service does)
+test('the Retry of a stop rejected before the result stops the run again without asking again', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    answer: 'Save now',
+    stops: [
+      async (record): Promise<void> => {
+        // The service keeps the release's failure on the run before it rejects the stop.
+        record.cleanupError = new StudyError(
+          'RUNTIME_FAILED',
+          'process group still running',
+        )
+        throw new Error('process group still running')
+      },
+      async (record): Promise<void> => {
+        record.stopped = true
+        record.cleanupError = undefined
+        record.nodeHistoryStatus = 'partial'
+        record.nodeHistoryEntryCount = 2
+      },
+    ],
+    summaries: [
+      async () =>
+        summary({
+          status: 'partial',
+          verdict: 'No result recorded',
+          testResult: 'none',
+          stopCount: 1,
+          explainedStopCount: 0,
+          hasResult: false,
+          learningCoverage: 'none',
+          learningMissing: [{ kind: 'summary' }, { kind: 'stop', stop: 1 }],
+          captureMissing: [{ kind: 'execution' }],
+        }),
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun()
+  recorder.use(record)
+  await save.save(record)
+  const afterRejectedStop = save.item(record)?.text
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.equal(afterRejectedStop, '$(error) Learning save failed · Retry')
+  assert.equal(recorder.asked.length, 1)
+  assert.equal(recorder.stopCalls(), 2)
+  assert.equal(
+    save.item(record)?.text,
+    '$(warning) Learning partially saved · Open replay',
+  )
+})
+
+// Value: protects=the Save of a test run whose continuation failed or passed its deadline before its release ended: no question (it can no longer reach its result), its release and seal, and a partial receipt; fails_when=the Save asks "Saving ends the test run before its result" of a run that will never reach it, and a Cancel leaves the failed run unreleased; why_new=no test saves a run whose phase is failed (Step 9 pass 3 state-machines, wrong row); seam=none; no_claim=the real release and seal (the stop is a stand-in)
+test('the Save of a test run that failed before its release asks nothing and saves its partial history', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    answer: undefined,
+    stops: [
+      async (record): Promise<void> => {
+        record.stopped = true
+        record.nodeHistoryStatus = 'partial'
+        record.nodeHistoryEntryCount = 2
+      },
+    ],
+    summaries: [
+      async () =>
+        summary({
+          status: 'partial',
+          verdict: 'No result recorded',
+          testResult: 'none',
+          stopCount: 1,
+          explainedStopCount: 0,
+          hasResult: false,
+          learningCoverage: 'none',
+          learningMissing: [{ kind: 'summary' }, { kind: 'stop', stop: 1 }],
+          captureMissing: [{ kind: 'execution' }],
+        }),
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'failed' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(recorder.asked, [])
+  assert.equal(recorder.stopCalls(), 1)
+  assert.equal(
+    save.item(record)?.text,
+    '$(warning) Learning partially saved · Open replay',
+  )
 })

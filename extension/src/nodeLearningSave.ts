@@ -154,8 +154,8 @@ export class NodeLearningSave {
     record: StudyRecord,
     studyId: string,
   ): Promise<void> {
-    // Before the result, Save ends the test run: the learner confirms it.
-    if (!record.stopped && record.nodePhase !== 'completed') {
+    // Before the result, Save ends a test run that could still reach it: the learner confirms it.
+    if (asksBeforeEnding(record)) {
       const question = describeNodeLearningSave({
         kind: 'question',
         reached: record.nodeStops?.length ?? 0,
@@ -375,6 +375,21 @@ function recordedNothing(record: StudyRecord): boolean {
     !record.nodeHistoryWriter ||
     // The seal sets the count; a sealed history without an entry has nothing to replay.
     record.nodeHistoryEntryCount === 0
+  )
+}
+
+/**
+ * Says whether a Save asks before it ends a test run: only while Codebook can still continue the run to its result, as the question's "before its result" says. A run whose earlier stop was rejected (its release began and failed: `cleanupError`) or whose continuation failed or passed its deadline (`nodePhase` failed) can no longer reach its result, so its Save stops it without asking; read by {@link NodeLearningSave.saveOnce}.
+ * @param record - The node-test run.
+ * @returns `true` when the Save asks first.
+ * @example asksBeforeEnding(record) // => false for a run whose earlier stop was rejected
+ */
+function asksBeforeEnding(record: StudyRecord): boolean {
+  return (
+    !record.stopped &&
+    !record.cleanupError &&
+    record.nodePhase !== 'completed' &&
+    record.nodePhase !== 'failed'
   )
 }
 

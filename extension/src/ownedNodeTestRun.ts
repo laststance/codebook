@@ -691,11 +691,11 @@ export class OwnedNodeTestRun {
   }
 
   /**
-   * Restores this run's output tab after the native debugger opened its console, unless a stop already began the release, which disposed the tab: the stop or result just observed stands without the reveal (EN5); called by {@link captureStop} and {@link completeOwned}.
+   * Restores this run's output tab after the native debugger opened its console, unless the run was aborted: a stop began its release, which disposes the tab, or the learner closed the tab, which aborts the run. The stop or result just observed stands without the reveal (EN5); called by {@link captureStop} and {@link completeOwned}.
    * @example this.revealOutput()
    */
   private revealOutput(): void {
-    if (!this.releaseBegun) this.outputTerminal?.reveal()
+    if (!this.abort.signal.aborted) this.outputTerminal?.reveal()
   }
 
   /**
