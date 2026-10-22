@@ -39,7 +39,7 @@ function needsOfHistory(
 }
 
 /**
- * Lists what a read test replay lacks, as structured parts every surface words through {@link describeNodeLearningPart}: the explanations its material lacks and the recorded evidence its journal lacks; called by {@link NodeLearningSave} after the seal and by {@link NodeTestHistoryStore.list} for the summary Saved studies and the history resource read. It imports neither the service nor the workspace, so both can call it.
+ * Lists what a read test replay lacks, as structured parts every surface words through {@link describeNodeLearningPart}: the explanations its material lacks and the recorded evidence its journal lacks; called by {@link NodeTestHistoryStore} when it reads a history's summary, which Saved studies, the history resource and {@link NodeLearningSave} (after the seal) then read. It imports neither the service nor the workspace, so both can call it.
  * Capture gaps never ask the chat for an explanation: a stop whose debugger state is empty or whose captured source does not verify ({@link nodeStopSourceMatches}), and a history that ended (sealed partial or interrupted) before its result.
  * @param history - The verified history: its status and entries.
  * @param material - The saved material's content; `undefined` before the first save.

@@ -7667,6 +7667,9 @@ export class StudyWorkspace {
     this.service = service
     service.recordings = this.recordings
     service.nodeHistoryStore = this.nodeHistoryStore!
+    // A summary's reason names no private path of this window (F15).
+    this.nodeHistoryStore!.describeCause = (error) =>
+      sanitizeCause(error, service.causeRoots)
     service.playbackController = this.playback
     service.presentationController = this
     if (!this.timer) {

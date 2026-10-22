@@ -7,10 +7,10 @@ import { withoutErrorName } from './withoutErrorName'
 export type CauseRoots = {
   /** The extension's storage folders (the service's storage root, the learning directory); each reads `<storage>`. */
   storage: readonly string[]
-  /** The opened repository's root; it reads `<workspace>`. */
-  workspace?: string
-  /** The user's home directory; it reads `~`. */
-  home?: string
+  /** The opened repository's root, as reported and by its real path when they differ (a symlinked workspace); each reads `<workspace>`. */
+  workspace?: string | readonly string[]
+  /** The user's home directory, as reported and by its real path when they differ; each reads `~`. */
+  home?: string | readonly string[]
 }
 
 /** C0 and C1 control characters, DEL, and the bidirectional controls that can reorder what a reader sees. */
@@ -47,7 +47,8 @@ function rootPatterns(root: string): RegExp[] {
   if (!trimmed) return []
   // A root must begin and end where a path segment does, so /Users/ada never matches inside /Users/adam, nor /var inside /private/var.
   const start = '(?<![A-Za-z0-9._-])'
-  const boundary = '(?![A-Za-z0-9._-])'
+  // A period ends a root when a sentence does (`… in /Users/ada/code.`); a period before a name character (`.ts`, `.d`) continues the name.
+  const boundary = '(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_-])'
   if (WINDOWS_ROOT.test(`${trimmed}\\`)) {
     const bare = trimmed.replace(/^\\\\\?\\/, '')
     const pattern = bare
@@ -75,7 +76,7 @@ function rootPatterns(root: string): RegExp[] {
 }
 
 /**
- * Words a failure's cause for a tooltip, a notification, the run resource, an MCP message and the Output › Codebook channel without the private paths it can carry, at the moment the cause is assigned, so every surface shows the same value; called by {@link StudyService} for a test history's failure, the test run's recording reason and the `HISTORY_SEAL_FAILED` cause, and by {@link NodeLearningSave} for the save's causes.
+ * Words a failure's cause for a tooltip, a notification, the run resource, an MCP message and the Output › Codebook channel without the private paths it can carry, at the moment the cause is assigned, so every surface shows the same value; called by {@link StudyService} for a test history's failure, the test run's recording reason and the `HISTORY_SEAL_FAILED` cause, by {@link NodeLearningSave} for the save's causes, by {@link StudyWorkspace} for the causes it reports, and by {@link NodeTestHistoryStore} for an unavailable history's reason.
  * The extension's storage roots read `<storage>`, the opened repository's root `<workspace>` and the home directory `~`, in POSIX and Windows forms (either separator, the `\\?\` prefix, any case on Windows) and through the macOS realpath aliases `/var` and `/private/var`. A {@link StudyError} reads as its message naming its cause ({@link messageNamingCause}); any other error loses its leading error name ({@link withoutErrorName}). Control characters, bidirectional ones included, become spaces. The whole text is returned; a surface cuts it for display ({@link cutCauseForDisplay}).
  * @param error - What was thrown, or a cause already in words.
  * @param roots - The private roots of this window.
@@ -91,13 +92,12 @@ export function sanitizeCause(error: unknown, roots: CauseRoots): string {
     error instanceof StudyError
       ? messageNamingCause(error.message, error.causeDetail)
       : withoutErrorName(String(error))
-  const replacements: [string, string][] = [
-    ...roots.storage.map((root): [string, string] => [root, '<storage>']),
-    ...(roots.workspace
-      ? [[roots.workspace, '<workspace>'] as [string, string]]
-      : []),
-    ...(roots.home ? [[roots.home, '~'] as [string, string]] : []),
-  ]
+  const replacements: [string, string][] = roots.storage.map(
+    (root): [string, string] => [root, '<storage>'],
+  )
+  for (const root of [roots.workspace ?? []].flat())
+    replacements.push([root, '<workspace>'])
+  for (const root of [roots.home ?? []].flat()) replacements.push([root, '~'])
   // The longest root first, so a storage folder inside the home directory reads <storage>, not ~/….
   replacements.sort((left, right) => right[0].length - left[0].length)
   for (const [root, words] of replacements)

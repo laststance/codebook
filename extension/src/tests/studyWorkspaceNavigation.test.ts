@@ -135,7 +135,13 @@ for (const sameHost of [false, true])
         // Admitting an isolated Node journal is a different history choice while browser selection stays unchanged.
         const header = nodeTestHistoryHeader(library.workspaceKey),
           writer = await harness.service.nodeHistoryStore!.start(header)
-        // Partial journals are readable history choices; this fixture claims no executed stop or result.
+        // Partial journals are readable history choices; this fixture claims no executed stop or result, only one recorded output (a history sealed with no entry is removed, D6).
+        await writer.appendOutput({
+          sequence: 1,
+          elapsedMs: 1,
+          channel: 'stdout',
+          text: 'RUN src/theme.test.ts',
+        })
         await writer.finish(
           'partial',
           'Owned test fixture has no execution evidence.',

@@ -14,7 +14,10 @@ import { join } from 'node:path'
 import { before, mock, test, type TestContext } from 'node:test'
 
 import { NODE_TEST_HISTORY_DIRECTORY } from '../constants'
-import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import {
+  NodeTestHistoryStore,
+  type NodeTestHistoryWriter,
+} from '../nodeTestHistoryStore'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { citationContext } from '../utils/citationContext'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
@@ -64,6 +67,24 @@ function holdHeaderCreation(
     },
   )
   return { folderMade, letGoOn }
+}
+
+/**
+ * Records one output line and seals the history as the learner's stop, so the history has something to replay: a history sealed with no entry is removed when it seals (Decision D6 of Cycle 0050).
+ * @param writer - The writer of a started history.
+ * @returns The sealed journal's hash.
+ * @example await sealWithOneOutput(writer)
+ */
+async function sealWithOneOutput(
+  writer: NodeTestHistoryWriter,
+): Promise<string | undefined> {
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  return writer.finish('partial', 'The learner stopped this run.')
 }
 
 test('Node history remains a readable interrupted prefix after extension restart and rejects foreign workspace access', async () => {
@@ -579,7 +600,7 @@ test('a stray file and a stray folder in the Node history directory take no plac
   try {
     // Act: the first test starts beside the stray entries; the second meets a store that holds its one history.
     const writer = await store.start(first)
-    await writer.finish('partial', 'The learner stopped this run.')
+    await sealWithOneOutput(writer)
     const secondStart = await store.start(second).then(
       () => 'admitted',
       (error: unknown) => String(error),
@@ -665,11 +686,7 @@ test('a Node test whose history cannot be started leaves no folder behind, and t
   const startRefusedByDisk = await outcomeOf(store.start(refusedByDisk))
   const foldersAfterTheRefusedFile = await readdir(historyDirectory)
   const nextStart = await outcomeOf(
-    store
-      .start(admitted)
-      .then((writer) =>
-        writer.finish('partial', 'The learner stopped this run.'),
-      ),
+    store.start(admitted).then((writer) => sealWithOneOutput(writer)),
   )
   // Assert
   assert.equal(
@@ -714,11 +731,7 @@ test('a folder without a header and one whose header cannot be read take no plac
   // Act: the first test starts beside the two folders; the second meets a store whose list holds its one history.
   const listedBefore = (await store.list()).map((entry) => entry.studyId)
   const firstStart = await outcomeOf(
-    store
-      .start(first)
-      .then((writer) =>
-        writer.finish('partial', 'The learner stopped this run.'),
-      ),
+    store.start(first).then((writer) => sealWithOneOutput(writer)),
   )
   const secondStart = await outcomeOf(store.start(second))
   // Assert
@@ -956,7 +969,7 @@ test('a Node test history start whose storage lock cannot be released after it m
   ): Promise<string> =>
     starting.then(
       async (writer) => {
-        await writer.finish('partial', 'The learner stopped this run.')
+        await sealWithOneOutput(writer)
         return 'started and sealed'
       },
       (error: unknown) => String(error),
@@ -1045,7 +1058,7 @@ test('a Node test asked for under a study id that already has a history is refus
   const header = nodeTestHistoryHeader(workspaceKey)
   try {
     const writer = await store.start(header)
-    await writer.finish('partial', 'The learner stopped this run.')
+    await sealWithOneOutput(writer)
 
     // Act
     const secondStart = await store.start(header).then(

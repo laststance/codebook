@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import { StudyError } from '../errors'
 import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { checkNodeTestFiles } from '../utils/checkNodeTestFiles'
+
+import { loadModule } from './utils/loadModule'
 
 const SOURCE_TEXT = 'export const nextRun = schedule(job, 5_000)\n'
 const TEST_TEXT = 'test("runs a delayed job after its timer", () => {})\n'
@@ -143,6 +145,118 @@ test('a missing stop file is refused naming its field and path', async () => {
       refusal.message,
       'node-test preparation refused: source.path src/removed.ts is not a file in the opened repository. Use a tracked path from codebook_sources.',
     )
+  } finally {
+    await cleanup()
+  }
+})
+
+const SECOND_SOURCE_TEXT = 'export const retryDelay = 250\n'
+
+/** The scheduler configuration with a second declared stop in `src/retry.ts`, which it also writes. */
+async function withSecondStop(
+  root: string,
+  configuration: NodeTestConfiguration,
+  hash = sha256(SECOND_SOURCE_TEXT),
+  path = 'src/retry.ts',
+): Promise<NodeTestConfiguration> {
+  await writeFile(join(root, 'src', 'retry.ts'), SECOND_SOURCE_TEXT)
+  return {
+    ...configuration,
+    additionalStops: [
+      {
+        path,
+        hash,
+        line: 1,
+        column: 1,
+        anchorIndex: 1,
+        inspections: [{ path: 'retryDelay', mode: 'value', required: true }],
+      },
+    ],
+  }
+}
+
+// Value: protects=the refusals of an additional stop: its number, its additionalStops[n].path field and the order of the source refusal before the test-hash refusal; fails_when=a changed second stop is numbered 1, a missing one names source.path, or a changed test file hides a changed source; why_new=only the first stop was covered (F18, E1); seam=none; no_claim=the debugger binding of each stop
+test('an additional stop is refused with its own number and field, and a changed source is refused before a changed test file', async () => {
+  // Arrange
+  const { root, configuration, cleanup } = await schedulerRepository()
+  try {
+    const twoStops = await withSecondStop(root, configuration)
+    const missingSecond = await withSecondStop(
+      root,
+      configuration,
+      undefined,
+      'src/gone.ts',
+    )
+    await writeFile(
+      join(root, 'src', 'retry.ts'),
+      'export const retryDelay = 0\n',
+    )
+    await writeFile(join(root, 'src', 'scheduler.test.ts'), 'test.skip("x")\n')
+
+    // Act
+    const changedSource = await refusalOf(root, twoStops)
+    const missingStop = await refusalOf(root, missingSecond)
+
+    // Assert
+    assert.equal(changedSource.code, 'SOURCE_CHANGED')
+    assert.equal(
+      changedSource.message,
+      `node-test preparation refused: declared stop 2 cites src/retry.ts with SHA-256 ${sha256(SECOND_SOURCE_TEXT)}, but the file now has ${sha256('export const retryDelay = 0\n')}. Read it with codebook_source, publish the article with the current source, then start with a new key.`,
+    )
+    assert.equal(missingStop.code, 'INVALID_CONFIGURATION')
+    assert.equal(
+      missingStop.message,
+      'node-test preparation refused: additionalStops[0].path src/gone.ts is not a file in the opened repository. Use a tracked path from codebook_sources.',
+    )
+  } finally {
+    await cleanup()
+  }
+})
+
+// Value: protects=one concurrent read per cited file; fails_when=a file cited twice is read twice, or the cited files are read one after another; why_new=the check read and hashed files one at a time and a repeated file twice (F50); seam=the file read is counted and gated; no_claim=the reads' wall-clock time
+test('each cited file is read once and the reads are in flight together', async () => {
+  // Arrange
+  const { root, configuration, cleanup } = await schedulerRepository()
+  try {
+    const twoStops = await withSecondStop(root, configuration)
+    const repeated: NodeTestConfiguration = {
+      ...twoStops,
+      additionalStops: [
+        twoStops.additionalStops![0]!,
+        { ...twoStops.additionalStops![0]!, line: 2, anchorIndex: 2 },
+      ],
+    }
+    const reads: string[] = []
+    let inFlight = 0
+    let mostInFlight = 0
+    const real = await import('node:fs/promises')
+    const boundary = await loadModule<{
+      checkNodeTestFiles: typeof checkNodeTestFiles
+    }>(resolve(__dirname, '../utils/checkNodeTestFiles.js'), {
+      'node:fs/promises': {
+        ...real,
+        readFile: async (path: string) => {
+          reads.push(path)
+          inFlight += 1
+          mostInFlight = Math.max(mostInFlight, inFlight)
+          // Yield so that reads started together overlap.
+          await new Promise((done) => setImmediate(done))
+          inFlight -= 1
+          return real.readFile(path)
+        },
+      },
+    })
+
+    // Act
+    await boundary.checkNodeTestFiles(root, repeated)
+
+    // Assert
+    assert.deepEqual(reads.sort(), [
+      join(root, 'src', 'retry.ts'),
+      join(root, 'src', 'scheduler.test.ts'),
+      join(root, 'src', 'scheduler.ts'),
+    ])
+    assert.equal(mostInFlight, 3)
   } finally {
     await cleanup()
   }

@@ -476,6 +476,48 @@ test('a test that ran and failed is not-demonstrated and its sealed history stay
   }
 })
 
+// Value: protects=the recording reason of a test that a signal ended without a report failure, and of a run stopped before its result; fails_when=the signal sentence loses the signal's name, or the interrupted fallback says a test failed; why_new=partialHistoryReason's signal sentence and interrupted fallback were untested (F69); seam=the owned run's result is a fake; no_claim=real signal delivery
+test('the recording reason names a signal that ended the test and says a run stopped before its result was interrupted', async () => {
+  // Arrange
+  const signalled = await testRunHarness({
+    complete: async () => ({
+      exitCode: null,
+      signal: 'SIGTERM',
+      output: '',
+      elapsedMs: 40,
+    }),
+  })
+  const stopped = await testRunHarness({})
+  try {
+    const signalledRun = (await signalled.start()).record
+    const stoppedRun = (await stopped.start()).record
+
+    // Act
+    await continueCurrentPause(signalled.service, signalledRun)
+    const signalState = await signalled.service.stop({
+      instanceId: signalled.service.instanceId,
+      runId: signalledRun.id,
+    })
+    const stoppedState = await stopped.service.stop({
+      instanceId: stopped.service.instanceId,
+      runId: stoppedRun.id,
+    })
+
+    // Assert
+    assert.equal(
+      signalState.recording.reason,
+      'The test did not pass: Ended by signal SIGTERM.',
+    )
+    assert.equal(
+      stoppedState.recording.reason,
+      'Node test was interrupted or did not produce every declared stop and a passing result.',
+    )
+  } finally {
+    await signalled.harness.close()
+    await stopped.harness.close()
+  }
+})
+
 // Value: protects=that an exit 0 whose report is missing records no result; fails_when=a result entry with exit 0 is written, so the history claims a pass nothing confirmed; why_new=the exit-facts branch must not cover a passing exit (EN5); seam=the owned run's result is a fake; no_claim=none beyond protects
 test('an exit 0 whose Vitest report is missing records no result', async () => {
   // Arrange
@@ -788,9 +830,15 @@ test('codebook_playback refuses a test replay’s study before the presentation 
     const runStudyId = `${run.service.instanceId}_${record.id}`
     const store = run.service.nodeHistoryStore!
     const earlier = nodeTestHistoryHeader(store.workspaceKey)
-    await (
-      await store.start(earlier)
-    ).finish('partial', 'An earlier window stopped it.')
+    const earlierWriter = await store.start(earlier)
+    // One recorded output, so the history has something to replay and is listed (a history sealed with no entry is removed, D6).
+    await earlierWriter.appendOutput({
+      sequence: 1,
+      elapsedMs: 1,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    await earlierWriter.finish('partial', 'An earlier window stopped it.')
     await store.list()
     let presentationChecks = 0
     run.service.presentationController = {
