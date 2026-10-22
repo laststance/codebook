@@ -270,6 +270,103 @@ test('a legacy history sealed with no entry takes no place of the saved study li
   assert.equal(names.includes(kept.studyId), true)
 })
 
+// Value: protects=a recording read by two summaries at once (the 250 ms refresh and a history resource read); fails_when=both continue the shared scan from one offset, so the second applies the same entries again and the recording reads interrupted; why_new=advanceRecordingScan mutated the shared scan across awaits with no serialization per study (F216); seam=the first journal read is held until the second summary was asked for; no_claim=reads of different histories
+test('two overlapping summaries of a growing recording leave it recording with no interrupted reason', async (context) => {
+  // Arrange
+  const { store, workspaceKey } = await emptyStore(context)
+  const writer = await store.start(nodeTestHistoryHeader(workspaceKey))
+  const appendOutput = (sequence: number): Promise<void> =>
+    writer.appendOutput({
+      sequence,
+      elapsedMs: sequence,
+      channel: 'stdout',
+      text: `line ${sequence}`,
+    })
+  await appendOutput(1)
+  const [first] = await store.list()
+  await appendOutput(2)
+  await appendOutput(3)
+  const openBefore = fsPromises.open
+  let releaseHeldRead!: () => void
+  const heldRead = new Promise<void>((resolve) => {
+    releaseHeldRead = resolve
+  })
+  let held = false
+  context.mock.method(
+    fsPromises,
+    'open',
+    async (...input: Parameters<typeof openBefore>) => {
+      const handle = await openBefore(...input)
+      if (input[1] !== 'r' || held) return handle
+      held = true
+      const readBefore = handle.read.bind(handle)
+      handle.read = (async (...readInput: unknown[]) => {
+        const result = await Reflect.apply(readBefore, handle, readInput)
+        await heldRead
+        return result
+      }) as typeof handle.read
+      return handle
+    },
+  )
+
+  // Act
+  const summaryA = store.summarize(first!.studyId)
+  const summaryB = store.summarize(first!.studyId)
+  await new Promise((resolve) => setImmediate(resolve))
+  releaseHeldRead()
+  const results = await Promise.all([summaryA, summaryB])
+
+  // Assert
+  assert.deepEqual(
+    results.map((summary) => [summary?.status, summary?.reason]),
+    [
+      ['recording', undefined],
+      ['recording', undefined],
+    ],
+  )
+})
+
+// Value: protects=a history Saved studies lists when a refresh fails to read both its journal and its header with a transient error; fails_when=the history disappears from Saved studies for that refresh and is not read again at the next; why_new=unavailableMemo returned nothing when its own header read failed too (F217); seam=the store's read and the header file read fail with EMFILE; no_claim=a header that is really corrupt (F102 test)
+test('a listed history stays listed when a refresh fails to read its journal and header with too many open files, and is read again at the next', async (context) => {
+  // Arrange
+  const { directory, store, studyIds } = await storeWithSealedHistories(1)
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const studyId = studyIds[0]!
+  const headerPath = join(
+    directory,
+    NODE_TEST_HISTORY_DIRECTORY,
+    studyId,
+    'header.json',
+  )
+  const [before] = await store.list()
+  // Rewriting the header changes its signal, so the next refresh reads the history again.
+  await writeFile(headerPath, await readFile(headerPath))
+  const readFileBefore = fsPromises.readFile
+  const refuse = (): never => {
+    throw Object.assign(new Error('EMFILE: too many open files'), {
+      code: 'EMFILE',
+    })
+  }
+  const readCalls = context.mock.method(store, 'read', async () => refuse())
+  const fileReads = context.mock.method(
+    fsPromises,
+    'readFile',
+    async (...input: Parameters<typeof readFileBefore>) =>
+      String(input[0]) === headerPath ? refuse() : readFileBefore(...input),
+  )
+
+  // Act
+  const duringFailure = await store.list()
+  readCalls.mock.restore()
+  fileReads.mock.restore()
+  const afterwards = await store.list()
+
+  // Assert
+  assert.deepEqual(duringFailure, [before])
+  assert.deepEqual(afterwards, [before])
+  assert.equal(store.isListedHistory(studyId), true)
+})
+
 // Value: protects=Saved studies against a header that was corrupted or removed after the last list; fails_when=a history whose header.json now fails stays listed as verified from the memo although it cannot open; why_new=the summary memo did not watch header.json (F102); seam=none; no_claim=edits that keep the header's size and time
 test('a history whose header was corrupted or removed after the last list is no longer listed as verified', async (context) => {
   // Arrange

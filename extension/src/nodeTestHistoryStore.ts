@@ -307,6 +307,11 @@ export class NodeTestHistoryStore {
   >()
   /** The last summary of each listed history with the file signals it was made from ({@link summarize}). */
   private readonly summaries = new Map<string, SummaryMemo>()
+  /** The summary read in flight for each history: a recording's scan is continued by one read at a time (F216). */
+  private readonly summaryReads = new Map<
+    string,
+    Promise<NodeTestHistorySummary | undefined>
+  >()
   /**
    * Words a failure's cause for a summary's `reason` without the private paths it can carry; the Study workspace sets it to the service's roots when it attaches the service, until then it hides the storage folder and the home directory.
    * @example store.describeCause(new Error("ENOENT: open '/Users/ada/…/events.jsonl'")) // => "ENOENT: open '<storage>/…/events.jsonl'"
@@ -593,7 +598,26 @@ export class NodeTestHistoryStore {
    * @returns The history's summary, or `undefined` for a folder that holds no history of this workspace.
    * @example await store.summarize(studyId) // => { status: 'complete', learningCoverage: 'complete', learningMissing: [], … }
    */
-  async summarize(
+  summarize(studyId: string): Promise<NodeTestHistorySummary | undefined> {
+    // One read per history at a time, as the material writes are: two reads of a recording would continue its shared scan from one offset and apply the same entries twice (F216). A later call finds the memo the earlier one made.
+    const previous = this.summaryReads.get(studyId) ?? Promise.resolve()
+    const operation = previous
+      .catch(() => undefined)
+      .then(() => this.summarizeOnce(studyId))
+    this.summaryReads.set(studyId, operation)
+    return operation.finally(() => {
+      if (this.summaryReads.get(studyId) === operation)
+        this.summaryReads.delete(studyId)
+    })
+  }
+
+  /**
+   * Makes or reuses the summary of one history; the body of {@link summarize}, run for one history at a time.
+   * @param studyId - The history's study id.
+   * @returns The history's summary, or `undefined` for a folder that holds no history of this workspace.
+   * @example await this.summarizeOnce(studyId)
+   */
+  private async summarizeOnce(
     studyId: string,
   ): Promise<NodeTestHistorySummary | undefined> {
     const signals = await this.fileSignals(studyId)
@@ -619,7 +643,12 @@ export class NodeTestHistoryStore {
         return counted.summary
       }
     }
-    const next = await this.readSummary(studyId, signals, memo?.scan)
+    const next = await this.readSummary(
+      studyId,
+      signals,
+      memo?.scan,
+      memo?.summary,
+    )
     if (!next) {
       this.forgetSummary(studyId)
       return undefined
@@ -702,19 +731,20 @@ export class NodeTestHistoryStore {
    * @param signals - The file signals the read belongs to; the history and material signals go into the memo.
    * @param previousScan - The scan of the last refresh of a history this window still writes, which this read continues.
    * @returns The memo, an unavailable summary for a journal that does not verify, or `undefined` without a header of this workspace or for a history sealed with no entry (D6). A memo marked `transient` is shown but not remembered.
-   * @example await this.readSummary(studyId, signals, undefined)
+   * @example await this.readSummary(studyId, signals, undefined, undefined)
    */
   private async readSummary(
     studyId: string,
     signals: { history: string; material: string; header: string },
     previousScan: RecordingScan | undefined,
+    previousSummary: NodeTestHistorySummary | undefined,
   ): Promise<SummaryMemo | undefined> {
     const { history: historySignal, material: materialSignal } = signals
     let loaded: LoadedHistory | undefined
     try {
       loaded = await this.loadHistory(studyId, signals.header, previousScan)
     } catch (error) {
-      return this.unavailableMemo(studyId, signals, error)
+      return this.unavailableMemo(studyId, signals, error, previousSummary)
     }
     // A history sealed with no entry holds nothing to replay: it is listed nowhere (D6, F85).
     if (!loaded) return undefined
@@ -798,16 +828,28 @@ export class NodeTestHistoryStore {
    * @param studyId - The history's study id.
    * @param signals - The file signals the read belongs to.
    * @param error - Why the history did not verify.
-   * @returns The memo, or `undefined` when no header of this workspace can be read either.
-   * @example return this.unavailableMemo(studyId, signals, error)
+   * @param previousSummary - The history's earlier summary, if it had one.
+   * @returns The memo; the earlier summary as a transient memo when a transient error also stops the header read; `undefined` when no header of this workspace can be read otherwise.
+   * @example return this.unavailableMemo(studyId, signals, error, previousSummary)
    */
   private async unavailableMemo(
     studyId: string,
     signals: { history: string; material: string },
     error: unknown,
+    previousSummary: NodeTestHistorySummary | undefined,
   ): Promise<SummaryMemo | undefined> {
     const header = await this.listedHeader(studyId)
-    if (!header) return undefined
+    if (!header) {
+      // A header that cannot be read for a transient reason does not make the history vanish: its earlier summary stays, not remembered, and the next refresh reads again (F217).
+      return previousSummary && isTransientFileError(error)
+        ? {
+            historySignal: signals.history,
+            materialSignal: signals.material,
+            summary: previousSummary,
+            transient: true,
+          }
+        : undefined
+    }
     const summary: NodeTestHistorySummary = {
       ...emptySummary(header),
       status: 'partial',
