@@ -8744,10 +8744,10 @@ export class StudyWorkspace {
         await playback.settle()
         return
       }
-      // A selected test replay's surfaces change only through its own selection (EN9): Retry shows its moment again, which reopens a recorded-source slot that could not open.
+      // A selected test replay's surfaces change only through its own selection (EN9): Retry shows its moment again, which reopens a recorded-source slot that could not open. A browser replay that holds the reader keeps its own Retry, as every test replay move refuses during it.
       const history = this.selectedNodeHistory,
         sequence = this.selectedNodeHistorySequence
-      if (history && sequence !== undefined) {
+      if (history && sequence !== undefined && !this.recordingActive) {
         await this.selectNodeHistoryEvent(history, sequence)
         return
       }
@@ -23462,7 +23462,7 @@ export class StudyWorkspace {
     request: number,
   ): Promise<boolean> {
     if (!verifiedStop) {
-      // A debugger the learner stopped stays stopped; one that has not started yet starts on the "Not recorded" thread.
+      // A debugger that has not started yet starts on the "Not recorded" thread; a running one is emptied even when this moment is the committed one, since a newer selection may have presented its stop meanwhile (4A); one the learner stopped stays stopped.
       if (!this.replayDebugger)
         await this.presentReplayDebuggerFor(request, async (debuggerView) => {
           await debuggerView.present(
@@ -23471,6 +23471,7 @@ export class StudyWorkspace {
             new AbortController().signal,
           )
         })
+      else this.replayDebugger.invalidate()
       if (request !== this.selectedNodeHistoryRequest) return false
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false

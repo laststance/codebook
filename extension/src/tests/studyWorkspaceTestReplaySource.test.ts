@@ -861,3 +861,53 @@ test('returning to Live closes the recorded-source slot a placeholder moment sho
     await harness.close()
   }
 })
+
+// Value: protects=returning to the shown moment that recorded no stop while a newer selection of a stop is still presenting that stop leaves the native debugger on no stop, so the stop's stack and values never stand beside a moment that recorded none (4A); fails_when=the return skips the leave because its moment is the committed one, and the debugger keeps the overtaken stop's frames; why_new=/ship Step 11 (Codex adversarial P1, Claude adversarial, Codex structured P2: the stale stack after a quick reversal); seam=the workspace harness's held historical debug presentation; no_claim=the native debugger's own drawing
+test('returning to the shown output while a stop still presents leaves the debugger on no stop', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    const held = harness.holdHistoricalDebugPresentation(true)
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await held.started
+    const invalidationsWhileStopPresents =
+      harness.historicalDebugInvalidations()
+
+    // Act
+    await harness.reader['selectNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      1,
+    )
+    held.reject(new Error('Historical debugger presentation was superseded.'))
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 1,
+      'the output stays selected',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(
+      harness.historicalDebugInvalidations(),
+      invalidationsWhileStopPresents + 1,
+    )
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().at(-1),
+      'Not recorded at this moment',
+    )
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      PLACEHOLDER,
+    )
+  } finally {
+    await harness.close()
+  }
+})

@@ -340,6 +340,44 @@ test('Open replay of a test replay during a browser replay tells the learner one
   }
 })
 
+// Value: protects=Retry pressed while a browser replay holds the reader leaves the shared debugger and source with that replay: it never presents the stop of a test replay that was selected before the recording opened; fails_when=Retry re-selects the earlier test replay's moment, which puts its recorded stop on the shared debugger beside the browser replay's frame; why_new=/ship Step 11 (Codex structured review P2: Retry bypassed the browser replay's refusal); seam=none; no_claim=what Retry does for the browser replay's own rows
+test('Retry during a browser replay presents no stop of the test replay selected before it', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(nodeHistory.studyId)
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      'the test replay on its stop',
+      2_000,
+    )
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    const testStopPresentations = () =>
+      harness.historicalDebugPresentations.filter((presentation) =>
+        presentation.label.startsWith('Recorded test stop'),
+      ).length
+    const presentationsBeforeRetry = testStopPresentations()
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.equal(testStopPresentations(), presentationsBeforeRetry)
+    assert.equal(harness.controller.state().studyId, harness.studyId)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the status bar's Save learning replay item of a live test run while the Study pane was never opened, the usual state of a chat-driven test run; fails_when=the item is drawn only when the reader publishes, so it stays hidden until the learner opens the Study pane and Save learning replay cannot be clicked; why_new=the live Save test opens the reader first (Red Team, Step 9 of PR-A's ship); seam=none; no_claim=the host's status bar drawing (the harness's status item stands in)
 test('the Save item of a live test run is drawn in the status bar while the Study pane is closed', async () => {
   // Arrange
