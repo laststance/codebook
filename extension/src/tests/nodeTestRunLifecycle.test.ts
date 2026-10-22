@@ -631,7 +631,7 @@ test('the run resource reads its learning coverage from its own cache as the sav
   }
 })
 
-// Value: protects=codebook_stop's answer after the test history could not be sealed: HISTORY_SEAL_FAILED with the run, its verdict and stops, a sanitized cause and the run state, the same for a repeated stop without a second seal, and one Output entry; fails_when=the tool answers ok, names the storage path, seals again, or reports nothing to the Output channel; why_new=a failed seal answered ok:true (protocol.ts:46-63, X1, AC2, AC17); seam=the writer's finish fails; no_claim=a full disk's real error text
+// Value: protects=codebook_stop's answer after the test history could not be sealed: HISTORY_SEAL_FAILED with the run, its verdict and stops, a sanitized cause and the run state (whose recording.reason gives the same cause), the same for a repeated stop without a second seal, and one Output entry; fails_when=the tool answers ok, names the storage path, seals again, reports nothing to the Output channel, or the run state's recording.reason loses the cause; why_new=a failed seal answered ok:true (protocol.ts:46-63, X1, AC2, AC17); seam=the writer's finish fails; no_claim=a full disk's real error text
 test('codebook_stop answers HISTORY_SEAL_FAILED with the run state when the test history cannot be sealed, and the same again for a repeated stop', async (context) => {
   // Arrange
   const run = await testRunHarness()
@@ -667,6 +667,10 @@ test('codebook_stop answers HISTORY_SEAL_FAILED with the run state when the test
       "ENOSPC: no space left on device, write '<storage>/node-tests.v1/x/sealed.json'",
     )
     assert.equal(first.state.recording.status, 'failed')
+    assert.equal(
+      first.state.recording.reason,
+      "ENOSPC: no space left on device, write '<storage>/node-tests.v1/x/sealed.json'",
+    )
     assert.equal(first.state.nodeTest?.replayAvailable, false)
     assert.equal(first.state.finalOutcome, 'demonstrated')
     assert.equal(first.state.studyOutcome, 'partial')
@@ -825,6 +829,80 @@ test('codebook_playback refuses a test replay’s study before the presentation 
     assert.equal(listedRefusal.code, 'PLAYBACK_PROFILE_UNSUPPORTED')
     assert.equal(presentationChecks, 0)
   } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=the run resource's recording.reason for a test run without a history: a run still preparing says it is preparing, a run stopped before its history began says nothing was recorded; fails_when=a run stopped during preparation keeps reading Preparing, a preparing run says nothing was recorded, or the stopped run leaves a history; why_new=the refusal test asserts error, outcomes and folders, no reason sentence (F8; E3 keeps a refused run's sentence); seam=none; no_claim=a refused run's reason (E3) and the agent's next move (pilot); the owned run is a fake
+test('a test run stopped while it is still preparing records no history, and its run resource says it was preparing and then that nothing was recorded', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  let checkIsHeld = false,
+    letCheckFinish!: () => void
+  const checkMayFinish = new Promise<void>((resolve) => {
+    letCheckFinish = resolve
+  })
+  // The environment's file check is the last step before the history begins: held, the run is preparing without a history.
+  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+    checkIsHeld = true
+    await checkMayFinish
+  }
+  try {
+    // The start's idempotency key, named by what this run is for.
+    const runName = 'stopped-while-preparing'
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: runName,
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(
+      () => checkIsHeld,
+      'the file check holds the run in its preparation',
+      2_000,
+    )
+    const whilePreparing = run.service.state(record)
+
+    // Act
+    const stopping = run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    letCheckFinish()
+    const afterStop = await stopping
+
+    // Assert
+    assert.deepEqual(
+      [
+        whilePreparing.finalOutcome,
+        whilePreparing.recording.status,
+        whilePreparing.recording.reason,
+      ],
+      [
+        'pending',
+        'unavailable',
+        'Preparing: the test history starts when preparation passes.',
+      ],
+    )
+    assert.deepEqual(
+      [
+        afterStop.finalOutcome,
+        afterStop.recording.status,
+        afterStop.recording.reason,
+      ],
+      [
+        'not-demonstrated',
+        'unavailable',
+        'The test run ended before its history began; nothing was recorded.',
+      ],
+    )
+    assert.equal(afterStop.error, undefined)
+    assert.equal(afterStop.nodeTest?.historyStatus, 'unavailable')
+    assert.equal(afterStop.nodeTest?.replayAvailable, false)
+    assert.deepEqual(await run.service.nodeHistoryStore!.list(), [])
+  } finally {
+    letCheckFinish()
     await run.harness.close()
   }
 })

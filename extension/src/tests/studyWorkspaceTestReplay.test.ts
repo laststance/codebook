@@ -623,3 +623,174 @@ test('Save learning replay of a live test run asks first, ends the run on Save n
     await harness.close()
   }
 })
+
+// Value: protects=opening a saved test replay whose learner decision, learning material or reader position cannot be read: it still opens on its first verified stop and each failure is shown as an error line; fails_when=an unreadable extra fails the open, loses its error line, or the replay lands elsewhere than its first verified stop; why_new=the open tests read healthy files and the load-failure test breaks the journal itself; seam=none; no_claim=real file errors (the store's three reads reject)
+test('a saved test replay still opens when its learner decision, learning material and reader position cannot be read, and each failure is shown', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await harness.reader.action('retry')
+    context.mock.method(store, 'readLearningDecision', async () => {
+      throw new Error('learner decision file unreadable')
+    })
+    context.mock.method(store, 'readLearningMaterial', async () => {
+      throw new Error('learning material file unreadable')
+    })
+    context.mock.method(store, 'readReaderPosition', async () => {
+      throw new Error('reader position file unreadable')
+    })
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
+        !lastView(harness)?.loading,
+      'the test replay is shown',
+      2_000,
+    )
+
+    // Assert
+    // A later reload of the learner's ledger retires the decision's line, so the lines the panes were sent are read, not only the last ones.
+    const errorLinesSent = new Set(
+      harness.postedMessages().flatMap((message) => message.errors),
+    )
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.deepEqual(
+      {
+        decision: errorLinesSent.has('Error: learner decision file unreadable'),
+        material: errorLinesSent.has(
+          'Error: learning material file unreadable',
+        ),
+        position: errorLinesSent.has('Error: reader position file unreadable'),
+      },
+      { decision: true, material: true, position: true },
+    )
+    assert.deepEqual(harness.errorMessages, [])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved test replay open in the Study pane keeps its Saved studies current: a history sealed meanwhile is listed after the refresh while the replay stays on its stop; fails_when=a refresh with a replay selected updates the catalog but publishes nothing, so the pane lists the new history only after the learner touches it; why_new=the EN9 test asserts the replay is not rendered over, not that the refresh publishes the catalog; seam=none; no_claim=the pane's own drawing of the list
+test('a refresh while a saved test replay is open lists the history sealed meanwhile and leaves the replay on its stop', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const store = harness.service.nodeHistoryStore!
+    const shown = await saveOneStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(shown.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === shown.studyId &&
+        !lastView(harness)?.loading,
+      'the saved test replay is shown',
+      2_000,
+    )
+    const sealedMeanwhile = await saveOneStopNodeHistory(store)
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.deepEqual(
+      lastView(harness)
+        ?.nodeHistoryCatalog?.map((history) => history.studyId)
+        .sort(),
+      [shown.studyId, sealedMeanwhile.studyId].sort(),
+    )
+    assert.equal(lastView(harness)?.nodeHistory?.header.studyId, shown.studyId)
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Save item of a test run whose launch failed after its history began: Preparing the test run… while it starts, then no item, and a run resource that reads partial with no replay; fails_when=a stale Preparing item stays, the item turns into Recording finished · Save learning replay for a run that recorded nothing, or the run offers a replay; why_new=the unit tests fabricate a sealed-with-no-entry record and no test joins the real seal to the status item (F8); seam=none; no_claim=how a real Vitest launch fails (the owned run is a fake that throws)
+test('a test run whose launch failed after its history began shows Preparing and then no Save item, and offers no replay', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let launchIsHeld = false,
+    letLaunchFail!: () => void
+  const launchMayFail = new Promise<void>((resolve) => {
+    letLaunchFail = resolve
+  })
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const { service, configuration } = harness
+    service.environment.build.sourceHash = 'f'.repeat(64)
+    // The history has begun when the owned run is created: held there, the run is preparing with an empty journal; failing there, it never records an entry.
+    service.environment.createNodeTestRun = async () => {
+      launchIsHeld = true
+      await launchMayFail
+      throw new Error('Vitest could not be launched.')
+    }
+    // The start's idempotency key, named by what this run is for.
+    const runName = 'launch-fails-after-history'
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: runName,
+      configuration: {
+        version: 1,
+        adapter: 'vitest-node',
+        book: configuration.book,
+        testFile: 'src/scheduler.test.ts',
+        testHash: 'a'.repeat(64),
+        testTitles: ['job scheduler', 'runs a delayed job after its timer'],
+        source: configuration.source,
+        inspections: configuration.inspections.slice(0, 1),
+      },
+    })
+    const record = service.record(receipt)
+    await waitUntil(
+      () => launchIsHeld,
+      'the owned run is being created after the history began',
+      2_000,
+    )
+    await readerSeams(harness).refresh()
+    const whileStarting = {
+      visible: harness.saveStatus.visible,
+      text: harness.saveStatus.text,
+      command: harness.saveStatus.command,
+    }
+
+    // Act
+    letLaunchFail()
+    await record.preparation
+    await waitUntil(() => record.stopped, 'the failed run released', 2_000)
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.deepEqual(whileStarting, {
+      visible: true,
+      text: '$(sync~spin) Preparing the test run…',
+      command: undefined,
+    })
+    assert.equal(harness.saveStatus.visible, false)
+    const state = service.state(record)
+    assert.deepEqual(
+      [
+        state.finalOutcome,
+        state.recording.status,
+        state.nodeTest?.historyStatus,
+        state.nodeTest?.replayAvailable,
+      ],
+      ['not-demonstrated', 'partial', 'partial', false],
+    )
+    assert.equal(harness.reader.inspect().opened, false)
+  } finally {
+    letLaunchFail()
+    await harness.close()
+  }
+})
