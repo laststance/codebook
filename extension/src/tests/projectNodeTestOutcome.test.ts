@@ -8,12 +8,13 @@ import {
   type NodeTestOutcomeInput,
 } from '../utils/projectNodeTestOutcome'
 
-/** The four results a combination can carry: none yet, a pass, a failing exit and a signal. */
+/** The five results a combination can carry: none yet, a pass, a failing exit, a signal and an exit that names neither a code nor a signal (it says nothing about the test, like no result). */
 const RESULTS: NodeTestOutcomeInput['result'][] = [
   undefined,
   { exitCode: 0, signal: null },
   { exitCode: 1, signal: null },
   { exitCode: null, signal: 'SIGTERM' },
+  { exitCode: null, signal: null },
 ]
 const HISTORIES: NodeTestHistoryState[] = [
   'none',
@@ -28,7 +29,8 @@ function ranAndFailed(input: NodeTestOutcomeInput): boolean {
   return (
     input.hasError ||
     (input.result !== undefined &&
-      (input.result.signal !== null || input.result.exitCode !== 0))
+      (input.result.signal !== null ||
+        (input.result.exitCode !== null && input.result.exitCode !== 0)))
   )
 }
 
@@ -163,7 +165,7 @@ const ROWS: {
   },
 ]
 
-/** Every combination of the outcome function's inputs: 5 history states × 2 entry counts × 2 completion facts × 4 results × 2 error facts × 2 stop facts. */
+/** Every combination of the outcome function's inputs: 5 history states × 2 entry counts × 2 completion facts × 5 results × 2 error facts × 2 stop facts. */
 function everyCombination(): NodeTestOutcomeInput[] {
   const combinations: NodeTestOutcomeInput[] = []
   for (const history of HISTORIES)
@@ -183,7 +185,7 @@ function everyCombination(): NodeTestOutcomeInput[] {
   return combinations
 }
 
-// Value: protects=every row of Design 1's outcome table for a test run, and that each input combination lands on exactly one row; fails_when=a row reads other outcomes than the table, two rows overlap, or a combination falls between rows; why_new=the run's outcomes were a three-way branch that stopped at partial (service.ts:2043-2053); seam=none; no_claim=how the service derives the facts from its record (service tests)
+// Value: protects=every row of Design 1's outcome table for a test run, and that each input combination lands on exactly one row, including a result with neither an exit code nor a signal, which says nothing about the test; fails_when=a row reads other outcomes than the table, two rows overlap, a combination falls between rows, or a result without an exit code and a signal reads as a failure; why_new=the run's outcomes were a three-way branch that stopped at partial (service.ts:2043-2053); seam=none; no_claim=how the service derives the facts from its record (service tests)
 test('every combination of a test run’s facts lands on exactly one row of the outcome table, with that row’s outcomes', () => {
   // Arrange
   const combinations = everyCombination()
@@ -201,7 +203,7 @@ test('every combination of a test run’s facts lands on exactly one row of the 
     )
     assert.deepEqual(outcome, matching[0]!.outcome, matching[0]!.name)
   }
-  assert.equal(combinations.length, 320)
+  assert.equal(combinations.length, 400)
 })
 
 // Value: protects=that saved learning of a test run is claimed only for a passing test whose history sealed complete; fails_when=any other combination reads demonstrated in studyOutcome or recordedStudyOutcome; why_new=AC2's guard over the whole input space; seam=none; no_claim=the run resource's other fields
