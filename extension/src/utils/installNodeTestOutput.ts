@@ -86,40 +86,41 @@ export function installNodeTestOutput(
     // Instant, never smooth: the learner's reduced-motion choice needs no separate path.
     output.scrollTop = output.scrollHeight
   }
-  /** Removes the lines a view no longer holds. */
-  const dropLinesNotIn = (lines: NodeTestApplicationView['lines']): void => {
-    const wanted = new Set(lines.map((value) => value.number))
+  /** Removes the lines a view no longer holds and lists the kept ones by their number, so each line is found without searching the whole output. */
+  const keptLines = (
+    lines: NodeTestApplicationView['lines'],
+  ): Map<number, HTMLElement> => {
+    const wanted = new Set(lines.map((value) => value.number)),
+      kept = new Map<number, HTMLElement>()
     for (const node of Array.from(output.children))
-      if (
-        !(node instanceof HTMLElement) ||
-        !wanted.has(Number(node.dataset.line))
-      )
-        node.remove()
+      if (node instanceof HTMLElement && wanted.has(Number(node.dataset.line)))
+        kept.set(Number(node.dataset.line), node)
+      else node.remove()
+    return kept
   }
   /** Places one line after the line before it: lines are matched by their number, so an unchanged line keeps its node and a selection or focus inside it survives; a changed line is replaced and a new one inserted. */
   const placeLine = (
     value: NodeTestApplicationView['lines'][number],
+    node: HTMLElement | undefined,
     previous: Element | undefined,
   ): Element => {
-    const node = output.querySelector<HTMLElement>(
-      `.output-line[data-line="${value.number}"]`,
-    )
-    const kept =
+    const unchanged =
       node?.dataset.channel === value.channel &&
       (node.dataset.cut === 'true') === Boolean(value.cut) &&
       node.querySelector('.output-text')?.textContent === value.text
-    if (kept && node) return node
+    if (unchanged && node) return node
     const placed = lineNode(value)
     if (node) node.replaceWith(placed)
     else if (previous) previous.after(placed)
     else output.prepend(placed)
     return placed
   }
-  /** Brings the output region's lines to a view's in place. */
+  /** Brings the output region's lines to a view's in place, in time linear in the lines. */
   const placeLines = (lines: NodeTestApplicationView['lines']): void => {
-    dropLinesNotIn(lines)
+    const kept = keptLines(lines)
     let previous: Element | undefined
-    for (const value of lines) previous = placeLine(value, previous)
+    for (const value of lines)
+      previous = placeLine(value, kept.get(value.number), previous)
   }
   const apply = (view: NodeTestApplicationView): void => {
     document.title = view.name

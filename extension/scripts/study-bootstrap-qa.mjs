@@ -2219,6 +2219,52 @@ async function check(page, options, collected) {
           testLines: await renderedLines(applicationPage, '#test-output-test'),
         })
       }
+      // Act: the host posts two views of a long recorded output, 32,768 one-character lines, the second without the first line and with one more (EN3: the update matches lines by their number in time linear in the lines).
+      const longUpdate = await applicationPage.evaluate(() => {
+        const lines = Array.from({ length: 32768 }, (_, index) => ({
+          channel: 'stdout',
+          text: String(index % 10),
+          number: index + 1000,
+        }))
+        const view = {
+          state: 'event',
+          time: 'Recorded test output · 0.90 s',
+          test: 'src/jobs.test.ts',
+          name: 'Recorded test output · src/jobs.test.ts · 0.90 s',
+          region: 'Recorded test output up to 0.90 s',
+        }
+        const post = (generation, shown) =>
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                type: 'node-history-output',
+                generation,
+                view: { ...view, generation, lines: shown },
+              },
+            }),
+          )
+        post(10, lines)
+        const started = performance.now()
+        post(11, [
+          ...lines.slice(1),
+          { channel: 'stdout', text: 'last', number: 33768 },
+        ])
+        return {
+          underASecond: performance.now() - started < 1000,
+          lines: document.querySelectorAll('#test-output .output-line').length,
+          last: document.querySelector('#test-output .output-line:last-child')
+            ?.textContent,
+        }
+      })
+      // Assert
+      cases.push({
+        name: 'an in-place update of a recorded test output of 32,768 lines takes less than a second in the Application pane (Design 8, EN3)',
+        actual: longUpdate,
+        passed:
+          longUpdate.underASecond &&
+          longUpdate.lines === 32768 &&
+          longUpdate.last === 'last\n',
+      })
       await applicationPage.close()
       // Assert
       cases.push({
