@@ -160,6 +160,7 @@ export const READER_ERROR_KINDS = [
   { kind: 'history-learning', retryable: true, choiceRetired: false },
   { kind: 'history-not-saved', retryable: true, choiceRetired: false },
   { kind: 'history-position', retryable: true, choiceRetired: false },
+  { kind: 'history-source', retryable: true, choiceRetired: false },
   { kind: 'layout', retryable: false, choiceRetired: false },
   { kind: 'node-history-control', retryable: false, choiceRetired: true },
   { kind: 'outline', retryable: true, choiceRetired: false },
@@ -655,6 +656,10 @@ export const MAX_UI_TEXT_CHARS = 8_192
 /** The most characters of a failure's cause a tooltip, a notification or an MCP message of the test replay shows; the Output › Codebook entry keeps the whole sanitized cause ({@link sanitizeCause}). */
 export const UI_CAUSE_MAX_CHARS = 300
 export const STUDY_SOURCE_SCHEME = 'codebook-source'
+/** The first path segment of a test replay's recorded-source slot ({@link nodeSourceSlotPath}): one Codebook-owned source document per opened test replay, whose text follows the selected moment (DS5). */
+export const NODE_SOURCE_SLOT_PATH_ROOT = 'node-history-slot'
+/** Longest wait for a test replay's recorded-source slot to show a selected moment's bytes before the selection reports that the slot could not open; the slot keeps its loading text meanwhile, never the earlier moment (EN8). */
+export const NODE_HISTORY_TRANSITION_BOUND_MS = 1_000
 /** Registered view types of the editor panes Codebook creates: Application, Study and Repository Wiki. */
 export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
   'codebook.scopedBrowser',

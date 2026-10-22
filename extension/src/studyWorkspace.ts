@@ -37,6 +37,8 @@ import {
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
+  NODE_HISTORY_TRANSITION_BOUND_MS,
+  NODE_SOURCE_SLOT_PATH_ROOT,
   OPEN_REPLAY_RESULT_WAIT_MS,
   PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
   PAUSE_FOCUS_LOOKBACK_MS,
@@ -102,6 +104,7 @@ import {
 import { NodeLearningSave } from './nodeLearningSave'
 import {
   nodeLearningStepIdSchema,
+  type NodeTestHistoryEntry,
   type NodeTestHistoryIndex,
   type NodeTestHistoryLearningDecision,
   type NodeTestLearningMaterial,
@@ -205,6 +208,10 @@ import { configuredObservationPosition } from './utils/configuredObservationPosi
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
 import { createRecordingObserver } from './utils/createRecordingObserver'
 import { describeNodeLearningSave } from './utils/describeNodeLearningSave'
+import {
+  describeNodeRecordedSource,
+  NODE_RECORDED_SOURCE_TEXT,
+} from './utils/describeNodeRecordedSource'
 import { describeNodeTestReplay } from './utils/describeNodeTestReplay'
 import { describeStudy } from './utils/describeStudy'
 import {
@@ -257,6 +264,8 @@ import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { nextNodeHistoryStepId } from './utils/nextNodeHistoryStepId'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeHistoryStepTarget } from './utils/nodeHistoryStepTarget'
+import { nodeSourceSlotName } from './utils/nodeSourceSlotName'
+import { nodeSourceSlotPath } from './utils/nodeSourceSlotPath'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { paneKeyboardTimeoutMessage } from './utils/paneKeyboardTimeoutMessage'
@@ -354,6 +363,8 @@ const revisionShape = { revision: z.number().int().nonnegative() }
 // The number a Study pane gives its request to open a Saved studies entry; {@link StudyWorkspace.receivePaneMessage} answers it.
 const openRequestShape = { openRequest: openRequestNumberSchema.optional() }
 const NODE_HISTORY_READER_PAGE_SIZE = 20
+/** A saved test stop, the only journal entry with captured source and a debugger snapshot. */
+type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
 const messageSchema = z.discriminatedUnion('type', [
   webviewFocusReceiptSchema,
   z.strictObject({ type: z.literal('ready') }),
@@ -688,6 +699,13 @@ export class StudyWorkspace {
   /** The generation of the view the Application pane's document shows, so each change is posted once. */
   private shownNodeHistoryApplicationGeneration?: number
   private nodeHistoryPlaybackController?: NodeHistoryPlaybackController
+  /** The selected test replay's recorded-source slot (DS5): its one Codebook-owned source document, the bytes it serves ({@link provideSource}) and the verified stop whose line and label it shows, `undefined` for the placeholder or its loading text. */
+  private nodeSourceSlot?: {
+    studyId: string
+    uri: vscode.Uri
+    text: string
+    stop?: NodeTestHistoryStop
+  }
   private playback?: PlaybackController
   private replayDebugger?: ReplayDebugger
   /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
@@ -8725,6 +8743,13 @@ export class StudyWorkspace {
         await playback.settle()
         return
       }
+      // A selected test replay's surfaces change only through its own selection (EN9): Retry shows its moment again, which reopens a recorded-source slot that could not open.
+      const history = this.selectedNodeHistory,
+        sequence = this.selectedNodeHistorySequence
+      if (history && sequence !== undefined) {
+        await this.selectNodeHistoryEvent(history, sequence)
+        return
+      }
       await this.renderSelection(true, true)
     }
   }
@@ -11938,6 +11963,18 @@ export class StudyWorkspace {
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
     this.replayDebugger?.invalidate()
+    const slot = this.nodeSourceSlot
+    this.nodeSourceSlot = undefined
+    // The retired replay's recorded-source slot goes with it.
+    if (slot)
+      await this.closeNodeSourceSlotTabs(slot.uri).catch((error: unknown) =>
+        this.report(
+          'layout',
+          new Error(
+            `The previous recorded source tab could not close. Arrange the Codebook panes manually. ${String(error)}`,
+          ),
+        ),
+      )
     if (!previousNodeHistoryId) return
     const previousHistoryPath = `/node-history/${previousNodeHistoryId}/`
     const previews = vscode.window.tabGroups.all
@@ -18572,6 +18609,12 @@ export class StudyWorkspace {
         this.confirmInitialAppRegistration()
         // The paused file the editor opens for a stop its own handling brings gets the keyboard at once.
         this.handOverAtPausedFileOpening(editor)
+        // A recorded-source slot brought back into view gets its stopped line and label again: the editor drops them with a hidden tab.
+        if (
+          editor &&
+          editor.document.uri.toString() === this.nodeSourceSlot?.uri.toString()
+        )
+          this.decorateNodeSourceSlot()
       }),
     )
     this.disposables.push(
@@ -18601,6 +18644,11 @@ export class StudyWorkspace {
       throw new Error('Captured source belongs to another workspace.')
     const cached = this.documents.get(uri.toString())
     if (cached !== undefined) return cached
+    // A test replay's recorded-source slot serves the moment it shows; a slot no replay holds now (a tab the editor restored) reads as the placeholder.
+    if (uri.path.split('/').filter(Boolean)[0] === NODE_SOURCE_SLOT_PATH_ROOT)
+      return this.nodeSourceSlot?.uri.toString() === uri.toString()
+        ? this.nodeSourceSlot.text
+        : NODE_RECORDED_SOURCE_TEXT.placeholder
     // A view is ephemeral presentation, never a recoverable hash-addressed saved snapshot.
     if (isLiveSourceViewUri(uri))
       throw new Error(
@@ -23207,7 +23255,9 @@ export class StudyWorkspace {
   }
 
   /**
-   * Selects one verified moment of a test replay and clears stale debugger state across unrecorded intervals; called by the Study pane's moves, step actions and Inspect, by Play and seeks, and by the replay's open.
+   * Selects one moment of a test replay on every surface in the browser replay's order (EN8); called by the Study pane's moves, step actions and Inspect, by Play and seeks, and by the replay's open.
+   *
+   * (1) Every surface leaves the earlier moment at once: the replay debugger shows no stop and the recorded-source slot drops the earlier stop's line, label and text ({@link leaveNodeHistoryMoment}); (2) the slot's bytes for this moment are confirmed in its document ({@link showNodeSourceSlot}); (3) the debugger is presented at the slot ({@link presentNodeHistoryDebugger}); (4) the slot's line and label, the Study position and the Application view commit together; the reader position is written after the commit. Every step re-checks that no newer selection took over.
    * The selection commits the step it shows with its moment ({@link nextNodeHistoryStepId}): a refused, failed or superseded selection leaves the learner's chosen step as it was.
    * @param history - The selected test replay.
    * @param sequence - The event to select.
@@ -23234,72 +23284,34 @@ export class StudyWorkspace {
     const entry = history.entries.find((value) => value.sequence === sequence)
     if (!entry)
       throw new Error('The requested Node history event is unavailable.')
-    if (entry.type === 'stop') {
-      const source = entry.debuggerSnapshot.frames[0]?.source
-      const sourceMatchesStop = nodeStopSourceMatches(entry)
-      if (!sourceMatchesStop && requireDebugger) {
-        throw new Error(
-          'The selected Node stop has no matching verified captured source for native debugging.',
-        )
-      }
-      if (sourceMatchesStop && source) {
-        const verifiedSource = source
-        const sourceUri = vscode.Uri.from({
-          scheme: STUDY_SOURCE_SCHEME,
-          authority: this.library!.workspaceKey,
-          path: `/node-history/${history.header.studyId}/${entry.sequence}/${verifiedSource.hash}/Captured-${basename(entry.source.path)}`,
-        })
-        // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
-        if (this.replayDebugger && !this.replayDebugger.available && !publish)
-          throw new Error(
-            'The historical Node debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
-          )
-        if (
-          (this.replayDebugger && !this.replayDebugger.available) ||
-          this.replayDebuggerRetirement
-        ) {
-          await this.replaceUnavailableReplayDebugger()
-          // The reader may have closed or selected another stop meanwhile; only the current selection creates the next owner.
-          if (request !== this.selectedNodeHistoryRequest) return
-        }
-        this.replayDebugger ??= this.createReplayDebugger()
-        let inspection: ReplayInspection
-        try {
-          inspection = await this.replayDebugger.present(
-            entry.debuggerSnapshot,
-            `Recorded Node test stop ${entry.index + 1} · ${entry.source.path}:${entry.frame.line}`,
-            new AbortController().signal,
-            { uri: sourceUri.toString(), hash: verifiedSource.hash },
-          )
-        } catch (error) {
-          // A newer learner selection supersedes this stop's native presentation; only the current request reports failures.
-          if (request !== this.selectedNodeHistoryRequest) return
-          throw error
-        }
-        if (request !== this.selectedNodeHistoryRequest) return
-        this.selectedNodeHistoryDebugAvailable = true
-        this.selectedNodeHistoryValuesUninspected = inspection === 'uninspected'
-      } else {
-        this.replayDebugger?.invalidate()
-        this.selectedNodeHistoryDebugAvailable = false
-        this.selectedNodeHistoryValuesUninspected = false
-      }
-    } else {
-      // Output and result events have no source/debugger snapshot; never carry an earlier stop forward.
-      this.replayDebugger?.invalidate()
+    const verifiedStop =
+      entry.type === 'stop' && nodeStopSourceMatches(entry) ? entry : undefined
+    if (entry.type === 'stop' && !verifiedStop && requireDebugger)
+      throw new Error(
+        'The selected Node stop has no matching verified captured source for native debugging.',
+      )
+    // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
+    if (verifiedStop && this.replayDebugger?.available === false && !publish)
+      throw new Error(
+        'The historical Node debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
+      )
+    // A step action or Inspect on the moment already shown keeps every surface; another moment leaves the earlier one at once.
+    if (entry.sequence !== this.selectedNodeHistorySequence)
+      this.leaveNodeHistoryMoment()
+    const slot = await this.showNodeSourceSlot(history, verifiedStop, request)
+    if (!slot) return
+    // A slot that could not open leaves the debugger on no stop; the moment still commits beside the slot's Study row (S2-1).
+    if (slot === 'failed') {
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
-    }
-    try {
-      await this.nodeHistoryStore!.saveReaderPosition(
-        history.header.studyId,
-        entry.sequence,
-        history,
-      )
-    } catch (error) {
-      this.report('history-position', error)
-    }
-    if (request !== this.selectedNodeHistoryRequest) return
+    } else if (
+      !(await this.presentNodeHistoryDebugger(verifiedStop, slot, request))
+    )
+      return
+    // The slot's stopped line and label commit with the moment.
+    if (this.nodeSourceSlot && slot !== 'failed')
+      this.nodeSourceSlot = { ...this.nodeSourceSlot, stop: verifiedStop }
+    this.decorateNodeSourceSlot()
     // A chosen step stays only with its own moment: a selection that lands on another event without a choice of its own (a seek, Play, Inspect) shows that event's first step (DS21).
     this.selectedNodeHistoryStepId = nextNodeHistoryStepId(
       stepChoice,
@@ -23317,6 +23329,349 @@ export class StudyWorkspace {
     if (alignPlayback)
       this.nodeHistoryPlaybackController?.select(entry.sequence)
     if (publish) this.publish()
+    // The reader position is written after the commit, so a slow write never holds the shown moment back.
+    try {
+      await this.nodeHistoryStore!.saveReaderPosition(
+        history.header.studyId,
+        entry.sequence,
+        history,
+      )
+    } catch (error) {
+      this.report('history-position', error)
+    }
+  }
+
+  /**
+   * Takes the earlier moment off the test replay's debugger and recorded-source slot before the next moment's bytes load (EN8 step 1): the debugger thread reads "Not recorded at this moment" and a slot that showed a stop shows its loading text with no stopped line or label; called by {@link selectNodeHistoryEvent} when it selects another moment.
+   * @example this.leaveNodeHistoryMoment()
+   */
+  private leaveNodeHistoryMoment(): void {
+    this.replayDebugger?.invalidate()
+    const slot = this.nodeSourceSlot
+    // A slot that holds the placeholder or its loading text shows no earlier moment.
+    if (!slot?.stop) return
+    this.nodeSourceSlot = {
+      ...slot,
+      text: NODE_RECORDED_SOURCE_TEXT.loading,
+      stop: undefined,
+    }
+    this.decorateNodeSourceSlot()
+    this.sourceChanges.fire(slot.uri)
+  }
+
+  /**
+   * Shows a test replay's moment in its one recorded-source slot (DS5, EN8 step 2): a verified stop's sealed source, otherwise the 4A placeholder, in a Codebook-owned document named after the stop's file, opened in the source group without taking focus and confirmed in its document before the debugger points at it; called by {@link selectNodeHistoryEvent}.
+   * A stop in another file renames the slot and closes the tab Codebook opened before, so a replay never leaves a tab per stop.
+   * @param history - The selected test replay.
+   * @param verifiedStop - The stop whose source verifies, or `undefined` for an output, the result or an unverified stop.
+   * @param request - The selection's request token.
+   * @returns
+   * - The slot's URI once its bytes show
+   * - `'failed'` when the slot could not open or did not show its bytes within {@link NODE_HISTORY_TRANSITION_BOUND_MS}, which {@link reportNodeSourceSlotFailure} told
+   * - `undefined` when a newer selection took over meanwhile
+   * @example await this.showNodeSourceSlot(history, stop, request) // => Uri codebook-source://…/node-history-slot/<studyId>/Captured-scheduler.ts
+   */
+  private async showNodeSourceSlot(
+    history: NodeTestHistoryIndex,
+    verifiedStop: NodeTestHistoryStop | undefined,
+    request: number,
+  ): Promise<vscode.Uri | 'failed' | undefined> {
+    const studyId = history.header.studyId
+    const earlier = this.nodeSourceSlot
+    // Outside a stop the slot keeps the name it has, or takes the file of the replay's first verified stop.
+    const uri = verifiedStop
+      ? this.nodeSourceSlotUri(studyId, verifiedStop.source.path)
+      : earlier?.studyId === studyId
+        ? earlier.uri
+        : this.nodeSourceSlotUri(studyId, nodeSourceSlotName(history))
+    const text =
+      verifiedStop?.debuggerSnapshot.frames[0]?.source?.text ??
+      NODE_RECORDED_SOURCE_TEXT.placeholder
+    // The stopped line and label wait for the commit ({@link selectNodeHistoryEvent}), so no editor event draws them before the debugger shows the stop.
+    this.nodeSourceSlot = { studyId, uri, text }
+    try {
+      // A slot named after another file, or another replay's slot, gives way: Codebook's earlier tab closes.
+      if (earlier && earlier.uri.toString() !== uri.toString())
+        await this.closeNodeSourceSlotTabs(earlier.uri)
+      this.sourceChanges.fire(uri)
+      const document = await vscode.workspace.openTextDocument(uri)
+      if (request !== this.selectedNodeHistoryRequest) return undefined
+      await vscode.window.showTextDocument(document, {
+        viewColumn: this.nodeSourceSlotColumn(uri),
+        preserveFocus: true,
+        preview: false,
+      })
+      await this.awaitNodeSourceSlotText(document, text, request)
+    } catch (error) {
+      if (request !== this.selectedNodeHistoryRequest) return undefined
+      this.reportNodeSourceSlotFailure(studyId, verifiedStop, error)
+      return 'failed'
+    }
+    if (request !== this.selectedNodeHistoryRequest) return undefined
+    // A slot that shows its moment answers an earlier failure to open it.
+    if (this.errors.delete('history-source')) this.publish()
+    return uri
+  }
+
+  /**
+   * Tells the learner that a test replay's recorded-source slot could not open (S2-1): the Study pane's `history-source` row names the stop and the sanitized cause and offers Retry, and Output › Codebook keeps one entry with the stack; called by {@link showNodeSourceSlot}.
+   * @param studyId - The test replay's study id.
+   * @param verifiedStop - The stop the slot was to show, or `undefined` for the placeholder.
+   * @param error - The failure.
+   * @example this.reportNodeSourceSlotFailure(studyId, stop, error)
+   */
+  private reportNodeSourceSlotFailure(
+    studyId: string,
+    verifiedStop: NodeTestHistoryStop | undefined,
+    error: unknown,
+  ): void {
+    const roots = this.service?.causeRoots ?? { storage: [] }
+    const cause = sanitizeCause(error, roots)
+    const stack = sanitizedStack(error, roots)
+    this.diagnostics?.log({
+      surface: 'open:recorded-source',
+      studyId,
+      profile: NODE_TEST_PROFILE,
+      cause,
+      ...(stack ? { stack } : {}),
+    })
+    this.report(
+      'history-source',
+      describeNodeRecordedSource({
+        kind: 'open-failed',
+        stop: verifiedStop ? verifiedStop.index + 1 : undefined,
+        cause,
+      }),
+    )
+  }
+
+  /**
+   * Waits until a test replay's recorded-source slot shows the bytes {@link showNodeSourceSlot} gave it, so the debugger never points at a line of earlier text; bounded by {@link NODE_HISTORY_TRANSITION_BOUND_MS}.
+   * @param document - The slot's document.
+   * @param text - The bytes the slot must show.
+   * @param request - The selection's request token; a newer selection ends the wait.
+   * @throws When the document does not show the bytes within the bound.
+   * @example await this.awaitNodeSourceSlotText(document, stop.debuggerSnapshot.frames[0].source.text, request)
+   */
+  private async awaitNodeSourceSlotText(
+    document: vscode.TextDocument,
+    text: string,
+    request: number,
+  ): Promise<void> {
+    const shown = (): boolean =>
+      request !== this.selectedNodeHistoryRequest ||
+      normalizeNativeSourceText(document.getText()) ===
+        normalizeNativeSourceText(text)
+    if (shown()) return
+    await new Promise<void>((resolve, reject) => {
+      const observation = new AbortController()
+      let finished = false
+      const finish = (failure?: { cause: unknown }): void => {
+        if (finished) return
+        finished = true
+        subscription.dispose()
+        observation.abort()
+        if (failure) reject(failure.cause)
+        else resolve()
+      }
+      const check = (): void => {
+        if (shown()) finish()
+      }
+      const subscription = vscode.workspace.onDidChangeTextDocument((event) => {
+        // Another document's edit cannot settle the slot.
+        if (event.document.uri.toString() === document.uri.toString()) check()
+      })
+      // A provider answer that reached the document before this subscription shows on the next poll.
+      void waitUntil(
+        () => {
+          check()
+          return finished
+        },
+        'the recorded source of this moment',
+        NODE_HISTORY_TRANSITION_BOUND_MS,
+        observation.signal,
+      ).catch((error: unknown) => finish({ cause: error }))
+    })
+  }
+
+  /**
+   * Presents a test replay's moment in the replay debugger at the recorded-source slot (EN8 step 3): a verified stop's recorded frames and values on the thread `Recorded test stop <n> · <path>:<line>`, otherwise the thread "Not recorded at this moment" with no frames, which also starts the session when the replay opens on such a moment; called by {@link selectNodeHistoryEvent}.
+   * @param verifiedStop - The stop whose source verifies, or `undefined`.
+   * @param slotUri - The slot the stop's frames open.
+   * @param request - The selection's request token.
+   * @returns `true` once the debugger shows the moment; `false` when a newer selection took over.
+   * @throws The debugger's failure for the current selection.
+   * @example await this.presentNodeHistoryDebugger(stop, slotUri, request) // => true
+   */
+  private async presentNodeHistoryDebugger(
+    verifiedStop: NodeTestHistoryStop | undefined,
+    slotUri: vscode.Uri,
+    request: number,
+  ): Promise<boolean> {
+    if (!verifiedStop) {
+      // A debugger the learner stopped stays stopped; one that has not started yet starts on the "Not recorded" thread.
+      if (!this.replayDebugger)
+        await this.presentReplayDebuggerFor(request, async (debuggerView) => {
+          await debuggerView.present(
+            undefined,
+            NODE_RECORDED_SOURCE_TEXT.notRecordedThread,
+            new AbortController().signal,
+          )
+        })
+      if (request !== this.selectedNodeHistoryRequest) return false
+      this.selectedNodeHistoryDebugAvailable = false
+      this.selectedNodeHistoryValuesUninspected = false
+      return true
+    }
+    if (
+      this.replayDebugger?.available === false ||
+      this.replayDebuggerRetirement
+    ) {
+      await this.replaceUnavailableReplayDebugger()
+      // The reader may have closed or selected another stop meanwhile; only the current selection creates the next owner.
+      if (request !== this.selectedNodeHistoryRequest) return false
+    }
+    const inspection = await this.presentReplayDebuggerFor(
+      request,
+      (debuggerView) =>
+        debuggerView.present(
+          verifiedStop.debuggerSnapshot,
+          describeNodeRecordedSource({
+            kind: 'thread',
+            stop: verifiedStop.index + 1,
+            path: verifiedStop.source.path,
+            line: verifiedStop.frame.line,
+          }),
+          new AbortController().signal,
+          { uri: slotUri.toString(), hash: verifiedStop.source.hash },
+        ),
+    )
+    if (request !== this.selectedNodeHistoryRequest) return false
+    this.selectedNodeHistoryDebugAvailable = true
+    this.selectedNodeHistoryValuesUninspected = inspection === 'uninspected'
+    return true
+  }
+
+  /**
+   * Runs one presentation of the test replay's debugger, creating the owner when there is none, and lets a newer selection's supersession end it quietly; called by {@link presentNodeHistoryDebugger}.
+   * @param request - The selection's request token.
+   * @param present - The presentation.
+   * @returns The presentation's result; `undefined` when a newer selection superseded it.
+   * @throws The presentation's failure while this selection is still the current one.
+   * @example await this.presentReplayDebuggerFor(request, (debuggerView) => debuggerView.present(undefined, 'Not recorded at this moment', signal))
+   */
+  private async presentReplayDebuggerFor<Result>(
+    request: number,
+    present: (debuggerView: ReplayDebugger) => Promise<Result>,
+  ): Promise<Result | undefined> {
+    this.replayDebugger ??= this.createReplayDebugger()
+    try {
+      return await present(this.replayDebugger)
+    } catch (error) {
+      // A newer learner selection supersedes this moment's native presentation; only the current request reports failures.
+      if (request !== this.selectedNodeHistoryRequest) return undefined
+      throw error
+    }
+  }
+
+  /**
+   * Draws the recorded-source slot's stopped line and its label `Recorded: <path>:<line> · <t> s` at a verified stop, and clears both for the placeholder and the loading text (EN8 step 4); called by {@link selectNodeHistoryEvent}, {@link leaveNodeHistoryMoment} and when the slot's tab comes back into view.
+   * @example this.decorateNodeSourceSlot()
+   */
+  private decorateNodeSourceSlot(): void {
+    const slot = this.nodeSourceSlot
+    if (!slot || !this.highlight || !this.sourceIdentity) return
+    for (const editor of vscode.window.visibleTextEditors) {
+      if (editor.document.uri.toString() !== slot.uri.toString()) continue
+      const stop = slot.stop
+      if (!stop) {
+        editor.setDecorations(this.highlight, [])
+        editor.setDecorations(this.sourceIdentity, [])
+        continue
+      }
+      const line = stop.frame.line - 1
+      const lineEnd = new vscode.Position(
+        line,
+        slot.text.split('\n')[line]?.length ?? 0,
+      )
+      const label = describeNodeRecordedSource({
+        kind: 'label',
+        path: stop.source.path,
+        line: stop.frame.line,
+        elapsedMs: stop.elapsedMs,
+      })
+      editor.setDecorations(this.highlight, [
+        new vscode.Range(line, 0, line, 0),
+      ])
+      editor.setDecorations(this.sourceIdentity, [
+        {
+          range: new vscode.Range(lineEnd, lineEnd),
+          hoverMessage: `${label} · captured SHA-256 ${stop.source.hash}`,
+          renderOptions: { after: { contentText: `  ${label}` } },
+        },
+      ])
+      editor.revealRange(
+        new vscode.Range(line, 0, line, 0),
+        vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+      )
+    }
+  }
+
+  /**
+   * Names the recorded-source slot's document for a test replay: Codebook's source scheme, this workspace's key and {@link nodeSourceSlotPath}; called by {@link showNodeSourceSlot}.
+   * @param studyId - The test replay's study id.
+   * @param sourcePath - The file the slot is named after.
+   * @returns The slot's URI.
+   * @example this.nodeSourceSlotUri(studyId, 'src/jobs/scheduler.ts') // => Uri codebook-source://<workspaceKey>/node-history-slot/<studyId>/Captured-scheduler.ts
+   */
+  private nodeSourceSlotUri(studyId: string, sourcePath: string): vscode.Uri {
+    return vscode.Uri.from({
+      scheme: STUDY_SOURCE_SCHEME,
+      authority: this.library!.workspaceKey,
+      path: nodeSourceSlotPath(studyId, sourcePath),
+    })
+  }
+
+  /**
+   * Chooses the editor column the recorded-source slot shows in: the group that already shows it (the learner may have moved it), else the source group, else the Study arrangement's source column; called by {@link showNodeSourceSlot}.
+   * @param uri - The slot's URI.
+   * @returns The view column.
+   * @example this.nodeSourceSlotColumn(slotUri) // => 2
+   */
+  private nodeSourceSlotColumn(uri: vscode.Uri): vscode.ViewColumn {
+    const showing = vscode.window.tabGroups.all.find((group) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === uri.toString(),
+      ),
+    )
+    return (
+      showing?.viewColumn ??
+      this.sourceGroup?.viewColumn ??
+      STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
+    )
+  }
+
+  /**
+   * Closes the unpinned, unchanged tabs of a recorded-source slot that Codebook opened, when the slot is renamed for another file or its test replay is retired; called by {@link showNodeSourceSlot} and {@link retireNodeHistorySelection}.
+   * @param uri - The slot's earlier URI.
+   * @throws When the editor keeps a tab it was asked to close.
+   * @example await this.closeNodeSourceSlotTabs(previousSlotUri)
+   */
+  private async closeNodeSourceSlotTabs(uri: vscode.Uri): Promise<void> {
+    const tabs = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter(
+        (tab) =>
+          !tab.isDirty &&
+          !tab.isPinned &&
+          this.ownsCapturedSourceTab(tab) &&
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === uri.toString(),
+      )
+    if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true)))
+      throw new Error('The editor kept the earlier recorded source tab.')
   }
 
   /** Persists navigation independently; failures do not erase prior learner decisions. @example await this.saveSelection() */

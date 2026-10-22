@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -29,6 +29,20 @@ import {
 } from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { shownTestOutput } from './utils/shownTestOutput'
+
+/**
+ * Lists the historical debugger presentations of recorded stops, leaving out the "Not recorded at this moment" presentations that start the replay debugger on an output, the result or an unverified stop (Design 4).
+ * @param harness - The workspace harness.
+ * @returns The presentations that carry a recorded stop's snapshot, in order.
+ * @example recordedStopPresentations(harness)[0]?.snapshot?.variables[0]?.name // => 'nextTheme'
+ */
+function recordedStopPresentations(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+) {
+  return harness.historicalDebugPresentations.filter(
+    (presentation) => presentation.snapshot !== undefined,
+  )
+}
 test('restored Observed moments leaves its loading state after workspace initialization', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -90,7 +104,7 @@ test('an unreadable Node history folder is reported while the saved-study reader
   }
 })
 
-// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger, and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview
+// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger through the replay's one recorded-source slot (PR-B2, DS5; counts follow recorded-stop presentations, as the debugger also starts on the "Not recorded" thread), and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview
 test('saved Node history is selectable in the reader without entering browser playback', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -407,13 +421,13 @@ test('saved Node history is selectable in the reader without entering browser pl
     // Native presentation precedes durable cursor publication; wait for both before inspecting the reader.
     await waitUntil(
       () =>
-        harness.historicalDebugPresentations.length === 1 &&
+        recordedStopPresentations(harness).length === 1 &&
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           23,
       'first historical Node stop reaches the native debugger and reader',
       1_000,
     )
-    const firstPresentation = harness.historicalDebugPresentations[0]!
+    const firstPresentation = recordedStopPresentations(harness)[0]!
     assert.equal(firstPresentation.snapshot?.variables[0]?.name, 'nextTheme')
     assert.equal(
       firstPresentation.sourceDocument?.hash,
@@ -433,12 +447,16 @@ test('saved Node history is selectable in the reader without entering browser pl
       shownTestOutput(harness),
       /between stops|Tests 1 passed/,
     )
+    // The stop's frames open the replay's one recorded-source slot, named after the stop's file (DS5).
+    const slotUri = new URL(firstPresentation.sourceDocument.uri)
+    assert.equal(
+      slotUri.pathname,
+      `/node-history-slot/${header.studyId}/Captured-${basename(header.configuration.source.path)}`,
+    )
+    // A per-stop source address of an earlier version still refuses a hash its sealed stop does not have.
     await assert.rejects(
       harness.readCapturedSource(
-        firstPresentation.sourceDocument.uri.replace(
-          header.configuration.source.hash,
-          secondSource.hash,
-        ),
+        `${slotUri.protocol}//${slotUri.host}/node-history/${header.studyId}/23/${secondSource.hash}/Captured-${basename(header.configuration.source.path)}`,
       ),
       /no longer matches its sealed history/i,
     )
@@ -508,13 +526,13 @@ test('saved Node history is selectable in the reader without entering browser pl
     })
     await waitUntil(
       () =>
-        harness.historicalDebugPresentations.length === 2 &&
+        recordedStopPresentations(harness).length === 2 &&
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           25,
       'second historical Node stop replaces the selected native and reader state',
       1_000,
     )
-    const secondPresentation = harness.historicalDebugPresentations[1]!
+    const secondPresentation = recordedStopPresentations(harness)[1]!
     assert.equal(secondPresentation.snapshot?.variables[0]?.name, 'themeName')
     assert.equal(secondPresentation.sourceDocument?.hash, secondSource.hash)
     assert.equal(
@@ -529,6 +547,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
 
     // Act: moving through output-only intervals clears the previously selected native debug context.
+    const invalidationsBeforeOutput = harness.historicalDebugInvalidations()
     harness.receive({
       type: 'node-history-event',
       revision: message.revision,
@@ -548,13 +567,16 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.equal(interStopMessage.nodeHistoryPosition?.type, 'output')
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
-    assert.equal(
-      harness.historicalDebugInvalidations(),
-      1,
+    assert.ok(
+      harness.historicalDebugInvalidations() > invalidationsBeforeOutput,
       'the previous stop is cleared during an output-only interval',
     )
     assert.equal(
-      harness.historicalDebugPresentations.length,
+      harness.historicalDebugInvalidationLabels().at(-1),
+      'Not recorded at this moment',
+    )
+    assert.equal(
+      recordedStopPresentations(harness).length,
       2,
       'an output-only interval does not claim a debugger snapshot',
     )
@@ -586,6 +608,7 @@ test('saved Node history is selectable in the reader without entering browser pl
       'backward navigation restores the output gap',
       1_000,
     )
+    const invalidationsBeforeResult = harness.historicalDebugInvalidations()
     harness.receive({
       type: 'node-history-event',
       revision: message.revision,
@@ -605,13 +628,12 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.equal(terminalMessage.nodeHistoryPosition?.type, 'result')
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
-    assert.equal(
-      harness.historicalDebugInvalidations(),
-      3,
+    assert.ok(
+      harness.historicalDebugInvalidations() > invalidationsBeforeResult,
       'terminal events do not retain historical debugger values',
     )
     assert.equal(
-      harness.historicalDebugPresentations[2]?.snapshot?.variables[0]?.name,
+      recordedStopPresentations(harness)[2]?.snapshot?.variables[0]?.name,
       'themeName',
       'revisiting a stop restores its captured values',
     )
@@ -625,7 +647,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     })
     await waitUntil(
       () =>
-        harness.historicalDebugPresentations.length === 4 &&
+        recordedStopPresentations(harness).length === 4 &&
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           25,
       'second stop is selected in the reader before reopening its history',
@@ -644,7 +666,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     })
     await waitUntil(
       () =>
-        harness.historicalDebugPresentations.length === 5 &&
+        recordedStopPresentations(harness).length === 5 &&
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           25 &&
         !harness.postedMessages().slice(-1)[0]?.loading,
@@ -660,7 +682,7 @@ test('saved Node history is selectable in the reader without entering browser pl
       true,
     )
     assert.equal(
-      harness.historicalDebugPresentations[4]?.snapshot?.variables[0]?.name,
+      recordedStopPresentations(harness)[4]?.snapshot?.variables[0]?.name,
       'themeName',
     )
     assert.equal(
@@ -675,7 +697,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     )
     assert.equal(
       await harness.readCapturedSource(
-        harness.historicalDebugPresentations[4].sourceDocument!.uri,
+        recordedStopPresentations(harness)[4]!.sourceDocument!.uri,
       ),
       secondSourceText,
     )
@@ -703,7 +725,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     const presentationsBeforeOutputRestore =
-      harness.historicalDebugPresentations.length
+      recordedStopPresentations(harness).length
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
       library.directory,
       header.workspaceKey,
@@ -735,7 +757,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     assert.equal(
-      harness.historicalDebugPresentations.length,
+      recordedStopPresentations(harness).length,
       presentationsBeforeOutputRestore,
       'reopening an output event does not present a stale debugger stop',
     )
@@ -757,7 +779,7 @@ test('saved Node history is selectable in the reader without entering browser pl
       harness.reader.inspect().view!.errors.at(-1)!,
       /Close browser replay/,
     )
-    assert.equal(harness.historicalDebugPresentations.length, 5)
+    assert.equal(recordedStopPresentations(harness).length, 5)
     harness.reader['recordingActive'] = false
 
     // Act: advance the independent event page without opening browser playback.
@@ -1233,7 +1255,7 @@ test('reopening a Node history after the learner stops its historical debugger r
       sequence: 2,
     })
     await waitUntil(
-      () => harness.historicalDebugPresentations.length === 1,
+      () => recordedStopPresentations(harness).length === 1,
       'the recorded stop reaches the native debugger',
       1_000,
     )
@@ -1248,7 +1270,7 @@ test('reopening a Node history after the learner stops its historical debugger r
     })
     await waitUntil(
       () =>
-        harness.historicalDebugPresentations.length === 2 &&
+        recordedStopPresentations(harness).length === 2 &&
         !harness.postedMessages().slice(-1)[0]?.loading,
       'the reopened history presents its saved stop through a fresh historical debugger',
       1_000,
@@ -1257,7 +1279,7 @@ test('reopening a Node history after the learner stops its historical debugger r
     // Assert
     assert.equal(harness.historicalDebuggers.length, 2)
     assert.equal(
-      harness.historicalDebugPresentations[1]?.snapshot?.variables[0]?.name,
+      recordedStopPresentations(harness)[1]?.snapshot?.variables[0]?.name,
       'nextTheme',
     )
     assert.equal(
@@ -1620,7 +1642,7 @@ test('moving to another Node history event while a stop still loads its native v
       harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.type,
       'result',
     )
-    assert.equal(harness.historicalDebugPresentations.length, 1)
+    assert.equal(recordedStopPresentations(harness).length, 1)
   } finally {
     await harness.close()
   }
@@ -3720,7 +3742,7 @@ test('inspecting a Node stop whose captured source differs from its recorded pos
     )
 
     // Assert
-    assert.equal(harness.historicalDebugPresentations.length, 0)
+    assert.equal(recordedStopPresentations(harness).length, 0)
     assert.equal(
       harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence,
       1,
@@ -3819,7 +3841,7 @@ test('a Node stop selected on the timeline whose captured source differs from it
     assert.equal(selectedStop.nodeHistoryPosition?.type, 'stop')
     assert.equal(selectedStop.nodeHistoryPosition?.sourceAvailable, false)
     assert.equal(selectedStop.nodeHistoryPosition?.debuggerAvailable, false)
-    assert.equal(harness.historicalDebugPresentations.length, 0)
+    assert.equal(recordedStopPresentations(harness).length, 0)
   } finally {
     await harness.close()
   }
@@ -4304,7 +4326,7 @@ test('pressing Inspect again while the editor is still stopping the ended histor
     assert.equal(sessionsWhileStopping, 1)
     assert.equal(harness.historicalDebuggers.length, 2)
     assert.equal(harness.historicalDebuggers[1]!.available, true)
-    assert.equal(harness.historicalDebugPresentations.length, 2)
+    assert.equal(recordedStopPresentations(harness).length, 2)
     assert.equal(view.nodeHistoryPosition?.sequence, 2)
     assert.equal(view.nodeHistoryPosition?.debuggerAvailable, true)
   } finally {

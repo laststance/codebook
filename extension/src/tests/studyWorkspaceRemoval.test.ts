@@ -7781,8 +7781,9 @@ test('a Node test history opened while the neighbour of a removed study is being
       inspected.view!.nodeHistory?.header.studyId,
       nodeHistory.studyId,
     )
+    // The stop's frames open the history's recorded-source slot (PR-B2, DS5).
     assert.equal(
-      presentedSource?.includes(`/node-history/${nodeHistory.studyId}/`),
+      presentedSource?.includes(`/node-history-slot/${nodeHistory.studyId}/`),
       true,
     )
     assert.equal(
