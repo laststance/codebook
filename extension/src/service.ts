@@ -429,6 +429,18 @@ export class StudyService {
   }
 
   /**
+   * Sanitizes a release failure before the run keeps or throws it, so `codebook_stop`, the run resource and a maintenance turn's error never name a private path (F218): a {@link StudyError} keeps its code, any other failure stays a plain error with sanitized words.
+   * @param failure - What the release threw, or its removal wording ({@link StudyService.releaseFailure}).
+   * @returns A sanitized {@link StudyError}, or a plain {@link Error} for a failure that was none.
+   * @example this.sanitizedFailure(new Error("close failed at '/Users/ada/.service/run'")).message // => "close failed at '<storage>/run'"
+   */
+  private sanitizedFailure(failure: unknown): unknown {
+    return failure instanceof StudyError
+      ? this.sanitizedError(failure)
+      : new Error(this.sanitizedCause(failure))
+  }
+
+  /**
    * Sanitizes the words of a test run's own error at its assignment, so the run resource and the `codebook_stop` answer never name a private path in the message or the cause (F49); called where {@link StudyService.prepare} and {@link StudyService.continueNodeTest} set `record.error`.
    * @param error - The domain error of the failure.
    * @returns An error with the same code, whose message and cause are sanitized and bounded.
@@ -2102,7 +2114,9 @@ export class StudyService {
       )
     // A failed release is worded again, and so is the error it gave a run that ended without one.
     if (record.releaseError === undefined) return
-    const failure = this.releaseFailure(record, record.releaseError)
+    const failure = this.sanitizedFailure(
+      this.releaseFailure(record, record.releaseError),
+    )
     if (record.cleanupError) record.cleanupError = domainError(failure)
     if (source?.kind === 'release')
       record.error = studyErrorNamingCause(domainError(failure))
@@ -2919,7 +2933,9 @@ export class StudyService {
    */
   private failByRelease(record: StudyRecord, error: unknown): void {
     if (record.error) return
-    record.error = studyErrorNamingCause(domainError(error))
+    record.error = studyErrorNamingCause(
+      domainError(this.sanitizedFailure(error)),
+    )
     record.errorSource = { kind: 'release' }
   }
 
@@ -3574,7 +3590,7 @@ export class StudyService {
     } catch (error) {
       // The raw failure stays for the wording of a removal found later (row 700).
       record.releaseError = error
-      const failure = this.releaseFailure(record, error)
+      const failure = this.sanitizedFailure(this.releaseFailure(record, error))
       record.cleanupError = domainError(failure)
       record.stopPromise = undefined
       throw failure

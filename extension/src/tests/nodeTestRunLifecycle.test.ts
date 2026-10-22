@@ -54,6 +54,8 @@ type FakeRunSteps = {
   complete?: () => ReturnType<NodeTestRuntime['complete']>
   /** How many releases fail before one succeeds. */
   releaseFailures?: number
+  /** Replaces the words of a failed release, which can name a path. */
+  releaseFailureText?: () => string
   /** The Saved Study Limit in force and how many saved studies the library holds; the history store counts both. */
   storage?: { limit: number; savedStudies: number }
 }
@@ -169,7 +171,8 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
       releaseAttempts++
       if (releaseAttempts <= (steps.releaseFailures ?? 0))
         throw new Error(
-          `process group still running (release ${releaseAttempts})`,
+          steps.releaseFailureText?.() ??
+            `process group still running (release ${releaseAttempts})`,
         )
       releases++
     },
@@ -1880,6 +1883,42 @@ test('a run refused at its admission and then stopped keeps refused-at-admission
     )
   } finally {
     letCheckFail()
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a test run whose release failed: the rejection of codebook_stop and the run resource's cleanupError name `<storage>` where the failure named the service's storage path; fails_when=the release error is stored and thrown raw, so the stop tool and the run resource carry the private path; why_new=stopRecord kept and threw the release failure unsanitized (F218); seam=the owned run's release throws a message with the storage root; no_claim=the removal rewording (studyRemoval tests)
+test('a failed release of a test run names no storage path in the stop rejection or the run resource', async () => {
+  // Arrange
+  let storageRoot = ''
+  const run = await testRunHarness({
+    releaseFailures: 1,
+    releaseFailureText: () =>
+      `process group still running in '${storageRoot}/x'`,
+  })
+  storageRoot = run.service.causeRoots.storage[0]!
+  try {
+    const { record } = await run.start()
+
+    // Act
+    const rejection = await run.service
+      .stop({ instanceId: run.service.instanceId, runId: record.id })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+    // Assert
+    assert.ok(rejection instanceof Error)
+    assert.equal(
+      rejection.message,
+      "process group still running in '<storage>/x'",
+    )
+    assert.equal(
+      run.service.state(record).cleanupError?.cause,
+      "Error: process group still running in '<storage>/x'",
+    )
+  } finally {
     await run.harness.close()
   }
 })
