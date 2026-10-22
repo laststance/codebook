@@ -14,6 +14,7 @@ node_modules/
 extension/dist/
 extension/coverage/
 extension/.fallow/
+extension/.eslintcache
 
 # Share this project's agent entry points despite user-global ignore rules
 !/AGENTS.md

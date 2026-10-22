@@ -316,13 +316,17 @@
     "format": "cd .. && prettier --write .",
     "format:check": "cd .. && prettier --check .",
     "health": "node scripts/checkHealth.mjs",
-    "health:static": "fallow health --fail-on-issues --baseline fallow-health-baseline.json",
+    "health:static": "fallow health --complexity --max-crap inf --baseline-mode identity --fail-on-issues --baseline fallow-health-baseline.json",
     "dupes": "fallow dupes --fail-on-issues --baseline fallow-dupes-baseline.json",
     "dead-code": "fallow dead-code --fail-on-issues --baseline fallow-dead-code-baseline.json",
-    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm health"
+    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm health:static && pnpm test && pnpm test:package && pnpm dupes && pnpm dead-code && pnpm health"
   },
   "lint-staged": {
-    "*": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore",
+    "!(*.ts)": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore",
+    "*.ts": [
+      "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore",
+      "eslint --cache --no-warn-ignored --max-warnings=0"
+    ],
     "../**/*": "prettier --ignore-unknown --write --ignore-path ../.gitignore --ignore-path ../.prettierignore"
   },
   "dependencies": {
