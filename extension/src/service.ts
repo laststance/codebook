@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { CONFIGURED_PROFILE } from './configuredProfile'
@@ -124,6 +123,7 @@ import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { homeRootNames, privateRootNames } from './utils/privateRootNames'
 import {
   projectNodeTestOutcome,
   type NodeTestHistoryState,
@@ -399,8 +399,9 @@ export class StudyService {
           : []),
         ...this.extraStorageRoots,
       ],
-      workspace: this.environment.workspace,
-      home: homedir(),
+      // Real paths too, so a symlinked repository or home stays hidden; an unreadable home is skipped (F58).
+      workspace: privateRootNames(this.environment.workspace),
+      home: homeRootNames(),
     }
   }
 

@@ -145,3 +145,57 @@ test('an Output entry’s stack drops the message line and names no storage fold
   assert.equal(sanitizedStack(withoutFrames, roots), undefined)
   assert.equal(sanitizedStack('Error: not an error object', roots), undefined)
 })
+
+// Value: protects=a root that ends a sentence in a cause; fails_when=`… nothing at /Users/ada/code/scheduler.` keeps the repository path because the full stop counts as part of a name, or `scheduler.ts` is cut at its extension; why_new=the boundary rejected every period after a root (F31); seam=none; no_claim=roots followed by other punctuation
+test('a root followed by the full stop of a sentence is hidden, and a file name that continues it is kept', () => {
+  // Arrange
+  const message =
+    'ENOENT: nothing at /Users/ada/code/scheduler. Also /Users/ada/code/scheduler.ts and /Users/ada/code/scheduler.'
+
+  // Act
+  const cause = sanitizeCause(message, {
+    storage: [],
+    workspace: '/Users/ada/code/scheduler',
+  })
+
+  // Assert
+  assert.equal(
+    cause,
+    'ENOENT: nothing at <workspace>. Also /Users/ada/code/scheduler.ts and <workspace>.',
+  )
+})
+
+// Value: protects=roots made of regular-expression characters and a home directory that is `/`; fails_when=a root such as /srv/a.b+c(d) matches loosely or throws, or a `/` home hides every path of the cause; why_new=these cells were untested (F31); seam=none; no_claim=other metacharacter placements
+test('a root with regular-expression characters is hidden only when it matches whole, and a root home hides nothing', () => {
+  // Arrange
+  const message =
+    'open /srv/a.b+c(d)/x.ts and /srv/aXb+c(d)/x.ts and /etc/hosts'
+
+  // Act
+  const cause = sanitizeCause(message, {
+    storage: [],
+    workspace: '/srv/a.b+c(d)',
+    home: '/',
+  })
+
+  // Assert
+  assert.equal(
+    cause,
+    'open <workspace>/x.ts and /srv/aXb+c(d)/x.ts and /etc/hosts',
+  )
+})
+
+// Value: protects=a workspace or home reached through a symlink; fails_when=the real path a message names survives because only the reported spelling is a root; why_new=causeRoots named the reported paths only (F58); seam=none; no_claim=how the service gathers the real paths
+test('a root given by several names hides each of them', () => {
+  // Arrange
+  const message = 'EACCES /Volumes/work/repo/a.ts via /Users/ada/link/a.ts'
+
+  // Act
+  const cause = sanitizeCause(message, {
+    storage: [],
+    workspace: ['/Users/ada/link', '/Volumes/work/repo'],
+  })
+
+  // Assert
+  assert.equal(cause, 'EACCES <workspace>/a.ts via <workspace>/a.ts')
+})
