@@ -294,6 +294,7 @@ test('a passing Node test run with every declared stop is demonstrated and seale
   }
 })
 
+// Value: protects=the saved Node history catalog resource staying readable when it spans several pages; fails_when=a later page is missing, repeated or unreadable; why_new=test histories add entries to the catalog (C49); seam=a real service with stand-in histories; no_claim=very large catalogs
 test('the saved Node history catalog stays readable after it spans several resource pages', async () => {
   // Arrange
   const harness = await createHarness(),

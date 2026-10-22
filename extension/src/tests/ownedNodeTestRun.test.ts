@@ -1186,6 +1186,7 @@ test('a failed cited assertion cannot return a successful result when a plugin r
   }
 })
 
+// Value: protects=a failing test with a failing process exit keeping its observed result for the partial history; fails_when=the result is dropped when the process exit fails too; why_new=a failed assertion and a failing exit arrive together; seam=a fake adapter and process; no_claim=real Vitest output
 test('a failed cited assertion with a failing process exit preserves its observed result for partial history', async () => {
   // Arrange
   const harness = await nodeRunHarness({ reportStatus: 'failed', exitCode: 1 })
@@ -1944,6 +1945,7 @@ test('a second Node test stop acknowledged at another column is refused before t
 })
 
 // Cycle 0045 (CR-7): red while the read of the next stop's bound place took no cancellation: an adapter that never answered it held the continuation after the run was stopped.
+// Value: protects=a run cancelled while the adapter never answers the breakpoint read ending at once; fails_when=the continuation stays held by an unanswered read after the stop; why_new=Cycle 0045 (CR-7); seam=an adapter whose read never answers; no_claim=a real debug adapter
 test('a run cancelled while the adapter does not answer the breakpoint read ends at once', async () => {
   // Arrange: the first stop is acknowledged at its declared 1:14; the next one is answered pending, and the adapter never says where it is bound.
   const harness = await nodeRunHarness({

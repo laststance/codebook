@@ -7734,7 +7734,7 @@ test('a return to the current run made while the neighbour of a removed study is
   }
 })
 
-// Value: protects=a Node test history the learner opened while the neighbour of a removed study was read keeps its own captured source; fails_when=the removal renders the saved-study selection over it and the source pane shows the saved-study placeholder (0040-D5); why_new=the Node test history was only asserted by its header; seam=the library's archive read, held by the test
+// Value: protects=a Node test history the learner opened while the neighbour of a removed study was read keeps its own captured source; fails_when=the removal renders the saved-study selection over it and the source pane shows the saved-study placeholder (0040-D5); why_new=the Node test history was only asserted by its header; seam=the library's archive read, held by the test; no_claim=the removal itself (the removal tests)
 test('a Node test history opened while the neighbour of a removed study is being read keeps the source it showed', async (context) => {
   // Arrange: two saved studies and a Node test history; the read of the removed study's neighbour is held.
   const harness = await workspaceHarness()

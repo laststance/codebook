@@ -51,7 +51,7 @@ test('untrusted, remote and virtual workspaces reject execution before creating 
   assert.equal(boundary.requireWorkspace(), '/workspace')
 })
 
-// Value: protects=Codebook on VS Code or Cursor for Windows opened on a repository in WSL; fails_when=a WSL remote file workspace is refused like any other remote, so Set Up AI Chat and status answer "not supported"; why_new=the boundary test only proved that every remote is refused (Cycle 0044 row N-1); seam=none
+// Value: protects=Codebook on VS Code or Cursor for Windows opened on a repository in WSL; fails_when=a WSL remote file workspace is refused like any other remote, so Set Up AI Chat and status answer "not supported"; why_new=the boundary test only proved that every remote is refused (Cycle 0044 row N-1); seam=none; no_claim=the host's real workspace-trust prompt
 test('a trusted file workspace opened in WSL is accepted and its prerequisites answer ready', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wsl-'))

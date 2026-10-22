@@ -10,6 +10,7 @@ import { runFlowKeepingCases } from '../utils/runFlowKeepingCases.mjs'
 // Read as text and never imported: loading the script starts its server and its browser.
 const scriptUrl = new URL('../study-bootstrap-qa.mjs', import.meta.url)
 
+// Value: protects=the pane DOM check handing its flow to the browser CLI as a file, never through eval; fails_when=the flow is passed through eval or an argument; why_new=the check's flow loading changed; seam=none; no_claim=the browser run itself (Reader DOM)
 test('the pane DOM check loads its flow without eval', async () => {
   // Arrange
   const script = await readFile(scriptUrl, 'utf8')
