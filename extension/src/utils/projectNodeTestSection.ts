@@ -8,6 +8,8 @@ import {
   describeNodeTestResult,
   type NodeTestVerdict,
 } from './describeNodeTestResult'
+import { projectNodeHistoryTimeline } from './projectNodeHistoryTimeline'
+import type { NodeHistoryTimeline } from './projectNodeHistoryTimeline'
 import type { NodeLearningSummaryProjection } from './projectNodeLearningSummary'
 
 /**
@@ -39,6 +41,8 @@ export type NodeTestSectionView = {
   /** Whether a stop lies before and after the selected event, for Previous stop and Next stop. */
   previousStop: boolean
   nextStop: boolean
+  /** The slider's unrecorded span and stop ticks; absent for a history with nothing to mark (one event, or events at one time). */
+  timeline?: NodeHistoryTimeline
 }
 
 /** The inputs of the section's view. */
@@ -72,6 +76,8 @@ export function projectNodeTestSection(
   const explanation = momentExplanation(selected, moment.selectedStep)
   const unverifiedStop =
     selected?.type === 'stop' && !input.selectedStopVerified
+  const timeline = projectNodeHistoryTimeline(history)
+  const marks = timeline ? { timeline } : {}
   return {
     status: sectionStatus(history, stops, verdict, learning),
     ...(selected ? { position: positionLine(selected, stops.length) } : {}),
@@ -101,6 +107,7 @@ export function projectNodeTestSection(
     nextStop: stops.some(
       (stop) => selected === undefined || stop.sequence > selected.sequence,
     ),
+    ...marks,
   }
 }
 

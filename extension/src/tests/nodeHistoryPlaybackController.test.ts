@@ -559,3 +559,80 @@ test('a Node stop that finishes presenting after the reader closed publishes not
   // Assert
   assert.equal(publishes, 0)
 })
+
+// Value: protects=Play not idling through a long unrecorded interval between two events and stating the shown event own time; fails_when=the dwell bound NODE_HISTORY_PLAY_MAX_DWELL_MS is removed (Play waits the recorded 60 s) or positionMs reports the elapsed wall time; why_new=Cycle 0049 DS11; seam=none; no_claim=native presentation timing
+test('Play waits at most 1,500 ms before an event recorded a minute later and reports that event’s own time', async () => {
+  // Arrange
+  let now = 0
+  const presented: number[] = []
+  const controller = new NodeHistoryPlaybackController({
+    present: async (sequence) => {
+      presented.push(sequence)
+    },
+    changed() {},
+    now: () => now,
+    manualTicks: true,
+  })
+  controller.open(
+    [
+      { sequence: 1, elapsedMs: 0 },
+      { sequence: 2, elapsedMs: 60_000 },
+      { sequence: 3, elapsedMs: 60_200 },
+    ],
+    1,
+  )
+  controller.play()
+
+  // Act
+  now = 1_499
+  await controller.tick()
+  const beforeBound = [...presented]
+  now = 1_500
+  await controller.tick()
+
+  // Assert
+  assert.deepEqual(beforeBound, [], 'nothing is presented before the bound')
+  assert.deepEqual(presented, [2], 'the far event follows at the bound')
+  assert.equal(controller.state().positionMs, 60_000)
+  assert.equal(
+    controller.state().mode,
+    'playing',
+    'an unrecorded interval neither pauses nor asks',
+  )
+  controller.dispose()
+})
+
+// Value: protects=events recorded close together keeping their recorded spacing under the dwell bound; fails_when=every event waits the full bound or none waits; why_new=Cycle 0049 DS11; seam=none; no_claim=none
+test('Play keeps the recorded spacing of events closer together than the dwell bound', async () => {
+  // Arrange
+  let now = 0
+  const presented: number[] = []
+  const controller = new NodeHistoryPlaybackController({
+    present: async (sequence) => {
+      presented.push(sequence)
+    },
+    changed() {},
+    now: () => now,
+    manualTicks: true,
+  })
+  controller.open(
+    [
+      { sequence: 1, elapsedMs: 0 },
+      { sequence: 2, elapsedMs: 200 },
+    ],
+    1,
+  )
+  controller.play()
+
+  // Act
+  now = 199
+  await controller.tick()
+  const beforeSpacing = [...presented]
+  now = 200
+  await controller.tick()
+
+  // Assert
+  assert.deepEqual(beforeSpacing, [])
+  assert.deepEqual(presented, [2])
+  controller.dispose()
+})

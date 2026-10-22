@@ -1,4 +1,7 @@
-import { PLAYBACK_TICK_INTERVAL_MS } from '../constants'
+import {
+  NODE_HISTORY_PLAY_MAX_DWELL_MS,
+  PLAYBACK_TICK_INTERVAL_MS,
+} from '../constants'
 
 export interface NodeHistoryPlaybackEvent {
   sequence: number
@@ -19,7 +22,6 @@ export class NodeHistoryPlaybackController {
   private events: NodeHistoryPlaybackEvent[] = []
   private selectedIndex = -1
   private mode: 'paused' | 'playing' = 'paused'
-  private anchorElapsedMs = 0
   private anchorWallMs = 0
   private timer?: ReturnType<typeof setInterval>
   private pending?: Promise<void>
@@ -108,7 +110,6 @@ export class NodeHistoryPlaybackController {
     )
       return
     this.mode = 'playing'
-    this.anchorElapsedMs = this.events[this.selectedIndex]!.elapsedMs
     this.anchorWallMs = this.clock()
     if (!this.dependencies.manualTicks) {
       this.timer = setInterval(() => {
@@ -155,24 +156,26 @@ export class NodeHistoryPlaybackController {
   async tick(): Promise<void> {
     if (this.mode !== 'playing' || this.pending || this.selectedIndex < 0)
       return
-    const targetTime =
-      this.anchorElapsedMs + Math.max(0, this.clock() - this.anchorWallMs)
     const nextIndex = this.selectedIndex + 1
     if (nextIndex >= this.events.length) {
       this.pause()
       return
     }
-    if (this.events[nextIndex]!.elapsedMs > targetTime) return
-    const generation = this.generation,
-      presentationStartedWallMs = this.clock()
+    // Each event waits its recorded spacing, never more than the dwell bound: the test ran unrecorded between stops, and Play does not idle through that time.
+    const recordedGapMs =
+      this.events[nextIndex]!.elapsedMs -
+      this.events[this.selectedIndex]!.elapsedMs
+    const dwellMs = Math.min(recordedGapMs, NODE_HISTORY_PLAY_MAX_DWELL_MS)
+    if (Math.max(0, this.clock() - this.anchorWallMs) < dwellMs) return
+    const generation = this.generation
     try {
       await this.present(nextIndex, generation)
     } catch (error) {
       this.pause()
       throw error
     }
-    // Waiting for native Run and Debug is a visible pause, not recorded test time; later output keeps its recorded spacing.
-    this.anchorWallMs += this.clock() - presentationStartedWallMs
+    // Waiting for native Run and Debug is a visible pause, not recorded test time: the next dwell starts when this event is on screen.
+    this.anchorWallMs = this.clock()
     if (
       this.mode === 'playing' &&
       this.selectedIndex === this.events.length - 1

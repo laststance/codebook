@@ -210,7 +210,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
+<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled><div id="node-history-coverage" class="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="node-history-coverage-label" class="history-coverage-label muted"></span></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
 <section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
@@ -345,6 +345,84 @@ function studyClient(
   }
   const seconds = (elapsed: number) =>
     `${(elapsed / options.secondMs).toFixed(2)} s`
+  /**
+   * Draws a transport's coverage strip: striped spans where source and debugger were not recorded, a tick for each recorded stop, the legend and the strip's accessible name; called for the browser transport and the test replay transport, so both draw alike.
+   * @param coverage - The strip element, hidden when there is nothing to mark.
+   * @param label - The legend element beside the slider.
+   * @param marks - The range with its gaps and recorded stops, or `undefined` when no coverage is known.
+   * @param legends - The legend for a range with gaps, for one without, and for no known coverage.
+   * @example renderTimelineCoverage(strip, legend, { startMs: 0, endMs: 900, gaps: [{ startMs: 0, endMs: 900 }], recordedPoints: [420] }, legends)
+   */
+  const renderTimelineCoverage = (
+    coverage: HTMLElement,
+    label: HTMLElement,
+    marks:
+      | {
+          startMs: number
+          endMs: number
+          gaps: Array<{ startMs: number; endMs: number }>
+          recordedPoints: number[]
+        }
+      | undefined,
+    legends: {
+      gapsLegend: string
+      noGapsLegend: string
+      unknownLegend: string
+    },
+  ): void => {
+    coverage.hidden = !marks
+    label.textContent = marks
+      ? marks.gaps.length
+        ? legends.gapsLegend
+        : legends.noGapsLegend
+      : legends.unknownLegend
+    if (!marks) {
+      coverage.replaceChildren()
+      delete coverage.dataset.signature
+      coverage.setAttribute(
+        'aria-label',
+        'Historical source and debugger coverage unknown',
+      )
+      return
+    }
+    const signature = JSON.stringify([
+      marks.startMs,
+      marks.endMs,
+      marks.gaps,
+      marks.recordedPoints,
+    ])
+    const gapTimes = marks.gaps
+      .map((gap) => `${seconds(gap.startMs)}–${seconds(gap.endMs)}`)
+      .join(', ')
+    const stopTimes = marks.recordedPoints.map(seconds).join(', ')
+    coverage.setAttribute(
+      'aria-label',
+      `${marks.gaps.length} source/debugger history gap${marks.gaps.length === 1 ? '' : 's'}${gapTimes ? `: ${gapTimes}` : ''}; ${marks.recordedPoints.length} recorded stop${marks.recordedPoints.length === 1 ? '' : 's'}${stopTimes ? `: ${stopTimes}` : ''}`,
+    )
+    // The same marks are not drawn again.
+    if (coverage.dataset.signature === signature) return
+    coverage.replaceChildren()
+    coverage.dataset.signature = signature
+    const durationMs = marks.endMs - marks.startMs
+    // Draw sealed-history gaps and exact recorded stops without changing the range input's seek semantics.
+    for (const gap of marks.gaps) {
+      const mark = document.createElement('span')
+      mark.className = 'history-gap'
+      mark.setAttribute('aria-hidden', 'true')
+      mark.style.left = `${((gap.startMs - marks.startMs) / durationMs) * options.timelineFullWidthPercent}%`
+      mark.style.width = `${((gap.endMs - gap.startMs) / durationMs) * options.timelineFullWidthPercent}%`
+      mark.title = `Not recorded at this moment · ${seconds(gap.startMs)}–${seconds(gap.endMs)}`
+      coverage.append(mark)
+    }
+    for (const positionMs of marks.recordedPoints) {
+      const mark = document.createElement('span')
+      mark.className = 'history-stop'
+      mark.setAttribute('aria-hidden', 'true')
+      mark.style.left = `${((positionMs - marks.startMs) / durationMs) * options.timelineFullWidthPercent}%`
+      mark.title = `Recorded source and debugger · ${seconds(positionMs)}`
+      coverage.append(mark)
+    }
+  }
   const playback = (
     action: 'play' | 'pause' | 'seek',
     positionMs?: number,
@@ -2195,6 +2273,18 @@ function studyClient(
       message.nodeHistoryPlayback,
       !message.nodeHistory || replaying,
     )
+    // Marks belong to the shown replay only: none while a browser recording or no replay is shown.
+    const marks = unavailable ? undefined : section?.timeline
+    renderTimelineCoverage(
+      element('node-history-coverage'),
+      element('node-history-coverage-label'),
+      marks,
+      {
+        gapsLegend: options.testReplay.timelineLegend,
+        noGapsLegend: options.testReplay.timelineLegend,
+        unknownLegend: '',
+      },
+    )
   }
   /**
    * Enables Previous stop, Next stop, Previous event and Next event where a move exists; called by {@link renderTestReplayTransport}.
@@ -3018,64 +3108,26 @@ function studyClient(
             : `${seconds(recording.presentedMs)} presented${range?.endKnown === false ? '; recording end unknown' : ''}`,
         )
       }
-      const coverage = element('history-coverage')
       const mapped =
         timeline.status === 'mapped' && range && range.endMs > range.startMs
-      coverage.hidden = !mapped
-      text(
-        'history-coverage-label',
+      renderTimelineCoverage(
+        element('history-coverage'),
+        element('history-coverage-label'),
         mapped
-          ? timeline.gaps.length
-            ? 'Striped: source/debugger not recorded · ticks: recorded stops'
-            : 'Source/debugger history recorded across this range'
-          : 'Historical source/debugger coverage unknown',
+          ? {
+              startMs: range.startMs,
+              endMs: range.endMs,
+              gaps: timeline.gaps,
+              recordedPoints: timeline.recordedPoints,
+            }
+          : undefined,
+        {
+          gapsLegend:
+            'Striped: source/debugger not recorded · ticks: recorded stops',
+          noGapsLegend: 'Source/debugger history recorded across this range',
+          unknownLegend: 'Historical source/debugger coverage unknown',
+        },
       )
-      if (mapped) {
-        const signature = JSON.stringify([
-          range.startMs,
-          range.endMs,
-          timeline.gaps,
-          timeline.recordedPoints,
-        ])
-        const gapTimes = timeline.gaps
-          .map((gap) => `${seconds(gap.startMs)}–${seconds(gap.endMs)}`)
-          .join(', ')
-        const stopTimes = timeline.recordedPoints.map(seconds).join(', ')
-        coverage.setAttribute(
-          'aria-label',
-          `${timeline.gaps.length} source/debugger history gap${timeline.gaps.length === 1 ? '' : 's'}${gapTimes ? `: ${gapTimes}` : ''}; ${timeline.recordedPoints.length} recorded stop${timeline.recordedPoints.length === 1 ? '' : 's'}${stopTimes ? `: ${stopTimes}` : ''}`,
-        )
-        if (coverage.dataset.signature !== signature) {
-          coverage.replaceChildren()
-          coverage.dataset.signature = signature
-          const durationMs = range.endMs - range.startMs
-          // Draw sealed-history gaps and exact recorded stops without changing the range input's seek semantics.
-          for (const gap of timeline.gaps) {
-            const mark = document.createElement('span')
-            mark.className = 'history-gap'
-            mark.setAttribute('aria-hidden', 'true')
-            mark.style.left = `${((gap.startMs - range.startMs) / durationMs) * options.timelineFullWidthPercent}%`
-            mark.style.width = `${((gap.endMs - gap.startMs) / durationMs) * options.timelineFullWidthPercent}%`
-            mark.title = `Not recorded at this moment · ${seconds(gap.startMs)}–${seconds(gap.endMs)}`
-            coverage.append(mark)
-          }
-          for (const positionMs of timeline.recordedPoints) {
-            const mark = document.createElement('span')
-            mark.className = 'history-stop'
-            mark.setAttribute('aria-hidden', 'true')
-            mark.style.left = `${((positionMs - range.startMs) / durationMs) * options.timelineFullWidthPercent}%`
-            mark.title = `Recorded source and debugger · ${seconds(positionMs)}`
-            coverage.append(mark)
-          }
-        }
-      } else {
-        coverage.replaceChildren()
-        delete coverage.dataset.signature
-        coverage.setAttribute(
-          'aria-label',
-          'Historical source and debugger coverage unknown',
-        )
-      }
     }
     const item = model.progressByItem.find(
       (value) => value.id === model.selection.itemId,

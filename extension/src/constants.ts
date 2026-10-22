@@ -716,6 +716,8 @@ export const PNG_WIDTH_OFFSET = 16
 export const PNG_HEIGHT_OFFSET = 20
 export const PNG_SIGNATURE_HEX = '89504e470d0a1a0a0000000d49484452'
 export const PLAYBACK_TICK_INTERVAL_MS = 50
+/** The longest Play waits between two events of a test replay, however far apart the journal recorded them (the test ran unrecorded between stops). */
+export const NODE_HISTORY_PLAY_MAX_DWELL_MS = 1_500
 export const PLAYBACK_PREFERENCE_FILE = 'playback.v1.json'
 export const PLAYBACK_PREFERENCE_LIMIT_BYTES = 65_536
 /** Converts milliseconds to the seconds that playback labels, seek steps and run failure texts name. */

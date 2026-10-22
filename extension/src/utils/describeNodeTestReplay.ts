@@ -33,6 +33,9 @@ export const NODE_TEST_REPLAY_TEXT = {
   play: 'Play',
   pause: 'Pause',
   stepDetails: 'Step details',
+  /** The slider's legend: a test journal records when a stop paused, not when the run resumed. */
+  timelineLegend:
+    'Ticks mark recorded stops; source and debugger are not recorded between them.',
   noSelection: 'Select an event to move through the recorded test history.',
   chooseReplay:
     'Choose a test replay from Saved studies to step through its output and debugger stops.',
