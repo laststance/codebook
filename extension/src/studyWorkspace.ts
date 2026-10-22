@@ -100,10 +100,11 @@ import {
   type StudyRemoval,
 } from './learningLibrary'
 import { NodeLearningSave } from './nodeLearningSave'
-import type {
-  NodeTestHistoryIndex,
-  NodeTestHistoryLearningDecision,
-  NodeTestLearningMaterial,
+import {
+  nodeLearningStepIdSchema,
+  type NodeTestHistoryIndex,
+  type NodeTestHistoryLearningDecision,
+  type NodeTestLearningMaterial,
 } from './nodeTestHistorySchemas'
 import { NodeTestHistoryStore } from './nodeTestHistoryStore'
 import {
@@ -228,7 +229,12 @@ import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
 import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
 import { hasRowAtMinimumHeight } from './utils/hasRowAtMinimumHeight'
 import { holdsEditorTab } from './utils/holdsEditorTab'
+import {
+  indexNodeTestOutput,
+  type NodeTestOutputIndex,
+} from './utils/indexNodeTestOutput'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
+import type { NodeTestOutputUpdate } from './utils/installNodeTestOutput'
 import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isChatEditorTabInput } from './utils/isChatEditorTabInput'
@@ -248,13 +254,21 @@ import { layoutKeepsEveryGroup } from './utils/layoutKeepsEveryGroup'
 import { libraryHasRoom } from './utils/libraryHasRoom'
 import { listsEveryTabGroup } from './utils/listsEveryTabGroup'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
+import { nextNodeHistoryStepId } from './utils/nextNodeHistoryStepId'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
+import { nodeHistoryStepTarget } from './utils/nodeHistoryStepTarget'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { paneKeyboardTimeoutMessage } from './utils/paneKeyboardTimeoutMessage'
 import { parseRecordedStudyGroups } from './utils/parseRecordedStudyGroups'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
+import { projectNodeLearningSummary } from './utils/projectNodeLearningSummary'
+import {
+  projectNodeTestApplication,
+  type NodeTestApplicationView,
+} from './utils/projectNodeTestApplication'
+import { projectNodeTestSection } from './utils/projectNodeTestSection'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
 import {
   type OpenRequestSettled,
@@ -427,12 +441,16 @@ const messageSchema = z.discriminatedUnion('type', [
     ...revisionShape,
     studyId: studyIdSchema,
     direction: z.enum(['previous', 'next']),
+    // Previous stop and Next stop move by stop, the event buttons by event (DS12).
+    unit: z.enum(['event', 'stop']).optional(),
   }),
   z.strictObject({
     type: z.literal('node-history-event'),
     ...revisionShape,
     studyId: studyIdSchema,
     sequence: z.number().int().positive(),
+    // A summary step's action names its step, which the section then shows with the event (DS21).
+    stepId: nodeLearningStepIdSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('node-history-stop'),
@@ -653,6 +671,22 @@ export class StudyWorkspace {
   /** The selected Node stop reached native Run and Debug without its values loading; the reader shows how to load them. */
   private selectedNodeHistoryValuesUninspected = false
   private selectedNodeHistoryRequest = 0
+  /** The step shown with the selected event, committed with that selection (DS21, {@link nextNodeHistoryStepId}); `undefined` shows the event's first step. */
+  private selectedNodeHistoryStepId?: string
+  /** The selected test replay's output read once ({@link indexNodeTestOutput}), with the history it was read from. */
+  private selectedNodeHistoryOutputIndex?: {
+    history: NodeTestHistoryIndex
+    index: NodeTestOutputIndex
+  }
+  /** The count of the Application pane's test replay views, and what the last one showed, so its generation changes only when the shown moment does. */
+  private nodeHistoryApplicationGeneration = 0
+  private nodeHistoryApplicationMemo?: {
+    key: string
+    generation: number
+    view: NodeTestApplicationView
+  }
+  /** The generation of the view the Application pane's document shows, so each change is posted once. */
+  private shownNodeHistoryApplicationGeneration?: number
   private nodeHistoryPlaybackController?: NodeHistoryPlaybackController
   private playback?: PlaybackController
   private replayDebugger?: ReplayDebugger
@@ -8503,7 +8537,7 @@ export class StudyWorkspace {
     }
     if (action === 'return-current') await this.returnCurrentSelection()
     if (action === 'source') await this.renderSelection(false)
-    if (action === 'focus-app') this.app?.reveal(undefined, false)
+    if (action === 'focus-app') await this.focusApplication()
     if (action === 'focus-context') {
       if (this.summaryComposition) await this.showLearningSummary()
       else this.contextPanel?.reveal(undefined, false)
@@ -11129,10 +11163,11 @@ export class StudyWorkspace {
   > {
     const request = ++this.historyRequest
     this.studyChoices++
-    this.pendingNodeHistory = request
-    this.loading = true
-    this.publish()
     try {
+      // The opening marker is set inside the try, so its finally ends it even when the first publish throws.
+      this.pendingNodeHistory = request
+      this.loading = true
+      this.publish()
       await this.replaceUnavailableReplayDebugger()
       const opening = await this.readNodeHistoryOpening(
         studyId,
@@ -11157,6 +11192,7 @@ export class StudyWorkspace {
       this.selectedNodeHistoryLearningMaterial = learningMaterial
       this.selectedNodeHistoryPage = 0
       this.selectedNodeHistorySequence = undefined
+      this.selectedNodeHistoryStepId = undefined
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
       // A Node history has no application frames; replace pixels from the prior browser study immediately.
@@ -11169,13 +11205,10 @@ export class StudyWorkspace {
             throw new Error(
               'The selected Node history changed during playback.',
             )
-          await this.selectNodeHistoryEvent(
-            selectedHistory,
-            sequence,
-            false,
-            false,
-            false,
-          )
+          await this.selectNodeHistoryEvent(selectedHistory, sequence, {
+            publish: false,
+            alignPlayback: false,
+          })
         },
         changed: () => this.publish(),
         failed: (error) => this.report('control', error),
@@ -11194,35 +11227,48 @@ export class StudyWorkspace {
       )
       if (positionError) this.report('history-position', positionError)
       if (initialSequence !== undefined)
-        await this.selectNodeHistoryEvent(
-          history,
-          initialSequence,
-          false,
-          false,
-          false,
-        )
+        await this.selectNodeHistoryEvent(history, initialSequence, {
+          publish: false,
+          alignPlayback: false,
+        })
       if (this.historyOpenSuperseded(request, revision))
         return { status: 'superseded' }
+      this.endNodeHistoryOpening(request)
       this.loading = false
       this.publish()
       return { status: 'opened' }
     } catch (error) {
       if (this.historyOpenSuperseded(request, revision))
         return { status: 'superseded' }
+      this.endNodeHistoryOpening(request)
       this.loading = false
       this.report('archive', error)
       this.publish()
       return { status: 'failed', error }
     } finally {
-      // A newer Node history request owns the marker by then.
-      if (this.pendingNodeHistory === request)
-        this.pendingNodeHistory = undefined
+      const endedHere = this.endNodeHistoryOpening(request)
       // A request discarded only because the reader's revision changed is still the latest; nothing else ends the loading state it set.
       if (this.loading && this.isLatestHistoryRequest(request)) {
         this.loading = false
         this.publish()
+      } else if (endedHere && !this.closing) {
+        // A render that ended the loading state meanwhile leaves the panes on this open's loading line until they are published again.
+        this.publish()
       }
     }
+  }
+
+  /**
+   * Ends a test replay open's own marker, which alone says that a test replay is opening ({@link nodeHistoryViews}): a render that ends the shared loading state meanwhile never ends it; called by {@link openNodeHistory} before its last publish and in its `finally`.
+   * @param request - The open's request token.
+   * @returns `true` when this call ended the open's marker; `false` when a newer open owns it or it was already ended.
+   * @example this.endNodeHistoryOpening(request) // => true
+   */
+  private endNodeHistoryOpening(request: number): boolean {
+    // A newer Node history request owns the marker by then.
+    if (this.pendingNodeHistory !== request) return false
+    this.pendingNodeHistory = undefined
+    return true
   }
 
   /**
@@ -11885,7 +11931,10 @@ export class StudyWorkspace {
     this.selectedNodeHistory = undefined
     this.selectedNodeHistoryLearningDecision = undefined
     this.selectedNodeHistoryLearningMaterial = undefined
+    // The retired replay's output index goes with it, so its entries leave the extension host's memory.
+    this.selectedNodeHistoryOutputIndex = undefined
     this.selectedNodeHistorySequence = undefined
+    this.selectedNodeHistoryStepId = undefined
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
     this.replayDebugger?.invalidate()
@@ -12048,6 +12097,74 @@ export class StudyWorkspace {
     }, REPOSITORY_READER_DEBOUNCE_MS)
   }
 
+  /**
+   * Projects a selected test replay's three views for the Study message: the Application pane's recorded output, the Study section's lines and the learning material for the one summary renderer; called by {@link message}, so the message's own projection gains no branch (EN14).
+   * The output is read once per opened history ({@link indexNodeTestOutput}); the Application view's generation changes only when the shown moment does, so its document is updated once per change.
+   * @param history - The selected test replay, all its entries; absent when none is selected.
+   * @param selected - The selected event.
+   * @returns The three views, or none without a selected test replay.
+   * @example this.nodeHistoryViews(history, event).nodeHistorySection?.position // => 'Stop 1 of 2 · 0.42 s'
+   */
+  private nodeHistoryViews(
+    history: NodeTestHistoryIndex | undefined,
+    selected: NodeTestHistoryIndex['entries'][number] | undefined,
+  ): Pick<
+    StudyViewMessage,
+    | 'nodeHistoryApplication'
+    | 'nodeHistorySection'
+    | 'nodeHistoryLearningSummary'
+  > {
+    if (!history) return {}
+    if (this.selectedNodeHistoryOutputIndex?.history !== history)
+      this.selectedNodeHistoryOutputIndex = {
+        history,
+        index: indexNodeTestOutput(history.entries),
+      }
+    // Only a test replay that is opening reads as loading, by its own marker: a background render's loading state, which may end in the middle of the open, never does.
+    const opening = this.pendingNodeHistory !== undefined
+    const key = JSON.stringify([
+      history.header.studyId,
+      history.entries.length,
+      history.status,
+      selected?.sequence,
+      opening,
+    ])
+    // The view is projected once per shown moment: every refresh publishes, and assembling the output again each time would cost its whole tail (F111).
+    if (this.nodeHistoryApplicationMemo?.key !== key) {
+      const generation = ++this.nodeHistoryApplicationGeneration
+      this.nodeHistoryApplicationMemo = {
+        key,
+        generation,
+        view: projectNodeTestApplication(
+          history,
+          this.selectedNodeHistoryOutputIndex.index,
+          selected,
+          generation,
+          opening,
+        ),
+      }
+    }
+    const learning = projectNodeLearningSummary(
+      this.selectedNodeHistoryLearningMaterial,
+      history,
+    )
+    return {
+      nodeHistoryApplication: this.nodeHistoryApplicationMemo.view,
+      nodeHistorySection: projectNodeTestSection({
+        history,
+        ...(selected ? { selected } : {}),
+        selectedStopVerified:
+          selected?.type === 'stop' && nodeStopSourceMatches(selected),
+        ...(learning ? { learning } : {}),
+        ...(this.selectedNodeHistoryStepId
+          ? { chosenStepId: this.selectedNodeHistoryStepId }
+          : {}),
+        applicationClosed: !this.app,
+      }),
+      ...(learning ? { nodeHistoryLearningSummary: learning } : {}),
+    }
+  }
+
   /** Joins compact live state with the selected archive; event logs never enter webview messages. @example this.message().model */
   private message(forSource = false): StudyViewMessage {
     if (!this.baselines) throw new Error('Study reader is not initialized.')
@@ -12158,22 +12275,6 @@ export class StudyWorkspace {
       selectedNodeHistoryEvent?.type === 'stop'
         ? selectedNodeHistoryEvent
         : undefined
-    const selectedNodeHistoryOutput =
-      selectedNodeHistory && selectedNodeHistoryEvent
-        ? selectedNodeHistory.entries
-            .filter(
-              (
-                entry,
-              ): entry is Extract<
-                NodeTestHistoryIndex['entries'][number],
-                { type: 'output' }
-              > =>
-                entry.type === 'output' &&
-                entry.sequence <= selectedNodeHistoryEvent.sequence,
-            )
-            .map((entry) => entry.text)
-            .join('')
-        : undefined
     const studyCatalog: StudyCatalogEntry[] = [
       ...this.catalog,
       ...this.nodeHistoryCatalog.map((history) => ({
@@ -12262,7 +12363,7 @@ export class StudyWorkspace {
           : {}),
         elapsedMs: selectedNodeHistoryEvent.elapsedMs,
       },
-      nodeHistoryOutput: selectedNodeHistoryOutput,
+      ...this.nodeHistoryViews(selectedNodeHistory, selectedNodeHistoryEvent),
       nodeHistoryPage: this.selectedNodeHistoryPage,
       nodeHistoryPageCount: this.selectedNodeHistory
         ? Math.max(
@@ -12426,10 +12527,18 @@ export class StudyWorkspace {
     this.publishLearningSave()
     if (!this.baselines) return
     const message = this.message()
+    // The Application pane follows a test replay's selected moment with every publish, in place (EN3).
+    if (message.nodeHistoryApplication && !this.recordingActive)
+      this.presentNodeHistoryApplication(
+        message,
+        message.nodeHistoryApplication,
+      )
     // Native readers retain full source; neither duplicate body belongs in the webview signature or message.
     const observation = message.model.observation
     const compact = {
       ...message,
+      // The recorded test output is the Application pane's alone; the Study views never read it.
+      nodeHistoryApplication: undefined,
       playbackPanelVisible: Boolean(
         this.recordingActive && this.moments?.visible,
       ),
@@ -13788,10 +13897,17 @@ export class StudyWorkspace {
    */
   private presentApplication(message: StudyViewMessage): void {
     if (this.recordingActive) return
+    // A test replay's pane is one document per history; each later moment is posted into it (EN3).
+    if (message.nodeHistoryApplication) {
+      this.presentNodeHistoryApplication(
+        message,
+        message.nodeHistoryApplication,
+      )
+      return
+    }
     const image = message.model.image
     const key = JSON.stringify([
       this.leaseId,
-      message.nodeHistory?.header.studyId,
       message.model.selection,
       message.study?.terminal,
       message.loading,
@@ -13801,7 +13917,6 @@ export class StudyWorkspace {
     if (key === this.lastApplicationKey) return
     this.lastApplicationKey = key
     if (
-      !message.nodeHistory &&
       message.model.selection.follow &&
       !message.study?.terminal &&
       this.viewport
@@ -13828,6 +13943,54 @@ export class StudyWorkspace {
       if (this.viewport) this.viewport.showHistory(html)
       else this.app.webview.html = html
     }
+  }
+
+  /**
+   * Brings the Application pane to the front, building it again first when the learner closed it while a test replay is selected, so Show recorded output and Focus application show the selected moment's recorded output (DS7); called for the Study pane's `focus-app` action.
+   * The reader's own entry ({@link open}) rebuilds the closed pane and draws the selected moment into it. Outside a test replay a closed pane stays closed: a browser replay and a live run own their pane's lifecycle.
+   * @example await this.focusApplication()
+   */
+  private async focusApplication(): Promise<void> {
+    if (!this.app && this.selectedNodeHistory && !this.recordingActive)
+      await this.open()
+    this.app?.reveal(undefined, false)
+  }
+
+  /**
+   * Shows a selected test replay in the Application pane as one document per history and posts each later moment into it (EN3), so moving through the replay never reloads the page and the learner's scroll position, text selection and focus survive; called by {@link presentApplication} for every render and refresh, and by {@link publish} for every published change, while a test replay is selected.
+   * The document is written again only for another history or another pane; an unchanged view's generation posts nothing. A hidden pane's restore copy follows the latest view ({@link BrowserViewport.updateHistory}).
+   * @param message - The Study message whose test replay is shown.
+   * @param view - Its Application view.
+   * @example this.presentNodeHistoryApplication(message, message.nodeHistoryApplication)
+   */
+  private presentNodeHistoryApplication(
+    message: StudyViewMessage,
+    view: NodeTestApplicationView,
+  ): void {
+    if (!this.app) return
+    const key = JSON.stringify([
+      this.leaseId,
+      'test-replay',
+      message.nodeHistory?.header.studyId,
+    ])
+    if (key !== this.lastApplicationKey) {
+      this.lastApplicationKey = key
+      this.shownNodeHistoryApplicationGeneration = view.generation
+      const html = capturedAppHtml(message)
+      if (this.viewport) this.viewport.showHistory(html)
+      else this.app.webview.html = html
+      return
+    }
+    if (view.generation === this.shownNodeHistoryApplicationGeneration) return
+    this.shownNodeHistoryApplicationGeneration = view.generation
+    const update: NodeTestOutputUpdate = {
+      type: 'node-history-output',
+      generation: view.generation,
+      view,
+    }
+    void this.app.webview.postMessage(update)
+    // The restore copy is written only if a replacement panel needs it, not at every moment.
+    this.viewport?.updateHistory(() => capturedAppHtml(message))
   }
 
   /**
@@ -21575,21 +21738,20 @@ export class StudyWorkspace {
         throw new Error(
           'Select the matching saved Node history before navigating its timeline.',
         )
-      const currentIndex = history.entries.findIndex(
-        (entry) => entry.sequence === this.selectedNodeHistorySequence,
+      const target = nodeHistoryStepTarget(
+        history.entries,
+        this.selectedNodeHistorySequence,
+        message.direction,
+        message.unit,
       )
-      const targetIndex =
-        currentIndex < 0
-          ? message.direction === 'next'
-            ? 0
-            : history.entries.length - 1
-          : currentIndex + (message.direction === 'next' ? 1 : -1)
-      const target = history.entries[targetIndex]
-      if (!target)
+      if (target === undefined)
         throw new Error(
-          `There is no ${message.direction} event in this Node history.`,
+          `There is no ${message.direction} ${message.unit ?? 'event'} in this Node history.`,
         )
-      await this.selectNodeHistoryEvent(history, target.sequence)
+      // Next and Previous show the event's first step (DS21), once the move commits.
+      await this.selectNodeHistoryEvent(history, target, {
+        stepChoice: { stepId: undefined },
+      })
     }
     if (message.type === 'node-history-event') {
       if (this.recordingActive)
@@ -21601,7 +21763,10 @@ export class StudyWorkspace {
         throw new Error(
           'Select the matching saved Node history before navigating its timeline.',
         )
-      await this.selectNodeHistoryEvent(history, message.sequence)
+      // A step's action selects its event and that step; an event's own control, the event's first step (DS21), once the selection commits.
+      await this.selectNodeHistoryEvent(history, message.sequence, {
+        stepChoice: { stepId: message.stepId },
+      })
     }
     if (message.type === 'node-history-stop') {
       if (this.recordingActive)
@@ -21620,7 +21785,9 @@ export class StudyWorkspace {
         throw new Error(
           'The requested Node history event is not a debugger stop.',
         )
-      await this.selectNodeHistoryEvent(history, message.sequence, true)
+      await this.selectNodeHistoryEvent(history, message.sequence, {
+        requireDebugger: true,
+      })
     }
     if (message.type === 'node-history-playback') {
       if (this.recordingActive)
@@ -23039,13 +23206,28 @@ export class StudyWorkspace {
     if (availabilityChanged || hintShown || failureCleared) this.publish()
   }
 
-  /** Selects one verified Node journal moment and clears stale debugger state across unrecorded intervals. @example await this.selectNodeHistoryEvent(history, 24) */
+  /**
+   * Selects one verified moment of a test replay and clears stale debugger state across unrecorded intervals; called by the Study pane's moves, step actions and Inspect, by Play and seeks, and by the replay's open.
+   * The selection commits the step it shows with its moment ({@link nextNodeHistoryStepId}): a refused, failed or superseded selection leaves the learner's chosen step as it was.
+   * @param history - The selected test replay.
+   * @param sequence - The event to select.
+   * @param options - `requireDebugger` refuses a stop without verified captured source (Inspect); `publish: false` leaves the Study message to the caller and keeps Play running (Play, a seek, the open); `alignPlayback: false` leaves the playhead where Play put it; `stepChoice` is the step a summary step's action names, or `{ stepId: undefined }` for the event's first step (Next and Previous); without it, the chosen step stays only on its own moment.
+   * @example await this.selectNodeHistoryEvent(history, 24, { stepChoice: { stepId: 'read' } })
+   */
   private async selectNodeHistoryEvent(
     history: NodeTestHistoryIndex,
     sequence: number,
-    requireDebugger = false,
-    publish = true,
-    alignPlayback = true,
+    {
+      requireDebugger = false,
+      publish = true,
+      alignPlayback = true,
+      stepChoice,
+    }: {
+      requireDebugger?: boolean
+      publish?: boolean
+      alignPlayback?: boolean
+      stepChoice?: { stepId: string | undefined }
+    } = {},
   ): Promise<void> {
     const request = ++this.selectedNodeHistoryRequest
     if (publish) this.nodeHistoryPlaybackController?.pause()
@@ -23118,6 +23300,15 @@ export class StudyWorkspace {
       this.report('history-position', error)
     }
     if (request !== this.selectedNodeHistoryRequest) return
+    // A chosen step stays only with its own moment: a selection that lands on another event without a choice of its own (a seek, Play, Inspect) shows that event's first step (DS21).
+    this.selectedNodeHistoryStepId = nextNodeHistoryStepId(
+      stepChoice,
+      {
+        sequence: this.selectedNodeHistorySequence,
+        stepId: this.selectedNodeHistoryStepId,
+      },
+      entry.sequence,
+    )
     this.selectedNodeHistorySequence = entry.sequence
     this.selectedNodeHistoryPage = Math.floor(
       history.entries.findIndex((value) => value.sequence === entry.sequence) /

@@ -72,6 +72,7 @@ The driving agent owns state, cycle selection and completion claims; GStack supp
 Standing rules, stated as rules (no decision log); delivery chain and ship limit: [Delivery](#delivery).
 
 - **Fallow scores application code only (2026-10-19):** `extension/src` without `src/tests`, and `extension/skills`; tests and `extension/scripts` are out ([checks](#commands-and-checks)).
+- **Everything for the product (owner, 2026-10-22):** 「お金を勝手に使うことと犯罪行為以外は禁止しないからPRODUCT_GOAL.mdの成果物/アプリケーションを最速/最高品質で作成する事に全リソースを捧げろ」. A rule, convention or skill step that plainly adds nothing to the product is skipped, not followed by habit; documents unrelated to the application ride on the current work branch, with no separate pull request and no wait on CI whose result is obvious. Spending money without the owner's permission and anything illegal stay forbidden, and the irreversible steps that **Never without the owner** lists still wait for the owner.
 - **The owner cannot answer:** every decision point takes the recommended option, named in the Issue's Owner decisions. A pause the owner directs stops the work at once; only the owner's explicit message lifts it. A conditional pause ("when X is done, stop") is not immediate.
 - **Dedicated Windows development machine (2026-10-14):** setup and repair (IME settings, QA reinstall or reset, needed data removal) need no new permission. Spend the time on live explanation, save and synchronized replay. A remedy that truly needs the owner: research it, finish independent preparation, give concrete verified steps. Outcomes and gates still govern.
 - **Never without the owner:** buying credits, subscription or billing changes, new or changed credentials, permanent deletion, security settings, repository visibility. Signing in with the owner's existing sessions to what the work needs is the agent's job, done without asking (2026-10-22). Preserve the owner's and others' edits, profiles, extensions, skills, settings, tabs, drafts, learning, target source and credentials.
@@ -150,6 +151,20 @@ Never embed a demonstration or validation application in the extension, its runt
 - Before TypeScript work read `/Users/ryotamurakami/.claude/rules/ts-rules.md`; for React also `/Users/ryotamurakami/.claude/rules/react-rules.md`.
 - Check for existing utilities, hooks, components and types before adding one. Reusable functions and classes get short purpose, trigger and caller docs with an example; reference workspace symbols with JSDoc links; explain non-obvious branches and loops briefly.
 - DAMP behavior tests, hard-coded expectations, Arrange/Act/Assert, `test`; `toBeVisible` for displayed UI.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on laststance/codebook, through the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage roles, each label named after its role (all five already exist on GitHub). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one root `GLOSSARY.md` and `docs/adr/`, created lazily. See `docs/agents/domain.md`.
 
 ## Codex compaction hook
 

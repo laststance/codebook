@@ -36,7 +36,8 @@ test('the pane DOM check loads its flow without eval', async () => {
 })
 
 // Local CodeRabbit review of Cycle 0045: the script read the compiled reader and the Wiki shell by a path from the working directory, so it ran from the repository root only.
-test('the pane DOM check reads the compiled reader and the Wiki shell beside the script, so it runs from any folder', async () => {
+// Value: protects=every file the pane DOM check reads is found beside the script (the compiled reader, the Wiki shell and, since Cycle 0049, the golden markup of the browser replay's sequence), so it runs from any folder; fails_when=a read uses a path from the working directory or the script reads a file this list does not name; why_new=the golden fixture read joins the list (Design 5's golden DOM); seam=none; no_claim=what the check asserts with those files
+test('the pane DOM check reads the compiled reader, the Wiki shell and its golden sequence markup beside the script, so it runs from any folder', async () => {
   // Arrange
   const script = await readFile(scriptUrl, 'utf8')
 
@@ -49,6 +50,7 @@ test('the pane DOM check reads the compiled reader and the Wiki shell beside the
   assert.deepEqual(readTargets, [
     "new URL('../dist/ui/studyHtml.js', import.meta.url)",
     "new URL('../skills/codebook/reader-shell.html', import.meta.url)",
+    "new URL('./fixtures/learning-sequence-golden.txt', import.meta.url)",
   ])
 })
 

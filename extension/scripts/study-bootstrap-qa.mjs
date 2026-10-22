@@ -8,6 +8,7 @@ import { resolve } from 'node:path'
 import { projectStudy } from '../dist/studyModel.js'
 import { createConfiguredStudy } from '../dist/tests/utils/createConfiguredStudy.js'
 import { studyHtml } from '../dist/ui/studyHtml.js'
+import { capturedAppHtml } from '../dist/utils/capturedAppHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
 
@@ -1243,8 +1244,28 @@ async function check(page, options, collected) {
         sourceAvailable: true,
         debuggerAvailable: true,
       }
+      // The host words the test replay section (projectNodeTestSection); the pane places its lines.
+      const nodeSection = {
+        status:
+          'Test passed · exit code 0 · capture complete · 1 of 1 stops explained',
+        position: 'Stop 1 of 1 · 1.20 s',
+        pointer: 'Output up to this moment is in the Application pane.',
+        applicationClosed: false,
+        sameMomentStepIds: [],
+        stepActions: {},
+        events: 'Events (1)',
+        verdict: 'Test passed · exit code 0',
+        previousStop: false,
+        nextStop: false,
+      }
+      const unverifiedNodeSection = {
+        ...nodeSection,
+        notRecorded: 'Source and debugger not recorded at this moment.',
+        unverified: 'Recorded source unavailable for this stop.',
+      }
       await publish({
         ...replay,
+        nodeHistorySection: nodeSection,
         nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: true },
       })
       const nodeWithoutValues = {
@@ -1257,6 +1278,7 @@ async function check(page, options, collected) {
       }
       await publish({
         ...replay,
+        nodeHistorySection: nodeSection,
         nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: false },
       })
       const nodeWithValues = {
@@ -1267,42 +1289,56 @@ async function check(page, options, collected) {
         name: 'a saved Node stop without native values shows the Run and Debug hint in its own muted status until values load',
         actual: { nodeWithoutValues, nodeWithValues },
         passed:
-          nodeWithoutValues.position ===
-            'Debugger stop 1 · 1.20 s · output shown through this event.' &&
+          nodeWithoutValues.position === 'Stop 1 of 1 · 1.20 s' &&
           nodeWithoutValues.hint ===
             'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.' &&
           nodeWithoutValues.role === 'status' &&
           nodeWithoutValues.muted &&
-          nodeWithValues.position ===
-            'Debugger stop 1 · 1.20 s · output shown through this event.' &&
+          nodeWithValues.position === 'Stop 1 of 1 · 1.20 s' &&
           nodeWithValues.hint === '',
       })
+      /** Reads the test replay section's position and the two lines that say what is not recorded. */
+      const nodeMomentLines = async () => ({
+        position: await page.locator('#node-history-position').textContent(),
+        notRecorded: await page
+          .locator('#node-history-not-recorded')
+          .textContent(),
+        unverified: await page
+          .locator('#node-history-unverified')
+          .textContent(),
+      })
       await publish({
         ...replay,
+        nodeHistorySection: nodeSection,
         nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
       })
-      const nodeSessionEnded = await page
-        .locator('#node-history-position')
-        .textContent()
+      const nodeSessionEnded = await nodeMomentLines()
       await publish({
         ...replay,
+        nodeHistorySection: unverifiedNodeSection,
         nodeHistoryPosition: {
           ...nodeStop,
           sourceAvailable: false,
           debuggerAvailable: false,
         },
       })
-      const nodeSourceMismatch = await page
-        .locator('#node-history-position')
-        .textContent()
+      const nodeSourceMismatch = await nodeMomentLines()
       cases.push({
-        name: 'a saved Node stop whose native session ended keeps its source label, and only a real source mismatch says captured source unavailable',
+        name: 'a saved test replay stop whose native session ended keeps its position line, and only a real source mismatch shows the unavailable-source and not-recorded lines',
         actual: { nodeSessionEnded, nodeSourceMismatch },
         passed:
-          nodeSessionEnded ===
-            'Debugger stop 1 · 1.20 s · output shown through this event.' &&
-          nodeSourceMismatch ===
-            'Debugger stop 1 · captured source unavailable · 1.20 s · output shown through this event.',
+          JSON.stringify(nodeSessionEnded) ===
+            JSON.stringify({
+              position: 'Stop 1 of 1 · 1.20 s',
+              notRecorded: '',
+              unverified: '',
+            }) &&
+          JSON.stringify(nodeSourceMismatch) ===
+            JSON.stringify({
+              position: 'Stop 1 of 1 · 1.20 s',
+              notRecorded: 'Source and debugger not recorded at this moment.',
+              unverified: 'Recorded source unavailable for this stop.',
+            }),
       })
       // Arrange: the Node history reader alone, with its selected stop shown by the native session.
       const nodeReader = {
@@ -1371,6 +1407,7 @@ async function check(page, options, collected) {
       // Act: the selected stop's captured source no longer matches its recorded hash.
       await publish({
         ...nodeReader,
+        nodeHistorySection: unverifiedNodeSection,
         nodeHistoryPosition: {
           ...nodeStop,
           sourceAvailable: false,
@@ -1379,7 +1416,9 @@ async function check(page, options, collected) {
       })
       // Counted and read without waiting, so a missing element is a failed case instead of a harness timeout.
       const sourceMismatch = {
-        position: await page.locator('#node-history-position').textContent(),
+        unverified: await page
+          .locator('#node-history-unverified')
+          .textContent(),
         inspectButtons: await nodeInspect.count(),
         explanation: await page
           .locator('#node-history-events .node-history-event p.muted')
@@ -1389,8 +1428,8 @@ async function check(page, options, collected) {
         name: 'a selected Node stop whose captured source does not match offers no Inspect in native debugger',
         actual: sourceMismatch,
         passed:
-          sourceMismatch.position ===
-            'Debugger stop 1 · captured source unavailable · 1.20 s · output shown through this event.' &&
+          sourceMismatch.unverified ===
+            'Recorded source unavailable for this stop.' &&
           sourceMismatch.inspectButtons === 0 &&
           sourceMismatch.explanation.join('|') ===
             'Matching captured source is unavailable for native debugging.',
@@ -1450,10 +1489,13 @@ async function check(page, options, collected) {
           unselectedMismatch.explanation.join('|') ===
             'Matching captured source is unavailable for native debugging.',
       })
-      // Arrange: keyboard focus on the selected stop's Inspect (Cycle 0044, 0033-OCR4).
+      // Arrange: keyboard focus on the selected stop's Inspect (Cycle 0044, 0033-OCR4), in the event list the learner expanded (DS16 collapses it).
       await publish({
         ...nodeReader,
         nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      await page.locator('#node-history-events-details').evaluate((details) => {
+        details.open = true
       })
       await nodeInspect.focus()
       const stopRequestsBefore = await page.evaluate(
@@ -1690,6 +1732,1348 @@ async function check(page, options, collected) {
           cardOverflow.cardTextLength === 400 &&
           cardOverflow.scrollWidth === cardOverflow.clientWidth,
       })
+
+      // Arrange: a test replay of two outputs, one stop and its passing result, with saved learning whose two steps share the stop; every line is worded by the host, as projectNodeTestSection words it (Design 8, red first).
+      const replayHash = 'b'.repeat(64)
+      const replayEntries = [
+        {
+          type: 'output',
+          sequence: 1,
+          elapsedMs: 100,
+          channel: 'stdout',
+          text: 'RUN src/jobs.test.ts\n',
+        },
+        {
+          type: 'output',
+          sequence: 2,
+          elapsedMs: 150,
+          channel: 'stderr',
+          text: 'slow timer\n',
+        },
+        {
+          type: 'stop',
+          sequence: 3,
+          index: 0,
+          elapsedMs: 420,
+          source: {
+            path: 'src/jobs.ts',
+            hash: replayHash,
+            line: 12,
+            column: 5,
+          },
+          frame: { name: 'schedule', line: 12, column: 5 },
+          facts: [],
+          debuggerSnapshot: {
+            frames: [
+              {
+                line: 12,
+                column: 5,
+                source: { name: 'src/jobs.ts', hash: replayHash, line: 12 },
+              },
+            ],
+            variables: [],
+          },
+        },
+        {
+          type: 'result',
+          sequence: 4,
+          elapsedMs: 900,
+          exitCode: 0,
+          signal: null,
+          outputTail: '',
+        },
+      ]
+      const replayLearning = {
+        content: {
+          question: 'How does the scheduler delay a job?',
+          title:
+            'How the job scheduler delays a job until its timer fires and then runs it exactly once',
+          summary:
+            'The test schedules a job and checks that it runs after its timer.',
+          participants: [
+            { id: 'test', label: 'Job test' },
+            { id: 'scheduler', label: 'schedule' },
+            { id: 'timer', label: 'Timer' },
+          ],
+          steps: [
+            {
+              id: 'read',
+              from: 'test',
+              to: 'scheduler',
+              label: 'Read the delay',
+              explanation: 'The stop shows the delay of 5,000 ms.',
+              evidence: 'observed',
+              reference: { type: 'stop', sequence: 3, sourceHash: replayHash },
+            },
+            {
+              id: 'keep',
+              from: 'scheduler',
+              to: 'timer',
+              label: 'Keep the timer',
+              explanation: 'The scheduler keeps the timer it created.',
+              evidence: 'source-derived',
+              reference: { type: 'stop', sequence: 3, sourceHash: replayHash },
+            },
+            {
+              id: 'verdict',
+              from: 'timer',
+              to: 'test',
+              label: 'Pass',
+              explanation: 'The job ran after its timer, so the test passed.',
+              evidence: 'observed',
+              reference: { type: 'result', sequence: 4 },
+            },
+          ],
+        },
+        positions: [
+          { stepId: 'read', elapsedMs: 420, sequence: 3 },
+          { stepId: 'keep', elapsedMs: 420, sequence: 3 },
+          { stepId: 'verdict', elapsedMs: 900, sequence: 4 },
+        ],
+      }
+      const replaySection = {
+        status:
+          'Test passed · exit code 0 · capture complete · 1 of 1 stops explained',
+        pointer: 'Output up to this moment is in the Application pane.',
+        applicationClosed: false,
+        sameMomentStepIds: [],
+        stepActions: {
+          read: 'Inspect stop 1 · 0.42 s',
+          keep: 'Inspect stop 1 · 0.42 s',
+          verdict: 'Inspect result · 0.90 s',
+        },
+        events: 'Events (4)',
+        verdict: 'Test passed · exit code 0',
+      }
+      const notRecordedLine = 'Source and debugger not recorded at this moment.'
+      /** The Study message of the job scheduler's test replay at one selected event. */
+      const testReplayAt = (position, section, mode = 'paused') => ({
+        ...nodeReader,
+        nodeHistoryEventCount: 4,
+        nodeHistory: {
+          header: { studyId: 'job-study' },
+          status: 'complete',
+          entries: replayEntries,
+        },
+        nodeHistoryLearningSummary: replayLearning,
+        nodeHistoryPosition: position,
+        nodeHistorySection: { ...replaySection, ...section },
+        nodeHistoryPlayback: {
+          mode,
+          sequence: position.sequence,
+          positionMs: position.elapsedMs,
+          startMs: 100,
+          endMs: 900,
+          loading: false,
+        },
+      })
+      const atFirstOutput = testReplayAt(
+          { sequence: 1, type: 'output', eventIndex: 0, elapsedMs: 100 },
+          {
+            position: 'Output · 0.10 s',
+            notRecorded: notRecordedLine,
+            previousStop: false,
+            nextStop: true,
+          },
+        ),
+        atStop = testReplayAt(
+          {
+            sequence: 3,
+            type: 'stop',
+            index: 0,
+            eventIndex: 2,
+            elapsedMs: 420,
+            sourceAvailable: true,
+            debuggerAvailable: true,
+          },
+          {
+            position: 'Stop 1 of 1 · 0.42 s',
+            explanation: 'The stop shows the delay of 5,000 ms.',
+            selectedStepId: 'read',
+            sameMomentStepIds: ['keep'],
+            previousStop: false,
+            nextStop: false,
+          },
+        ),
+        atResult = testReplayAt(
+          { sequence: 4, type: 'result', eventIndex: 3, elapsedMs: 900 },
+          {
+            position: 'Result · Test passed · exit code 0 · 0.90 s',
+            explanation: 'The job ran after its timer, so the test passed.',
+            notRecorded: notRecordedLine,
+            selectedStepId: 'verdict',
+            previousStop: true,
+            nextStop: false,
+          },
+        )
+      /** Reads the section's lines, the step marked current and the steps marked as the same recorded moment. */
+      const replaySectionLines = () =>
+        page.evaluate(() => ({
+          position: document.getElementById('node-history-position')
+            .textContent,
+          explanation: document.getElementById('node-history-explanation')
+            .textContent,
+          notRecorded: document.getElementById('node-history-not-recorded')
+            .textContent,
+          current: Array.from(
+            document.querySelectorAll(
+              '#node-learning-steps [data-node-step][aria-current="true"]',
+            ),
+            (control) => control.dataset.nodeStep,
+          ),
+          sameMoment: Array.from(
+            document.querySelectorAll(
+              '#node-learning-steps .same-moment:not([hidden])',
+            ),
+            (note) =>
+              note.parentElement.querySelector('[data-node-step]').dataset
+                .nodeStep,
+          ),
+          stepControls: document.querySelectorAll(
+            '#node-learning-steps [data-node-step]',
+          ).length,
+        }))
+      // Act: the replay opens on its first output, then shows the stop and the result.
+      await page.setViewportSize({ width: 600, height: 800 })
+      await publish(atFirstOutput)
+      const firstOutputLines = await replaySectionLines()
+      await publish(atStop)
+      const stopLines = await replaySectionLines()
+      await publish(atResult)
+      const resultLines = await replaySectionLines()
+      // Assert
+      cases.push({
+        name: 'a test replay section shows each moment’s locator, explanation and not-recorded line, marks exactly the selected step current and names the other steps of its moment (Design 8)',
+        actual: { firstOutputLines, stopLines, resultLines },
+        passed:
+          JSON.stringify({ firstOutputLines, stopLines, resultLines }) ===
+          JSON.stringify({
+            firstOutputLines: {
+              position: 'Output · 0.10 s',
+              explanation: '',
+              notRecorded: notRecordedLine,
+              current: [],
+              sameMoment: [],
+              stepControls: 3,
+            },
+            stopLines: {
+              position: 'Stop 1 of 1 · 0.42 s',
+              explanation: 'The stop shows the delay of 5,000 ms.',
+              notRecorded: '',
+              current: ['read'],
+              sameMoment: ['keep'],
+              stepControls: 3,
+            },
+            resultLines: {
+              position: 'Result · Test passed · exit code 0 · 0.90 s',
+              explanation: 'The job ran after its timer, so the test passed.',
+              notRecorded: notRecordedLine,
+              current: ['verdict'],
+              sameMoment: [],
+              stepControls: 3,
+            },
+          }),
+      })
+      // Value: protects=a closed Application pane is named in the test replay section with a way back: the row with Show recorded output appears, its click asks the host for the pane (`focus-app`), and the row goes once the pane is back; fails_when=the row stays hidden while the pane is closed, the button sends another action (`arrange`, which could not bring the pane back), or the row stays after the pane is back; why_new=Step 9 pass 1b's QA critical (Show recorded output could not bring the pane back) and pass 2's testing review: no DOM case showed the row or clicked it; seam=none; no_claim=that the host builds the pane again, which studyWorkspaceTestReplayOutput.test.ts proves
+      // Arrange: the stop of the replay while the learner has closed the Application pane.
+      const paneClosedLine = 'The Application pane is closed.'
+      await publish(
+        testReplayAt(atStop.nodeHistoryPosition, {
+          ...atStop.nodeHistorySection,
+          applicationClosed: true,
+          pointer: paneClosedLine,
+        }),
+      )
+      const whenClosed = await page.evaluate(() => ({
+        rowShown: !document.getElementById('node-history-closed').hidden,
+        pointer: document.getElementById('node-history-pointer').textContent,
+      }))
+      await page.evaluate(() => {
+        window.sent = []
+      })
+      // Act
+      await page.locator('#node-history-closed button').click()
+      const sentOnClick = await page.evaluate(() =>
+        window.sent
+          .filter((message) => message.type === 'action')
+          .map((message) => message.action),
+      )
+      await publish(atStop)
+      const rowShownWhenBack = await page.evaluate(
+        () => !document.getElementById('node-history-closed').hidden,
+      )
+      // Assert
+      cases.push({
+        name: 'a closed Application pane is named in the test replay section, Show recorded output asks for it again, and the row goes once the pane is back (DS7)',
+        actual: { whenClosed, sentOnClick, rowShownWhenBack },
+        passed:
+          JSON.stringify({ whenClosed, sentOnClick, rowShownWhenBack }) ===
+          JSON.stringify({
+            whenClosed: { rowShown: true, pointer: paneClosedLine },
+            sentOnClick: ['focus-app'],
+            rowShownWhenBack: false,
+          }),
+      })
+      // Arrange: the keyboard alone, from the opened replay (DS17): Step details, a step of the stop, Next stop, Previous stop, a seek and Pause.
+      await publish(atFirstOutput)
+      await page.evaluate(() => {
+        window.sent = []
+      })
+      // Act
+      await toggleByKeyboard('node-learning-steps-details')
+      await page.locator('#node-learning-steps [data-node-step="keep"]').focus()
+      await page.keyboard.press('Enter')
+      await page.locator('#node-history-stop-next').focus()
+      await page.keyboard.press('Enter')
+      await publish(atResult)
+      await page.locator('#node-history-stop-previous').focus()
+      await page.keyboard.press('Enter')
+      await publish(atStop)
+      await page.locator('#node-history-playhead').focus()
+      await page.keyboard.press('End')
+      await publish(
+        testReplayAt(
+          atStop.nodeHistoryPosition,
+          atStop.nodeHistorySection,
+          'playing',
+        ),
+      )
+      await page.locator('#node-history-playback-toggle').focus()
+      await page.keyboard.press('Enter')
+      const keyboardRequests = await page.evaluate(() =>
+        window.sent
+          .filter((message) => message.type.startsWith('node-history'))
+          .map(({ type, sequence, stepId, direction, unit, action }) => ({
+            type,
+            sequence,
+            stepId,
+            direction,
+            unit,
+            action,
+          })),
+      )
+      // Assert
+      cases.push({
+        name: 'the keyboard alone opens Step details, selects a step of the stop, moves by Next stop and Previous stop, seeks and pauses a test replay (Design 8)',
+        actual: keyboardRequests,
+        passed:
+          JSON.stringify(keyboardRequests) ===
+          JSON.stringify([
+            { type: 'node-history-event', sequence: 3, stepId: 'keep' },
+            { type: 'node-history-step', direction: 'next', unit: 'stop' },
+            { type: 'node-history-step', direction: 'previous', unit: 'stop' },
+            { type: 'node-history-playback', action: 'seek' },
+            { type: 'node-history-playback', action: 'pause' },
+          ]),
+      })
+      // Arrange: the section's four move buttons with a replay saved and none chosen, then at three moments of the replay (DS12): the stop buttons follow the stops around the selected event, the event buttons its place among the events.
+      /** Reads which of the section's move buttons the learner can press. */
+      const enabledMoves = () =>
+        page.evaluate(() =>
+          Object.fromEntries(
+            [
+              ['previousStop', 'node-history-stop-previous'],
+              ['nextStop', 'node-history-stop-next'],
+              ['previousEvent', 'node-history-moment-previous'],
+              ['nextEvent', 'node-history-moment-next'],
+            ].map(([move, id]) => [
+              move,
+              !document.getElementById(id).disabled,
+            ]),
+          ),
+        )
+      // Act
+      await publish({
+        ...options.message,
+        revision: revisionAt(5),
+        nodeHistoryCatalog: [{ studyId: 'job-study' }],
+      })
+      const movesWithNoReplay = await enabledMoves()
+      await publish(atFirstOutput)
+      const movesAtTheFirstOutput = await enabledMoves()
+      await publish(atStop)
+      const movesAtTheOnlyStop = await enabledMoves()
+      await publish(atResult)
+      const movesAtTheResult = await enabledMoves()
+      // Assert
+      // Value: protects=the section's four move buttons can be pressed only where the move exists: with no replay chosen none can; at the first output Next stop and Next event can; at the only stop, which has events on both sides, neither stop button can but both event buttons can; at the result Previous stop and Previous event can, and Next stop and Next event cannot; fails_when=a stop button is enabled where no stop lies that way (the learner's press ends in a refusal line), a button the host would honor stays disabled, the stop buttons follow the event position or the event buttons follow the stops, or a button can be pressed with no replay; why_new=PR-B1 adds the stop buttons beside the event buttons and takes their state from the host's flags (DS12), and no case reads a disabled state: the keyboard case presses buttons that are enabled and the focus case reads them for a replay of one event only; seam=none; no_claim=which flags the host sends for each moment (projectNodeTestSection's tests) or what a press sends (the keyboard case) (stand-ins: the Study messages the host posts)
+      cases.push({
+        name: 'a test replay offers Previous stop and Next stop only where a stop lies that way and Previous event and Next event only where an event does (Design 8, DS12)',
+        actual: {
+          movesWithNoReplay,
+          movesAtTheFirstOutput,
+          movesAtTheOnlyStop,
+          movesAtTheResult,
+        },
+        passed:
+          JSON.stringify({
+            movesWithNoReplay,
+            movesAtTheFirstOutput,
+            movesAtTheOnlyStop,
+            movesAtTheResult,
+          }) ===
+          JSON.stringify({
+            movesWithNoReplay: {
+              previousStop: false,
+              nextStop: false,
+              previousEvent: false,
+              nextEvent: false,
+            },
+            movesAtTheFirstOutput: {
+              previousStop: false,
+              nextStop: true,
+              previousEvent: false,
+              nextEvent: true,
+            },
+            movesAtTheOnlyStop: {
+              previousStop: false,
+              nextStop: false,
+              previousEvent: true,
+              nextEvent: true,
+            },
+            movesAtTheResult: {
+              previousStop: true,
+              nextStop: false,
+              previousEvent: true,
+              nextEvent: false,
+            },
+          }),
+      })
+      /** Counts the rendered lines of an element by the height of a one-word copy of it, so a clamp to two lines is measured as the learner sees it. */
+      const renderedLines = (shownIn, selector) =>
+        shownIn.evaluate((selector) => {
+          const shown = document.querySelector(selector),
+            probe = shown.cloneNode(false)
+          probe.removeAttribute('id')
+          probe.textContent = 'X'
+          shown.after(probe)
+          const lines = Math.round(
+            shown.getBoundingClientRect().height /
+              probe.getBoundingClientRect().height,
+          )
+          probe.remove()
+          return lines
+        }, selector)
+      // Act: the stop's section at three widths (DS19).
+      await publish(atStop)
+      const studyWidths = []
+      for (const width of [320, 480, 760]) {
+        await page.setViewportSize({ width, height: 720 })
+        studyWidths.push({
+          width,
+          ...(await page.evaluate(() => {
+            const diagram = document.querySelector(
+              '#node-learning-sequence .sequence-diagram',
+            )
+            return {
+              pageScrolls:
+                document.documentElement.scrollWidth >
+                document.documentElement.clientWidth,
+              diagramFitsOrScrollsInside:
+                diagram.scrollWidth <= diagram.clientWidth ||
+                getComputedStyle(diagram).overflowX === 'auto',
+            }
+          })),
+          titleLines: await renderedLines(page, '#node-learning-title'),
+        })
+      }
+      await page.setViewportSize({ width: 600, height: 800 })
+      await page.locator('#node-learning-steps-details').evaluate((details) => {
+        details.open = false
+      })
+      // Assert
+      cases.push({
+        name: 'a test replay section at 320, 480 and 760 px has no page-level horizontal scroll, a title of at most two lines and a sequence diagram that scrolls inside itself (Design 8)',
+        actual: studyWidths,
+        passed: studyWidths.every(
+          (reading) =>
+            !reading.pageScrolls &&
+            reading.diagramFitsOrScrollsInside &&
+            reading.titleLines >= 1 &&
+            reading.titleLines <= 2,
+        ),
+      })
+      // Arrange: the section's states before it has a replay or an event to show (DS7), in the pane's fixed words (the String catalog): no replay saved, replays saved and none chosen, then a replay with no event selected and no saved learning, then the same replay with its learning again.
+      /** Reads the section's status and locator lines, whether it says that no learning was saved, and what of the replay's diagram and steps is drawn. */
+      const sectionReading = () =>
+        page.evaluate(() => {
+          const noMaterial = document.getElementById('node-history-no-material')
+          return {
+            status: document.getElementById('node-history-status').textContent,
+            position: document.getElementById('node-history-position')
+              .textContent,
+            noMaterial: noMaterial.hidden ? 'hidden' : noMaterial.textContent,
+            learning: document.getElementById('node-history-learning').hidden
+              ? 'hidden'
+              : 'shown',
+            drawn:
+              document.getElementById('node-learning-sequence').children
+                .length +
+              document.getElementById('node-learning-steps').children.length,
+          }
+        })
+      // Act
+      await publish({ ...options.message, revision: revisionAt(5) })
+      const noReplaySaved = await sectionReading()
+      await publish({
+        ...options.message,
+        revision: revisionAt(5),
+        nodeHistoryCatalog: [{ studyId: 'job-study' }],
+      })
+      const noneChosen = await sectionReading()
+      await publish(atStop)
+      const withLearning = await sectionReading()
+      await publish({
+        ...atStop,
+        nodeHistoryPosition: undefined,
+        nodeHistoryPlayback: undefined,
+        nodeHistoryLearningSummary: undefined,
+        nodeHistorySection: {
+          ...replaySection,
+          previousStop: false,
+          nextStop: true,
+        },
+      })
+      const withoutSelectionAndLearning = await sectionReading()
+      await publish(atStop)
+      const learningAgain = await sectionReading()
+      // Assert
+      const withTheStop = {
+        status:
+          'Test passed · exit code 0 · capture complete · 1 of 1 stops explained',
+        position: 'Stop 1 of 1 · 0.42 s',
+        noMaterial: 'hidden',
+        learning: 'shown',
+        drawn: 2,
+      }
+      // Value: protects=the Study pane's test replay section is never blank and never stale: it says that no replay is saved, to choose one, or to select an event, says when no learning summary was saved, and keeps no diagram or steps of the replay before it; fails_when=a state shows another's line or none, the no-learning line is missing or stays after learning returns, or a replay without learning shows the diagram of the replay before; why_new=PR-B1 reworded and moved these states (the String catalog) and no test, new or old, read any of them; seam=none; no_claim=what the host projects for each state (projectNodeTestSection's tests) or the line for a closed Application pane (stand-ins: the pane's page and the Study messages the host posts)
+      cases.push({
+        name: 'a test replay section says that no replay is saved, to choose one and to select an event, says when no learning summary was saved and draws no diagram of the replay before it (Design 8, DS7)',
+        actual: {
+          noReplaySaved,
+          noneChosen,
+          withLearning,
+          withoutSelectionAndLearning,
+          learningAgain,
+        },
+        passed:
+          JSON.stringify({
+            noReplaySaved,
+            noneChosen,
+            withLearning,
+            withoutSelectionAndLearning,
+            learningAgain,
+          }) ===
+          JSON.stringify({
+            noReplaySaved: {
+              status: 'No test replay has been saved in this workspace.',
+              position: '',
+              noMaterial: 'hidden',
+              learning: 'hidden',
+              drawn: 0,
+            },
+            noneChosen: {
+              status:
+                'Choose a test replay from Saved studies to step through its output and debugger stops.',
+              position: '',
+              noMaterial: 'hidden',
+              learning: 'hidden',
+              drawn: 0,
+            },
+            withLearning: withTheStop,
+            withoutSelectionAndLearning: {
+              status: withTheStop.status,
+              position:
+                'Select an event to move through the recorded test history.',
+              noMaterial: 'No learning summary was saved for this test replay.',
+              learning: 'hidden',
+              drawn: 0,
+            },
+            learningAgain: withTheStop,
+          }),
+      })
+      // Arrange: the Application pane's document of the same replay at its first output (Design 3), in a page of its own with its saved webview state; the Study page stays as it is for the cases that follow.
+      const applicationPage = await page.context().newPage()
+      await applicationPage.setViewportSize({ width: 760, height: 360 })
+      await applicationPage.goto(options.url)
+      await applicationPage.evaluate(() => {
+        window.sent = []
+        window.savedState = undefined
+        window.acquireVsCodeApi = () => ({
+          getState: () => window.savedState,
+          setState(state) {
+            window.savedState = state
+          },
+          postMessage: (message) => window.sent.push(message),
+        })
+      })
+      await applicationPage.setContent(options.html.application)
+      const twoFrames = () =>
+        applicationPage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      await twoFrames()
+      const firstOutputDocument = await applicationPage.evaluate(() => ({
+        time: document.getElementById('test-output-time').textContent,
+        lines: Array.from(
+          document.querySelectorAll('#test-output .output-text'),
+          (line) => line.textContent,
+        ).length,
+        firstLine: document.querySelector('#test-output .output-text')
+          ?.textContent,
+        endHidden: document.getElementById('test-output-end').hidden,
+      }))
+      // Act: the learner scrolls up, selects a line and leaves the keyboard in the output; the host then posts the result's view, and a late older one.
+      await applicationPage.evaluate(() => {
+        document.getElementById('test-output').scrollTop = 0
+      })
+      await twoFrames()
+      await applicationPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        getSelection().selectAllChildren(
+          output.querySelectorAll('.output-text')[4],
+        )
+        output.focus()
+      })
+      await applicationPage.evaluate((views) => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'node-history-output',
+              generation: 2,
+              view: views.result,
+            },
+          }),
+        )
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'node-history-output',
+              generation: 1,
+              view: views.first,
+            },
+          }),
+        )
+      }, options.testReplayViews)
+      await twoFrames()
+      const afterUpdate = await applicationPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        return {
+          scrollTop: output.scrollTop,
+          selection: getSelection().toString(),
+          focused: document.activeElement?.id,
+          lines: output.querySelectorAll('.output-line').length,
+          stderrMarks: output.querySelectorAll('.stderr-mark').length,
+          end: document.getElementById('test-output-end').textContent,
+          time: document.getElementById('test-output-time').textContent,
+          jumpShown: !document.getElementById('test-output-jump').hidden,
+        }
+      })
+      // Act: Jump to latest by keyboard.
+      await applicationPage.locator('#test-output-jump').focus()
+      await applicationPage.keyboard.press('Enter')
+      await twoFrames()
+      const afterJump = await applicationPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        return {
+          atEnd:
+            output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
+          jumpShown: !document.getElementById('test-output-jump').hidden,
+          focused: document.activeElement?.id,
+          follow: window.savedState?.testOutputFollow,
+        }
+      })
+      // The webview state as the document left it at the result, for the reload case below.
+      const stateAtResult = await applicationPage.evaluate(
+        () => window.savedState,
+      )
+      // Assert
+      cases.push({
+        name: 'the Application document of a test replay shows only the output up to its moment, and an in-place update to the result keeps the learner’s scroll position, selection and focus, ignores an older view and returns to the end with Jump to latest (Design 8)',
+        actual: { firstOutputDocument, afterUpdate, afterJump },
+        passed:
+          JSON.stringify({ firstOutputDocument, afterUpdate, afterJump }) ===
+          JSON.stringify({
+            firstOutputDocument: {
+              time: 'Recorded test output · 0.10 s',
+              lines: 40,
+              firstLine: 'RUN src/jobs.test.ts',
+              endHidden: true,
+            },
+            afterUpdate: {
+              scrollTop: 0,
+              selection: 'job 4 scheduled',
+              focused: 'test-output',
+              lines: 41,
+              stderrMarks: 1,
+              end: 'Test passed · exit code 0',
+              time: 'Recorded test output · 0.90 s',
+              jumpShown: true,
+            },
+            afterJump: {
+              atEnd: true,
+              jumpShown: false,
+              focused: 'test-output',
+              follow: true,
+            },
+          }),
+      })
+      // Act: the Application document at three widths (DS19).
+      const applicationWidths = []
+      for (const width of [320, 480, 760]) {
+        await applicationPage.setViewportSize({ width, height: 360 })
+        applicationWidths.push({
+          width,
+          pageScrolls: await applicationPage.evaluate(
+            () =>
+              document.documentElement.scrollWidth >
+              document.documentElement.clientWidth,
+          ),
+          testLines: await renderedLines(applicationPage, '#test-output-test'),
+        })
+      }
+      // Act: the host posts two views of a long recorded output, 32,768 one-character lines, the second without the first line and with one more (EN3: the update matches lines by their number in time linear in the lines).
+      const longUpdate = await applicationPage.evaluate(() => {
+        const lines = Array.from({ length: 32768 }, (_, index) => ({
+          channel: 'stdout',
+          text: String(index % 10),
+          number: index + 1000,
+        }))
+        const view = {
+          time: 'Recorded test output · 0.90 s',
+          test: 'src/jobs.test.ts',
+          name: 'Recorded test output · src/jobs.test.ts · 0.90 s',
+          region: 'Recorded test output up to 0.90 s',
+        }
+        const post = (generation, shown) =>
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                type: 'node-history-output',
+                generation,
+                view: { ...view, generation, lines: shown },
+              },
+            }),
+          )
+        post(10, lines)
+        const started = performance.now()
+        post(11, [
+          ...lines.slice(1),
+          { channel: 'stdout', text: 'last', number: 33768 },
+        ])
+        return {
+          // gstack-timing-ok: the bound guards a hang, not a speed: the earlier per-line lookup took 3.5 s and this update 61 ms on the Mac, so 1 s keeps a wide margin each way.
+          underASecond: performance.now() - started < 1000,
+          lines: document.querySelectorAll('#test-output .output-line').length,
+          last: document.querySelector('#test-output .output-line:last-child')
+            ?.textContent,
+        }
+      })
+      // Assert
+      cases.push({
+        name: 'an in-place update of a recorded test output of 32,768 lines takes less than a second in the Application pane (Design 8, EN3)',
+        actual: longUpdate,
+        passed:
+          longUpdate.underASecond &&
+          longUpdate.lines === 32768 &&
+          longUpdate.last === 'last\n',
+      })
+      // Value: protects=the follow choice belongs to its own test replay (DS20): a document of another replay written into the same Application pane starts at the end of its output, although the learner stopped following in the first one, while a document of the same replay, as its restore copy writes it, keeps the learner's choice; fails_when=the webview state keeps one follow choice for every replay, so the next replay opens at the top of its output with Jump to latest shown; why_new=Step 9's testing and maintainability reviews found the choice kept under one key that outlives a replay; seam=none; no_claim=VS Code's keeping of webview state across documents, which the page's saved-state stand-in plays
+      // Act: the pane's document written again, once for another replay and once for this one, each with a saved choice not to follow; each write gets a page of its own, as a webview loads a new document in a fresh page.
+      const sameReplay = await applicationPage.evaluate(
+        () => window.savedState?.testOutputHistory,
+      )
+      const followAfterWrite = async (savedState) => {
+        const writtenPage = await page.context().newPage()
+        await writtenPage.setViewportSize({ width: 760, height: 360 })
+        await writtenPage.goto(options.url)
+        await writtenPage.evaluate((state) => {
+          window.savedState = state
+          window.acquireVsCodeApi = () => ({
+            getState: () => window.savedState,
+            setState(next) {
+              window.savedState = next
+            },
+            postMessage() {},
+          })
+        }, savedState)
+        await writtenPage.setContent(options.html.application)
+        await writtenPage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+        const reading = await writtenPage.evaluate(() => {
+          const output = document.getElementById('test-output')
+          return {
+            atEnd:
+              output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
+            jumpShown: !document.getElementById('test-output-jump').hidden,
+          }
+        })
+        await writtenPage.close()
+        return reading
+      }
+      // Value: protects=an Application document that the editor loads again from its first write (the pane moved to another window, webviews reloaded) shows the latest moment it had received, with that moment's time and verdict, instead of the moment it was first written with; fails_when=the reloaded document shows its first moment or its loading line while the Study pane, the source and the debugger show the latest one; why_new=Step 9's state-machines review found the pane's html written once per replay and each later moment only posted; seam=none; no_claim=VS Code's own reload, which the fresh page with the kept state stands in for
+      // Act: the first write loaded again in a fresh page with the state the document kept at the result.
+      const reloadedPage = await page.context().newPage()
+      await reloadedPage.setViewportSize({ width: 760, height: 360 })
+      await reloadedPage.goto(options.url)
+      await reloadedPage.evaluate((state) => {
+        window.savedState = state
+        window.acquireVsCodeApi = () => ({
+          getState: () => window.savedState,
+          setState(next) {
+            window.savedState = next
+          },
+          postMessage() {},
+        })
+      }, stateAtResult)
+      await reloadedPage.setContent(options.html.application)
+      const reloaded = await reloadedPage.evaluate(() => ({
+        time: document.getElementById('test-output-time').textContent,
+        end: document.getElementById('test-output-end').textContent,
+        endShown: !document.getElementById('test-output-end').hidden,
+      }))
+      await reloadedPage.close()
+      // Assert
+      cases.push({
+        name: 'an Application document loaded again from its first write shows the latest moment it had received (EN3)',
+        actual: reloaded,
+        passed:
+          JSON.stringify(reloaded) ===
+          JSON.stringify({
+            time: 'Recorded test output · 0.90 s',
+            end: 'Test passed · exit code 0',
+            endShown: true,
+          }),
+      })
+      // Value: protects=an Application document the editor loads again after the learner stopped following shows the latest moment it had received and keeps not following: it stays where it starts, offers Jump to latest and keeps the choice in its state; fails_when=the reloaded document drops the learner's choice and scrolls to the end, hides Jump to latest, or shows its first moment; why_new=Step 9 pass 2's state-machines review: the reload case reloaded only a following document; seam=none; no_claim=VS Code's own reload, which the fresh page with the kept state stands in for
+      // Act: the first write loaded again with the state the document kept at the result, the learner not following.
+      const reloadedNotFollowingPage = await page.context().newPage()
+      await reloadedNotFollowingPage.setViewportSize({
+        width: 760,
+        height: 360,
+      })
+      await reloadedNotFollowingPage.goto(options.url)
+      await reloadedNotFollowingPage.evaluate(
+        (state) => {
+          window.savedState = state
+          window.acquireVsCodeApi = () => ({
+            getState: () => window.savedState,
+            setState(next) {
+              window.savedState = next
+            },
+            postMessage() {},
+          })
+        },
+        { ...stateAtResult, testOutputFollow: false },
+      )
+      await reloadedNotFollowingPage.setContent(options.html.application)
+      await reloadedNotFollowingPage.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      )
+      const reloadedNotFollowing = await reloadedNotFollowingPage.evaluate(
+        () => {
+          const output = document.getElementById('test-output')
+          return {
+            time: document.getElementById('test-output-time').textContent,
+            atEnd:
+              output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
+            jumpShown: !document.getElementById('test-output-jump').hidden,
+            savedFollow: window.savedState?.testOutputFollow,
+          }
+        },
+      )
+      await reloadedNotFollowingPage.close()
+      // Assert
+      cases.push({
+        name: 'an Application document loaded again after the learner stopped following shows the latest moment and keeps Jump to latest (DS20, EN3)',
+        actual: reloadedNotFollowing,
+        passed:
+          JSON.stringify(reloadedNotFollowing) ===
+          JSON.stringify({
+            time: 'Recorded test output · 0.90 s',
+            atEnd: false,
+            jumpShown: true,
+            savedFollow: false,
+          }),
+      })
+      const anotherReplay = await followAfterWrite({
+        testOutputFollow: false,
+        testOutputHistory: 'another-test-replay',
+      })
+      const sameReplayKept = await followAfterWrite({
+        testOutputFollow: false,
+        testOutputHistory: sameReplay,
+      })
+      // Assert
+      cases.push({
+        name: 'a test replay’s Application document follows its own output although the learner stopped following in another replay, and the same replay’s document keeps the learner’s choice (DS20)',
+        actual: { sameReplay, anotherReplay, sameReplayKept },
+        passed:
+          typeof sameReplay === 'string' &&
+          JSON.stringify({ anotherReplay, sameReplayKept }) ===
+            JSON.stringify({
+              anotherReplay: { atEnd: true, jumpShown: false },
+              sameReplayKept: { atEnd: false, jumpShown: true },
+            }),
+      })
+      // Value: protects=an Application document written again for the same replay with a newer moment keeps that moment over an older view its state kept (a document written again after the learner came back to the replay); fails_when=the kept view is applied whatever its generation, and the pane goes back to an older moment while the Study pane, the source and the debugger show the current one; why_new=Step 9 pass 2's testing review: only a newer kept view was tested; seam=none; no_claim=the host's generation counter, which only grows within a window
+      // Arrange: the state keeps the result's view at generation 0; the document is written with the first output at generation 1.
+      const olderKeptPage = await page.context().newPage()
+      await olderKeptPage.setViewportSize({ width: 760, height: 360 })
+      await olderKeptPage.goto(options.url)
+      await olderKeptPage.evaluate(
+        (state) => {
+          window.savedState = state
+          window.acquireVsCodeApi = () => ({
+            getState: () => window.savedState,
+            setState(next) {
+              window.savedState = next
+            },
+            postMessage() {},
+          })
+        },
+        {
+          testOutputHistory: sameReplay,
+          testOutputFollow: true,
+          testOutputView: { ...options.testReplayViews.result, generation: 0 },
+        },
+      )
+      // Act
+      await olderKeptPage.setContent(options.html.application)
+      const olderKept = await olderKeptPage.evaluate(() => ({
+        time: document.getElementById('test-output-time').textContent,
+        endShown: !document.getElementById('test-output-end').hidden,
+      }))
+      await olderKeptPage.close()
+      // Assert
+      cases.push({
+        name: 'an Application document written again for the same replay keeps its own newer moment over an older view its state kept (EN3)',
+        actual: olderKept,
+        passed:
+          JSON.stringify(olderKept) ===
+          JSON.stringify({
+            time: 'Recorded test output · 0.10 s',
+            endShown: false,
+          }),
+      })
+      // Value: protects=while moments stream into a test replay's Application document (Play posts up to twenty a second), the document writes its state, which copies the whole shown output, once for the stream, and writes the last moment when it is left; fails_when=each posted moment writes the state again (twenty serialized copies of the output for twenty moments), or a document left after the stream keeps an older moment; why_new=Step 9 pass 2's core checklist and performance review (C3): the state write copied the whole view at every moment; seam=none; no_claim=VS Code's own state transport, which the stand-in imitates by serializing each write, and the timer's interval, which no assertion here waits for
+      // Arrange: a document whose state writes are counted and serialized, as VS Code's webview serializes them.
+      const streamPage = await page.context().newPage()
+      await streamPage.setViewportSize({ width: 760, height: 360 })
+      await streamPage.goto(options.url)
+      await streamPage.evaluate(() => {
+        window.savedState = undefined
+        window.stateWrites = 0
+        window.acquireVsCodeApi = () => ({
+          getState: () =>
+            window.savedState === undefined
+              ? undefined
+              : JSON.parse(window.savedState),
+          setState(next) {
+            window.stateWrites += 1
+            window.savedState = JSON.stringify(next)
+          },
+          postMessage() {},
+        })
+      })
+      await streamPage.setContent(options.html.application)
+      // Act: twenty moments posted in a row, as the host posts them during Play (each message is handled as it is dispatched); then the document is left.
+      const streamed = await streamPage.evaluate((result) => {
+        for (let generation = 2; generation <= 21; generation += 1)
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                type: 'node-history-output',
+                generation,
+                view: { ...result, generation },
+              },
+            }),
+          )
+        const whileStreaming = window.stateWrites
+        window.dispatchEvent(new Event('pagehide'))
+        return {
+          whileStreaming,
+          afterLeaving: window.stateWrites,
+          keptGeneration: JSON.parse(window.savedState).testOutputView
+            .generation,
+        }
+      }, options.testReplayViews.result)
+      await streamPage.close()
+      // Assert
+      cases.push({
+        name: 'a test replay’s Application document writes its state once for a stream of moments and writes the last moment when it is left (DS20, EN3)',
+        actual: streamed,
+        passed:
+          JSON.stringify(streamed) ===
+          JSON.stringify({
+            whileStreaming: 1,
+            afterLeaving: 2,
+            keptGeneration: 21,
+          }),
+      })
+      // Value: protects=moments posted one by one, as the host posts them during Play, are joined into one state write per TEST_OUTPUT_STATE_WRITE_INTERVAL_MS (500 ms), and the joined last moment is written when the interval ends, without the document being left; fails_when=the interval is dropped or zero (a write per moment, each copying the whole output), or the timer forgets the moments joined during the interval, so a document reloaded later shows an older moment; why_new=Step 9 pass 3's testing review: the stream case posts every moment in one task and flushes by pagehide, so neither the interval nor the timer's write was tested; seam=the page's setTimeout, replaced to hold the document's timers of 100 ms or more until the case runs them; no_claim=the real passage of time, which the held timer stands in for
+      // Arrange: a document whose state writes are counted, with its long timers held.
+      const timerPage = await page.context().newPage()
+      await timerPage.setViewportSize({ width: 760, height: 360 })
+      await timerPage.goto(options.url)
+      await timerPage.evaluate(() => {
+        window.savedState = undefined
+        window.stateWrites = 0
+        window.heldTimers = []
+        const realSetTimeout = window.setTimeout.bind(window)
+        window.setTimeout = (callback, delay) => {
+          if (delay === undefined || delay >= 100) {
+            window.heldTimers.push({ callback, delay })
+            return window.heldTimers.length
+          }
+          return realSetTimeout(callback, delay)
+        }
+        window.acquireVsCodeApi = () => ({
+          getState: () => window.savedState,
+          setState(next) {
+            window.stateWrites += 1
+            window.savedState = structuredClone(next)
+          },
+          postMessage() {},
+        })
+      })
+      await timerPage.setContent(options.html.application)
+      // Act: three moments, each posted in its own task.
+      for (const generation of [2, 3, 4])
+        await timerPage.evaluate(
+          ({ generation, view }) =>
+            window.dispatchEvent(
+              new MessageEvent('message', {
+                data: {
+                  type: 'node-history-output',
+                  generation,
+                  view: { ...view, generation },
+                },
+              }),
+            ),
+          { generation, view: options.testReplayViews.result },
+        )
+      const beforeInterval = await timerPage.evaluate(() => ({
+        writes: window.stateWrites,
+        stateTimers: window.heldTimers
+          .filter((timer) => timer.delay === 500)
+          .map((timer) => timer.delay),
+      }))
+      const afterInterval = await timerPage.evaluate(() => {
+        window.heldTimers.find((timer) => timer.delay === 500)?.callback()
+        return {
+          writes: window.stateWrites,
+          kept: window.savedState?.testOutputView?.generation,
+        }
+      })
+      await timerPage.close()
+      // Assert
+      cases.push({
+        name: 'moments posted one by one are joined into one state write per interval, and the joined moment is written when the interval ends (DS20, EN3)',
+        actual: { beforeInterval, afterInterval },
+        passed:
+          JSON.stringify({ beforeInterval, afterInterval }) ===
+          JSON.stringify({
+            beforeInterval: { writes: 1, stateTimers: [500] },
+            afterInterval: { writes: 2, kept: 4 },
+          }),
+      })
+      await applicationPage.close()
+      // Assert
+      cases.push({
+        name: 'the Application document of a test replay at 320, 480 and 760 px has no page-level horizontal scroll and a test name of at most two lines (Design 8)',
+        actual: applicationWidths,
+        passed: applicationWidths.every(
+          (reading) =>
+            !reading.pageScrolls &&
+            reading.testLines >= 1 &&
+            reading.testLines <= 2,
+        ),
+      })
+      // Arrange: a second Application document of the same replay, in a page of its own with its saved webview state, for the in-place updates that move to another moment (Design 3, EN3, DS20); the page above is closed, and the cases below keep their own.
+      const updatePage = await page.context().newPage()
+      await updatePage.setViewportSize({ width: 760, height: 360 })
+      await updatePage.goto(options.url)
+      await updatePage.evaluate(() => {
+        window.savedState = undefined
+        window.acquireVsCodeApi = () => ({
+          getState: () => window.savedState,
+          setState(state) {
+            window.savedState = state
+          },
+          postMessage: () => {},
+        })
+      })
+      await updatePage.setContent(options.html.application)
+      /** Posts one view into the document as the host does for a later moment, then waits two frames so the layout has settled. */
+      const postOutputView = async (generation, view) => {
+        await updatePage.evaluate(
+          ({ generation, view }) =>
+            window.dispatchEvent(
+              new MessageEvent('message', {
+                data: {
+                  type: 'node-history-output',
+                  generation,
+                  view: { ...view, generation },
+                },
+              }),
+            ),
+          { generation, view },
+        )
+        await updatePage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      }
+      /** Reads what the document shows after an update: the numbers of its lines, its header and names, its muted lines (`hidden` when one is left out) and whether it stands at the end of the output. */
+      const readOutputUpdate = () =>
+        updatePage.evaluate(() => {
+          const output = document.getElementById('test-output')
+          const mutedLine = (id) => {
+            const shown = document.getElementById(id)
+            return shown.hidden ? 'hidden' : shown.textContent
+          }
+          const numbers = Array.from(output.children, (line) =>
+            Number(line.dataset.line),
+          )
+          return {
+            first: numbers[0],
+            last: numbers.at(-1),
+            count: numbers.length,
+            ascending: numbers.every(
+              (number, index) =>
+                index === 0 || number === numbers[index - 1] + 1,
+            ),
+            time: document.getElementById('test-output-time').textContent,
+            title: document.title,
+            region: output.getAttribute('aria-label'),
+            inspector: mutedLine('test-output-inspector'),
+            cut: mutedLine('test-output-cut'),
+            placeholder: mutedLine('test-output-placeholder'),
+            end: mutedLine('test-output-end'),
+            atEnd:
+              output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
+          }
+        })
+      const atTheResult = options.testReplayViews.result
+      const withoutEnd = { ...atTheResult }
+      delete withoutEnd.end
+      const earlierName = `Recorded test output · ${atTheResult.test} · 0.05 s`
+      /** The view of an earlier moment: jobs `from` to 25 of the output, with the lines it leaves out named. */
+      const earlierWindow = (from) => ({
+        ...withoutEnd,
+        time: 'Recorded test output · 0.05 s',
+        name: earlierName,
+        region: 'Recorded test output up to 0.05 s',
+        lines: Array.from({ length: 26 - from }, (_, index) => ({
+          channel: 'stdout',
+          text: `job ${from + index} scheduled`,
+          number: from + index,
+        })),
+        cut: '… 120 earlier characters not shown',
+        inspector: '2 Node inspector lines hidden',
+      })
+      // Act: the document follows the output to the result; the host then moves back to an earlier window of the output, widens it at its start and moves to a moment with no output yet.
+      await postOutputView(2, atTheResult)
+      const followedToResult = await readOutputUpdate()
+      await postOutputView(3, earlierWindow(10))
+      const windowFromTen = await readOutputUpdate()
+      await postOutputView(4, earlierWindow(5))
+      const windowFromFive = await readOutputUpdate()
+      await postOutputView(5, {
+        ...withoutEnd,
+        time: 'Recorded test output · 0.05 s',
+        name: earlierName,
+        region: 'Recorded test output up to 0.05 s',
+        lines: [],
+        placeholder: 'No test output recorded up to this moment.',
+      })
+      const noOutputYet = await readOutputUpdate()
+      // Assert
+      const mutedWhenShown = {
+        inspector: '2 Node inspector lines hidden',
+        cut: '… 120 earlier characters not shown',
+        placeholder: 'hidden',
+        end: 'hidden',
+        atEnd: true,
+      }
+      // Value: protects=the Application document's in-place update: while the learner follows the output it ends at the latest line, an update to an earlier moment drops the later lines and the verdict, inserts lines at the start, and shows then hides the lines for what the output leaves out and for no output yet, with the header, the title and the region name following the moment; fails_when=a verdict, a later line or a muted line stays after the move back, the lines come out of order, the document stops following the end, or a name keeps the earlier moment's time; why_new=PR-B1 posts every later moment into one document and no other case posts a view that shortens or restarts the output, shows the cut and inspector lines or hides the verdict; seam=none; no_claim=the host's choice of views (the workspace and projection tests) or VS Code's own webview (stand-ins: the page's message event as the host posts it and a stub of the webview API)
+      cases.push({
+        name: 'an in-place update of the Application document follows the output to the result, then at an earlier moment drops the later lines and the verdict, shows what the output leaves out and hides it again (Design 8, EN3, DS20)',
+        actual: {
+          followedToResult,
+          windowFromTen,
+          windowFromFive,
+          noOutputYet,
+        },
+        passed:
+          JSON.stringify({
+            followedToResult,
+            windowFromTen,
+            windowFromFive,
+            noOutputYet,
+          }) ===
+          JSON.stringify({
+            followedToResult: {
+              first: 0,
+              last: 40,
+              count: 41,
+              ascending: true,
+              time: 'Recorded test output · 0.90 s',
+              title: atTheResult.name,
+              region: 'Recorded test output up to 0.90 s',
+              inspector: 'hidden',
+              cut: 'hidden',
+              placeholder: 'hidden',
+              end: 'Test passed · exit code 0',
+              atEnd: true,
+            },
+            windowFromTen: {
+              first: 10,
+              last: 25,
+              count: 16,
+              ascending: true,
+              time: 'Recorded test output · 0.05 s',
+              title: earlierName,
+              region: 'Recorded test output up to 0.05 s',
+              ...mutedWhenShown,
+            },
+            windowFromFive: {
+              first: 5,
+              last: 25,
+              count: 21,
+              ascending: true,
+              time: 'Recorded test output · 0.05 s',
+              title: earlierName,
+              region: 'Recorded test output up to 0.05 s',
+              ...mutedWhenShown,
+            },
+            noOutputYet: {
+              count: 0,
+              ascending: true,
+              time: 'Recorded test output · 0.05 s',
+              title: earlierName,
+              region: 'Recorded test output up to 0.05 s',
+              inspector: 'hidden',
+              cut: 'hidden',
+              placeholder: 'No test output recorded up to this moment.',
+              end: 'hidden',
+              atEnd: true,
+            },
+          }),
+      })
+      // Act: a line the test was still printing at one moment is finished at the next, and a later line holds markup as a repository's test may print it.
+      const markup = '<img src=x onerror="window.invented=true">'
+      const runLine = {
+        channel: 'stdout',
+        text: 'RUN src/jobs.test.ts',
+        number: 0,
+      }
+      await postOutputView(6, {
+        ...withoutEnd,
+        lines: [runLine, { channel: 'stdout', text: 'job 1 sch', number: 1 }],
+      })
+      await updatePage.evaluate(() => {
+        window.runNode = document.querySelector('#test-output [data-line="0"]')
+        window.unfinishedNode = document.querySelector(
+          '#test-output [data-line="1"]',
+        )
+      })
+      await postOutputView(7, {
+        ...withoutEnd,
+        lines: [
+          runLine,
+          { channel: 'stdout', text: 'job 1 scheduled', number: 1 },
+          { channel: 'stderr', text: markup, number: 2 },
+        ],
+      })
+      const finishedLine = await updatePage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        return {
+          unchangedLineKeepsItsNode:
+            output.querySelector('[data-line="0"]') === window.runNode,
+          finishedText: output.querySelector('[data-line="1"] .output-text')
+            .textContent,
+          unfinishedNodeLeft: !window.unfinishedNode.isConnected,
+          markupText: output.querySelector('[data-line="2"] .output-text')
+            .textContent,
+          markupMark: output.querySelector('[data-line="2"] .stderr-mark')
+            ?.textContent,
+          elementsInOutput: output.querySelectorAll('img, script, [onerror]')
+            .length,
+          scriptRan: window.invented === true,
+        }
+      })
+      // Value: protects=a move back to a shorter moment while the learner has stopped following leaves following off: the browser's clamp of the scroll position to the shorter output is the document's change, not the learner's scroll back to the end; fails_when=the clamp turns following on, hides Jump to latest and saves that choice, so the next moment scrolls the learner to the end although they never scrolled back or pressed Jump to latest (DS20); why_new=Step 9 pass 2's state-machines review (wrong row: not following × a newer view whose output is shorter); seam=none; no_claim=a scroll the learner makes back to the end, which turns following on
+      // Arrange: the result's whole output, which the learner scrolls to its end and then just above it.
+      const settleUpdatePage = () =>
+        updatePage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      const readFollow = () =>
+        updatePage.evaluate(() => ({
+          jumpShown: !document.getElementById('test-output-jump').hidden,
+          follow: window.savedState?.testOutputFollow,
+        }))
+      await postOutputView(8, atTheResult)
+      await updatePage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        output.scrollTop = output.scrollHeight
+      })
+      await settleUpdatePage()
+      await updatePage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        output.scrollTop = output.scrollHeight - output.clientHeight - 40
+      })
+      await settleUpdatePage()
+      const stoppedFollowing = await readFollow()
+      // Act: an earlier moment whose output is shorter than the scroll position.
+      await postOutputView(9, earlierWindow(20))
+      const afterShorter = await readFollow()
+      // Assert
+      cases.push({
+        name: 'a move back to a shorter moment leaves the Application document not following when the learner stopped following (DS20)',
+        actual: { stoppedFollowing, afterShorter },
+        passed:
+          JSON.stringify({ stoppedFollowing, afterShorter }) ===
+          JSON.stringify({
+            stoppedFollowing: { jumpShown: true, follow: false },
+            afterShorter: { jumpShown: true, follow: false },
+          }),
+      })
+      await updatePage.close()
+      // Assert
+      // Value: protects=the in-place update replaces exactly the line whose text changed (a line finished at the next moment), keeps the nodes of the lines that did not change, and shows output that holds markup as text, never as elements; fails_when=a finished line keeps its earlier text, an unchanged line's node is replaced (the learner's selection and focus there are lost), or markup in recorded output becomes an element; why_new=PR-B1's update path builds the line nodes in the browser, which the escaping test of the first document does not cover; seam=none; no_claim=the document's Content Security Policy, which the browser enforces (stand-ins: the page's message event and a stub of the webview API)
+      cases.push({
+        name: 'an in-place update replaces a line whose text changed, keeps the nodes of the other lines and shows output that holds markup as text (Design 8, EN3, S3-1)',
+        actual: finishedLine,
+        passed:
+          JSON.stringify(finishedLine) ===
+          JSON.stringify({
+            unchangedLineKeepsItsNode: true,
+            finishedText: 'job 1 scheduled',
+            unfinishedNodeLeft: true,
+            markupText: markup,
+            markupMark: '[stderr] ',
+            elementsInOutput: 0,
+            scriptRan: false,
+          }),
+      })
       await publish({
         ...replay,
         recording: {
@@ -1806,6 +3190,15 @@ async function check(page, options, collected) {
           !diagram.invented &&
           diagram.links === 2 &&
           diagram.summary.includes('<script>'),
+      })
+      // Golden DOM (Design 5, AC14): the browser's saved sequence renders the markup it rendered before the summary renderer was shared with test replays.
+      const sequenceMarkup = await page.evaluate(
+        () => document.getElementById('learning-sequence').innerHTML,
+      )
+      cases.push({
+        name: 'the saved learning sequence of a browser replay renders the same markup as before its renderer was shared with test replays',
+        actual: sequenceMarkup,
+        passed: sequenceMarkup === options.goldenLearningSequence,
       })
       await page.screenshot({
         path: `${options.output}/saved-learning-sequence.png`,
@@ -2884,9 +4277,13 @@ async function check(page, options, collected) {
         focused: document.activeElement.id,
         label: document.activeElement.textContent,
       }))
-      // Act: a Node test history with a single event, whose transport has no usable control.
+      // Act: a Node test history with a single event, whose transport has no usable control, with its event list collapsed as it opens (DS16).
+      await page.locator('#node-history-events-details').evaluate((details) => {
+        details.open = false
+      })
       const singleEvent = {
         ...nodeReader,
+        nodeHistorySection: nodeSection,
         revision: revisionAt(15),
         nodeHistoryPlayback: {
           mode: 'paused',
@@ -2934,8 +4331,8 @@ async function check(page, options, collected) {
           focusWhileLoading.focused === 'playback-toggle' &&
           focusWhileLoading.label === 'Pause' &&
           focusWithSingleEvent.transportDisabled &&
-          focusWithSingleEvent.focused === 'Selected event' &&
-          focusWithSingleEvent.focusedSequence === '2',
+          focusWithSingleEvent.focused === 'Events (1)' &&
+          focusWithSingleEvent.focusedSequence === undefined,
       })
       await publish({ ...replay, revision: revisionAt(10) })
     } else {
@@ -3342,6 +4739,20 @@ async function check(page, options, collected) {
           endMs: 1000,
           positionMs: 0,
         },
+        nodeHistorySection: {
+          status:
+            'No result recorded · capture complete · 0 of 0 stops explained',
+          position: 'Output · 0.00 s',
+          notRecorded: 'Source and debugger not recorded at this moment.',
+          pointer: 'Output up to this moment is in the Application pane.',
+          applicationClosed: false,
+          sameMomentStepIds: [],
+          stepActions: {},
+          events: 'Events (2)',
+          verdict: 'No result recorded',
+          previousStop: false,
+          nextStop: false,
+        },
       }
       await publish({
         ...panelReplay,
@@ -3352,7 +4763,7 @@ async function check(page, options, collected) {
       const nodeDuringApplicationReplay = {
         regions: [
           await statusRegion('node-history-status'),
-          await statusRegion('node-history-position'),
+          await statusRegion('node-history-moment'),
           await statusRegion('node-history-hint'),
         ],
         height: await page
@@ -3397,7 +4808,7 @@ async function check(page, options, collected) {
             JSON.stringify({
               regions: [
                 { ...emptyRegion('node-history-status'), role: 'status/null' },
-                emptyRegion('node-history-position'),
+                emptyRegion('node-history-moment'),
                 emptyRegion('node-history-hint'),
               ],
               height: 0,
@@ -3410,7 +4821,7 @@ async function check(page, options, collected) {
           JSON.stringify(nodeAfterApplicationReplay) ===
             JSON.stringify({
               status:
-                'complete · 2 verified events. Test output, executed source and recorded debugger stops; no application video.',
+                'No result recorded · capture complete · 0 of 0 stops explained',
               nodePlayVisible: true,
               nodePlayEnabled: true,
               nodeTimelineVisible: true,
@@ -6653,6 +8064,40 @@ function wikiShellPage(shell) {
   })
 }
 
+// The job scheduler's test replay in the Application pane (Design 8): its first output, forty lines so the region scrolls, then its result, with a test name long enough to wrap; worded as projectNodeTestApplication words them.
+const replayTestName =
+  'src/jobs.test.ts › job scheduler › runs a delayed job after its timer even when the clock jumps forward by more than one interval'
+const replayFirstLines = [
+  { channel: 'stdout', text: 'RUN src/jobs.test.ts', number: 0 },
+  ...Array.from({ length: 39 }, (_, index) => ({
+    channel: 'stdout',
+    text: `job ${index + 1} scheduled`,
+    number: index + 1,
+  })),
+]
+const testReplayViews = {
+  first: {
+    generation: 1,
+    time: 'Recorded test output · 0.10 s',
+    test: replayTestName,
+    name: `Recorded test output · ${replayTestName} · 0.10 s`,
+    region: 'Recorded test output up to 0.10 s',
+    lines: replayFirstLines,
+  },
+  result: {
+    generation: 2,
+    time: 'Recorded test output · 0.90 s',
+    test: replayTestName,
+    name: `Recorded test output · ${replayTestName} · 0.90 s`,
+    region: 'Recorded test output up to 0.90 s',
+    lines: [
+      ...replayFirstLines,
+      { channel: 'stderr', text: 'slow timer', number: 40 },
+    ],
+    end: 'Test passed · exit code 0',
+  },
+}
+
 const report = {
   mode,
   qualification:
@@ -6675,7 +8120,15 @@ try {
   await writeFile(
     flowPath,
     readerDomFlowText(check, {
-      html: { context: studyHtml('context'), moments: studyHtml('moments') },
+      html: {
+        context: studyHtml('context'),
+        moments: studyHtml('moments'),
+        application: capturedAppHtml({
+          ...message,
+          nodeHistoryApplication: testReplayViews.first,
+        }),
+      },
+      testReplayViews,
       // With LF line endings, as the publisher writes a page and a browser hashes its script, also from a checkout that holds the shell with CRLF.
       wikiShell: wikiShellPage(
         (
@@ -6685,6 +8138,13 @@ try {
           )
         ).replace(/\r\n?/g, '\n'),
       ),
+      // The browser sequence's markup before the shared renderer (Design 5): a text fixture, which the formatter leaves as it is.
+      goldenLearningSequence: (
+        await readFile(
+          new URL('./fixtures/learning-sequence-golden.txt', import.meta.url),
+          'utf8',
+        )
+      ).trimEnd(),
       message,
       output,
       url: `http://127.0.0.1:${server.address().port}/`,

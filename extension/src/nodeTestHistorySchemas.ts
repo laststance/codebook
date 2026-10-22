@@ -130,7 +130,8 @@ export const nodeTestHistoryLearningDecisionSchema = z.strictObject({
   at: z.iso.datetime(),
 })
 
-const nodeLearningStepIdSchema = z
+/** A learning-material step's id; the Study pane names the step the learner chose with it (DS21). */
+export const nodeLearningStepIdSchema = z
   .string()
   .min(1)
   .max(LEARNING_SUMMARY_LIMITS.identifierChars)

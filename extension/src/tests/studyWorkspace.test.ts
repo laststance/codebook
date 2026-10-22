@@ -28,6 +28,7 @@ import {
   resetFakeClock,
 } from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { shownTestOutput } from './utils/shownTestOutput'
 test('restored Observed moments leaves its loading state after workspace initialization', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -89,6 +90,7 @@ test('an unreadable Node history folder is reported while the saved-study reader
   }
 })
 
+// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger, and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview
 test('saved Node history is selectable in the reader without entering browser playback', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -285,10 +287,13 @@ test('saved Node history is selectable in the reader without entering browser pl
         .nativePanels()
         .find((panel) => panel.kind === 'codebook.scopedBrowser')?.webview
         .html ?? ''
+    // The Application pane is the test replay's one output surface: its document names the cited test (Design 3).
+    assert.match(applicationHtml, /<pre id="test-output"/)
     assert.match(
       applicationHtml,
-      /Recorded test output for this test replay is in the Study pane\./,
+      /id="test-output-test"[^>]*>src\/theme\.test\.ts/,
     )
+    assert.doesNotMatch(applicationHtml, /is in the Study pane/)
     assert.doesNotMatch(applicationHtml, /application video unavailable/)
     assert.doesNotMatch(
       applicationHtml,
@@ -423,9 +428,9 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.equal(firstStopMessage.nodeHistoryPosition?.sequence, 23)
     assert.equal(firstStopMessage.nodeHistoryPosition?.index, 0)
     assert.equal(firstStopMessage.nodeHistoryPosition?.elapsedMs, 23)
-    assert.match(firstStopMessage.nodeHistoryOutput!, /output 22/)
+    assert.match(shownTestOutput(harness), /output 22/)
     assert.doesNotMatch(
-      firstStopMessage.nodeHistoryOutput!,
+      shownTestOutput(harness),
       /between stops|Tests 1 passed/,
     )
     await assert.rejects(
@@ -520,8 +525,8 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.equal(secondStopMessage.nodeHistoryPosition?.sequence, 25)
     assert.equal(secondStopMessage.nodeHistoryPosition?.index, 1)
     assert.equal(secondStopMessage.nodeHistoryPosition?.elapsedMs, 25)
-    assert.match(secondStopMessage.nodeHistoryOutput!, /between stops/)
-    assert.doesNotMatch(secondStopMessage.nodeHistoryOutput!, /Tests 1 passed/)
+    assert.match(shownTestOutput(harness), /between stops/)
+    assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
 
     // Act: moving through output-only intervals clears the previously selected native debug context.
     harness.receive({
@@ -541,8 +546,8 @@ test('saved Node history is selectable in the reader without entering browser pl
 
     // Assert
     assert.equal(interStopMessage.nodeHistoryPosition?.type, 'output')
-    assert.match(interStopMessage.nodeHistoryOutput!, /between stops/)
-    assert.doesNotMatch(interStopMessage.nodeHistoryOutput!, /Tests 1 passed/)
+    assert.match(shownTestOutput(harness), /between stops/)
+    assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     assert.equal(
       harness.historicalDebugInvalidations(),
       1,
@@ -598,8 +603,8 @@ test('saved Node history is selectable in the reader without entering browser pl
     // Assert
     const terminalMessage = harness.postedMessages().slice(-1)[0]!
     assert.equal(terminalMessage.nodeHistoryPosition?.type, 'result')
-    assert.match(terminalMessage.nodeHistoryOutput!, /between stops/)
-    assert.doesNotMatch(terminalMessage.nodeHistoryOutput!, /Tests 1 passed/)
+    assert.match(shownTestOutput(harness), /between stops/)
+    assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     assert.equal(
       harness.historicalDebugInvalidations(),
       3,
@@ -695,26 +700,27 @@ test('saved Node history is selectable in the reader without entering browser pl
       outputPositionMessage.nodeHistoryPosition?.debuggerAvailable,
       undefined,
     )
-    assert.match(outputPositionMessage.nodeHistoryOutput!, /between stops/)
-    assert.doesNotMatch(
-      outputPositionMessage.nodeHistoryOutput!,
-      /Tests 1 passed/,
-    )
+    assert.match(shownTestOutput(harness), /between stops/)
+    assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     const presentationsBeforeOutputRestore =
       harness.historicalDebugPresentations.length
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
       library.directory,
       header.workspaceKey,
     )
+    const postedBeforeOutputRestore = harness.postedMessages().length
     harness.receive({
       type: 'node-history',
       revision: outputPositionMessage.revision,
       studyId: header.studyId,
     })
+    // A message of the reopened history, not the last one before it, which names the same cursor.
     await waitUntil(
       () =>
+        harness.postedMessages().length > postedBeforeOutputRestore &&
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-          24 && !harness.postedMessages().slice(-1)[0]?.loading,
+          24 &&
+        !harness.postedMessages().slice(-1)[0]?.loading,
       'a fresh history store restores the output-only cursor',
       1_000,
     )
@@ -726,11 +732,8 @@ test('saved Node history is selectable in the reader without entering browser pl
       reopenedOutputMessage.nodeHistoryPosition?.debuggerAvailable,
       undefined,
     )
-    assert.match(reopenedOutputMessage.nodeHistoryOutput!, /between stops/)
-    assert.doesNotMatch(
-      reopenedOutputMessage.nodeHistoryOutput!,
-      /Tests 1 passed/,
-    )
+    assert.match(shownTestOutput(harness), /between stops/)
+    assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     assert.equal(
       harness.historicalDebugPresentations.length,
       presentationsBeforeOutputRestore,
@@ -823,6 +826,7 @@ test('saved Node history is selectable in the reader without entering browser pl
   }
 })
 
+// Value: protects=seeking a test replay's time restores each stop's exact recorded debugger state, clears it at output and result events, and shows in the Application pane only the output recorded up to the selected event; fails_when=a seek shows another moment's values or output recorded after the selected event; why_new=PR-B1 reads the shown output from the Application view (Design 3, AC5); seam=the workspace harness's posted messages and historical debug presentations; no_claim=native Run and Debug pixels
 test('Node journal time seeking restores exact stops and clears debugger across output and result events', async () => {
   // Arrange: keep this playback contract isolated from unrelated reader reopen and pagination workflows.
   const harness = await workspaceHarness()
@@ -990,8 +994,8 @@ test('Node journal time seeking restores exact stops and clears debugger across 
       harness.historicalDebugPresentations.at(-1)?.snapshot?.variables[0]?.name,
       'themeName',
     )
-    assert.match(secondStop.nodeHistoryOutput!, /between stops/)
-    assert.doesNotMatch(secondStop.nodeHistoryOutput!, /Tests 1 passed/)
+    assert.match(shownTestOutput(harness), /between stops/)
+    assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     assert.equal(await store.readReaderPosition(history.studyId), 4)
 
     // Act: seek into the output interval and then to the final result.
