@@ -2250,6 +2250,7 @@ async function check(page, options, collected) {
           { channel: 'stdout', text: 'last', number: 33768 },
         ])
         return {
+          // gstack-timing-ok: the bound guards a hang, not a speed: the earlier per-line lookup took 3.5 s and this update 61 ms on the Mac, so 1 s keeps a wide margin each way.
           underASecond: performance.now() - started < 1000,
           lines: document.querySelectorAll('#test-output .output-line').length,
           last: document.querySelector('#test-output .output-line:last-child')
