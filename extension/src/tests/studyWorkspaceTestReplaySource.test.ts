@@ -411,11 +411,13 @@ test('the debugger is presented at a stop only after the slot’s document shows
 test('a slow reader position write does not hold the selected moment back', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
+  let releaseWrite = (): void => {}
+  // The held writes, awaited before the harness removes its folders, so no late write lands in a folder being removed.
+  const heldWrites: Promise<unknown>[] = []
   try {
     const store = harness.service.nodeHistoryStore!
     const history = await saveOneStopNodeHistory(store)
     await openReplayAt(harness, history.studyId, 2)
-    let releaseWrite = (): void => {}
     const writeHeld = new Promise<void>((resolve) => {
       releaseWrite = resolve
     })
@@ -423,11 +425,10 @@ test('a slow reader position write does not hold the selected moment back', asyn
     context.mock.method(
       store,
       'saveReaderPosition',
-      async (
-        ...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>
-      ) => {
-        await writeHeld
-        return save(...args)
+      (...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>) => {
+        const write = writeHeld.then(() => save(...args))
+        heldWrites.push(write)
+        return write
       },
     )
 
@@ -446,8 +447,9 @@ test('a slow reader position write does not hold the selected moment back', asyn
 
     // Assert
     assert.equal(lastView(harness)?.nodeHistoryPosition?.type, 'result')
-    releaseWrite()
   } finally {
+    releaseWrite()
+    await Promise.allSettled(heldWrites)
     context.mock.restoreAll()
     await harness.close()
   }
