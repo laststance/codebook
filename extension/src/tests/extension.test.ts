@@ -1637,8 +1637,13 @@ test('activation gives the service and the Study reader one sink that writes une
     }[] = [],
     commands = new Map<string, () => Promise<string | void>>(),
     subscriptions: { dispose(): void }[] = [],
-    channels: { name: string; log: boolean | undefined; dispose(): void }[] =
-      [],
+    channels: {
+      name: string
+      log: boolean | undefined
+      error: (text: string) => void
+      show: (preserveFocus?: boolean) => void
+      dispose(): void
+    }[] = [],
     entries: string[] = [],
     shows: (boolean | undefined)[] = []
   const boundary = await loadModule<typeof ExtensionModule>(
@@ -1761,6 +1766,22 @@ test('activation gives the service and the Study reader one sink that writes une
       ),
       "EACCES: permission denied, open '<storage>/state.json'",
     )
+
+    // The channel is disposed with the extension: writing to it throws, and the sinks must not (F99).
+    channels[0]!.error = (): void => {
+      throw new Error('Channel has been closed')
+    }
+    channels[0]!.show = (): void => {
+      throw new Error('Channel has been closed')
+    }
+    assert.doesNotThrow(() => {
+      service.diagnostics?.({
+        surface: 'HISTORY_SEAL_FAILED',
+        cause: 'EIO: i/o error',
+      })
+      reader.diagnostics?.log({ surface: 'open:test-replay', cause: 'x' })
+      reader.diagnostics?.show()
+    })
   } finally {
     await boundary.deactivate()
     await harness.close()

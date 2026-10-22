@@ -453,13 +453,18 @@ export class StudyService {
     cause: string,
   ): void {
     const stack = sanitizedStack(error, this.causeRoots)
-    this.diagnostics?.({
-      surface,
-      studyId: `${this.instanceId}_${record.id}`,
-      profile: record.profile,
-      cause,
-      ...(stack ? { stack } : {}),
-    })
+    // A sink that throws (the log channel after deactivation) must not escape the stop that reports the failure and leave the run unreleased (F99).
+    try {
+      this.diagnostics?.({
+        surface,
+        studyId: `${this.instanceId}_${record.id}`,
+        profile: record.profile,
+        cause,
+        ...(stack ? { stack } : {}),
+      })
+    } catch {
+      // The failure is in the run's own answer; the channel has nowhere to write.
+    }
   }
 
   /** Lets editor shutdown retire only physically released owners when final evidence persistence fails. @example service.resourcesReleased // true after all release checks */
@@ -846,7 +851,11 @@ export class StudyService {
         (record) =>
           record.profile === NODE_TEST_PROFILE &&
           `${this.instanceId}_${record.id}` === studyId,
-      ) || Boolean(this.nodeHistoryStore?.isListedHistory(studyId))
+      ) ||
+      Boolean(
+        this.nodeHistoryStore?.isListedHistory(studyId) ||
+        this.nodeHistoryStore?.holdsHistoryFolder(studyId),
+      )
     )
   }
 
@@ -1389,6 +1398,7 @@ export class StudyService {
         record.stopping ||
         record.stopped ||
         record.error ||
+        record.cleanupError ||
         this.now() >= record.deadlineAt ||
         input.participant !== 'server' ||
         input.sessionId !== current.sessionId ||
@@ -1417,6 +1427,7 @@ export class StudyService {
       record.stopping ||
       record.stopped ||
       record.error ||
+      record.cleanupError ||
       record.runtime.evidence.failure ||
       this.now() >= record.deadlineAt
     )
@@ -2301,10 +2312,12 @@ export class StudyService {
       record.error?.message.slice(0, MAX_UI_TEXT_CHARS) ??
       evidenceFailure?.slice(0, MAX_UI_TEXT_CHARS) ??
       runtimeFailure
+    // A run whose release failed can no longer continue: only its stop is offered again (F91, D18).
     const canControl =
       !this.stopping &&
       !record.stopping &&
       !record.stopped &&
+      !record.cleanupError &&
       !terminalReason &&
       this.now() < record.deadlineAt
     const nodeStop = record.nodeStops?.at(-1)
@@ -2417,7 +2430,7 @@ export class StudyService {
       record.explanationKeys.size >= MAX_EXPLANATIONS
     // explain refuses every new key of a stopped run whose evidence failed, so the step is not offered then either.
     const stoppedEvidenceFailure = this.stoppedRunEvidenceFailure(record)
-    const nextActions = [
+    const availableActions = [
       canControl && record.prepared && runtime?.status === 'ready'
         ? runtime.nextAction
         : undefined,
@@ -2438,6 +2451,9 @@ export class StudyService {
         : undefined,
       holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
+    // After a stop whose release failed, only the stop is offered again (F91, D18).
+    const nextActions =
+      record.cleanupError && !record.stopped ? ['stop'] : availableActions
     const material = {
       instanceId: this.instanceId,
       runId: record.id,

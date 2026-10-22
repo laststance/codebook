@@ -194,17 +194,28 @@ export function activate(
   })
   if (output) context.subscriptions.push(output)
   const diagnostics = {
+    // The channel is disposed with the extension's subscriptions: a failure reported while the window closes must not throw out of the stop that reports it (F99).
     log: (entry: CodebookDiagnostic): void => {
-      output?.error(
-        formatCodebookDiagnostic(entry, {
-          extensionVersion: EXTENSION_VERSION,
-          apiVersion: API_VERSION,
-          hostName: vscode.env?.appName ?? 'unknown host',
-          hostVersion: vscode.version ?? 'unknown version',
-        }),
-      )
+      try {
+        output?.error(
+          formatCodebookDiagnostic(entry, {
+            extensionVersion: EXTENSION_VERSION,
+            apiVersion: API_VERSION,
+            hostName: vscode.env?.appName ?? 'unknown host',
+            hostVersion: vscode.version ?? 'unknown version',
+          }),
+        )
+      } catch {
+        // A disposed channel has nowhere to write; the failure is already in the run's own answer.
+      }
     },
-    show: (): void => output?.show(true),
+    show: (): void => {
+      try {
+        output?.show(true)
+      } catch {
+        // A disposed channel cannot be shown.
+      }
+    },
   }
   const isCursorHost =
     vscode.env?.appName?.toLowerCase().includes('cursor') ?? false

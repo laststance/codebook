@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import {
   chmod,
   mkdir,
@@ -514,6 +515,16 @@ export class NodeTestHistoryStore {
    */
   isListedHistory(studyId: string): boolean {
     return this.summaries.has(studyId)
+  }
+
+  /**
+   * Says whether this workspace's history directory holds a folder for a study id, listed or not, without reading its files; read by {@link StudyService.playback}, so a test replay of an earlier session is refused before this window has listed it (F9).
+   * @param studyId - A study id an agent sent.
+   * @returns `true` for a study id named like a history whose folder exists.
+   * @example store.holdsHistoryFolder(earlierSessionStudyId) // => true before any list of this window
+   */
+  holdsHistoryFolder(studyId: string): boolean {
+    return HISTORY_IDENTITY.test(studyId) && existsSync(this.path(studyId))
   }
 
   /**

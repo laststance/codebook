@@ -1368,3 +1368,108 @@ test('a test run’s own error from a failed advance and from a report failure n
     await reported.harness.close()
   }
 })
+
+// Value: protects=codebook_playback refusing a test replay of an earlier session with PLAYBACK_PROFILE_UNSUPPORTED although this window's store has not listed it yet; fails_when=the refusal depends on the window's last list, so an agent that sends the id before the Study workspace refreshed gets a browser-replay error or a load attempt; why_new=the guard read only the listed histories (F9); seam=an earlier window's store writes the history, this window's store never lists it; no_claim=the learner's open of the replay
+test('codebook_playback refuses an earlier session’s test replay before this window has listed it', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  try {
+    const earlierWindow = new NodeTestHistoryStore(
+      join(run.harness.directory, '.learning'),
+      '0'.repeat(64),
+    )
+    const earlier = nodeTestHistoryHeader(earlierWindow.workspaceKey)
+    await (
+      await earlierWindow.start(earlier)
+    ).finish('partial', 'An earlier window stopped it.')
+
+    // Act
+    const refusal = (() => {
+      try {
+        run.service.playback({
+          instanceId: run.service.instanceId,
+          studyId: earlier.studyId,
+          action: 'open',
+          expectedRevision: 0,
+        })
+      } catch (error) {
+        return error
+      }
+      return undefined
+    })()
+
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(refusal.code, 'PLAYBACK_PROFILE_UNSUPPORTED')
+    assert.equal(
+      run.service.nodeHistoryStore!.isListedHistory(earlier.studyId),
+      false,
+    )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a test run whose Stop failed to release it: the run resource offers only stop (no continue-server, no continueArguments), codebook_continue refuses with STALE_PAUSE, and a retried Stop releases it; fails_when=the failed release leaves continue-server and current continueArguments on offer for a run that can no longer continue; why_new=after a stop whose release failed the run resource still offered the agent a continuation (F91, D18); seam=the owned run's first release fails; no_claim=a release that keeps failing
+test('after a stop whose release failed, the run offers only stop and refuses a continue with STALE_PAUSE', async () => {
+  // Arrange
+  const run = await testRunHarness({ stops: 2, releaseFailures: 1 })
+  try {
+    const { record } = await run.start()
+    const staleArguments =
+      run.service.state(record).participants.server?.continueArguments
+    assert.ok(staleArguments, 'the run is paused at a stop it can continue')
+    const identity = { instanceId: run.service.instanceId, runId: record.id }
+    await run.service.stop(identity).catch(() => undefined)
+
+    // Act
+    const afterFailedRelease = run.service.state(record)
+    const refusal = await run.service.continue(staleArguments).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    const afterRetry = await run.service.stop(identity)
+
+    // Assert
+    assert.deepEqual(afterFailedRelease.nextActions, ['stop'])
+    assert.equal(
+      afterFailedRelease.participants.server?.continueArguments,
+      undefined,
+    )
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(refusal.code, 'STALE_PAUSE')
+    assert.equal(afterRetry.state, 'stopped')
+    assert.equal(run.releases(), 1)
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a seal failure reported to a diagnostics sink that throws (the log channel after deactivation): the stop still answers HISTORY_SEAL_FAILED and the run is released; fails_when=the sink's throw escapes stopRecord, so codebook_stop rejects and the run stays unreleased; why_new=the Output sink threw after deactivation and left the run unreleased (F99); seam=the diagnostics sink throws; no_claim=the real log channel (extension.test.ts covers its sink)
+test('a diagnostics sink that throws does not leave the run unreleased when the history cannot be sealed', async (context) => {
+  // Arrange
+  const run = await testRunHarness()
+  context.mock.method(NodeTestHistoryWriter.prototype, 'finish', async () => {
+    throw new Error('EIO: i/o error')
+  })
+  run.service.diagnostics = () => {
+    throw new Error('Channel has been closed')
+  }
+  try {
+    const { record } = await run.start()
+    await continueCurrentPause(run.service, record)
+
+    // Act
+    const answer = await run.service.stopForTool({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+
+    // Assert
+    assert.equal(answer.sealFailure?.code, 'HISTORY_SEAL_FAILED')
+    assert.equal(record.stopped, true)
+    assert.equal(run.releases(), 1)
+  } finally {
+    await run.harness.close()
+  }
+})
