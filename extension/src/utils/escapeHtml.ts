@@ -8,7 +8,7 @@ const HTML_ENTITIES: Readonly<Record<string, string>> = {
 }
 
 /**
- * Makes a text safe to print into HTML, the way the Wiki publisher escapes what it prints; called by {@link rebindDeepWikiEditorLinks} when it prints a source path into a served page, by {@link withServedAddresses} when it writes a Codebook address anew, by {@link servedWikiPageHtml} for the reader's script tag, and by {@link capturedAppHtml} for every text of the captured application page.
+ * Makes a text safe to print into HTML, the way the Wiki publisher escapes what it prints; called by {@link rebindDeepWikiEditorLinks} when it prints a source path into a served page, by {@link withServedAddresses} when it writes a Codebook address anew, by {@link servedWikiPageHtml} for the reader's script tag, and by {@link capturedAppHtml} and {@link testOutputHtml} for every text of the Application pane's page.
  * @param text - The plain text.
  * @returns The text with `&`, `<`, `>`, `"` and `'` replaced by their entities; any other character unchanged.
  * @example

@@ -719,6 +719,16 @@ export class BrowserViewport {
     this.rendererAttached = true
   }
 
+  /**
+   * Keeps the restore copy of the shown history current without writing the document again: a test replay's later moments reach its document as messages (EN3), and a replacement panel restores this copy ({@link restorePanelContents}). Called by the Study workspace after each posted moment; nothing happens while the viewport is live or released.
+   * @param html - The history's document at its latest moment.
+   * @example viewport.updateHistory(capturedAppHtml(message))
+   */
+  updateHistory(html: string): void {
+    if (this.closed || !this.historical) return
+    this.historicalHtml = html
+  }
+
   /** Reconnects the same target presentation when the learner explicitly follows its current pause. @example await viewport.showLive(signal) */
   async showLive(signal: AbortSignal): Promise<void> {
     if (this.closed) throw new Error('Viewport lease is released')

@@ -8,6 +8,7 @@ import { resolve } from 'node:path'
 import { projectStudy } from '../dist/studyModel.js'
 import { createConfiguredStudy } from '../dist/tests/utils/createConfiguredStudy.js'
 import { studyHtml } from '../dist/ui/studyHtml.js'
+import { capturedAppHtml } from '../dist/utils/capturedAppHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
 
@@ -1243,8 +1244,28 @@ async function check(page, options, collected) {
         sourceAvailable: true,
         debuggerAvailable: true,
       }
+      // The host words the test replay section (projectNodeTestSection); the pane places its lines.
+      const nodeSection = {
+        status:
+          'Test passed · exit code 0 · capture complete · 1 of 1 stops explained',
+        position: 'Stop 1 of 1 · 1.20 s',
+        pointer: 'Output up to this moment is in the Application pane.',
+        applicationClosed: false,
+        sameMomentStepIds: [],
+        stepActions: {},
+        events: 'Events (1)',
+        verdict: 'Test passed · exit code 0',
+        previousStop: false,
+        nextStop: false,
+      }
+      const unverifiedNodeSection = {
+        ...nodeSection,
+        notRecorded: 'Source and debugger not recorded at this moment.',
+        unverified: 'Recorded source unavailable for this stop.',
+      }
       await publish({
         ...replay,
+        nodeHistorySection: nodeSection,
         nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: true },
       })
       const nodeWithoutValues = {
@@ -1257,6 +1278,7 @@ async function check(page, options, collected) {
       }
       await publish({
         ...replay,
+        nodeHistorySection: nodeSection,
         nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: false },
       })
       const nodeWithValues = {
@@ -1267,42 +1289,56 @@ async function check(page, options, collected) {
         name: 'a saved Node stop without native values shows the Run and Debug hint in its own muted status until values load',
         actual: { nodeWithoutValues, nodeWithValues },
         passed:
-          nodeWithoutValues.position ===
-            'Debugger stop 1 · 1.20 s · output shown through this event.' &&
+          nodeWithoutValues.position === 'Stop 1 of 1 · 1.20 s' &&
           nodeWithoutValues.hint ===
             'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.' &&
           nodeWithoutValues.role === 'status' &&
           nodeWithoutValues.muted &&
-          nodeWithValues.position ===
-            'Debugger stop 1 · 1.20 s · output shown through this event.' &&
+          nodeWithValues.position === 'Stop 1 of 1 · 1.20 s' &&
           nodeWithValues.hint === '',
       })
+      /** Reads the test replay section's position and the two lines that say what is not recorded. */
+      const nodeMomentLines = async () => ({
+        position: await page.locator('#node-history-position').textContent(),
+        notRecorded: await page
+          .locator('#node-history-not-recorded')
+          .textContent(),
+        unverified: await page
+          .locator('#node-history-unverified')
+          .textContent(),
+      })
       await publish({
         ...replay,
+        nodeHistorySection: nodeSection,
         nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
       })
-      const nodeSessionEnded = await page
-        .locator('#node-history-position')
-        .textContent()
+      const nodeSessionEnded = await nodeMomentLines()
       await publish({
         ...replay,
+        nodeHistorySection: unverifiedNodeSection,
         nodeHistoryPosition: {
           ...nodeStop,
           sourceAvailable: false,
           debuggerAvailable: false,
         },
       })
-      const nodeSourceMismatch = await page
-        .locator('#node-history-position')
-        .textContent()
+      const nodeSourceMismatch = await nodeMomentLines()
       cases.push({
-        name: 'a saved Node stop whose native session ended keeps its source label, and only a real source mismatch says captured source unavailable',
+        name: 'a saved test replay stop whose native session ended keeps its position line, and only a real source mismatch shows the unavailable-source and not-recorded lines',
         actual: { nodeSessionEnded, nodeSourceMismatch },
         passed:
-          nodeSessionEnded ===
-            'Debugger stop 1 · 1.20 s · output shown through this event.' &&
-          nodeSourceMismatch ===
-            'Debugger stop 1 · captured source unavailable · 1.20 s · output shown through this event.',
+          JSON.stringify(nodeSessionEnded) ===
+            JSON.stringify({
+              position: 'Stop 1 of 1 · 1.20 s',
+              notRecorded: '',
+              unverified: '',
+            }) &&
+          JSON.stringify(nodeSourceMismatch) ===
+            JSON.stringify({
+              position: 'Stop 1 of 1 · 1.20 s',
+              notRecorded: 'Source and debugger not recorded at this moment.',
+              unverified: 'Recorded source unavailable for this stop.',
+            }),
       })
       // Arrange: the Node history reader alone, with its selected stop shown by the native session.
       const nodeReader = {
@@ -1371,6 +1407,7 @@ async function check(page, options, collected) {
       // Act: the selected stop's captured source no longer matches its recorded hash.
       await publish({
         ...nodeReader,
+        nodeHistorySection: unverifiedNodeSection,
         nodeHistoryPosition: {
           ...nodeStop,
           sourceAvailable: false,
@@ -1379,7 +1416,9 @@ async function check(page, options, collected) {
       })
       // Counted and read without waiting, so a missing element is a failed case instead of a harness timeout.
       const sourceMismatch = {
-        position: await page.locator('#node-history-position').textContent(),
+        unverified: await page
+          .locator('#node-history-unverified')
+          .textContent(),
         inspectButtons: await nodeInspect.count(),
         explanation: await page
           .locator('#node-history-events .node-history-event p.muted')
@@ -1389,8 +1428,8 @@ async function check(page, options, collected) {
         name: 'a selected Node stop whose captured source does not match offers no Inspect in native debugger',
         actual: sourceMismatch,
         passed:
-          sourceMismatch.position ===
-            'Debugger stop 1 · captured source unavailable · 1.20 s · output shown through this event.' &&
+          sourceMismatch.unverified ===
+            'Recorded source unavailable for this stop.' &&
           sourceMismatch.inspectButtons === 0 &&
           sourceMismatch.explanation.join('|') ===
             'Matching captured source is unavailable for native debugging.',
@@ -1450,10 +1489,13 @@ async function check(page, options, collected) {
           unselectedMismatch.explanation.join('|') ===
             'Matching captured source is unavailable for native debugging.',
       })
-      // Arrange: keyboard focus on the selected stop's Inspect (Cycle 0044, 0033-OCR4).
+      // Arrange: keyboard focus on the selected stop's Inspect (Cycle 0044, 0033-OCR4), in the event list the learner expanded (DS16 collapses it).
       await publish({
         ...nodeReader,
         nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      await page.locator('#node-history-events-details').evaluate((details) => {
+        details.open = true
       })
       await nodeInspect.focus()
       const stopRequestsBefore = await page.evaluate(
@@ -1690,6 +1732,505 @@ async function check(page, options, collected) {
           cardOverflow.cardTextLength === 400 &&
           cardOverflow.scrollWidth === cardOverflow.clientWidth,
       })
+
+      // Arrange: a test replay of two outputs, one stop and its passing result, with saved learning whose two steps share the stop; every line is worded by the host, as projectNodeTestSection words it (Design 8, red first).
+      const replayHash = 'b'.repeat(64)
+      const replayEntries = [
+        {
+          type: 'output',
+          sequence: 1,
+          elapsedMs: 100,
+          channel: 'stdout',
+          text: 'RUN src/jobs.test.ts\n',
+        },
+        {
+          type: 'output',
+          sequence: 2,
+          elapsedMs: 150,
+          channel: 'stderr',
+          text: 'slow timer\n',
+        },
+        {
+          type: 'stop',
+          sequence: 3,
+          index: 0,
+          elapsedMs: 420,
+          source: {
+            path: 'src/jobs.ts',
+            hash: replayHash,
+            line: 12,
+            column: 5,
+          },
+          frame: { name: 'schedule', line: 12, column: 5 },
+          facts: [],
+          debuggerSnapshot: {
+            frames: [
+              {
+                line: 12,
+                column: 5,
+                source: { name: 'src/jobs.ts', hash: replayHash, line: 12 },
+              },
+            ],
+            variables: [],
+          },
+        },
+        {
+          type: 'result',
+          sequence: 4,
+          elapsedMs: 900,
+          exitCode: 0,
+          signal: null,
+          outputTail: '',
+        },
+      ]
+      const replayLearning = {
+        content: {
+          question: 'How does the scheduler delay a job?',
+          title:
+            'How the job scheduler delays a job until its timer fires and then runs it exactly once',
+          summary:
+            'The test schedules a job and checks that it runs after its timer.',
+          participants: [
+            { id: 'test', label: 'Job test' },
+            { id: 'scheduler', label: 'schedule' },
+            { id: 'timer', label: 'Timer' },
+          ],
+          steps: [
+            {
+              id: 'read',
+              from: 'test',
+              to: 'scheduler',
+              label: 'Read the delay',
+              explanation: 'The stop shows the delay of 5,000 ms.',
+              evidence: 'observed',
+              reference: { type: 'stop', sequence: 3, sourceHash: replayHash },
+            },
+            {
+              id: 'keep',
+              from: 'scheduler',
+              to: 'timer',
+              label: 'Keep the timer',
+              explanation: 'The scheduler keeps the timer it created.',
+              evidence: 'source-derived',
+              reference: { type: 'stop', sequence: 3, sourceHash: replayHash },
+            },
+            {
+              id: 'verdict',
+              from: 'timer',
+              to: 'test',
+              label: 'Pass',
+              explanation: 'The job ran after its timer, so the test passed.',
+              evidence: 'observed',
+              reference: { type: 'result', sequence: 4 },
+            },
+          ],
+        },
+        positions: [
+          { stepId: 'read', elapsedMs: 420, sequence: 3 },
+          { stepId: 'keep', elapsedMs: 420, sequence: 3 },
+          { stepId: 'verdict', elapsedMs: 900, sequence: 4 },
+        ],
+      }
+      const replaySection = {
+        status:
+          'Test passed · exit code 0 · capture complete · 1 of 1 stops explained',
+        pointer: 'Output up to this moment is in the Application pane.',
+        applicationClosed: false,
+        sameMomentStepIds: [],
+        stepActions: {
+          read: 'Inspect stop 1 · 0.42 s',
+          keep: 'Inspect stop 1 · 0.42 s',
+          verdict: 'Inspect result · 0.90 s',
+        },
+        events: 'Events (4)',
+        verdict: 'Test passed · exit code 0',
+      }
+      const notRecordedLine = 'Source and debugger not recorded at this moment.'
+      /** The Study message of the job scheduler's test replay at one selected event. */
+      const testReplayAt = (position, section, mode = 'paused') => ({
+        ...nodeReader,
+        nodeHistoryEventCount: 4,
+        nodeHistory: {
+          header: { studyId: 'job-study' },
+          status: 'complete',
+          entries: replayEntries,
+        },
+        nodeHistoryLearningSummary: replayLearning,
+        nodeHistoryPosition: position,
+        nodeHistorySection: { ...replaySection, ...section },
+        nodeHistoryPlayback: {
+          mode,
+          sequence: position.sequence,
+          positionMs: position.elapsedMs,
+          startMs: 100,
+          endMs: 900,
+          loading: false,
+        },
+      })
+      const atFirstOutput = testReplayAt(
+          { sequence: 1, type: 'output', eventIndex: 0, elapsedMs: 100 },
+          {
+            position: 'Output · 0.10 s',
+            notRecorded: notRecordedLine,
+            previousStop: false,
+            nextStop: true,
+          },
+        ),
+        atStop = testReplayAt(
+          {
+            sequence: 3,
+            type: 'stop',
+            index: 0,
+            eventIndex: 2,
+            elapsedMs: 420,
+            sourceAvailable: true,
+            debuggerAvailable: true,
+          },
+          {
+            position: 'Stop 1 of 1 · 0.42 s',
+            explanation: 'The stop shows the delay of 5,000 ms.',
+            selectedStepId: 'read',
+            sameMomentStepIds: ['keep'],
+            previousStop: false,
+            nextStop: false,
+          },
+        ),
+        atResult = testReplayAt(
+          { sequence: 4, type: 'result', eventIndex: 3, elapsedMs: 900 },
+          {
+            position: 'Result · Test passed · exit code 0 · 0.90 s',
+            explanation: 'The job ran after its timer, so the test passed.',
+            notRecorded: notRecordedLine,
+            selectedStepId: 'verdict',
+            previousStop: true,
+            nextStop: false,
+          },
+        )
+      /** Reads the section's lines, the step marked current and the steps marked as the same recorded moment. */
+      const replaySectionLines = () =>
+        page.evaluate(() => ({
+          position: document.getElementById('node-history-position')
+            .textContent,
+          explanation: document.getElementById('node-history-explanation')
+            .textContent,
+          notRecorded: document.getElementById('node-history-not-recorded')
+            .textContent,
+          current: Array.from(
+            document.querySelectorAll(
+              '#node-learning-steps [data-node-step][aria-current="true"]',
+            ),
+            (control) => control.dataset.nodeStep,
+          ),
+          sameMoment: Array.from(
+            document.querySelectorAll(
+              '#node-learning-steps .same-moment:not([hidden])',
+            ),
+            (note) =>
+              note.parentElement.querySelector('[data-node-step]').dataset
+                .nodeStep,
+          ),
+          stepControls: document.querySelectorAll(
+            '#node-learning-steps [data-node-step]',
+          ).length,
+        }))
+      // Act: the replay opens on its first output, then shows the stop and the result.
+      await page.setViewportSize({ width: 600, height: 800 })
+      await publish(atFirstOutput)
+      const firstOutputLines = await replaySectionLines()
+      await publish(atStop)
+      const stopLines = await replaySectionLines()
+      await publish(atResult)
+      const resultLines = await replaySectionLines()
+      // Assert
+      cases.push({
+        name: 'a test replay section shows each moment’s locator, explanation and not-recorded line, marks exactly the selected step current and names the other steps of its moment (Design 8)',
+        actual: { firstOutputLines, stopLines, resultLines },
+        passed:
+          JSON.stringify({ firstOutputLines, stopLines, resultLines }) ===
+          JSON.stringify({
+            firstOutputLines: {
+              position: 'Output · 0.10 s',
+              explanation: '',
+              notRecorded: notRecordedLine,
+              current: [],
+              sameMoment: [],
+              stepControls: 3,
+            },
+            stopLines: {
+              position: 'Stop 1 of 1 · 0.42 s',
+              explanation: 'The stop shows the delay of 5,000 ms.',
+              notRecorded: '',
+              current: ['read'],
+              sameMoment: ['keep'],
+              stepControls: 3,
+            },
+            resultLines: {
+              position: 'Result · Test passed · exit code 0 · 0.90 s',
+              explanation: 'The job ran after its timer, so the test passed.',
+              notRecorded: notRecordedLine,
+              current: ['verdict'],
+              sameMoment: [],
+              stepControls: 3,
+            },
+          }),
+      })
+      // Arrange: the keyboard alone, from the opened replay (DS17): Step details, a step of the stop, Next stop, Previous stop, a seek and Pause.
+      await publish(atFirstOutput)
+      await page.evaluate(() => {
+        window.sent = []
+      })
+      // Act
+      await toggleByKeyboard('node-learning-steps-details')
+      await page.locator('#node-learning-steps [data-node-step="keep"]').focus()
+      await page.keyboard.press('Enter')
+      await page.locator('#node-history-stop-next').focus()
+      await page.keyboard.press('Enter')
+      await publish(atResult)
+      await page.locator('#node-history-stop-previous').focus()
+      await page.keyboard.press('Enter')
+      await publish(atStop)
+      await page.locator('#node-history-playhead').focus()
+      await page.keyboard.press('End')
+      await publish(
+        testReplayAt(
+          atStop.nodeHistoryPosition,
+          atStop.nodeHistorySection,
+          'playing',
+        ),
+      )
+      await page.locator('#node-history-playback-toggle').focus()
+      await page.keyboard.press('Enter')
+      const keyboardRequests = await page.evaluate(() =>
+        window.sent
+          .filter((message) => message.type.startsWith('node-history'))
+          .map(({ type, sequence, stepId, direction, unit, action }) => ({
+            type,
+            sequence,
+            stepId,
+            direction,
+            unit,
+            action,
+          })),
+      )
+      // Assert
+      cases.push({
+        name: 'the keyboard alone opens Step details, selects a step of the stop, moves by Next stop and Previous stop, seeks and pauses a test replay (Design 8)',
+        actual: keyboardRequests,
+        passed:
+          JSON.stringify(keyboardRequests) ===
+          JSON.stringify([
+            { type: 'node-history-event', sequence: 3, stepId: 'keep' },
+            { type: 'node-history-step', direction: 'next', unit: 'stop' },
+            { type: 'node-history-step', direction: 'previous', unit: 'stop' },
+            { type: 'node-history-playback', action: 'seek' },
+            { type: 'node-history-playback', action: 'pause' },
+          ]),
+      })
+      /** Counts the rendered lines of an element by the height of a one-word copy of it, so a clamp to two lines is measured as the learner sees it. */
+      const renderedLines = (shownIn, selector) =>
+        shownIn.evaluate((selector) => {
+          const shown = document.querySelector(selector),
+            probe = shown.cloneNode(false)
+          probe.removeAttribute('id')
+          probe.textContent = 'X'
+          shown.after(probe)
+          const lines = Math.round(
+            shown.getBoundingClientRect().height /
+              probe.getBoundingClientRect().height,
+          )
+          probe.remove()
+          return lines
+        }, selector)
+      // Act: the stop's section at three widths (DS19).
+      await publish(atStop)
+      const studyWidths = []
+      for (const width of [320, 480, 760]) {
+        await page.setViewportSize({ width, height: 720 })
+        studyWidths.push({
+          width,
+          ...(await page.evaluate(() => {
+            const diagram = document.querySelector(
+              '#node-learning-sequence .sequence-diagram',
+            )
+            return {
+              pageScrolls:
+                document.documentElement.scrollWidth >
+                document.documentElement.clientWidth,
+              diagramFitsOrScrollsInside:
+                diagram.scrollWidth <= diagram.clientWidth ||
+                getComputedStyle(diagram).overflowX === 'auto',
+            }
+          })),
+          titleLines: await renderedLines(page, '#node-learning-title'),
+        })
+      }
+      await page.setViewportSize({ width: 600, height: 800 })
+      await page.locator('#node-learning-steps-details').evaluate((details) => {
+        details.open = false
+      })
+      // Assert
+      cases.push({
+        name: 'a test replay section at 320, 480 and 760 px has no page-level horizontal scroll, a title of at most two lines and a sequence diagram that scrolls inside itself (Design 8)',
+        actual: studyWidths,
+        passed: studyWidths.every(
+          (reading) =>
+            !reading.pageScrolls &&
+            reading.diagramFitsOrScrollsInside &&
+            reading.titleLines >= 1 &&
+            reading.titleLines <= 2,
+        ),
+      })
+      // Arrange: the Application pane's document of the same replay at its first output (Design 3), in a page of its own with its saved webview state; the Study page stays as it is for the cases that follow.
+      const applicationPage = await page.context().newPage()
+      await applicationPage.setViewportSize({ width: 760, height: 360 })
+      await applicationPage.goto(options.url)
+      await applicationPage.evaluate(() => {
+        window.sent = []
+        window.savedState = undefined
+        window.acquireVsCodeApi = () => ({
+          getState: () => window.savedState,
+          setState(state) {
+            window.savedState = state
+          },
+          postMessage: (message) => window.sent.push(message),
+        })
+      })
+      await applicationPage.setContent(options.html.application)
+      const twoFrames = () =>
+        applicationPage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      await twoFrames()
+      const firstOutputDocument = await applicationPage.evaluate(() => ({
+        time: document.getElementById('test-output-time').textContent,
+        lines: Array.from(
+          document.querySelectorAll('#test-output .output-text'),
+          (line) => line.textContent,
+        ).length,
+        firstLine: document.querySelector('#test-output .output-text')
+          ?.textContent,
+        endHidden: document.getElementById('test-output-end').hidden,
+      }))
+      // Act: the learner scrolls up, selects a line and leaves the keyboard in the output; the host then posts the result's view, and a late older one.
+      await applicationPage.evaluate(() => {
+        document.getElementById('test-output').scrollTop = 0
+      })
+      await twoFrames()
+      await applicationPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        getSelection().selectAllChildren(
+          output.querySelectorAll('.output-text')[4],
+        )
+        output.focus()
+      })
+      await applicationPage.evaluate((views) => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'node-history-output',
+              generation: 2,
+              view: views.result,
+            },
+          }),
+        )
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'node-history-output',
+              generation: 1,
+              view: views.first,
+            },
+          }),
+        )
+      }, options.testReplayViews)
+      await twoFrames()
+      const afterUpdate = await applicationPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        return {
+          scrollTop: output.scrollTop,
+          selection: getSelection().toString(),
+          focused: document.activeElement?.id,
+          lines: output.querySelectorAll('.output-line').length,
+          stderrMarks: output.querySelectorAll('.stderr-mark').length,
+          end: document.getElementById('test-output-end').textContent,
+          time: document.getElementById('test-output-time').textContent,
+          jumpShown: !document.getElementById('test-output-jump').hidden,
+        }
+      })
+      // Act: Jump to latest by keyboard.
+      await applicationPage.locator('#test-output-jump').focus()
+      await applicationPage.keyboard.press('Enter')
+      await twoFrames()
+      const afterJump = await applicationPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        return {
+          atEnd:
+            output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
+          jumpShown: !document.getElementById('test-output-jump').hidden,
+          focused: document.activeElement?.id,
+          follow: window.savedState?.testOutputFollow,
+        }
+      })
+      // Assert
+      cases.push({
+        name: 'the Application document of a test replay shows only the output up to its moment, and an in-place update to the result keeps the learner’s scroll position, selection and focus, ignores an older view and returns to the end with Jump to latest (Design 8)',
+        actual: { firstOutputDocument, afterUpdate, afterJump },
+        passed:
+          JSON.stringify({ firstOutputDocument, afterUpdate, afterJump }) ===
+          JSON.stringify({
+            firstOutputDocument: {
+              time: 'Recorded test output · 0.10 s',
+              lines: 40,
+              firstLine: 'RUN src/jobs.test.ts',
+              endHidden: true,
+            },
+            afterUpdate: {
+              scrollTop: 0,
+              selection: 'job 4 scheduled',
+              focused: 'test-output',
+              lines: 41,
+              stderrMarks: 1,
+              end: 'Test passed · exit code 0',
+              time: 'Recorded test output · 0.90 s',
+              jumpShown: true,
+            },
+            afterJump: {
+              atEnd: true,
+              jumpShown: false,
+              focused: 'test-output',
+              follow: true,
+            },
+          }),
+      })
+      // Act: the Application document at three widths (DS19).
+      const applicationWidths = []
+      for (const width of [320, 480, 760]) {
+        await applicationPage.setViewportSize({ width, height: 360 })
+        applicationWidths.push({
+          width,
+          pageScrolls: await applicationPage.evaluate(
+            () =>
+              document.documentElement.scrollWidth >
+              document.documentElement.clientWidth,
+          ),
+          testLines: await renderedLines(applicationPage, '#test-output-test'),
+        })
+      }
+      await applicationPage.close()
+      // Assert
+      cases.push({
+        name: 'the Application document of a test replay at 320, 480 and 760 px has no page-level horizontal scroll and a test name of at most two lines (Design 8)',
+        actual: applicationWidths,
+        passed: applicationWidths.every(
+          (reading) =>
+            !reading.pageScrolls &&
+            reading.testLines >= 1 &&
+            reading.testLines <= 2,
+        ),
+      })
       await publish({
         ...replay,
         recording: {
@@ -1806,6 +2347,15 @@ async function check(page, options, collected) {
           !diagram.invented &&
           diagram.links === 2 &&
           diagram.summary.includes('<script>'),
+      })
+      // Golden DOM (Design 5, AC14): the browser's saved sequence renders the markup it rendered before the summary renderer was shared with test replays.
+      const sequenceMarkup = await page.evaluate(
+        () => document.getElementById('learning-sequence').innerHTML,
+      )
+      cases.push({
+        name: 'the saved learning sequence of a browser replay renders the same markup as before its renderer was shared with test replays',
+        actual: sequenceMarkup,
+        passed: sequenceMarkup === options.goldenLearningSequence,
       })
       await page.screenshot({
         path: `${options.output}/saved-learning-sequence.png`,
@@ -2884,9 +3434,13 @@ async function check(page, options, collected) {
         focused: document.activeElement.id,
         label: document.activeElement.textContent,
       }))
-      // Act: a Node test history with a single event, whose transport has no usable control.
+      // Act: a Node test history with a single event, whose transport has no usable control, with its event list collapsed as it opens (DS16).
+      await page.locator('#node-history-events-details').evaluate((details) => {
+        details.open = false
+      })
       const singleEvent = {
         ...nodeReader,
+        nodeHistorySection: nodeSection,
         revision: revisionAt(15),
         nodeHistoryPlayback: {
           mode: 'paused',
@@ -2934,8 +3488,8 @@ async function check(page, options, collected) {
           focusWhileLoading.focused === 'playback-toggle' &&
           focusWhileLoading.label === 'Pause' &&
           focusWithSingleEvent.transportDisabled &&
-          focusWithSingleEvent.focused === 'Selected event' &&
-          focusWithSingleEvent.focusedSequence === '2',
+          focusWithSingleEvent.focused === 'Events (1)' &&
+          focusWithSingleEvent.focusedSequence === undefined,
       })
       await publish({ ...replay, revision: revisionAt(10) })
     } else {
@@ -3342,6 +3896,20 @@ async function check(page, options, collected) {
           endMs: 1000,
           positionMs: 0,
         },
+        nodeHistorySection: {
+          status:
+            'No result recorded · capture complete · 0 of 0 stops explained',
+          position: 'Output · 0.00 s',
+          notRecorded: 'Source and debugger not recorded at this moment.',
+          pointer: 'Output up to this moment is in the Application pane.',
+          applicationClosed: false,
+          sameMomentStepIds: [],
+          stepActions: {},
+          events: 'Events (2)',
+          verdict: 'No result recorded',
+          previousStop: false,
+          nextStop: false,
+        },
       }
       await publish({
         ...panelReplay,
@@ -3352,7 +3920,7 @@ async function check(page, options, collected) {
       const nodeDuringApplicationReplay = {
         regions: [
           await statusRegion('node-history-status'),
-          await statusRegion('node-history-position'),
+          await statusRegion('node-history-moment'),
           await statusRegion('node-history-hint'),
         ],
         height: await page
@@ -3397,7 +3965,7 @@ async function check(page, options, collected) {
             JSON.stringify({
               regions: [
                 { ...emptyRegion('node-history-status'), role: 'status/null' },
-                emptyRegion('node-history-position'),
+                emptyRegion('node-history-moment'),
                 emptyRegion('node-history-hint'),
               ],
               height: 0,
@@ -3410,7 +3978,7 @@ async function check(page, options, collected) {
           JSON.stringify(nodeAfterApplicationReplay) ===
             JSON.stringify({
               status:
-                'complete · 2 verified events. Test output, executed source and recorded debugger stops; no application video.',
+                'No result recorded · capture complete · 0 of 0 stops explained',
               nodePlayVisible: true,
               nodePlayEnabled: true,
               nodeTimelineVisible: true,
@@ -6653,6 +7221,42 @@ function wikiShellPage(shell) {
   })
 }
 
+// The job scheduler's test replay in the Application pane (Design 8): its first output, forty lines so the region scrolls, then its result, with a test name long enough to wrap; worded as projectNodeTestApplication words them.
+const replayTestName =
+  'src/jobs.test.ts › job scheduler › runs a delayed job after its timer even when the clock jumps forward by more than one interval'
+const replayFirstLines = [
+  { channel: 'stdout', text: 'RUN src/jobs.test.ts', number: 0 },
+  ...Array.from({ length: 39 }, (_, index) => ({
+    channel: 'stdout',
+    text: `job ${index + 1} scheduled`,
+    number: index + 1,
+  })),
+]
+const testReplayViews = {
+  first: {
+    generation: 1,
+    state: 'event',
+    time: 'Recorded test output · 0.10 s',
+    test: replayTestName,
+    name: `Recorded test output · ${replayTestName} · 0.10 s`,
+    region: 'Recorded test output up to 0.10 s',
+    lines: replayFirstLines,
+  },
+  result: {
+    generation: 2,
+    state: 'event',
+    time: 'Recorded test output · 0.90 s',
+    test: replayTestName,
+    name: `Recorded test output · ${replayTestName} · 0.90 s`,
+    region: 'Recorded test output up to 0.90 s',
+    lines: [
+      ...replayFirstLines,
+      { channel: 'stderr', text: 'slow timer', number: 40 },
+    ],
+    end: 'Test passed · exit code 0',
+  },
+}
+
 const report = {
   mode,
   qualification:
@@ -6675,7 +7279,15 @@ try {
   await writeFile(
     flowPath,
     readerDomFlowText(check, {
-      html: { context: studyHtml('context'), moments: studyHtml('moments') },
+      html: {
+        context: studyHtml('context'),
+        moments: studyHtml('moments'),
+        application: capturedAppHtml({
+          ...message,
+          nodeHistoryApplication: testReplayViews.first,
+        }),
+      },
+      testReplayViews,
       // With LF line endings, as the publisher writes a page and a browser hashes its script, also from a checkout that holds the shell with CRLF.
       wikiShell: wikiShellPage(
         (
@@ -6685,6 +7297,13 @@ try {
           )
         ).replace(/\r\n?/g, '\n'),
       ),
+      // The browser sequence's markup before the shared renderer (Design 5): a text fixture, which the formatter leaves as it is.
+      goldenLearningSequence: (
+        await readFile(
+          new URL('./fixtures/learning-sequence-golden.txt', import.meta.url),
+          'utf8',
+        )
+      ).trimEnd(),
       message,
       output,
       url: `http://127.0.0.1:${server.address().port}/`,

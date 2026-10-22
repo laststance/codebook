@@ -21,6 +21,9 @@ import type { StudyDescriptor } from '../utils/describeStudy'
 import { installPaneFocusMemory } from '../utils/installPaneFocusMemory'
 import { installShortcutHelp } from '../utils/installShortcutHelp'
 import type { projectLearningSummary } from '../utils/projectLearningSummary'
+import type { NodeLearningSummaryProjection } from '../utils/projectNodeLearningSummary'
+import type { NodeTestApplicationView } from '../utils/projectNodeTestApplication'
+import type { NodeTestSectionView } from '../utils/projectNodeTestSection'
 import type { ShownInterpretation } from '../utils/projectRecording'
 import type { OpenRequestSettled } from '../utils/readOpenRequest'
 import { savedLaterNote } from '../utils/savedLaterNote'
@@ -138,7 +141,12 @@ export interface StudyViewMessage {
     debuggerAvailable?: boolean
     nativeValuesUninspected?: boolean
   }
-  nodeHistoryOutput?: string
+  /** The Application pane's view of the selected test replay at the selected event (Design 3); the pane is its one output surface. */
+  nodeHistoryApplication?: NodeTestApplicationView
+  /** The Study pane's test replay section, every line already worded (Designs 5 and 6). */
+  nodeHistorySection?: NodeTestSectionView
+  /** The test replay's learning material for the one summary renderer, each referenced step with its event (Design 5). */
+  nodeHistoryLearningSummary?: NodeLearningSummaryProjection
   contentTab?: 'overview' | 'live' | 'recording'
   playbackPanelVisible?: boolean
   presentation?: PresentationState
@@ -202,7 +210,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2>Node test history</h2><p class="muted">Step through a saved test replay selected in Saved studies. Captured source and native debugger state appear only at verified stops; output and result events clear debugger state. A test replay has no application video.</p><p id="node-history-status" class="status" role="status"></p><p id="node-history-position" class="status" role="status" aria-live="polite"></p><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Node test learning sequence"></div><p class="muted">This learning material describes the saved test journal; it records no application video.</p></section><div class="playback-row"><button id="node-history-playback-toggle" class="primary" type="button" data-node-history-playback="play">Play</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><p class="muted">Timeline follows recorded test events; a test replay has no application video.</p><pre id="node-history-output" aria-label="Recorded test output through selected event"></pre><div class="row"><button id="node-history-moment-previous" type="button">Previous event</button><button id="node-history-moment-next" type="button">Next event</button><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></section>
+<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="arrange">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
 <section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
@@ -472,13 +480,23 @@ function studyClient(
     )
       return
     if (target.dataset.nodeHistorySequence && current?.nodeHistory) {
-      send({
-        type: target.dataset.inspectNodeHistoryStop
-          ? 'node-history-stop'
-          : 'node-history-event',
-        studyId: current.nodeHistory.header.studyId,
-        sequence: Number(target.dataset.nodeHistorySequence),
-      })
+      // A summary step's action selects its event and that step (DS21); an Inspect selects the stop in the native debugger.
+      send(
+        target.dataset.inspectNodeHistoryStop
+          ? {
+              type: 'node-history-stop',
+              studyId: current.nodeHistory.header.studyId,
+              sequence: Number(target.dataset.nodeHistorySequence),
+            }
+          : {
+              type: 'node-history-event',
+              studyId: current.nodeHistory.header.studyId,
+              sequence: Number(target.dataset.nodeHistorySequence),
+              ...(target.dataset.nodeStep
+                ? { stepId: target.dataset.nodeStep }
+                : {}),
+            },
+      )
     } else if (target.dataset.nodeHistoryPlayback) {
       nodeHistoryPlayback(
         target.dataset.nodeHistoryPlayback as 'play' | 'pause',
@@ -621,22 +639,36 @@ function studyClient(
         page: (current.nodeHistoryPage ?? 0) + 1,
       })
   })
-  element('node-history-moment-previous').addEventListener('click', () => {
+  /**
+   * Asks the host to move the test replay to the previous or next event, or stop (DS12); sent by the transport's Previous stop, Next stop, Previous event and Next event.
+   * @param direction - Which way to move.
+   * @param unit - `stop` moves to a stop, `event` to any event.
+   * @example stepTestReplay('next', 'stop')
+   */
+  const stepTestReplay = (
+    direction: 'previous' | 'next',
+    unit: 'event' | 'stop',
+  ): void => {
     if (current?.nodeHistory)
       send({
         type: 'node-history-step',
         studyId: current.nodeHistory.header.studyId,
-        direction: 'previous',
+        direction,
+        unit,
       })
-  })
-  element('node-history-moment-next').addEventListener('click', () => {
-    if (current?.nodeHistory)
-      send({
-        type: 'node-history-step',
-        studyId: current.nodeHistory.header.studyId,
-        direction: 'next',
-      })
-  })
+  }
+  element('node-history-stop-previous').addEventListener('click', () =>
+    stepTestReplay('previous', 'stop'),
+  )
+  element('node-history-stop-next').addEventListener('click', () =>
+    stepTestReplay('next', 'stop'),
+  )
+  element('node-history-moment-previous').addEventListener('click', () =>
+    stepTestReplay('previous', 'event'),
+  )
+  element('node-history-moment-next').addEventListener('click', () =>
+    stepTestReplay('next', 'event'),
+  )
   const nodePlayhead = element('node-history-playhead') as HTMLInputElement
   nodePlayhead.addEventListener('input', () => {
     nodeHistoryScrubbing = true
@@ -1664,7 +1696,7 @@ function studyClient(
     control.hidden = !isOffered
   }
   /**
-   * Finds the control that takes the focus of a Show Variables button that left: the first preferred transport control that is shown and enabled (Play can be disabled at a recording's end or on a history's last event), else the first such control of the section.
+   * Finds the control that takes the focus of a Show Variables button that left: the first preferred transport control that is shown and enabled (Play can be disabled at a recording's end or on a history's last event), else the first such control of the section. A preferred disclosure summary counts too (a test replay's collapsed event list, whose selected event is not shown).
    * @param owed - The button that left, the preferred selectors and the section.
    * @returns The control, or nothing when the section shows no enabled control.
    * @example usableTransportControl(transportFocusOwed)?.id // => 'playback-toggle'
@@ -1676,12 +1708,19 @@ function studyClient(
       ...owed.preferred.map((selector) => document.querySelector(selector)),
       ...Array.from(element(owed.section).querySelectorAll('button,input')),
     ].find(
-      (control): control is HTMLButtonElement | HTMLInputElement =>
+      (control): control is HTMLElement =>
         (control instanceof HTMLButtonElement ||
-          control instanceof HTMLInputElement) &&
+          control instanceof HTMLInputElement ||
+          (control instanceof HTMLElement &&
+            control.localName === 'summary')) &&
         control !== owed.leaving &&
-        !control.disabled &&
-        control.getClientRects().length > 0,
+        !(
+          (control instanceof HTMLButtonElement ||
+            control instanceof HTMLInputElement) &&
+          control.disabled
+        ) &&
+        // Shown: a control inside a closed disclosure still has boxes, and cannot take the focus.
+        control.checkVisibility(),
     )
   /** Moves the focus a Show Variables button left behind to its transport, once; called after a Study message was rendered while this document has the focus, and at the document's next focus event otherwise. A learner who already put the focus on another control keeps it. @example payTransportFocus() */
   const payTransportFocus = (): void => {
@@ -1906,6 +1945,114 @@ function studyClient(
     generalName: string,
   ): string => message.liveTitle ?? profileTitle ?? generalName
   /**
+   * Draws a saved learning sequence, a browser replay's and a test replay's alike (Design 5): the participants' lifelines, one numbered arrow per step, then the numbered steps with their evidence, explanation and action. Participant names and explanations are text nodes; agent-authored markup never becomes executable content.
+   * The browser replay passes its seek link as the action, a test replay its event selection; called for the Learning summary and the test replay section.
+   * @param content - The material's participants and steps.
+   * @param label - The diagram's accessible name.
+   * @param stepAction - Builds the node that follows a step's explanation.
+   * @returns The diagram, then the numbered step list.
+   * @example replace('learning-sequence', learning, () => sequenceView(learning.content, label, linkFor))
+   */
+  const sequenceView = <
+    Step extends {
+      id: string
+      from: string
+      to: string
+      label: string
+      explanation: string
+      evidence: string
+    },
+  >(
+    content: {
+      participants: readonly { id: string; label: string }[]
+      steps: readonly Step[]
+    },
+    label: string,
+    stepAction: (step: Step) => Node,
+  ): [visual: HTMLDivElement, steps: HTMLOListElement] => {
+    const namespace = 'http://www.w3.org/2000/svg',
+      diagram = document.createElementNS(namespace, 'svg')
+    const layout = options.sequence,
+      width = Math.max(
+        layout.minWidthPx,
+        content.participants.length * layout.columnWidthPx,
+      ),
+      height = layout.topPaddingPx + content.steps.length * layout.rowHeightPx
+    diagram.setAttribute('viewBox', `0 0 ${width} ${height}`)
+    diagram.setAttribute('width', String(width))
+    diagram.setAttribute('height', String(height))
+    diagram.setAttribute('role', 'img')
+    diagram.setAttribute('aria-label', label)
+    const column = (id: string) =>
+      layout.columnWidthPx / 2 +
+      content.participants.findIndex((value) => value.id === id) *
+        layout.columnWidthPx
+    for (const participant of content.participants) {
+      const x = column(participant.id),
+        name = document.createElementNS(namespace, 'text'),
+        line = document.createElementNS(namespace, 'line')
+      name.setAttribute('x', String(x))
+      name.setAttribute('y', String(layout.nameYpx))
+      name.setAttribute('text-anchor', 'middle')
+      for (
+        let offset = 0;
+        offset < participant.label.length;
+        offset += layout.nameChunkChars
+      ) {
+        const span = document.createElementNS(namespace, 'tspan')
+        span.setAttribute('x', String(x))
+        span.setAttribute('dy', String(offset ? layout.nameLineHeightPx : 0))
+        span.textContent = participant.label.slice(
+          offset,
+          offset + layout.nameChunkChars,
+        )
+        name.append(span)
+      }
+      line.setAttribute('x1', String(x))
+      line.setAttribute('x2', String(x))
+      line.setAttribute('y1', String(layout.lifelineYpx))
+      line.setAttribute('y2', String(height))
+      line.setAttribute('class', 'sequence-lifeline')
+      diagram.append(name, line)
+    }
+    const list = document.createElement('ol')
+    list.className = 'sequence-steps'
+    content.steps.forEach((step, index) => {
+      const x1 = column(step.from),
+        x2 = column(step.to),
+        y = layout.firstArrowYpx + index * layout.rowHeightPx,
+        arrow = document.createElementNS(namespace, 'path'),
+        number = document.createElementNS(namespace, 'text')
+      const direction = x2 >= x1 ? 1 : -1
+      arrow.setAttribute(
+        'd',
+        x1 === x2
+          ? `M ${x1} ${y} h ${layout.loopWidthPx} v ${layout.loopHeightPx} h ${-layout.loopWidthPx} m ${layout.arrowWidthPx} ${-layout.arrowHeightPx} l ${-layout.arrowWidthPx} ${layout.arrowHeightPx} l ${layout.arrowWidthPx} ${layout.arrowHeightPx}`
+          : `M ${x1} ${y} H ${x2} m ${-layout.arrowWidthPx * direction} ${-layout.arrowHeightPx} l ${layout.arrowWidthPx * direction} ${layout.arrowHeightPx} l ${-layout.arrowWidthPx * direction} ${layout.arrowHeightPx}`,
+      )
+      arrow.setAttribute('class', `sequence-arrow ${step.evidence}`)
+      number.setAttribute(
+        'x',
+        String((x1 + x2) / 2 + (x1 === x2 ? layout.loopHeightPx : 0)),
+      )
+      number.setAttribute('y', String(y - layout.numberGapPx))
+      number.setAttribute('text-anchor', 'middle')
+      number.textContent = `${index + 1}. ${step.label.slice(0, layout.nameChunkChars)}${step.label.length > layout.nameChunkChars ? '…' : ''}`
+      diagram.append(arrow, number)
+      const row = document.createElement('li'),
+        heading = document.createElement('strong'),
+        detail = document.createElement('p')
+      heading.textContent = `${step.label} · ${step.evidence}`
+      detail.textContent = step.explanation
+      row.append(heading, detail, stepAction(step))
+      list.append(row)
+    })
+    const visual = document.createElement('div')
+    visual.className = 'sequence-diagram'
+    visual.append(diagram)
+    return [visual, list]
+  }
+  /**
    * Says whether a Study message shows a replay in the bottom panel's pane, which shows one transport; read by {@link showsLiveStrip} and before the save state and unrelated Node history are written.
    * The live strip and the save state are left out there by keeping their status regions empty, not by taking them from the page: when the replay is left, the run's state and the save state are written into regions that exist. Both say how things stand at that moment, so their announcement then is no old news.
    * @param message - The current Study message.
@@ -1913,6 +2060,512 @@ function studyClient(
    */
   const isReplayInBottomPanel = (message: StudyViewMessage): boolean =>
     isBottomPanel && Boolean(message.recording)
+  /**
+   * Renders the Study pane's test replay section for a Study message (Designs 5 and 6, DS16): status, the selected moment and its explanation, the transport, the summary with the selected step, the learner's decision and the collapsed event list; called by the message listener, which holds no branch of the section's own.
+   * During a browser replay in the bottom panel the section's status regions stay empty and in the page.
+   * @param message - The current Study message.
+   * @param replaying - Whether a browser recording is shown, which disables the section's controls.
+   * @example renderTestReplay(message, false)
+   */
+  const renderTestReplay = (
+    message: StudyViewMessage,
+    replaying: boolean,
+  ): void => {
+    const suppressed = isReplayInBottomPanel(message)
+    const section = suppressed ? undefined : message.nodeHistorySection
+    renderTestReplayMoment(message, section, suppressed)
+    renderTestReplayTransport(message, section, replaying, suppressed)
+    renderTestReplayLearning(message, section, replaying)
+    renderTestReplayUnderstanding(message, replaying)
+    renderTestReplayEvents(message, section, replaying)
+  }
+  /**
+   * Writes the section's status, the selected moment's locator and explanation (one polite live region), the not-recorded lines, where the output is, and the values hint; called by {@link renderTestReplay}.
+   * @param message - The current Study message.
+   * @param section - The section's worded view, absent while suppressed or without a test replay.
+   * @param suppressed - Whether a browser replay holds the bottom panel.
+   * @example renderTestReplayMoment(message, message.nodeHistorySection, false)
+   */
+  const renderTestReplayMoment = (
+    message: StudyViewMessage,
+    section: StudyViewMessage['nodeHistorySection'],
+    suppressed: boolean,
+  ): void => {
+    const idle = suppressed
+      ? ''
+      : message.nodeHistoryCatalog?.length
+        ? options.testReplay.chooseReplay
+        : options.testReplay.noReplay
+    renderTestReplayLines(section, idle)
+    // A saved stop committed without native values keeps the same muted guidance row as replay, separate from the position facts.
+    const uninspected =
+      !suppressed &&
+      Boolean(message.nodeHistoryPosition?.nativeValuesUninspected)
+    text('node-history-hint', uninspected ? options.nativeValuesHint : '')
+    offerShowVariables(
+      'node-history-show-variables',
+      uninspected,
+      options.nodeTransportFocus,
+      'node-history',
+    )
+  }
+  /**
+   * Places the section's worded lines: status, locator, explanation, the not-recorded and unavailable-source lines, the output pointer and the closed pane's action; called by {@link renderTestReplayMoment}.
+   * @param section - The section's worded view, absent while suppressed or without a test replay.
+   * @param idle - The status line without a section.
+   * @example renderTestReplayLines(message.nodeHistorySection, '')
+   */
+  const renderTestReplayLines = (
+    section: StudyViewMessage['nodeHistorySection'],
+    idle: string,
+  ): void => {
+    text('node-history-status', section?.status ?? idle)
+    text(
+      'node-history-position',
+      section ? (section.position ?? options.testReplay.noSelection) : '',
+    )
+    text('node-history-explanation', section?.explanation ?? '')
+    text('node-history-not-recorded', section?.notRecorded ?? '')
+    text('node-history-unverified', section?.unverified ?? '')
+    text('node-history-pointer', section?.pointer ?? '')
+    element('node-history-closed').hidden = !section?.applicationClosed
+  }
+  /**
+   * Enables or disables a control of the section by its id; called by the transport's renderers.
+   * @param id - The control's id.
+   * @param disabled - Whether it is disabled.
+   * @example setDisabled('node-history-stop-next', true)
+   */
+  const setDisabled = (id: string, disabled: boolean): void => {
+    const control = element(id)
+    if (
+      control instanceof HTMLButtonElement ||
+      control instanceof HTMLInputElement
+    )
+      control.disabled = disabled
+  }
+  /**
+   * Sets the section's transport: Previous stop and Next stop first (DS12), Play or Pause, the time slider and Previous event and Next event; called by {@link renderTestReplay}.
+   * @param message - The current Study message.
+   * @param section - The section's worded view.
+   * @param replaying - Whether a browser recording is shown.
+   * @param suppressed - Whether a browser replay holds the bottom panel.
+   * @example renderTestReplayTransport(message, message.nodeHistorySection, false, false)
+   */
+  const renderTestReplayTransport = (
+    message: StudyViewMessage,
+    section: StudyViewMessage['nodeHistorySection'],
+    replaying: boolean,
+    suppressed: boolean,
+  ): void => {
+    const eventCount = message.nodeHistoryEventCount ?? 0,
+      selectedIndex = message.nodeHistoryPosition?.eventIndex ?? -1
+    const unavailable = !message.nodeHistory || suppressed || replaying
+    setDisabled(
+      'node-history-stop-previous',
+      unavailable || !section?.previousStop,
+    )
+    setDisabled('node-history-stop-next', unavailable || !section?.nextStop)
+    setDisabled(
+      'node-history-moment-previous',
+      unavailable || eventCount === 0 || selectedIndex === 0,
+    )
+    setDisabled(
+      'node-history-moment-next',
+      unavailable || eventCount === 0 || selectedIndex === eventCount - 1,
+    )
+    renderTestReplayToggle(
+      message,
+      suppressed,
+      eventCount > 0 && selectedIndex === eventCount - 1,
+    )
+    renderTestReplayPlayhead(
+      message.nodeHistoryPlayback,
+      !message.nodeHistory || replaying,
+    )
+  }
+  /**
+   * Sets Play or Pause: Pause while the replay plays, Play otherwise, which cannot start at the last event; called by {@link renderTestReplayTransport}.
+   * @param message - The current Study message.
+   * @param suppressed - Whether a browser replay holds the bottom panel.
+   * @param atLastEvent - Whether the last event is selected.
+   * @example renderTestReplayToggle(message, false, false)
+   */
+  const renderTestReplayToggle = (
+    message: StudyViewMessage,
+    suppressed: boolean,
+    atLastEvent: boolean,
+  ): void => {
+    const playbackState = message.nodeHistoryPlayback,
+      toggle = element('node-history-playback-toggle')
+    const playing = playbackState?.mode === 'playing'
+    toggle.dataset.nodeHistoryPlayback = playing ? 'pause' : 'play'
+    toggle.textContent = playing
+      ? options.testReplay.pause
+      : options.testReplay.play
+    setDisabled(
+      'node-history-playback-toggle',
+      !message.nodeHistory ||
+        suppressed ||
+        !playbackState?.sequence ||
+        playbackState.loading ||
+        (!playing && atLastEvent),
+    )
+  }
+  /**
+   * Places the section's time slider at the selected time, unless the learner is dragging it; called by {@link renderTestReplayTransport}.
+   * @param playbackState - The test replay's playback state.
+   * @param unavailable - Whether no test replay is shown or a browser recording is.
+   * @example renderTestReplayPlayhead(message.nodeHistoryPlayback, false)
+   */
+  const renderTestReplayPlayhead = (
+    playbackState: StudyViewMessage['nodeHistoryPlayback'],
+    unavailable: boolean,
+  ): void => {
+    const start = playbackState?.startMs,
+      end = playbackState?.endMs
+    const ranged = start !== undefined && end !== undefined
+    nodePlayhead.disabled =
+      unavailable || !ranged || start === end || Boolean(playbackState?.loading)
+    // A disabled playhead cannot be scrubbed, so a scrub interrupted by loading ends here.
+    if (nodePlayhead.disabled) nodeHistoryScrubbing = false
+    nodePlayhead.min = String(start ?? 0)
+    nodePlayhead.max = String(end ?? 0)
+    if (nodeHistoryScrubbing) return
+    nodePlayhead.value = String(
+      ranged ? (playbackState?.positionMs ?? start) : 0,
+    )
+    describeTestReplayPlayhead(playbackState?.positionMs)
+  }
+  /**
+   * Says the selected test time to assistive technology and beside the slider, never the raw millisecond value; called by {@link renderTestReplayPlayhead}.
+   * @param positionMs - The selected time, if any.
+   * @example describeTestReplayPlayhead(420)
+   */
+  const describeTestReplayPlayhead = (positionMs: number | undefined): void => {
+    nodePlayhead.setAttribute(
+      'aria-valuetext',
+      positionMs === undefined
+        ? 'No recorded test time selected'
+        : `${seconds(positionMs)} of recorded test time`,
+    )
+    text(
+      'node-history-playback-position',
+      positionMs === undefined
+        ? 'Test journal playback'
+        : `Recorded test time · ${(positionMs / options.secondMs).toFixed(2)} s`,
+    )
+  }
+  /**
+   * Draws the test replay's learning material with the one renderer the browser replay uses (Design 5): the diagram, the numbered steps under Step details, the selected step marked `aria-current` and the selected event's other steps marked `Same recorded moment` (DS21); without material, the line that none was saved. Called by {@link renderTestReplay}.
+   * @param message - The current Study message.
+   * @param section - The section's worded view.
+   * @param replaying - Whether a browser recording is shown.
+   * @example renderTestReplayLearning(message, message.nodeHistorySection, false)
+   */
+  const renderTestReplayLearning = (
+    message: StudyViewMessage,
+    section: StudyViewMessage['nodeHistorySection'],
+    replaying: boolean,
+  ): void => {
+    const learning = message.nodeHistoryLearningSummary
+    element('node-history-learning').hidden = !learning
+    element('node-history-no-material').hidden =
+      !message.nodeHistory || Boolean(learning)
+    if (!learning) {
+      // A message without material keeps no earlier replay's diagram or steps in the page, hidden or not.
+      renderKeys.delete('node-learning-sequence')
+      element('node-learning-sequence').replaceChildren()
+      element('node-learning-steps').replaceChildren()
+      return
+    }
+    text('node-learning-title', learning.content.title)
+    // The title is clamped to two lines (DS19); its tooltip keeps the whole sentence.
+    element('node-learning-title').title = learning.content.title
+    text('node-learning-question', `Question: ${learning.content.question}`)
+    text('node-learning-summary', learning.content.summary)
+    const key = JSON.stringify([learning, section?.stepActions])
+    if (renderKeys.get('node-learning-sequence') !== key) {
+      renderKeys.set('node-learning-sequence', key)
+      const [visual, list] = sequenceView(
+        learning.content,
+        `Sequence for ${learning.content.title}. Numbered interactions are described below.`,
+        (step) => testReplayStepAction(step.id, learning, section),
+      )
+      element('node-learning-sequence').replaceChildren(visual)
+      element('node-learning-steps').replaceChildren(list)
+    }
+    for (const control of Array.from(
+      element('node-learning-steps').querySelectorAll<HTMLButtonElement>(
+        'button[data-node-step]',
+      ),
+    )) {
+      const stepId = control.dataset.nodeStep ?? ''
+      control.disabled = replaying
+      control.setAttribute(
+        'aria-current',
+        String(stepId === section?.selectedStepId),
+      )
+      const note =
+        control.parentElement?.querySelector<HTMLElement>('.same-moment')
+      if (note) note.hidden = !section?.sameMomentStepIds.includes(stepId)
+    }
+  }
+  /**
+   * Builds a test replay step's action: a control that selects the event its reference names, and that step (DS21), with the hidden `Same recorded moment` note; a step that names no event of the history says so. Called by {@link renderTestReplayLearning} through {@link sequenceView}.
+   * @param stepId - The step.
+   * @param learning - The projected material.
+   * @param section - The section's worded view, which holds each step's action label.
+   * @returns The action's node.
+   * @example testReplayStepAction('stop-1', learning, section)
+   */
+  const testReplayStepAction = (
+    stepId: string,
+    learning: NonNullable<StudyViewMessage['nodeHistoryLearningSummary']>,
+    section: StudyViewMessage['nodeHistorySection'],
+  ): Node => {
+    const position = learning.positions.find((value) => value.stepId === stepId)
+    const label = section?.stepActions[stepId]
+    if (!position || !label) {
+      const missing = document.createElement('p')
+      missing.className = 'muted'
+      missing.textContent = options.testReplay.noLinkedEvent
+      return missing
+    }
+    const action = document.createElement('div'),
+      control = document.createElement('button'),
+      note = document.createElement('span')
+    control.type = 'button'
+    control.className = 'link'
+    control.dataset.nodeHistorySequence = String(position.sequence)
+    control.dataset.nodeStep = stepId
+    control.textContent = label
+    note.className = 'same-moment'
+    note.textContent = options.testReplay.sameMoment
+    note.hidden = true
+    action.append(control, ' ', note)
+    return action
+  }
+  /**
+   * Sets the learner's own understanding decision for the test replay; success never marks it. Called by {@link renderTestReplay}.
+   * @param message - The current Study message.
+   * @param replaying - Whether a browser recording is shown.
+   * @example renderTestReplayUnderstanding(message, false)
+   */
+  const renderTestReplayUnderstanding = (
+    message: StudyViewMessage,
+    replaying: boolean,
+  ): void => {
+    const decision = message.nodeHistoryLearningDecision
+    const understanding = element('node-history-understood') as HTMLInputElement
+    understanding.checked = decision?.understood ?? false
+    understanding.disabled =
+      !message.nodeHistory || message.loading || replaying
+    understanding.setAttribute('aria-disabled', String(understanding.disabled))
+    text(
+      'node-history-understanding-state',
+      decision
+        ? decision.understood
+          ? `Learner marked understood · ${decision.at}`
+          : `Learner marked for review · ${decision.at}`
+        : 'Only your explicit choice is saved; test success never marks understanding.',
+    )
+  }
+  /**
+   * Fills the test replay's collapsed event list (DS16): `Events (<count>)`, the page controls and one humanized row per event of the page, each with Select event and, at a stop whose captured source verifies, Inspect in native debugger; keyboard focus returns to the same control after the list is drawn again. Called by {@link renderTestReplay}.
+   * @param message - The current Study message.
+   * @param section - The section's worded view.
+   * @param replaying - Whether a browser recording is shown.
+   * @example renderTestReplayEvents(message, message.nodeHistorySection, false)
+   */
+  const renderTestReplayEvents = (
+    message: StudyViewMessage,
+    section: StudyViewMessage['nodeHistorySection'],
+    replaying: boolean,
+  ): void => {
+    const history = message.nodeHistory,
+      position = message.nodeHistoryPosition
+    text('node-history-events-summary', section?.events ?? 'Events')
+    renderTestReplayEventPage(message)
+    // Rendering the list again replaces its buttons; remember which control had keyboard focus.
+    const list = element('node-history-events'),
+      keyboardStandsAt = keyboardControl(),
+      focusedControl =
+        keyboardStandsAt instanceof HTMLButtonElement &&
+        list.contains(keyboardStandsAt)
+          ? keyboardStandsAt
+          : undefined,
+      focusedEvent = focusedControl && {
+        sequence: focusedControl.dataset.nodeHistorySequence,
+        inspect: focusedControl.dataset.inspectNodeHistoryStop === 'true',
+      }
+    replace(
+      'node-history-events',
+      // The selected stop's Inspect follows the native session and the captured source, so a change in either draws the list again.
+      [
+        history?.entries ?? [],
+        replaying,
+        position?.sequence,
+        Boolean(position?.debuggerAvailable),
+        position?.sourceAvailable,
+        message.nodeHistoryUnverifiedStops ?? [],
+        section?.verdict,
+      ],
+      () =>
+        (history?.entries ?? []).map((entry) =>
+          testReplayEventRow(entry, message, section, replaying),
+        ),
+    )
+    // Keyboard focus returns to the same event's control after the list was drawn again.
+    if (
+      focusedControl &&
+      focusedEvent &&
+      !list.contains(document.activeElement)
+    )
+      moveFocusOf(
+        focusedControl,
+        () =>
+          Array.from(
+            list.querySelectorAll<HTMLButtonElement>(
+              'button[data-node-history-sequence]',
+            ),
+          ).find(
+            (control) =>
+              control.dataset.nodeHistorySequence === focusedEvent.sequence &&
+              (control.dataset.inspectNodeHistoryStop === 'true') ===
+                focusedEvent.inspect,
+          ),
+        // As before this rule: the event's control is brought into view with the focus.
+        {},
+      )
+  }
+  /**
+   * Sets the event list's page line and its Previous page and Next page; called by {@link renderTestReplayEvents}.
+   * @param message - The current Study message.
+   * @example renderTestReplayEventPage(message)
+   */
+  const renderTestReplayEventPage = (message: StudyViewMessage): void => {
+    const page = message.nodeHistoryPage ?? 0,
+      pageCount = message.nodeHistoryPageCount ?? 0
+    text(
+      'node-history-page',
+      message.nodeHistory
+        ? `Page ${page + 1} of ${Math.max(pageCount, 1)}`
+        : '',
+    )
+    setDisabled('node-history-previous', !message.nodeHistory || page === 0)
+    setDisabled(
+      'node-history-next',
+      !message.nodeHistory || page + 1 >= pageCount,
+    )
+  }
+  /**
+   * Builds one row of the test replay's event list: `Output · <channel> · <t> s` with its text, `Stop <n> · <path>:<line>:<column> · <t> s` with its frame and captured facts, or `Result · <verdict> · <t> s` with the output tail, then its controls; called by {@link renderTestReplayEvents}.
+   * @param entry - The event.
+   * @param message - The current Study message.
+   * @param section - The section's worded view, which holds the verdict.
+   * @param replaying - Whether a browser recording is shown.
+   * @returns The row.
+   * @example testReplayEventRow(history.entries[0], message, section, false)
+   */
+  const testReplayEventRow = (
+    entry: NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
+    message: StudyViewMessage,
+    section: StudyViewMessage['nodeHistorySection'],
+    replaying: boolean,
+  ): HTMLElement => {
+    const words = options.testReplay,
+      position = message.nodeHistoryPosition
+    const row = document.createElement('article'),
+      heading = document.createElement('h3'),
+      body = document.createElement('pre')
+    row.className = 'node-history-event'
+    heading.textContent =
+      entry.type === 'output'
+        ? `${words.eventOutput} · ${entry.channel} · ${seconds(entry.elapsedMs)}`
+        : entry.type === 'stop'
+          ? `${words.eventStop} ${entry.index + 1} · ${entry.source.path}:${entry.source.line}:${entry.source.column} · ${seconds(entry.elapsedMs)}`
+          : `${words.eventResult} · ${section?.verdict ?? ''} · ${seconds(entry.elapsedMs)}`
+    body.textContent =
+      entry.type === 'output'
+        ? entry.text
+        : entry.type === 'stop'
+          ? [
+              entry.frame.name,
+              ...entry.facts.map((fact) => `${fact.path}: ${fact.display}`),
+            ].join('\n')
+          : entry.outputTail
+    row.append(heading, body)
+    const isSelected = entry.sequence === position?.sequence
+    const select = document.createElement('button')
+    select.type = 'button'
+    select.dataset.nodeHistorySequence = String(entry.sequence)
+    select.textContent = isSelected ? 'Selected event' : 'Select event'
+    // The selected control stays focusable so keyboard focus survives the press; it then sends nothing.
+    select.disabled = replaying
+    if (isSelected) select.setAttribute('aria-disabled', 'true')
+    select.setAttribute('aria-pressed', String(isSelected))
+    row.append(select)
+    if (entry.type === 'stop')
+      row.append(
+        testReplayInspectControl(entry, message, isSelected, replaying),
+      )
+    return row
+  }
+  /**
+   * Builds a stop row's Inspect in native debugger, or the line that its captured source cannot be inspected; called by {@link testReplayEventRow}.
+   * A stop is inspectable when its first recorded frame names the stop's own source, hash, line and column and the extension verified its captured text.
+   * @param entry - The stop.
+   * @param message - The current Study message.
+   * @param isSelected - Whether the stop is the selected event.
+   * @param replaying - Whether a browser recording is shown.
+   * @returns The control, or the muted line.
+   * @example testReplayInspectControl(stop, message, true, false)
+   */
+  const testReplayInspectControl = (
+    entry: Extract<
+      NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
+      { type: 'stop' }
+    >,
+    message: StudyViewMessage,
+    isSelected: boolean,
+    replaying: boolean,
+  ): HTMLElement => {
+    const position = message.nodeHistoryPosition,
+      frame = entry.debuggerSnapshot.frames[0],
+      source = frame?.source
+    const inspectable =
+      source?.name === entry.source.path &&
+      source.hash === entry.source.hash &&
+      source.line === entry.source.line &&
+      entry.frame.line === entry.source.line &&
+      entry.frame.column === entry.source.column &&
+      frame?.line === entry.frame.line &&
+      frame.column === entry.frame.column &&
+      // The extension hashed every shown stop's captured text; a mismatch there cannot be inspected either.
+      !(message.nodeHistoryUnverifiedStops ?? []).includes(entry.sequence) &&
+      !(isSelected && position?.sourceAvailable === false)
+    if (!inspectable) {
+      const unavailable = document.createElement('p')
+      unavailable.className = 'muted'
+      unavailable.textContent =
+        'Matching captured source is unavailable for native debugging.'
+      return unavailable
+    }
+    const shown = isSelected && Boolean(position?.debuggerAvailable)
+    const inspect = document.createElement('button')
+    inspect.type = 'button'
+    inspect.dataset.nodeHistorySequence = String(entry.sequence)
+    inspect.dataset.inspectNodeHistoryStop = 'true'
+    inspect.textContent = shown
+      ? 'Debugger stop selected'
+      : 'Inspect in native debugger'
+    // The pressed Inspect stays focusable so keyboard focus survives the press; it then sends nothing.
+    inspect.disabled = replaying
+    if (shown) inspect.setAttribute('aria-disabled', 'true')
+    inspect.setAttribute('aria-pressed', String(shown))
+    return inspect
+  }
   /**
    * Says whether this pane shows the live strip for a Study message; read by {@link liveStripStatus}.
    * @param message - The current Study message.
@@ -2514,113 +3167,28 @@ function studyClient(
       element('learning-title').title = learning.content.title
       text('learning-question', `Question: ${learning.content.question}`)
       text('learning-summary', learning.content.summary)
-      replace('learning-sequence', learning, () => {
-        const namespace = 'http://www.w3.org/2000/svg',
-          diagram = document.createElementNS(namespace, 'svg')
-        const layout = options.sequence,
-          width = Math.max(
-            layout.minWidthPx,
-            learning.content.participants.length * layout.columnWidthPx,
-          ),
-          height =
-            layout.topPaddingPx +
-            learning.content.steps.length * layout.rowHeightPx
-        diagram.setAttribute('viewBox', `0 0 ${width} ${height}`)
-        diagram.setAttribute('width', String(width))
-        diagram.setAttribute('height', String(height))
-        diagram.setAttribute('role', 'img')
-        diagram.setAttribute(
-          'aria-label',
+      replace('learning-sequence', learning, () =>
+        sequenceView(
+          learning.content,
           `Sequence for ${learning.content.title}. Numbered interactions are described below.`,
-        )
-        const column = (id: string) =>
-          layout.columnWidthPx / 2 +
-          learning.content.participants.findIndex((value) => value.id === id) *
-            layout.columnWidthPx
-        for (const participant of learning.content.participants) {
-          const x = column(participant.id),
-            name = document.createElementNS(namespace, 'text'),
-            line = document.createElementNS(namespace, 'line')
-          name.setAttribute('x', String(x))
-          name.setAttribute('y', String(layout.nameYpx))
-          name.setAttribute('text-anchor', 'middle')
-          // Participant names and explanations are text nodes; agent-authored markup never becomes executable content.
-          for (
-            let offset = 0;
-            offset < participant.label.length;
-            offset += layout.nameChunkChars
-          ) {
-            const span = document.createElementNS(namespace, 'tspan')
-            span.setAttribute('x', String(x))
-            span.setAttribute(
-              'dy',
-              String(offset ? layout.nameLineHeightPx : 0),
-            )
-            span.textContent = participant.label.slice(
-              offset,
-              offset + layout.nameChunkChars,
-            )
-            name.append(span)
-          }
-          line.setAttribute('x1', String(x))
-          line.setAttribute('x2', String(x))
-          line.setAttribute('y1', String(layout.lifelineYpx))
-          line.setAttribute('y2', String(height))
-          line.setAttribute('class', 'sequence-lifeline')
-          diagram.append(name, line)
-        }
-        const list = document.createElement('ol')
-        list.className = 'sequence-steps'
-        learning.content.steps.forEach((step, index) => {
-          const x1 = column(step.from),
-            x2 = column(step.to),
-            y = layout.firstArrowYpx + index * layout.rowHeightPx,
-            arrow = document.createElementNS(namespace, 'path'),
-            number = document.createElementNS(namespace, 'text')
-          const direction = x2 >= x1 ? 1 : -1
-          arrow.setAttribute(
-            'd',
-            x1 === x2
-              ? `M ${x1} ${y} h ${layout.loopWidthPx} v ${layout.loopHeightPx} h ${-layout.loopWidthPx} m ${layout.arrowWidthPx} ${-layout.arrowHeightPx} l ${-layout.arrowWidthPx} ${layout.arrowHeightPx} l ${layout.arrowWidthPx} ${layout.arrowHeightPx}`
-              : `M ${x1} ${y} H ${x2} m ${-layout.arrowWidthPx * direction} ${-layout.arrowHeightPx} l ${layout.arrowWidthPx * direction} ${layout.arrowHeightPx} l ${-layout.arrowWidthPx * direction} ${layout.arrowHeightPx}`,
-          )
-          arrow.setAttribute('class', `sequence-arrow ${step.evidence}`)
-          number.setAttribute(
-            'x',
-            String((x1 + x2) / 2 + (x1 === x2 ? layout.loopHeightPx : 0)),
-          )
-          number.setAttribute('y', String(y - layout.numberGapPx))
-          number.setAttribute('text-anchor', 'middle')
-          number.textContent = `${index + 1}. ${step.label.slice(0, layout.nameChunkChars)}${step.label.length > layout.nameChunkChars ? '…' : ''}`
-          diagram.append(arrow, number)
-          const row = document.createElement('li'),
-            label = document.createElement('strong'),
-            detail = document.createElement('p')
-          label.textContent = `${step.label} · ${step.evidence}`
-          detail.textContent = step.explanation
-          row.append(label, detail)
-          const position = learning.positions.find(
-            (value) => value.stepId === step.id,
-          )?.elapsedMs
-          if (position !== undefined) {
-            const link = document.createElement('button')
-            link.className = 'link'
-            link.dataset.summaryStep = step.id
-            link.textContent = `${step.reference && 'captureHash' in step.reference ? 'Inspect verified result' : 'Inspect referenced stop'} · ${seconds(position)}`
-            row.append(link)
-          } else {
+          (step) => {
+            const position = learning.positions.find(
+              (value) => value.stepId === step.id,
+            )?.elapsedMs
+            if (position !== undefined) {
+              const link = document.createElement('button')
+              link.className = 'link'
+              link.dataset.summaryStep = step.id
+              link.textContent = `${step.reference && 'captureHash' in step.reference ? 'Inspect verified result' : 'Inspect referenced stop'} · ${seconds(position)}`
+              return link
+            }
             const missing = document.createElement('p')
             missing.className = 'muted'
             missing.textContent = 'No recorded evidence is linked to this step.'
-            row.append(missing)
-          }
-          list.append(row)
-        })
-        const visual = document.createElement('div')
-        visual.className = 'sequence-diagram'
-        visual.append(diagram)
-        return [visual, list]
-      })
+            return missing
+          },
+        ),
+      )
       for (const control of Array.from(
         element('learning-sequence').querySelectorAll<HTMLButtonElement>(
           '[data-summary-step]',
@@ -2734,365 +3302,7 @@ function studyClient(
         unopenableChoice = undefined
       followOpeningChoice(message)
       showChosenEntry(message, previous)
-      const nodeHistories = message.nodeHistoryCatalog ?? []
-      const nodeHistory = message.nodeHistory
-      // Application replay keeps unrelated Node status nodes empty without hiding those regions.
-      const nodeHistoryIsSuppressed = isReplayInBottomPanel(message)
-      const nodeHistoryStatusText = nodeHistory
-        ? `${nodeHistory.status}${nodeHistory.reason ? ` · ${nodeHistory.reason}` : ''} · ${nodeHistory.entries.length} verified events. Test output, executed source and recorded debugger stops; no application video.`
-        : nodeHistories.length
-          ? 'Choose a Node test history from Saved studies to inspect its verified output and debugger stops.'
-          : 'No Node test history has been saved in this workspace.'
-      text(
-        'node-history-status',
-        nodeHistoryIsSuppressed ? '' : nodeHistoryStatusText,
-      )
-      const nodeHistoryUnderstanding = element(
-        'node-history-understood',
-      ) as HTMLInputElement
-      nodeHistoryUnderstanding.checked =
-        message.nodeHistoryLearningDecision?.understood ?? false
-      nodeHistoryUnderstanding.disabled =
-        !nodeHistory || message.loading || Boolean(recording)
-      nodeHistoryUnderstanding.setAttribute(
-        'aria-disabled',
-        String(nodeHistoryUnderstanding.disabled),
-      )
-      text(
-        'node-history-understanding-state',
-        message.nodeHistoryLearningDecision
-          ? message.nodeHistoryLearningDecision.understood
-            ? `Learner marked understood · ${message.nodeHistoryLearningDecision.at}`
-            : `Learner marked for review · ${message.nodeHistoryLearningDecision.at}`
-          : 'Only your explicit choice is saved; test success never marks understanding.',
-      )
-      const nodeLearning = message.nodeHistoryLearningMaterial
-      element('node-history-learning').hidden = !nodeLearning
-      if (nodeLearning) {
-        text('node-learning-title', nodeLearning.content.title)
-        text(
-          'node-learning-question',
-          `Question: ${nodeLearning.content.question}`,
-        )
-        text('node-learning-summary', nodeLearning.content.summary)
-        replace('node-learning-sequence', nodeLearning, () => {
-          const namespace = 'http://www.w3.org/2000/svg',
-            diagram = document.createElementNS(namespace, 'svg')
-          const layout = options.sequence,
-            width = Math.max(
-              layout.minWidthPx,
-              nodeLearning.content.participants.length * layout.columnWidthPx,
-            ),
-            height =
-              layout.topPaddingPx +
-              nodeLearning.content.steps.length * layout.rowHeightPx
-          diagram.setAttribute('viewBox', `0 0 ${width} ${height}`)
-          diagram.setAttribute('width', String(width))
-          diagram.setAttribute('height', String(height))
-          diagram.setAttribute('role', 'img')
-          diagram.setAttribute(
-            'aria-label',
-            `Sequence diagram for ${nodeLearning.content.title}; a numbered text description follows.`,
-          )
-          const column = (id: string) =>
-            layout.columnWidthPx / 2 +
-            nodeLearning.content.participants.findIndex(
-              (participant) => participant.id === id,
-            ) *
-              layout.columnWidthPx
-          for (const participant of nodeLearning.content.participants) {
-            const x = column(participant.id),
-              name = document.createElementNS(namespace, 'text'),
-              lifeline = document.createElementNS(namespace, 'line')
-            name.setAttribute('x', String(x))
-            name.setAttribute('y', String(layout.nameYpx))
-            name.setAttribute('text-anchor', 'middle')
-            name.textContent = participant.label
-            lifeline.setAttribute('x1', String(x))
-            lifeline.setAttribute('x2', String(x))
-            lifeline.setAttribute('y1', String(layout.lifelineYpx))
-            lifeline.setAttribute('y2', String(height))
-            lifeline.setAttribute('class', 'sequence-lifeline')
-            diagram.append(name, lifeline)
-          }
-          const list = document.createElement('ol')
-          list.className = 'sequence-steps'
-          nodeLearning.content.steps.forEach((step, index) => {
-            const from = column(step.from),
-              to = column(step.to),
-              y = layout.firstArrowYpx + index * layout.rowHeightPx,
-              direction = to >= from ? 1 : -1
-            const arrow = document.createElementNS(namespace, 'path'),
-              label = document.createElementNS(namespace, 'text')
-            arrow.setAttribute(
-              'd',
-              from === to
-                ? `M ${from} ${y} h ${layout.loopWidthPx} v ${layout.loopHeightPx} h ${-layout.loopWidthPx} m ${layout.arrowWidthPx} ${-layout.arrowHeightPx} l ${-layout.arrowWidthPx} ${layout.arrowHeightPx} l ${layout.arrowWidthPx} ${layout.arrowHeightPx}`
-                : `M ${from} ${y} H ${to} m ${-layout.arrowWidthPx * direction} ${-layout.arrowHeightPx} l ${layout.arrowWidthPx * direction} ${layout.arrowHeightPx} l ${-layout.arrowWidthPx * direction} ${layout.arrowHeightPx}`,
-            )
-            arrow.setAttribute('class', `sequence-arrow ${step.evidence}`)
-            label.setAttribute('x', String((from + to) / 2))
-            label.setAttribute('y', String(y - layout.numberGapPx))
-            label.setAttribute('text-anchor', 'middle')
-            label.textContent = `${index + 1}. ${step.label.slice(0, layout.nameChunkChars)}${step.label.length > layout.nameChunkChars ? '…' : ''}`
-            diagram.append(arrow, label)
-            const row = document.createElement('li'),
-              heading = document.createElement('strong'),
-              explanation = document.createElement('p')
-            heading.textContent = `${step.label} · ${step.evidence}`
-            explanation.textContent = step.explanation
-            row.append(heading, explanation)
-            const reference = step.reference
-            if (reference) {
-              const control = document.createElement('button')
-              control.type = 'button'
-              control.dataset.nodeHistorySequence = String(reference.sequence)
-              control.textContent = `Inspect ${reference.type} event ${reference.sequence}`
-              row.append(control)
-            } else {
-              const unavailable = document.createElement('p')
-              unavailable.className = 'muted'
-              unavailable.textContent =
-                'No recorded event is linked to this step.'
-              row.append(unavailable)
-            }
-            list.append(row)
-          })
-          const visual = document.createElement('div')
-          visual.className = 'sequence-diagram'
-          visual.append(diagram)
-          return [visual, list]
-        })
-      }
-      const position = message.nodeHistoryPosition
-      const playbackState = message.nodeHistoryPlayback
-      const nodeHistoryToggle = element(
-        'node-history-playback-toggle',
-      ) as HTMLButtonElement
-      nodeHistoryToggle.dataset.nodeHistoryPlayback =
-        playbackState?.mode === 'playing' ? 'pause' : 'play'
-      nodeHistoryToggle.textContent =
-        playbackState?.mode === 'playing' ? 'Pause' : 'Play'
-      nodeHistoryToggle.disabled =
-        !nodeHistory ||
-        nodeHistoryIsSuppressed ||
-        !playbackState?.sequence ||
-        playbackState.loading ||
-        (playbackState.mode === 'paused' &&
-          (message.nodeHistoryEventCount ?? 0) > 0 &&
-          (position?.eventIndex ?? -1) ===
-            (message.nodeHistoryEventCount ?? 0) - 1)
-      nodePlayhead.disabled =
-        !nodeHistory ||
-        playbackState?.startMs === undefined ||
-        playbackState.endMs === undefined ||
-        playbackState.startMs === playbackState.endMs ||
-        playbackState.loading ||
-        Boolean(recording)
-      if (
-        playbackState?.startMs !== undefined &&
-        playbackState.endMs !== undefined
-      ) {
-        nodePlayhead.min = String(playbackState.startMs)
-        nodePlayhead.max = String(playbackState.endMs)
-        // A disabled playhead cannot be scrubbed, so a scrub interrupted by loading ends here.
-        if (nodePlayhead.disabled) nodeHistoryScrubbing = false
-        if (!nodeHistoryScrubbing)
-          nodePlayhead.value = String(
-            playbackState.positionMs ?? playbackState.startMs,
-          )
-      } else {
-        nodeHistoryScrubbing = false
-        nodePlayhead.min = '0'
-        nodePlayhead.max = '0'
-        nodePlayhead.value = '0'
-      }
-      // Assistive technology reads the selected test time, not the raw millisecond value; during a scrub the thumb's own time stays.
-      if (!nodeHistoryScrubbing)
-        nodePlayhead.setAttribute(
-          'aria-valuetext',
-          playbackState?.positionMs === undefined
-            ? 'No recorded test time selected'
-            : `${seconds(playbackState.positionMs)} of recorded test time`,
-        )
-      if (!nodeHistoryScrubbing)
-        text(
-          'node-history-playback-position',
-          playbackState?.positionMs === undefined
-            ? 'Test journal playback'
-            : `Recorded test time · ${(playbackState.positionMs / options.secondMs).toFixed(2)} s`,
-        )
-      const momentDescription =
-        position?.type === 'stop'
-          ? `Debugger stop ${(position.index ?? 0) + 1}${position.sourceAvailable ? '' : ' · captured source unavailable'}`
-          : position?.type === 'result'
-            ? 'Test result · debugger not recorded at this moment'
-            : position?.type === 'output'
-              ? 'Test output · debugger not recorded at this moment'
-              : 'Select an event to move through the recorded test history.'
-      const nodeHistoryPositionText = position
-        ? `${momentDescription} · ${(position.elapsedMs / 1000).toFixed(2)} s · output shown through this event.`
-        : momentDescription
-      text(
-        'node-history-position',
-        nodeHistoryIsSuppressed ? '' : nodeHistoryPositionText,
-      )
-      // A saved stop committed without native values keeps the same muted guidance row as replay, separate from the position facts.
-      text(
-        'node-history-hint',
-        !nodeHistoryIsSuppressed && position?.nativeValuesUninspected
-          ? options.nativeValuesHint
-          : '',
-      )
-      offerShowVariables(
-        'node-history-show-variables',
-        !nodeHistoryIsSuppressed && Boolean(position?.nativeValuesUninspected),
-        options.nodeTransportFocus,
-        'node-history',
-      )
-      text(
-        'node-history-output',
-        message.nodeHistoryOutput ??
-          'Select an event to view test output recorded through that moment.',
-      )
-      text(
-        'node-history-page',
-        nodeHistory
-          ? `Page ${(message.nodeHistoryPage ?? 0) + 1} of ${message.nodeHistoryPageCount ?? 1}`
-          : '',
-      )
-      ;(element('node-history-previous') as HTMLButtonElement).disabled =
-        !nodeHistory || (message.nodeHistoryPage ?? 0) === 0
-      ;(element('node-history-next') as HTMLButtonElement).disabled =
-        !nodeHistory ||
-        (message.nodeHistoryPage ?? 0) + 1 >=
-          (message.nodeHistoryPageCount ?? 0)
-      const selectedSequence = position?.sequence
-      const selectedIndex = position?.eventIndex ?? -1
-      const eventCount = message.nodeHistoryEventCount ?? 0
-      ;(element('node-history-moment-previous') as HTMLButtonElement).disabled =
-        !nodeHistory || eventCount === 0 || selectedIndex === 0
-      ;(element('node-history-moment-next') as HTMLButtonElement).disabled =
-        !nodeHistory || eventCount === 0 || selectedIndex === eventCount - 1
-      const unverifiedStops = message.nodeHistoryUnverifiedStops ?? []
-      // Rendering the list again replaces its buttons; remember which stop control had keyboard focus.
-      const nodeEvents = element('node-history-events'),
-        keyboardStandsAt = keyboardControl(),
-        focusedControl =
-          keyboardStandsAt instanceof HTMLButtonElement &&
-          nodeEvents.contains(keyboardStandsAt)
-            ? keyboardStandsAt
-            : undefined,
-        focusedStop = focusedControl && {
-          sequence: focusedControl.dataset.nodeHistorySequence,
-          inspect: focusedControl.dataset.inspectNodeHistoryStop === 'true',
-        }
-      replace(
-        'node-history-events',
-        // The selected stop's Inspect follows the native session and the captured source, so a change in either must render the list again.
-        [
-          nodeHistory?.entries ?? [],
-          Boolean(recording),
-          selectedSequence,
-          Boolean(position?.debuggerAvailable),
-          position?.sourceAvailable,
-          unverifiedStops,
-        ],
-        () =>
-          (nodeHistory?.entries ?? []).map((entry) => {
-            const article = document.createElement('article')
-            article.className = 'node-history-event'
-            const heading = document.createElement('h3')
-            heading.textContent =
-              entry.type === 'output'
-                ? `${entry.channel} · ${(entry.elapsedMs / 1000).toFixed(2)} s`
-                : entry.type === 'stop'
-                  ? `Debugger stop ${entry.index + 1} · ${entry.source.path}:${entry.source.line}:${entry.source.column}`
-                  : `Test result · ${(entry.elapsedMs / 1000).toFixed(2)} s`
-            const body = document.createElement('pre')
-            body.textContent =
-              entry.type === 'output'
-                ? entry.text
-                : entry.type === 'stop'
-                  ? `${entry.frame.name}\n${entry.facts.map((fact) => `${fact.path}: ${fact.display}`).join('\n')}\nHistorical debugger snapshot: ${entry.debuggerSnapshot.frames.length} frames, ${entry.debuggerSnapshot.variables.length} values`
-                  : `exitCode=${entry.exitCode ?? 'unknown'} signal=${entry.signal ?? 'none'}\n${entry.outputTail}`
-            article.append(heading, body)
-            const isSelected = entry.sequence === selectedSequence
-            const select = document.createElement('button')
-            select.type = 'button'
-            select.dataset.nodeHistorySequence = String(entry.sequence)
-            select.textContent = isSelected ? 'Selected event' : 'Select event'
-            // The selected control stays focusable so keyboard focus survives the press; it then sends nothing.
-            select.disabled = Boolean(recording)
-            if (isSelected) select.setAttribute('aria-disabled', 'true')
-            select.setAttribute('aria-pressed', String(isSelected))
-            article.append(select)
-            if (entry.type === 'stop') {
-              const source = entry.debuggerSnapshot.frames[0]?.source
-              if (
-                source &&
-                source.name === entry.source.path &&
-                source.hash === entry.source.hash &&
-                source.line === entry.source.line &&
-                entry.frame.line === entry.source.line &&
-                entry.frame.column === entry.source.column &&
-                entry.debuggerSnapshot.frames[0]?.line === entry.frame.line &&
-                entry.debuggerSnapshot.frames[0]?.column ===
-                  entry.frame.column &&
-                // The extension hashed every shown stop's captured text; a mismatch there cannot be inspected either.
-                !unverifiedStops.includes(entry.sequence) &&
-                !(isSelected && position?.sourceAvailable === false)
-              ) {
-                const inspect = document.createElement('button')
-                inspect.type = 'button'
-                inspect.dataset.nodeHistorySequence = String(entry.sequence)
-                inspect.dataset.inspectNodeHistoryStop = 'true'
-                inspect.textContent =
-                  isSelected && position?.debuggerAvailable
-                    ? 'Debugger stop selected'
-                    : 'Inspect in native debugger'
-                // The pressed Inspect stays focusable so keyboard focus survives the press; it then sends nothing.
-                inspect.disabled = Boolean(recording)
-                if (isSelected && position?.debuggerAvailable)
-                  inspect.setAttribute('aria-disabled', 'true')
-                inspect.setAttribute(
-                  'aria-pressed',
-                  String(isSelected && position?.debuggerAvailable),
-                )
-                article.append(inspect)
-              } else {
-                const unavailable = document.createElement('p')
-                unavailable.className = 'muted'
-                unavailable.textContent =
-                  'Matching captured source is unavailable for native debugging.'
-                article.append(unavailable)
-              }
-            }
-            return article
-          }),
-      )
-      // Keyboard focus returns to the same stop's control after the list was rendered again.
-      if (
-        focusedControl &&
-        focusedStop &&
-        !nodeEvents.contains(document.activeElement)
-      )
-        moveFocusOf(
-          focusedControl,
-          () =>
-            Array.from(
-              nodeEvents.querySelectorAll<HTMLButtonElement>(
-                'button[data-node-history-sequence]',
-              ),
-            ).find(
-              (control) =>
-                control.dataset.nodeHistorySequence === focusedStop.sequence &&
-                (control.dataset.inspectNodeHistoryStop === 'true') ===
-                  focusedStop.inspect,
-            ),
-          // As before this rule: the stop's control is brought into view with the focus.
-          {},
-        )
+      renderTestReplay(message, Boolean(recording))
     }
     for (const link of Array.from(
       document.querySelectorAll<HTMLButtonElement>('.link[data-action]'),

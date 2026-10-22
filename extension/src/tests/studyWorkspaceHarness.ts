@@ -37,6 +37,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as StudyWorkspaceModule from '../studyWorkspace'
 import type { StudyFilesCopied, StudyViewMessage } from '../ui/studyHtml'
 import { bookObservationHash } from '../utils/bookObservationHash'
+import type { NodeTestOutputUpdate } from '../utils/installNodeTestOutput'
 import type { OpenRequestSettled } from '../utils/readOpenRequest'
 
 import { ControlledRuntime, createHarness } from './helpers'
@@ -1119,6 +1120,8 @@ export async function workspaceHarness(
   let deferredMovedPanelPlacement: string | undefined,
     asynchronousLayoutReads = false
   const postedMessages: StudyViewMessage[] = []
+  // What the Application pane's test replay document received in place, in order (EN3): one view per later moment.
+  const applicationOutputs: NodeTestOutputUpdate[] = []
   // What a webview receives besides Study messages: the reader's replies to a pane's open requests, with the webview that got each.
   const openRequestReplies: {
     /** The pane that was answered: `context` for the Study pane's panel, `summary` and `moments` for the two views, and the panel's own view type for any other panel, so a reply to a wrong panel is told apart. */
@@ -2643,6 +2646,7 @@ export async function workspaceHarness(
             | PresentationPoseRestore
             | OpenRequestSettled
             | StudyFilesCopied
+            | NodeTestOutputUpdate
             | {
                 type: 'codebook-focus'
                 phase: string
@@ -2650,6 +2654,10 @@ export async function workspaceHarness(
                 epoch?: string
               },
         ) => {
+          if (message.type === 'node-history-output') {
+            applicationOutputs.push(message)
+            return true
+          }
           if (message.type === 'open-request-settled') {
             openRequestReplies.push({
               webview: kind === 'codebook.studyContext' ? 'context' : kind,
@@ -5106,6 +5114,8 @@ export async function workspaceHarness(
     changeOutlineCheckbox: (itemId: string, checked: boolean): void =>
       outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
     postedMessages: () => postedMessages,
+    /** Lists the views the Application pane's test replay document received in place, oldest first, so a test reads the recorded output the learner sees at the selected moment. @example harness.applicationOutputs().at(-1)?.view.lines */
+    applicationOutputs: () => [...applicationOutputs],
     /** Lists the reader's replies to open requests in the order the webviews received them, so a test can assert which pane was answered and when. @example harness.openRequestReplies() // => [{ webview: 'context', openRequest: 3 }] */
     openRequestReplies: () => openRequestReplies.map((reply) => ({ ...reply })),
     /** Gives the last Study message the bottom panel had received when its open request with this number was answered, so a test can assert that the message naming the entry arrived before the reply. @example harness.playbackPanelMessageAtReply(1)?.model.selection.studyId */

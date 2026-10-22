@@ -15,6 +15,7 @@ import {
   STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
 } from '../constants'
+import { NODE_TEST_REPLAY_TEXT } from '../utils/describeNodeTestReplay'
 import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
 const STUDY_FOCUS_MARGIN_PX = 4
 const STUDY_COMPACT_READER_MAX_WIDTH_PX = 759
@@ -100,6 +101,8 @@ const TIMELINE_FULL_WIDTH_PERCENT = 100
 const APPLICATION_COVERED_ANNOUNCEMENT =
   'Bring the Recorded application tab to the front to show this moment again.'
 export const STUDY_UI_OPTIONS = {
+  /** A test replay's fixed words (the String catalog); the pane's client code imports nothing, so they arrive here. */
+  testReplay: NODE_TEST_REPLAY_TEXT,
   sequence: STUDY_SEQUENCE_LAYOUT,
   maxStickyFraction: 0.35,
   compactReaderMaxWidthPx: STUDY_COMPACT_READER_MAX_WIDTH_PX,
@@ -164,12 +167,15 @@ export const STUDY_UI_OPTIONS = {
     '#playhead',
   ],
   nodeTransportFocus: [
+    '#node-history-stop-next',
+    '#node-history-stop-previous',
     '#node-history-playback-toggle',
     '#node-history-playhead',
     '#node-history-moment-previous',
     '#node-history-moment-next',
-    // A history with a single event has no usable transport control: its selected event's own control takes the focus, which sends nothing when pressed.
+    // A history with a single event has no usable transport control: its selected event's own control takes the focus, which sends nothing when pressed, or, while the event list is collapsed, the list's summary.
     '#node-history-events [aria-pressed="true"]',
+    '#node-history-events-summary',
   ],
 }
 export const STUDY_STYLES = `
@@ -206,8 +212,14 @@ body.moments-only #recording-transport{display:flex;flex-wrap:wrap;align-items:c
 
 #saved-studies select{width:100%}#delete-study-row,#study-unopenable,#study-newer,#study-repairable,#delete-study-reason,#delete-study-status,#study-files{margin:8px 0 0}#delete-study-reason:empty{display:none}#delete-study-status:empty{margin:0}#study-files-list{margin:0 0 8px;padding-left:20px}#study-files-note{margin:0 0 8px}#copy-study-files-status{margin:8px 0 0}#copy-study-files-status:empty{margin:0}
 #learning-summary,.sequence-steps p{white-space:pre-wrap}.sequence-diagram{overflow:auto;max-height:420px;border:1px solid var(--vscode-panel-border,#444);padding:8px}.sequence-diagram svg{display:block;max-width:none;font-size:12px}.sequence-diagram text{fill:var(--vscode-foreground,#ddd)}.sequence-lifeline{stroke:var(--vscode-descriptionForeground,#aaa);stroke-dasharray:4 4}.sequence-arrow{fill:none;stroke:var(--vscode-textLink-foreground,#4daafc);stroke-width:2}.sequence-arrow.source-derived{stroke-dasharray:6 4}.sequence-arrow.unknown{stroke-dasharray:2 5;stroke:var(--vscode-descriptionForeground,#aaa)}.sequence-steps{padding-left:24px}.sequence-steps li{padding:10px 0}.sequence-steps p{margin:6px 0}.sequence-steps [aria-current=true]{font-weight:bold}
-/* Long recorded test output wraps inside the reader, and scrolls there if a line still cannot, instead of widening the page (Cycle 0044, 0031-W1 and 0038-W); each event card's own text does the same. */
-#node-history-output,.node-history-event pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;overflow:auto}
+/* Each event card's text wraps inside the reader, and scrolls there if a line still cannot, instead of widening the page (Cycle 0044, 0031-W1 and 0038-W). */
+.node-history-event pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;overflow:auto}
+/* A test replay's transport stays in view while its summary and steps scroll under it (DS16); Previous stop and Next stop lead it (DS12). */
+#node-history-transport{position:sticky;top:0;z-index:2;background:var(--vscode-editor-background,#181818);padding:4px 0;border-bottom:1px solid var(--vscode-panel-border,#444)}#node-history-transport .row{margin:4px 0 0}#node-history-moment p{margin:4px 0}#node-history-explanation:empty,#node-history-not-recorded:empty,#node-history-unverified:empty{display:none}.same-moment{color:var(--vscode-descriptionForeground,#aaa);font-size:12px}
+#node-history-moment>p:empty{margin:0;padding:0;border:0}
+#node-learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+/* A test replay's Application pane: the header and footer stay pinned and the output region is the only scroller (DS4); a standard-error line starts with a mark in the terminal's red, and the mark, never the color alone, says so. */
+body.test-output{height:100vh;padding:0;overflow:hidden}body.test-output main{display:flex;flex-direction:column;height:100%;min-height:0;padding:12px 16px}.test-output-header p{margin:0}#test-output-test{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#test-output{flex:1;min-height:0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0;padding:8px;border:1px solid var(--vscode-panel-border,#444)}#test-output:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4)}.stderr-mark{color:var(--vscode-terminal-ansiRed,#f14c4c)}#test-output-jump{align-self:flex-start}body.test-output p{margin:4px 0}
 /* A Learning summary in a narrow side bar keeps a long title to two lines and its sequence in view; the full title stays in its tooltip, and a title the clamp cuts is a tab stop that is shown whole while it has the keyboard focus. A wider summary shows the title whole. */
 #title:focus-visible,#learning-title:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
 /* Compact replay keeps its empty header spacing; a disclosed layout notice uses the shared gap. */

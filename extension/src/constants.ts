@@ -979,6 +979,8 @@ export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
 /** How many test histories {@link NodeTestHistoryStore.list} reads at a time when a refresh finds new, still recording or changed ones; a sealed journal it already summarized is not read again. */
 export const NODE_HISTORY_SUMMARY_READ_CONCURRENCY = 4
+/** How much of a test replay's recorded output, counted in code points of the shown text (the `[stderr] ` marks and line feeds included), the Application pane keeps up to the selected event: its end, where the selected moment is. */
+export const NODE_TEST_OUTPUT_TAIL_CHARS = 65_536
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256
 /** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */
