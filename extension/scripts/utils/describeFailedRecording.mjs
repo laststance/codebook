@@ -7,10 +7,10 @@ import { MAX_NAMED_FAILED_TESTS } from './testShardConstants.mjs'
  * Called by `recordTimings` in `test-shard.mjs` after `collectTestRun` has answered.
  *
  * @param results - The finished top-level tests, each `{ file, name, failed }`.
- * @returns `N tests failed; timings were not recorded: <file> › <name>; …` with at most `MAX_NAMED_FAILED_TESTS` names and "and K more" for the rest; whitespace runs in a name become one space, so the sentence stays one line.
+ * @returns `N tests failed; timings were not recorded: <file> › <name>; …` (`1 test failed` for one) with at most `MAX_NAMED_FAILED_TESTS` names and "and K more" for the rest; whitespace runs in a name become one space, so the sentence stays one line.
  * @example
  * describeFailedRecording([{ file: 'a.test.js', name: 'breaks', failed: true }])
- * // => '1 tests failed; timings were not recorded: a.test.js › breaks.'
+ * // => '1 test failed; timings were not recorded: a.test.js › breaks.'
  */
 export function describeFailedRecording(results) {
   const failed = results.filter((result) => result.failed)
@@ -19,5 +19,7 @@ export function describeFailedRecording(results) {
     .slice(0, MAX_NAMED_FAILED_TESTS)
     .map((result) => `${result.file} › ${result.name.replace(/\s+/g, ' ')}`)
   const more = failed.length - named.length
-  return `${failed.length} tests failed; timings were not recorded: ${named.join('; ')}${more > 0 ? `; and ${more} more` : ''}.`
+  // One failed test is counted in the singular (F212).
+  const count = `${failed.length} ${failed.length === 1 ? 'test' : 'tests'} failed`
+  return `${count}; timings were not recorded: ${named.join('; ')}${more > 0 ? `; and ${more} more` : ''}.`
 }
