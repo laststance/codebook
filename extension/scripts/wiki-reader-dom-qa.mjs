@@ -1059,16 +1059,45 @@ async function check(page, options, collected) {
         },
       }
     })
-    const picturesOf = async (suffix) => ({
-      article: await page.screenshot({
-        clip: clips.article,
-        path: `${options.output}/${still}-article${suffix}.png`,
-      }),
-      composer: await page.screenshot({
-        clip: clips.composer,
-        path: `${options.output}/${still}-composer${suffix}.png`,
-      }),
-    })
+    /** Takes a still of one region again, a frame apart, until two in a row are the same picture: a loaded machine can show a region before its final raster (an anti-aliased corner one shade off), which is no difference of the layout (F135). Gives up after 10 stills and keeps the last. @example (await settledStill(clips.composer, 'wiki-reading-720-composer')).retakes // => 0 */
+    const settledStill = async (clip, name) => {
+      let picture = await page.screenshot({
+        clip,
+        path: `${options.output}/${name}.png`,
+      })
+      for (let retakes = 0; retakes < 10; retakes += 1) {
+        await page.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+        const again = await page.screenshot({
+          clip,
+          path: `${options.output}/${name}.png`,
+        })
+        // Two stills in a row that are the same picture are the settled one.
+        if (again.toString('base64') === picture.toString('base64'))
+          return { picture: again, retakes }
+        picture = again
+      }
+      return { picture, retakes: 10 }
+    }
+    const picturesOf = async (suffix) => {
+      const article = await settledStill(
+        clips.article,
+        `${still}-article${suffix}`,
+      )
+      const composer = await settledStill(
+        clips.composer,
+        `${still}-composer${suffix}`,
+      )
+      return {
+        article: article.picture,
+        composer: composer.picture,
+        retakes: { article: article.retakes, composer: composer.retakes },
+      }
+    }
     const picturesAsServed = await picturesOf('')
     await page.evaluate(() => {
       const style = document.createElement('style')
@@ -1085,6 +1114,11 @@ async function check(page, options, collected) {
     return {
       asServed,
       withoutRoom,
+      // How many stills each region took to settle, as served and without the room (F135).
+      stillRetakes: {
+        asServed: picturesAsServed.retakes,
+        withoutRoom: picturesWithoutRoom.retakes,
+      },
       articlePicture: await pictureDifference(
         picturesAsServed.article,
         picturesWithoutRoom.article,
