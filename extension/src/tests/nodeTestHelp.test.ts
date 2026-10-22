@@ -52,6 +52,22 @@ function exampleWithValues() {
   }
 }
 
+// Value: protects=the Vitest version the help names, which must follow NODE_TEST_MINIMUM_VITEST_MAJOR; fails_when=one of the three sentences keeps a hard-coded major when the supported major changes; why_new=the help hard-coded 4 in three sentences (F43); seam=none; no_claim=the status sentence of readVitestPrerequisite
+test('the node-test help names the minimum Vitest major in each of its three sentences', async () => {
+  // Arrange
+  const { text } = await servedNodeTestHelp()
+
+  // Act
+  const sentences = [
+    'its missing list names a root Vitest that is missing or older than 4)',
+    'PREREQUISITE_MISSING when the root Vitest is missing or older than 4.',
+    'node-test runs the Vitest 4 or later installed at the repository root',
+  ]
+
+  // Assert
+  for (const sentence of sentences) assert.ok(text.includes(sentence), sentence)
+})
+
 // Value: protects=the node-test help's complete start example, which an agent copies the shape of; fails_when=the example no longer parses once its placeholders are replaced, or a placeholder does not name the answer it comes from; why_new=the help had no complete example (X9, AC18); seam=none; no_claim=that the example's lines run in any repository
 test('the node-test help’s example parses as a start once its placeholders are replaced', async () => {
   // Arrange

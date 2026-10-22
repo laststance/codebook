@@ -76,7 +76,7 @@ function rootPatterns(root: string): RegExp[] {
 }
 
 /**
- * Words a failure's cause for a tooltip, a notification, the run resource, an MCP message and the Output › Codebook channel without the private paths it can carry, at the moment the cause is assigned, so every surface shows the same value; called by {@link StudyService} for a test history's failure, the test run's recording reason and the `HISTORY_SEAL_FAILED` cause, and by {@link NodeLearningSave} for the save's causes.
+ * Words a failure's cause for a tooltip, a notification, the run resource, an MCP message and the Output › Codebook channel without the private paths it can carry, at the moment the cause is assigned, so every surface shows the same value; called by {@link StudyService} for a test history's failure, the test run's recording reason and the `HISTORY_SEAL_FAILED` cause, by {@link NodeLearningSave} for the save's causes, by {@link StudyWorkspace} for the causes it reports, and by {@link NodeTestHistoryStore} for an unavailable history's reason.
  * The extension's storage roots read `<storage>`, the opened repository's root `<workspace>` and the home directory `~`, in POSIX and Windows forms (either separator, the `\\?\` prefix, any case on Windows) and through the macOS realpath aliases `/var` and `/private/var`. A {@link StudyError} reads as its message naming its cause ({@link messageNamingCause}); any other error loses its leading error name ({@link withoutErrorName}). Control characters, bidirectional ones included, become spaces. The whole text is returned; a surface cuts it for display ({@link cutCauseForDisplay}).
  * @param error - What was thrown, or a cause already in words.
  * @param roots - The private roots of this window.

@@ -19,6 +19,7 @@ import {
   IMAGE_LIMIT_BYTES,
   REPOSITORY_RUN_TIMEOUT_MS,
   SOURCE_LIMIT_BYTES,
+  NODE_TEST_MINIMUM_VITEST_MAJOR,
   NODE_TEST_PROFILE,
   ACTIVE_TIMEOUT_MS,
   MAX_EXPLANATIONS,
@@ -228,7 +229,7 @@ export async function readResource(
       since: NODE_TEST_SINCE_API_1_8_HELP,
       example: NODE_TEST_HELP_EXAMPLE,
       walkthrough: [
-        'codebook_status: copy instanceId; profiles node-test must be ready (its missing list names a root Vitest that is missing or older than 4).',
+        `codebook_status: copy instanceId; profiles node-test must be ready (its missing list names a root Vitest that is missing or older than ${NODE_TEST_MINIMUM_VITEST_MAJOR}).`,
         'codebook://help/node-test (this resource): the configuration schema, the example and these steps.',
         'codebook_sources, then codebook_source for the test file and each cited source: copy each path and its hash, and choose the stop lines from numberedText.',
         'codebook_publish_book: publish the article whose node cites the stop sources; copy bookId, revision and the node id.',
@@ -243,8 +244,7 @@ export async function readResource(
       ],
       testSelection:
         'testTitles cites exactly one test: every enclosing describe title, outermost first, then the test title, exactly as Vitest reports them, for example ["job scheduler", "runs a delayed job after its timer"]. A title alone matches only a top-level test. testName is retired and refused for new runs. Before launch, Codebook asks Vitest which files its file filter would run, excludes every other file and passes the titles as one literal anchored name pattern; a file listed by several Vitest projects is refused. After the process exits, Vitest\'s JSON report must show exactly the cited test executed in the cited file, otherwise the run fails. A title path that selects no test ends the run before its first declared stop with the exit code.',
-      refusals:
-        "A node-test start is answered with its receipt; its deterministic checks run during preparation, before its history begins, and a refusal there ends the run with its error before its first stop: SOURCE_CHANGED when a declared stop's source no longer has its cited hash (read it with codebook_source, publish the article with the current source), INVALID_CONFIGURATION when the test file changed or a path is not a file of the repository, PREREQUISITE_MISSING when the root Vitest is missing or older than 4. Each message names the field, the path and both hashes and ends with its fix. A refused run records nothing and frees its slot and its key: start again with a new key after the fix.",
+      refusals: `A node-test start is answered with its receipt; its deterministic checks run during preparation, before its history begins, and a refusal there ends the run with its error before its first stop: SOURCE_CHANGED when a declared stop's source no longer has its cited hash (read it with codebook_source, publish the article with the current source), INVALID_CONFIGURATION when the test file changed or a path is not a file of the repository, PREREQUISITE_MISSING when the root Vitest is missing or older than ${NODE_TEST_MINIMUM_VITEST_MAJOR}. Each message names the field, the path and both hashes and ends with its fix. A refused run records nothing and frees its slot and its key: start again with a new key after the fix.`,
       replay:
         "A sealed history is a test replay the learner opens from Saved studies or Open replay: its test output, the executed source and the native debugger's recorded values and stack at each stop, at one playhead; no application video. Times count from the run's start, paused time at stops included.",
       results:
@@ -263,8 +263,7 @@ export async function readResource(
         stops: 8,
         runTimeoutMs: REPOSITORY_RUN_TIMEOUT_MS,
         output: 'Bounded by the owned Node process adapter.',
-        vitest:
-          'node-test runs the Vitest 4 or later installed at the repository root (node_modules/vitest); a Vitest installed only inside a package is not supported yet.',
+        vitest: `node-test runs the Vitest ${NODE_TEST_MINIMUM_VITEST_MAJOR} or later installed at the repository root (node_modules/vitest); a Vitest installed only inside a package is not supported yet.`,
       },
     })
   if (uri === 'codebook://help/repository')
