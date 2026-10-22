@@ -414,17 +414,25 @@ export class OwnedNodeTestRun {
         atColumn,
         pause.reason,
       )
-    const first = check(verified?.line === line ? verified.column : column)
+    // The declared column first: a pause there is the declared stop whoever set the breakpoint that paused (F220).
+    const atDeclared = check(column)
+    if (
+      atDeclared.status !== 'wrong-position' ||
+      atDeclared.observedFrame.line !== line
+    )
+      return atDeclared
+    const observedColumn = atDeclared.observedFrame.column
     const isOwnedHit =
       this.ownedBreakpointId !== undefined &&
       pause.hitBreakpointIds?.includes(this.ownedBreakpointId) === true
-    if (
-      first.status === 'wrong-position' &&
-      isOwnedHit &&
-      first.observedFrame.line === line
-    )
-      return check(first.observedFrame.column)
-    return first
+    const isLearnerHit = pause.hitBreakpointIds !== undefined && !isOwnedHit
+    const boundColumn = verified?.line === line ? verified.column : undefined
+    // The owned breakpoint's bound column: the pause is there and is not a learner's own breakpoint.
+    if (!isLearnerHit && boundColumn === observedColumn)
+      return check(boundColumn)
+    // A registration that names no place yet: the pause the owned breakpoint itself hit shows where it is bound.
+    if (isOwnedHit && boundColumn === undefined) return check(observedColumn)
+    return atDeclared
   }
 
   /** Reports whether another declared checked source stop must be captured before the test may finish. @example while (run.hasNextStop()) await run.advance() */

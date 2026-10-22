@@ -2622,3 +2622,32 @@ test('a second Node test stop answered as pending and then bound at another colu
     await harness.cleanup()
   }
 })
+
+// Value: protects=a learner's own breakpoint that pauses at the declared column while the owned breakpoint is bound at another column of the line: the pause is the declared stop and is captured; fails_when=every pause on the declared line is checked at the bound column, so the learner's pause at the declared column is held as a learner pause and the preparation never reaches its stop; why_new=checkFrameAtBoundColumn checked at the bound column first (F220); seam=the fake session acknowledges 1:1 and pauses at the declared 1:14 for a learner breakpoint; no_claim=the owned hit at the bound column (the F155 tests)
+test('a learner’s breakpoint pausing at the declared column is accepted although the owned breakpoint is bound at another column', async () => {
+  // Arrange: declared at 1:14, owned breakpoint acknowledged at 1:1, the learner's breakpoint pauses at 1:14.
+  const harness = await nodeRunHarness({
+    acknowledgements: [{ verified: true, line: 1, column: 1 }],
+    firstPause: { line: 1, hitBreakpointIds: [LEARNER_BREAKPOINT_ID] },
+  })
+  let giveUp!: NodeJS.Timeout
+  try {
+    // Act
+    const stop = await Promise.race([
+      harness.run.prepare(),
+      new Promise<never>((_resolve, reject) => {
+        giveUp = setTimeout(
+          () => reject(new Error('the run is held at the learner’s pause')),
+          2_000,
+        )
+      }),
+    ])
+
+    // Assert
+    assert.deepEqual([stop.frame.line, stop.frame.column], [1, 14])
+  } finally {
+    clearTimeout(giveUp)
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
