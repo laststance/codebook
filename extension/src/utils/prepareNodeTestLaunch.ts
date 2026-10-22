@@ -51,11 +51,11 @@ const literalGlob = (path: string) => path.replace(/[\\*?[\]{}()!+@]/g, '\\$&')
  * Vitest's file filter is a substring match and its name filter a regular expression over the full test name, so the command excludes every
  * other file Vitest reports and anchors the literal title path. Vitest 5 joins titles with " > " and Vitest 4 with one space.
  * Called by the owned Node test run during preparation, before any test code executes.
+ * The paths and hashes are checked by {@link checkNodeTestFiles} and the root Vitest by {@link readVitestPrerequisite}, the same checks the run's preparation made before its history began; they run again here because time passes between the two.
  *
  * @param workspace - Opened repository root.
  * @param configuration - Validated test intent of a new run.
  * @param listTestFiles - Runs the owned `vitest list --filesOnly` with the run's Node and cancellation.
- * The paths and hashes are checked by {@link checkNodeTestFiles} and the root Vitest by {@link readVitestPrerequisite}, the same checks the run's preparation made before its history began; they run again here because time passes between the two.
  * @returns The checked program, argv, stops, cited title path and the private report location the caller must remove.
  * @throws The typed refusal of {@link checkNodeTestFiles} or the root Vitest's `PREREQUISITE_MISSING`; an error when the Vitest program is not a file of the repository, the identity is retired or missing, or Vitest cannot select the cited file alone.
  * @example
