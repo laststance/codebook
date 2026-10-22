@@ -4622,7 +4622,7 @@ test('after a removal refused because another window of this machine still recor
   }
 })
 
-// Value: protects=the remedy a full library names after a removal of a study of which nothing was left by then; fails_when="Study archive is unavailable." counts as a refusal of the Trash, so the next full library offers no deletion, although the Trash was never asked; why_new=Cycle 0046 review AF1; seam=the library directory, from which the test removes one study's files by hand after the list showed it, and the editor's dialogs and Trash, stubbed at the vscode boundary
+// Value: protects=the remedy a full library names after a removal of a study of which nothing was left by then; fails_when="Study archive is unavailable." counts as a refusal of the Trash, so the next full library offers no deletion, although the Trash was never asked; why_new=Cycle 0046 review AF1; the removal's line read before the run (Cycle 0050 F215); seam=the library directory, from which the test removes one study's files by hand after the list showed it, and the editor's dialogs and Trash, stubbed at the vscode boundary; no_claim=how long the line stays once another run is current
 test('after a removal refused because nothing was left of the study, a run refused on the full library still offers to delete a saved study', async () => {
   // Arrange: two saved studies and a limit of one; the first one's files are removed by hand after the list showed it.
   const harness = await workspaceHarness()
@@ -4635,6 +4635,13 @@ test('after a removal refused because nothing was left of the study, a run refus
     await rm(join(directory, `${gone.id}.study.meta.v3.json`))
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     await requestRemoval(harness, gone.id)
+    // The removal's line is read before the run: the reader retires it at its next refresh once another run is current, which a loaded machine can bring before a later read (F215).
+    await waitUntil(
+      () => harness.reader.inspect().view!.studyRemoval?.status === 'failed',
+      'the refused removal’s line',
+      5_000,
+    )
+    const removal = structuredClone(harness.reader.inspect().view!.studyRemoval)
 
     // Act
     const refused = await startRun(harness)
@@ -4642,7 +4649,7 @@ test('after a removal refused because nothing was left of the study, a run refus
     // Assert
     assert.deepEqual(
       {
-        removal: structuredClone(harness.reader.inspect().view!.studyRemoval),
+        removal,
         moved: harness.trashMoves,
         refusal: refused.record.error?.message,
       },
