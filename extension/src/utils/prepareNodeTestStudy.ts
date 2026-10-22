@@ -8,8 +8,12 @@ import type { RepositoryBookStore } from '../repositoryBook'
 import type { RepositorySourceService } from '../repositorySource'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
-import { assertCitedSourceStops } from './assertConfiguredDescriptor'
+import {
+  assertCitedSourceStops,
+  CitedStopMismatchError,
+} from './assertConfiguredDescriptor'
 import { citationContext } from './citationContext'
+import { describeCitedStopMismatch } from './describeCitedStopMismatch'
 import { describeMissingBookNode } from './describeMissingBookNode'
 import { requireNodeTestTitles } from './requireNodeTestTitles'
 
@@ -65,21 +69,37 @@ export async function prepareNodeTestStudy(
       paths.has(source.path),
     ),
   })
+  const declaredStops = [
+    {
+      label: 'source',
+      source: configuration.source,
+      anchorIndex: configuration.book.anchorIndex,
+    },
+    ...(configuration.additionalStops ?? []).map((stop, index) => ({
+      label: `additionalStops[${index}]`,
+      source: stop,
+      anchorIndex: stop.anchorIndex,
+    })),
+  ]
   try {
-    assertCitedSourceStops(descriptor, [
-      {
-        source: configuration.source,
-        anchorIndex: configuration.book.anchorIndex,
-      },
-      ...(configuration.additionalStops ?? []).map((stop) => ({
-        source: stop,
-        anchorIndex: stop.anchorIndex,
-      })),
-    ])
+    assertCitedSourceStops(descriptor, declaredStops)
   } catch (error) {
+    const declared =
+      error instanceof CitedStopMismatchError
+        ? declaredStops[error.stopIndex]
+        : undefined
+    // Name the stop, its anchor and the failed condition, so the chat does not guess among them (inventory row 14, D17).
     throw new StudyError(
       'INVALID_CONFIGURATION',
-      'Node test stops must identify exact positions in their retained citations.',
+      error instanceof CitedStopMismatchError && declared
+        ? describeCitedStopMismatch(
+            declared.label,
+            error.mismatch,
+            declared.source,
+            declared.anchorIndex,
+            descriptor,
+          )
+        : 'Node test stops must identify exact positions in their retained citations.',
       String(error),
     )
   }
