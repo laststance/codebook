@@ -194,6 +194,7 @@ import {
   type StudyViewMessage,
 } from './ui/studyHtml'
 import { adoptWikiGroupReturn } from './utils/adoptWikiGroupReturn'
+import { awaitDocumentSettled } from './utils/awaitDocumentSettled'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { capturedAppHtml } from './utils/capturedAppHtml'
 import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
@@ -13304,53 +13305,27 @@ export class StudyWorkspace {
     lifetime: number,
     signal?: AbortSignal,
   ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const observation = new AbortController()
-      let finished = false
-      const finish = (failure?: { cause: unknown }): void => {
-        if (finished) return
-        finished = true
-        subscription.dispose()
-        observation.abort()
-        signal?.removeEventListener('abort', check)
-        if (failure) reject(failure.cause)
-        else resolve()
-      }
-      const check = (): void => {
-        try {
-          this.assertLifetime(lifetime)
-          signal?.throwIfAborted()
-          if (this.isRenderSuperseded(revision))
-            throw new Error('Captured source view was superseded.')
-          if (
-            normalizeNativeSourceText(editor.document.getText()) ===
-            normalizeNativeSourceText(text)
-          )
-            finish()
-        } catch (error) {
-          finish({ cause: error })
-        }
-      }
-      const subscription = vscode.workspace.onDidChangeTextDocument((event) => {
-        // Another document's edit cannot settle this captured source.
-        if (event.document.uri.toString() === editor.document.uri.toString())
-          check()
-      })
-      signal?.addEventListener('abort', check, { once: true })
-      // Close and newer intent may emit no document event; retain the existing bounded observation for them.
-      void waitUntil(
-        () => {
-          check()
-          return finished
-        },
-        'the selected captured source bytes',
-        PRESENTATION_READY_TIMEOUT_MS,
-        observation.signal,
-      ).catch((error: unknown) => finish({ cause: error }))
-      // Subscribe before notifying the provider, then check already-delivered or unchanged bytes too.
-      this.sourceChanges.fire(editor.document.uri)
-      check()
-    })
+    await awaitDocumentSettled(
+      vscode.workspace.onDidChangeTextDocument,
+      editor.document.uri.toString(),
+      () => {
+        this.assertLifetime(lifetime)
+        signal?.throwIfAborted()
+        if (this.isRenderSuperseded(revision))
+          throw new Error('Captured source view was superseded.')
+        return (
+          normalizeNativeSourceText(editor.document.getText()) ===
+          normalizeNativeSourceText(text)
+        )
+      },
+      'the selected captured source bytes',
+      PRESENTATION_READY_TIMEOUT_MS,
+      {
+        signal,
+        // Subscribe before notifying the provider, then check already-delivered or unchanged bytes too.
+        afterSubscribe: () => this.sourceChanges.fire(editor.document.uri),
+      },
+    )
   }
 
   /**
@@ -23458,40 +23433,16 @@ export class StudyWorkspace {
     text: string,
     request: number,
   ): Promise<void> {
-    const shown = (): boolean =>
-      request !== this.selectedNodeHistoryRequest ||
-      normalizeNativeSourceText(document.getText()) ===
-        normalizeNativeSourceText(text)
-    if (shown()) return
-    await new Promise<void>((resolve, reject) => {
-      const observation = new AbortController()
-      let finished = false
-      const finish = (failure?: { cause: unknown }): void => {
-        if (finished) return
-        finished = true
-        subscription.dispose()
-        observation.abort()
-        if (failure) reject(failure.cause)
-        else resolve()
-      }
-      const check = (): void => {
-        if (shown()) finish()
-      }
-      const subscription = vscode.workspace.onDidChangeTextDocument((event) => {
-        // Another document's edit cannot settle the slot.
-        if (event.document.uri.toString() === document.uri.toString()) check()
-      })
-      // A provider answer that reached the document before this subscription shows on the next poll.
-      void waitUntil(
-        () => {
-          check()
-          return finished
-        },
-        'the recorded source of this moment',
-        NODE_HISTORY_TRANSITION_BOUND_MS,
-        observation.signal,
-      ).catch((error: unknown) => finish({ cause: error }))
-    })
+    await awaitDocumentSettled(
+      vscode.workspace.onDidChangeTextDocument,
+      document.uri.toString(),
+      () =>
+        request !== this.selectedNodeHistoryRequest ||
+        normalizeNativeSourceText(document.getText()) ===
+          normalizeNativeSourceText(text),
+      'the recorded source of this moment',
+      NODE_HISTORY_TRANSITION_BOUND_MS,
+    )
   }
 
   /**
