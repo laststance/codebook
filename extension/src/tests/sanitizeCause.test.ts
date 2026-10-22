@@ -9,7 +9,7 @@ import { sanitizedStack } from '../utils/sanitizedStack'
 const STORAGE =
   '/Users/ada/Library/Application Support/Code/User/workspaceStorage/4f2a/laststance.codebook'
 
-// Value: protects=the extension's storage path, the opened repository and the home directory in causes the agent and the learner read (POSIX); fails_when=any of the three roots survives in the cause, or a storage folder inside the home directory reads ~/… instead of <storage>; why_new=historyReason and the save's causes were raw String(error) (service.ts:2191, 3125; EN12); seam=none; no_claim=causes of browser runs outside this plan
+// Value: protects=the extension's storage path, the opened repository and the home directory in causes the agent and the learner read (POSIX); fails_when=any of the three roots survives in the cause, or a storage folder inside the home directory reads ~/… instead of <storage>; why_new=historyReason and the save's causes were raw String(error) (the service's historyReason and save causes; EN12); seam=none; no_claim=causes of browser runs outside this plan
 test('a cause names no storage folder, repository root or home directory of this machine', () => {
   // Arrange
   const error = new Error(

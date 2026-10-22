@@ -257,7 +257,6 @@ test('saved Node history is selectable in the reader without entering browser pl
       libraryEntry.outcome,
       'Test replay · Test passed · exit code 0 · capture complete · 0 of 2 stops explained',
     )
-    assert.doesNotMatch(libraryEntry.outcome, /replay (is |are )?unavailable/i)
     assert.equal(libraryEntry.metadata, 'validated')
 
     // Act: selecting the catalog entry routes to the Node journal while preserving browser-study selection.

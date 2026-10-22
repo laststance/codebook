@@ -57,7 +57,7 @@ export const NODE_TEST_SINCE_API_1_8_HELP =
   'Since API 1.8 a node-test run reads demonstrated in finalOutcome once its test passed, and in studyOutcome and recordedStudyOutcome once its history sealed complete; a sealed history is a test replay the learner opens from Saved studies or Open replay (test output, executed source and recorded debugger stops; no application video). nodeTest.testResult (passed, failed, signal or none), nodeTest.learningCoverage (complete, partial or none) and nodeTest.learningMissing tell the result and the explanations the saved learning material still lacks; nextActions lists save-node-learning until coverage is complete. Claim saved learning only when studyOutcome is demonstrated and nodeTest.learningCoverage is complete; a run resource without nodeTest.learningCoverage supports no such claim.'
 
 /** The complete node-test start the help shows, with every value that comes from another answer written as a placeholder that names that answer, and the start's new key as a placeholder too; a test replaces them and parses it with {@link nodeTestConfigSchema}. */
-export const NODE_TEST_HELP_EXAMPLE = {
+const NODE_TEST_HELP_EXAMPLE = {
   instanceId: '<instanceId from codebook_status>',
   profile: NODE_TEST_PROFILE,
   key: '<a new key for this start>',

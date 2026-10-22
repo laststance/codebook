@@ -85,7 +85,7 @@ test('an older root Vitest and a missing one are named with what to ask the lear
   }
 })
 
-// Value: protects=the agent's first answer from text a package's version field carries; fails_when=an instruction-like or overlong version is printed into codebook_status; why_new=prepareNodeTestLaunch printed the version verbatim (prepareNodeTestLaunch.ts:132-135, EN11); seam=none; no_claim=other package metadata
+// Value: protects=the agent's first answer from text a package's version field carries; fails_when=an instruction-like or overlong version is printed into codebook_status; why_new=prepareNodeTestLaunch printed the version verbatim (prepareNodeTestLaunch's version line, EN11); seam=none; no_claim=other package metadata
 test('a version that is no short semantic version is reported as an unreadable version', async () => {
   // Arrange
   const { root, cleanup } = await repository()

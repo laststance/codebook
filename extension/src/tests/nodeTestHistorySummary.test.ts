@@ -36,7 +36,7 @@ async function storeWithSealedHistories(count: number) {
   }
 }
 
-// Value: protects=the refresh's cost: a second list of unchanged sealed histories reads no journal again and answers the same summaries; fails_when=list() reads and hashes every journal at each refresh (every 250 ms); why_new=list() had no memo (nodeTestHistoryStore.ts:264, EN7, AC20); seam=the store's read is counted; no_claim=absolute timings
+// Value: protects=the refresh's cost: a second list of unchanged sealed histories reads no journal again and answers the same summaries; fails_when=list() reads and hashes every journal at each refresh (every 250 ms); why_new=list() had no memo (NodeTestHistoryStore.list, EN7, AC20); seam=the store's read is counted; no_claim=absolute timings
 test('a second list of unchanged sealed histories reads no journal again', async (context) => {
   // Arrange
   const { store, cleanup } = await storeWithSealedHistories(3)

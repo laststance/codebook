@@ -1293,7 +1293,7 @@ test('an exit 0 whose report is missing returns no result', async () => {
   }
 })
 
-// Value: protects=the private Vitest report while the result check reads it; fails_when=a stop removes the report folder during the check, so the check reports a missing report for a test that passed; why_new=releaseOwned removed the report at once (ownedNodeTestRun.ts:907, EN5, AC19); seam=the report check is held by the test; no_claim=the service's seal (service tests)
+// Value: protects=the private Vitest report while the result check reads it; fails_when=a stop removes the report folder during the check, so the check reports a missing report for a test that passed; why_new=releaseOwned removed the report at once (releaseOwned's report removal, EN5, AC19); seam=the report check is held by the test; no_claim=the service's seal (service tests)
 test('a stop while the report is being checked removes the report only after the check read it', async () => {
   // Arrange
   let finishRead!: () => void

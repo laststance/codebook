@@ -219,7 +219,7 @@ async function continueCurrentPause(
   return service.continue(args)
 }
 
-// Value: protects=a node-test start refused during its preparation: its typed error in the run resource, no history folder, and its retained-run slot and start key given up; fails_when=the checks run after the history began, a refused run keeps its slot so the 17th start answers LIMIT_EXCEEDED, or its key still replays the refused receipt; why_new=refusals left a history and held a slot (service.ts:2663, EN1, AC19); seam=the environment's file check is a fake; no_claim=the agent's behavior after a refusal (pilot)
+// Value: protects=a node-test start refused during its preparation: its typed error in the run resource, no history folder, and its retained-run slot and start key given up; fails_when=the checks run after the history began, a refused run keeps its slot so the 17th start answers LIMIT_EXCEEDED, or its key still replays the refused receipt; why_new=refusals left a history and held a slot (the refusal path of the node-test start, EN1, AC19); seam=the environment's file check is a fake; no_claim=the agent's behavior after a refusal (pilot)
 test('a node-test start refused during its preparation records no history and frees its slot and its start key', async () => {
   // Arrange
   const run = await testRunHarness()
@@ -270,7 +270,7 @@ test('a node-test start refused during its preparation records no history and fr
   }
 })
 
-// Value: protects=a Stop while the run advances to its next stop: the continuation settles before the seal, the run ends without an error of its own and its history seals partial with the stop it reached; fails_when=the seal starts while the continuation runs, or the cancelled continuation becomes the run's error and reads not-demonstrated; why_new=stopRecord awaited preparation and explanations but not a Node continuation (service.ts:3048-3070, EN5); seam=the owned run is a fake whose advance a stop cancels; no_claim=the native debugger's own cancellation
+// Value: protects=a Stop while the run advances to its next stop: the continuation settles before the seal, the run ends without an error of its own and its history seals partial with the stop it reached; fails_when=the seal starts while the continuation runs, or the cancelled continuation becomes the run's error and reads not-demonstrated; why_new=stopRecord awaited preparation and explanations but not a Node continuation (the stop's wait in stopRecord, EN5); seam=the owned run is a fake whose advance a stop cancels; no_claim=the native debugger's own cancellation
 test('a Stop while the run advances to its next stop waits for that continuation and seals the stop it reached', async () => {
   // Arrange
   const run = await testRunHarness({
@@ -506,7 +506,7 @@ test('an exit 0 whose Vitest report is missing records no result', async () => {
   }
 })
 
-// Value: protects=a passing run whose first release failed: a retried Stop that releases it clears the release's error and seals the history complete; fails_when=the release error from failByRelease stays and the history seals partial; why_new=the seal read !record.error (service.ts:2513-2517, EN4, AC19); seam=the owned run's first release fails; no_claim=a release that keeps failing
+// Value: protects=a passing run whose first release failed: a retried Stop that releases it clears the release's error and seals the history complete; fails_when=the release error from failByRelease stays and the history seals partial; why_new=the seal read !record.error (the history seal's error check, EN4, AC19); seam=the owned run's first release fails; no_claim=a release that keeps failing
 test('a passing run whose first release failed seals complete when a retried Stop releases it', async () => {
   // Arrange
   const run = await testRunHarness({ releaseFailures: 1 })
@@ -589,7 +589,11 @@ test('the run resource reads its learning coverage from its own cache as the sav
         { type: 'result' as const, sequence: result.sequence },
       ]),
     })
+    const readsAfterSaves = reads.mock.callCount()
+    // The 250 ms polls of the run resource: three reads of its state after the last save.
     const fully = run.service.state(record)
+    run.service.state(record)
+    run.service.state(record)
     const readsAfterPolls = reads.mock.callCount()
     const summariesAfterPolls = summaries.mock.callCount()
     const resource = await readResource(
@@ -609,8 +613,9 @@ test('the run resource reads its learning coverage from its own cache as the sav
     assert.deepEqual(fully.nodeTest?.learningMissing, [])
     assert.ok(!fully.nextActions.includes('save-node-learning'))
     assert.equal(summariesAfterPolls, summariesBeforePolls)
-    // The second save reads the history once to check its references; the polls read nothing.
-    assert.equal(readsAfterPolls - readsBeforePolls, 2)
+    // The saves read the history to check their references (the number is theirs to choose); the polls after them read nothing.
+    assert.ok(readsAfterSaves > readsBeforePolls)
+    assert.equal(readsAfterPolls, readsAfterSaves)
     assert.ok('text' in resource)
     const body = JSON.parse(JSON.parse(resource.text).content)
     assert.deepEqual(
@@ -631,7 +636,7 @@ test('the run resource reads its learning coverage from its own cache as the sav
   }
 })
 
-// Value: protects=codebook_stop's answer after the test history could not be sealed: HISTORY_SEAL_FAILED with the run, its verdict and stops, a sanitized cause and the run state (whose recording.reason gives the same cause), the same for a repeated stop without a second seal, and one Output entry; fails_when=the tool answers ok, names the storage path, seals again, reports nothing to the Output channel, or the run state's recording.reason loses the cause; why_new=a failed seal answered ok:true (protocol.ts:46-63, X1, AC2, AC17); seam=the writer's finish fails; no_claim=a full disk's real error text
+// Value: protects=codebook_stop's answer after the test history could not be sealed: HISTORY_SEAL_FAILED with the run, its verdict and stops, a sanitized cause and the run state (whose recording.reason gives the same cause), the same for a repeated stop without a second seal, and one Output entry; fails_when=the tool answers ok, names the storage path, seals again, reports nothing to the Output channel, or the run state's recording.reason loses the cause; why_new=a failed seal answered ok:true (the stop answer's protocol shape, X1, AC2, AC17); seam=the writer's finish fails; no_claim=a full disk's real error text
 test('codebook_stop answers HISTORY_SEAL_FAILED with the run state when the test history cannot be sealed, and the same again for a repeated stop', async (context) => {
   // Arrange
   const run = await testRunHarness()
@@ -779,7 +784,7 @@ test('a stop of a run refused before its history began answers no seal failure',
   }
 })
 
-// Value: protects=codebook_playback refusing a test replay's study before the presentation check and before any load, for this window's run and for a listed history; fails_when=the presentation's busy refusal or a load comes first, or a listed test history is handed to the browser replay's controller; why_new=a test replay's id reached the controller (service.ts:648, X2, AC2); seam=the presentation controller refuses everything; no_claim=the learner's own open of a test replay
+// Value: protects=codebook_playback refusing a test replay's study before the presentation check and before any load, for this window's run and for a listed history; fails_when=the presentation's busy refusal or a load comes first, or a listed test history is handed to the browser replay's controller; why_new=a test replay's id reached the controller (the playback command's study admission, X2, AC2); seam=the presentation controller refuses everything; no_claim=the learner's own open of a test replay
 test('codebook_playback refuses a test replay’s study before the presentation check, for a run and for a listed history', async () => {
   // Arrange
   const run = await testRunHarness()

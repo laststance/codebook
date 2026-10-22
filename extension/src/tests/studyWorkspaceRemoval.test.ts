@@ -7808,7 +7808,7 @@ test('a Node test history opened while the neighbour of a removed study is being
   }
 })
 
-// Value: protects=display ownership while a test replay is selected: refreshes after the background saved-study selection changed leave the replay's source, its debugger and its selected stop as they were (EN9); fails_when=the periodic refresh renders the changed background selection over the replay and its source pane shows the saved-study placeholder; why_new=the refresh called renderSelection whenever no browser recording was active (studyWorkspace.ts:10312-10352, AC6); seam=the library's archive read, held by the test, and the refreshes the test runs; no_claim=native editor group behavior (N49)
+// Value: protects=display ownership while a test replay is selected: refreshes after the background saved-study selection changed leave the replay's source, its debugger and its selected stop as they were (EN9); fails_when=the periodic refresh renders the changed background selection over the replay and its source pane shows the saved-study placeholder; why_new=the refresh called renderSelection whenever no browser recording was active (the refresh's renderSelection branch, AC6); seam=the library's archive read, held by the test, and the refreshes the test runs; no_claim=native editor group behavior (N49)
 test('refreshes after the background selection changed leave a selected test replay’s source and debugger on its stop', async (context) => {
   // Arrange: a saved study the learner removes while a test replay shows its stop.
   const harness = await workspaceHarness()

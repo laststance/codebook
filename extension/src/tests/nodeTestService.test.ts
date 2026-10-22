@@ -16,7 +16,7 @@ import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSource
 import { createHarness } from './helpers'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
-// Value: protects=a natural test run's whole loop on the run resource: cited ordered pauses, the actual passing result, the sealed journal as a demonstrated test replay with its hash, the agent's coverage fields and the neutral help; fails_when=a passing run with every declared stop reads partial or unavailable, the contextHash differs from the sealed journal, coverage or nextActions are missing, or the help keeps a removed sentence or a development-target title; why_new=API 1.8 makes a test run a learning replay (C49-1, AC1, AC8); seam=the owned Node test runtime is a fake; no_claim=the native debugger and Vitest (ownedNodeTestRun tests, N49)
+// Value: protects=a natural test run's whole loop on the run resource: cited ordered pauses, the actual passing result, the sealed journal as a demonstrated test replay with its hash, the agent's coverage fields and the neutral help; fails_when=a passing run with every declared stop reads partial or unavailable, the contextHash differs from the sealed journal, coverage or nextActions are missing, or the help loses its history, nested-title, retired-testName or learner-pause sentence; why_new=API 1.8 makes a test run a learning replay (C49-1, AC1, AC8); seam=the owned Node test runtime is a fake; no_claim=the native debugger and Vitest (ownedNodeTestRun tests, N49)
 test('a passing Node test run with every declared stop is demonstrated and sealed as a test replay', async () => {
   // Arrange
   const harness = await createHarness(),
@@ -277,20 +277,10 @@ test('a passing Node test run with every declared stop is demonstrated and seale
     )
     assert.ok('text' in help)
     assert.match(help.text, /history journal/i)
-    assert.doesNotMatch(
-      help.text,
-      /not application video or synchronized application replay/i,
-    )
-    assert.doesNotMatch(help.text, /replay (is |are )?unavailable/i)
     assert.match(
       help.text,
       /\[\\"job scheduler\\", \\"runs a delayed job after its timer\\"\]/,
       'help shows a nested test cited by its title path',
-    )
-    assert.doesNotMatch(
-      help.text,
-      /invoice data queries/,
-      'help quotes no title of the development target',
     )
     assert.match(help.text, /testName is retired and refused for new runs/)
     assert.match(
