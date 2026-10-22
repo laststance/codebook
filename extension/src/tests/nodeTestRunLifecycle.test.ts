@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 import { NODE_TEST_HISTORY_DIRECTORY, NODE_TEST_PROFILE } from '../constants'
-import { StudyError } from '../errors'
+import { NodeLearningRevisionChangedError, StudyError } from '../errors'
 import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import type { NodeTestLearningMaterialContent } from '../nodeTestHistorySchemas'
 import {
@@ -35,10 +35,14 @@ const PASSING_RESULT = {
 /** What a fake owned run does at each step, each held or answered as a case needs. */
 type FakeRunSteps = {
   stops?: 1 | 2
+  /** Records no output before the first stop, so a run stopped there seals a history with no entry. */
+  silent?: boolean
   /** Holds the preparation's first stop until it settles, or until a stop cancels it. */
   prepareHeld?: Promise<void>
   /** Holds the advance to the second stop until it settles, or until a stop cancels it. */
   advanceHeld?: Promise<void>
+  /** Makes the advance to the next stop fail with this error. */
+  advanceFails?: () => Error
   /** Holds the final continuation (the process's result and the report check) until it settles. */
   completeHeld?: Promise<void>
   /** What the final continuation answers or throws. */
@@ -136,6 +140,7 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
     },
     async advance() {
       // A stop aborts the owned run: an advance under way rejects, as the debugger's wait does.
+      if (steps.advanceFails) throw steps.advanceFails()
       await Promise.race([steps.advanceHeld, cancelled])
       return stops[++cursor]!
     },
@@ -162,12 +167,13 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
     },
   }
   service.environment.createNodeTestRun = async (_configuration, record) => {
-    await record('node-test.output', {
-      sequence: 1,
-      elapsedMs: 3,
-      channel: 'stdout',
-      text: 'RUN src/scheduler.test.ts',
-    })
+    if (!steps.silent)
+      await record('node-test.output', {
+        sequence: 1,
+        elapsedMs: 3,
+        channel: 'stdout',
+        text: 'RUN src/scheduler.test.ts',
+      })
     return runtime
   }
   return {
@@ -1145,5 +1151,220 @@ test('a node-test start refused for full saved-study storage answers a typed PRE
     assert.deepEqual(await run.service.nodeHistoryStore!.list(), [])
   } finally {
     await run.harness.close()
+  }
+})
+
+// Value: protects=the run resource's nextActions for a test history sealed with no entry (stopped before the first stop): no save-node-learning, because nothing is left to explain or save; fails_when=the action is offered for an empty history, so the agent asks the learner for a Save item that does not show; why_new=nextActions offered save-node-learning for any history whose coverage was not complete (F71); seam=the owned run is a fake whose first stop a stop cancels; no_claim=the Save item's visibility in the status bar (nodeLearningSave tests)
+test('a test history sealed with no entry does not offer save-node-learning', async () => {
+  // Arrange
+  const run = await testRunHarness({
+    prepareHeld: new Promise<void>(() => {}),
+    silent: true,
+  })
+  try {
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: 'sealed-with-no-entry',
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => record.nodeRun !== undefined, 'the owned run exists')
+
+    // Act
+    const state = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+
+    // Assert
+    assert.equal(record.nodeHistoryEntryCount, 0)
+    assert.equal(state.nextActions.includes('save-node-learning'), false)
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=codebook_explain_node_history telling a stale material revision (IDEMPOTENCY_CONFLICT) from a citation that merely names a path containing the words "revision changed" (INVALID_REFERENCE stays); fails_when=the conflict is recognized by searching the error text, so a stop in src/revision changed.ts turns INVALID_REFERENCE into IDEMPOTENCY_CONFLICT, or a real stale revision stops being a conflict; why_new=explainNodeHistory mapped the error by its text (F44); seam=the history store's save is replaced by one that throws; no_claim=the store's own revision check (nodeTestHistoryStore tests)
+test('explain_node_history answers IDEMPOTENCY_CONFLICT for a stale revision and keeps INVALID_REFERENCE for a citation whose path says "revision changed"', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  const store = run.service.nodeHistoryStore!
+  const studyId = `${'1'.repeat(8)}-1111-1111-1111-${'1'.repeat(12)}_${'2'.repeat(8)}-2222-2222-2222-${'2'.repeat(12)}`
+  const content = materialCiting([
+    { type: 'stop', sequence: 2, sourceHash: 'a'.repeat(64) },
+  ])
+  const input = { studyId, expectedRevision: 0, content }
+  try {
+    store.saveLearningMaterial = async () => {
+      throw new StudyError(
+        'INVALID_REFERENCE',
+        'Step 1 cites a stop in src/revision changed.ts that the sealed journal does not hold.',
+      )
+    }
+    const citation = await run.service.explainNodeHistory(input).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    store.saveLearningMaterial = async () => {
+      throw new NodeLearningRevisionChangedError(0, 1)
+    }
+
+    // Act
+    const stale = await run.service.explainNodeHistory(input).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.ok(citation instanceof StudyError)
+    assert.equal(citation.code, 'INVALID_REFERENCE')
+    assert.ok(stale instanceof StudyError)
+    assert.equal(stale.code, 'IDEMPOTENCY_CONFLICT')
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=nodeTest.captureMissing in the run resource and the node-history resource for a history cut before its result: [{kind: execution}] in both, absent before the seal; fails_when=the run resource exposes no capture gap (an agent claims saved learning for a replay Save reads as partially saved) or the two resources disagree; why_new=captureMissing was not exposed (F72, D8); seam=the owned run is a fake whose advance a stop cancels; no_claim=the skill's claim rule (a document of group C)
+test('the run and the node-history resource list the capture gap of a history cut before its result, and the run lists none before the seal', async () => {
+  // Arrange
+  const run = await testRunHarness({
+    stops: 2,
+    advanceHeld: new Promise<void>(() => {}),
+  })
+  try {
+    const { record } = await run.start()
+    const beforeSeal = run.service.state(record)
+    const advancing = continueCurrentPause(run.service, record)
+    advancing.catch(() => undefined)
+    await waitUntil(() => record.nodePhase === 'advancing', 'the advance')
+
+    // Act
+    const afterStop = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    const history = await readResource(
+      run.service,
+      afterStop.nodeTest!.historyUri!,
+    )
+
+    // Assert
+    assert.equal(beforeSeal.nodeTest?.captureMissing, undefined)
+    assert.deepEqual(
+      afterStop.nodeTest?.captureMissing?.filter(
+        (part) => part.kind === 'execution',
+      ),
+      [{ kind: 'execution' }],
+    )
+    assert.ok('text' in history)
+    const resourceMissing: unknown = JSON.parse(
+      JSON.parse(history.text).content,
+    ).captureMissing
+    assert.deepEqual(resourceMissing, afterStop.nodeTest?.captureMissing)
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=the run resource cutting a long seal failure to the 300 characters AC17 shows (nodeTest.historyReason, recording.reason, recording.contextReason) while the run keeps the whole sanitized cause bounded to 8,192 characters for the Output entry; fails_when=a resource shows the whole 10,000-character cause, or the stored cause loses its bound; why_new=the run resource showed whole causes and nodeHistoryFailure lost its bound (F51); seam=the writer's finish fails with a very long message; no_claim=the Output channel's rendering
+test('the run resource cuts a long seal failure to 300 characters and the run keeps it bounded to 8,192', async (context) => {
+  // Arrange
+  const run = await testRunHarness()
+  context.mock.method(NodeTestHistoryWriter.prototype, 'finish', async () => {
+    throw new Error(`ENOSPC: ${'x'.repeat(10_000)}`)
+  })
+  const diagnostics: CodebookDiagnostic[] = []
+  run.service.diagnostics = (entry) => diagnostics.push(entry)
+  try {
+    const { record } = await run.start()
+    await continueCurrentPause(run.service, record)
+
+    // Act
+    const answer = await run.service.stopForTool({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+
+    // Assert
+    const shown = `ENOSPC: ${'x'.repeat(285)}… [cut]`
+    assert.deepEqual(
+      [
+        answer.state.nodeTest?.historyReason,
+        answer.state.recording.reason,
+        answer.state.recording.contextReason,
+      ],
+      [shown, shown, shown],
+    )
+    assert.equal(record.nodeHistoryFailure?.length, 8_192)
+    assert.equal(diagnostics[0]?.cause.length, 8_192)
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a test run's own error carrying no private path: a failed advance, and the report failure of a failing result, read `<storage>` in the run's error message and cause; fails_when=the error assigned at the continuation keeps the raw storage path in the run resource and the codebook_continue refusal; why_new=a test run's own error was not sanitized at assignment (F49); seam=the owned run's advance fails and its result carries a report failure naming the storage path; no_claim=the real adapter's wording
+test('a test run’s own error from a failed advance and from a report failure names no storage path', async () => {
+  // Arrange
+  let storage = ''
+  const failedAdvance = await testRunHarness({
+    stops: 2,
+    advanceFails: () =>
+      new Error(
+        `ENOENT: no such file or directory, open '${storage}/x/a.json'`,
+      ),
+  })
+  storage = failedAdvance.service.causeRoots.storage[0]!
+  let reportStorage = ''
+  const reported = await testRunHarness({
+    complete: async () => ({
+      exitCode: 1,
+      signal: null,
+      output: 'Tests 1 failed',
+      elapsedMs: 40,
+      reportFailure: `report not found at ${reportStorage}/report.json`,
+    }),
+  })
+  reportStorage = reported.service.causeRoots.storage[0]!
+  try {
+    const advanceStart = await failedAdvance.start()
+    const advanceRejection = await continueCurrentPause(
+      failedAdvance.service,
+      advanceStart.record,
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    const reportStart = await reported.start()
+    await continueCurrentPause(reported.service, reportStart.record)
+
+    // Act
+    const advanceState = failedAdvance.service.state(advanceStart.record)
+    const reportState = reported.service.state(reportStart.record)
+
+    // Assert
+    assert.ok(advanceRejection instanceof StudyError)
+    assert.deepEqual(
+      [
+        advanceRejection.describe().message,
+        advanceRejection.describe().cause,
+        advanceState.error?.message,
+        advanceState.error?.cause,
+      ],
+      [
+        "The study operation failed. Cause: ENOENT: no such file or directory, open '<storage>/x/a.json'",
+        "ENOENT: no such file or directory, open '<storage>/x/a.json'",
+        "The study operation failed. Cause: ENOENT: no such file or directory, open '<storage>/x/a.json'",
+        "ENOENT: no such file or directory, open '<storage>/x/a.json'",
+      ],
+    )
+    assert.equal(
+      reportState.error?.message,
+      "Test failed · exit code 1, and Vitest's test report could not confirm the cited test: report not found at <storage>/report.json",
+    )
+  } finally {
+    await failedAdvance.harness.close()
+    await reported.harness.close()
   }
 })

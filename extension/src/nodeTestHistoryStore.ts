@@ -23,7 +23,11 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
 } from './constants'
-import { SavedStudyStorageFullError, StudyError } from './errors'
+import {
+  NodeLearningRevisionChangedError,
+  SavedStudyStorageFullError,
+  StudyError,
+} from './errors'
 import {
   nodeTestHistoryEntrySchema,
   nodeTestHistoryHeaderSchema,
@@ -940,8 +944,9 @@ export class NodeTestHistoryStore {
     const current = await this.readLearningMaterial(studyId)
     const currentRevision = current?.revision ?? 0
     if (expectedRevision !== currentRevision)
-      throw new Error(
-        `Node learning material revision changed; expected ${expectedRevision}, current ${currentRevision}.`,
+      throw new NodeLearningRevisionChangedError(
+        expectedRevision,
+        currentRevision,
       )
     const parsedContent = nodeTestLearningMaterialContentSchema.parse(content)
     assertLearningCitations(parsedContent, citableEvents(history))

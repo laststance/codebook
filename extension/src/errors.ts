@@ -148,6 +148,19 @@ export class SavedStudyStorageFullError extends Error {
   }
 }
 
+/**
+ * Marks the save of learning material whose expected revision is no longer the saved one; the typed signal {@link NodeTestHistoryStore.saveLearningMaterial} gives {@link StudyService.explainNodeHistory}, which answers `IDEMPOTENCY_CONFLICT`, so a cited path that happens to contain the words "revision changed" is never taken for it.
+ *
+ * @example throw new NodeLearningRevisionChangedError(0, 1)
+ */
+export class NodeLearningRevisionChangedError extends Error {
+  constructor(expectedRevision: number, currentRevision: number) {
+    super(
+      `Node learning material revision changed; expected ${expectedRevision}, current ${currentRevision}.`,
+    )
+  }
+}
+
 /** Normalizes unexpected boundary failures without pretending they succeeded; called by protocol handlers. @example domainError(new Error('disk')).code */
 export function domainError(error: unknown): StudyError {
   return error instanceof StudyError

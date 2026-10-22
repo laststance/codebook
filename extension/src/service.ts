@@ -40,7 +40,12 @@ import {
   PRESENTATION_MODE_IDS,
   STUDY_PRESENTATIONS,
 } from './constants'
-import { SavedStudyStorageFullError, StudyError, domainError } from './errors'
+import {
+  NodeLearningRevisionChangedError,
+  SavedStudyStorageFullError,
+  StudyError,
+  domainError,
+} from './errors'
 import {
   learningSummarySchema,
   type LearningSummary,
@@ -119,6 +124,7 @@ import {
   type NodeLearningExplanationPart,
   type NodeLearningNeeds,
 } from './utils/listMissingNodeExplanations'
+import type { NodeLearningCapturePart } from './utils/listMissingNodeLearning'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
@@ -325,6 +331,8 @@ interface StudyRecordState {
     materialRevision: number
     missing: NodeLearningExplanationPart[]
     coverage: NodeLearningCoverage
+    /** The recorded evidence the sealed journal lacks, which no explanation can add and which makes Save read partially saved; `undefined` while the journal could not be read, which supports no claim of saved learning. */
+    captureMissing?: NodeLearningCapturePart[]
   }
   /** Why a browser recording's finish or read-back failed at the run's stop, sanitized when it was assigned; a `codebook_stop` of the run answers `HISTORY_SEAL_FAILED` with it. */
   recordingSealFailure?: string
@@ -404,6 +412,30 @@ export class StudyService {
       workspace: this.environment.workspace,
       home: homedir(),
     }
+  }
+
+  /**
+   * Words a failure for the places a run keeps it, once, at the moment it is assigned: private roots replaced ({@link sanitizeCause}) and the whole bounded to {@link MAX_UI_TEXT_CHARS}; every surface then shows the same value, cut for display where it is shown ({@link cutCauseForDisplay}).
+   * @param error - What was thrown, or a cause already in words.
+   * @returns The sanitized, bounded cause.
+   * @example this.sanitizedCause(new Error("ENOSPC, write '/Users/ada/.learning/x'")) // => "ENOSPC, write '<storage>/x'"
+   */
+  private sanitizedCause(error: unknown): string {
+    return sanitizeCause(error, this.causeRoots).slice(0, MAX_UI_TEXT_CHARS)
+  }
+
+  /**
+   * Sanitizes the words of a test run's own error at its assignment, so the run resource and the `codebook_stop` answer never name a private path in the message or the cause (F49); called where {@link StudyService.prepare} and {@link StudyService.continueNodeTest} set `record.error`.
+   * @param error - The domain error of the failure.
+   * @returns An error with the same code, whose message and cause are sanitized and bounded.
+   * @example this.sanitizedError(new StudyError('RUNTIME_FAILED', "failed at /Users/ada/repo/a.ts")).message // => 'failed at <workspace>/a.ts'
+   */
+  private sanitizedError(error: StudyError): StudyError {
+    return new StudyError(
+      error.code,
+      this.sanitizedCause(error.message),
+      this.sanitizedCause(error.causeDetail),
+    )
   }
 
   /**
@@ -1435,9 +1467,11 @@ export class StudyService {
       record.nodePhase = 'completed'
       // The exit already says the test did not pass; the run's error names why Vitest's report could not confirm the cited test.
       if (result.reportFailure !== undefined) {
-        record.error = new StudyError(
-          'RUNTIME_FAILED',
-          `${describeNodeTestResult(result)}, and Vitest's test report could not confirm the cited test: ${result.reportFailure}`,
+        record.error = this.sanitizedError(
+          new StudyError(
+            'RUNTIME_FAILED',
+            `${describeNodeTestResult(result)}, and Vitest's test report could not confirm the cited test: ${result.reportFailure}`,
+          ),
         )
         queueMicrotask(() => {
           void this.stopRecord(record).catch(() => undefined)
@@ -1449,9 +1483,11 @@ export class StudyService {
         throw new StudyError(
           'STALE_PAUSE',
           'The run was stopped during this continuation; read the run resource.',
-          String(error),
+          this.sanitizedCause(error),
         )
-      record.error = studyErrorNamingCause(domainError(error))
+      record.error = this.sanitizedError(
+        studyErrorNamingCause(domainError(error)),
+      )
       record.nodePhase = 'failed'
       queueMicrotask(() => {
         void this.stopRecord(record).catch(() => undefined)
@@ -1808,7 +1844,7 @@ export class StudyService {
       )
       return material
     } catch (error) {
-      if (String(error).includes('revision changed'))
+      if (error instanceof NodeLearningRevisionChangedError)
         throw new StudyError(
           'IDEMPOTENCY_CONFLICT',
           'Node learning material changed; read the latest material and retry with its revision.',
@@ -1842,6 +1878,7 @@ export class StudyService {
       record.nodeLearning = this.nodeLearningOf(
         record.nodeLearning.needs,
         record.nodeLearningMaterial,
+        record.nodeLearning.captureMissing,
       )
   }
 
@@ -2393,7 +2430,10 @@ export class StudyService {
         ? 'save-learning-summary'
         : undefined,
       // A sealed test history whose learning material does not yet explain every stop and the result asks for codebook_explain_node_history.
-      record.nodeLearning && record.nodeLearning.coverage !== 'complete'
+      // Only a history with an entry holds anything to explain or save; a history sealed with none has no Save item either.
+      record.nodeLearning &&
+      record.nodeLearning.coverage !== 'complete' &&
+      (record.nodeHistoryEntryCount ?? 0) > 0
         ? 'save-node-learning'
         : undefined,
       holdsHistory ? 'read-history' : undefined,
@@ -2457,11 +2497,13 @@ export class StudyService {
               historyStatus:
                 record.nodeHistoryStatus ??
                 (record.nodeHistoryWriter ? 'recording' : 'unavailable'),
-              historyReason: record.nodeHistoryFailure,
+              historyReason: cutCauseForDisplay(record.nodeHistoryFailure),
               testResult: nodeTestResultKind(record.nodeResult),
               // Present once the history is sealed: how much the saved learning material explains, read from the run's cache (EN2).
               learningCoverage: record.nodeLearning?.coverage,
               learningMissing: record.nodeLearning?.missing,
+              // Recorded evidence the replay lacks: Save reads partially saved while any is missing, so a claim of saved learning needs this empty.
+              captureMissing: record.nodeLearning?.captureMissing,
               recordingAvailable: nodeOutcome?.replayAvailable ?? false,
               replayAvailable: nodeOutcome?.replayAvailable ?? false,
             }
@@ -2750,7 +2792,9 @@ export class StudyService {
       contextHash: sealed ? record.nodeHistoryHash : undefined,
       studyHash: undefined,
       contextReason:
-        status === 'failed' ? record.nodeHistoryFailure : undefined,
+        status === 'failed'
+          ? cutCauseForDisplay(record.nodeHistoryFailure)
+          : undefined,
     }
   }
 
@@ -2765,8 +2809,10 @@ export class StudyService {
     record: StudyRecord,
     status: ReturnType<typeof projectNodeTestOutcome>['recordingStatus'],
   ): string | undefined {
-    if (status === 'failed') return record.nodeHistoryFailure
-    if (status === 'partial') return record.nodeHistoryReason
+    if (status === 'failed')
+      return cutCauseForDisplay(record.nodeHistoryFailure)
+    if (status === 'partial')
+      return cutCauseForDisplay(record.nodeHistoryReason)
     if (status !== 'unavailable') return undefined
     // A run refused, failed or stopped before its history began recorded nothing; a run still preparing says so.
     return (
@@ -3263,7 +3309,7 @@ export class StudyService {
               record.definition?.configuration.version === 2 ? 3 : 2,
             )
           } catch (error) {
-            record.recordingFailure = `Recording unavailable before input: ${String(error)}`
+            record.recordingFailure = `Recording unavailable before input: ${this.sanitizedCause(error)}`
           }
         }
         if (this.stopping || record.stopping) return
@@ -3285,6 +3331,8 @@ export class StudyService {
       if (record.profile === NODE_TEST_PROFILE && !record.nodeHistoryWriter)
         record.historyExcluded = 'refused-at-preparation'
       record.error = this.preparationError(record, error)
+      if (record.profile === NODE_TEST_PROFILE)
+        record.error = this.sanitizedError(record.error)
       record.runtime?.fail(record.error.message)
       if (record.nodePhase) record.nodePhase = 'failed'
     }
@@ -3452,15 +3500,9 @@ export class StudyService {
               await this.recordings?.read(record.recording.header.studyId)
               record.recordingSeal = seal
             } catch (error) {
-              record.recordingFailure = String(error).slice(
-                0,
-                MAX_UI_TEXT_CHARS,
-              )
-              // A recording whose finish or read-back failed at the stop is a history that could not be sealed: codebook_stop answers HISTORY_SEAL_FAILED.
-              record.recordingSealFailure = sanitizeCause(
-                error,
-                this.causeRoots,
-              )
+              // One sanitized value for both: the recording's reason and the seal failure `codebook_stop` answers (F48).
+              record.recordingSealFailure = this.sanitizedCause(error)
+              record.recordingFailure = record.recordingSealFailure
               this.diagnose(
                 'HISTORY_SEAL_FAILED',
                 record,
@@ -3543,10 +3585,11 @@ export class StudyService {
       record.nodeLearning = this.nodeLearningOf(
         writer.learningNeeds(),
         record.nodeLearningMaterial,
+        await this.captureMissingOf(writer.header.studyId),
       )
     } catch (error) {
       writer.abandon()
-      record.nodeHistoryFailure = sanitizeCause(error, this.causeRoots)
+      record.nodeHistoryFailure = this.sanitizedCause(error)
       record.nodeHistoryStatus = 'failed'
       this.diagnose(
         'HISTORY_SEAL_FAILED',
@@ -3570,7 +3613,7 @@ export class StudyService {
       : kind === 'failed' || kind === 'signal'
         ? `The test did not pass: ${describeNodeTestResult(record.nodeResult)}.`
         : 'Node test was interrupted or did not produce every declared stop and a passing result.'
-    return sanitizeCause(reason, this.causeRoots)
+    return this.sanitizedCause(reason)
   }
 
   /**
@@ -3583,12 +3626,31 @@ export class StudyService {
   private nodeLearningOf(
     needs: NodeLearningNeeds,
     material: StudyRecord['nodeLearningMaterial'],
+    captureMissing: NodeLearningCapturePart[] | undefined,
   ): NonNullable<StudyRecord['nodeLearning']> {
     return {
       needs,
       materialRevision: material?.revision ?? 0,
       ...listMissingNodeExplanations(needs, material?.content),
+      captureMissing,
     }
+  }
+
+  /**
+   * Reads the capture gaps of a sealed test history from the store's one summary, the rule Saved studies and Save read too; called by {@link StudyService.sealNodeHistory}, so the run resource exposes them without a store read (F72).
+   * @param studyId - The sealed history's study id.
+   * @returns The capture parts the journal lacks, or `undefined` when the summary could not be read or did not verify the journal.
+   * @example await this.captureMissingOf(studyId) // => [{ kind: 'execution' }] for a history cut before its result
+   */
+  private async captureMissingOf(
+    studyId: string,
+  ): Promise<NodeLearningCapturePart[] | undefined> {
+    const summary = await this.nodeHistoryStore
+      ?.summarize(studyId)
+      .catch(() => undefined)
+    return summary?.verification === 'verified'
+      ? summary.captureMissing
+      : undefined
   }
 
   /**
