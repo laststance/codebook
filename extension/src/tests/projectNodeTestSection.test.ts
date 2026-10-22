@@ -307,3 +307,44 @@ test('before a selection the section offers the first stop and says when the App
   assert.equal(view.previousStop, false)
   assert.equal(view.nextStop, true)
 })
+
+// Value: protects=Previous stop and Next stop are offered only where a stop lies before or after the selected event, whatever type that event is: both at an output between two stops, only Next stop before the first stop, only Previous stop at the last stop and at the result, and neither in a replay that recorded no stop; fails_when=a side is decided by the selected event's own type or position instead of by the stops around it (an output between two stops loses a side), the first stop offers Previous stop, the last stop or the result offers Next stop, or a replay without stops offers a move the host would refuse; why_new=the section tests above assert Previous stop only as false, and its true cases exist only in the Study messages the Reader DOM check builds by hand (DS12); seam=none; no_claim=how the pane draws or disables the buttons (the Reader DOM check) or where a move lands (nodeHistoryStepTarget's tests)
+test('Previous stop and Next stop are offered only where a stop lies before or after the selected event', () => {
+  // Arrange
+  const stopFlagsAt = (
+    selected: NodeTestHistoryEntry | undefined,
+    shown: typeof history = history,
+  ) => {
+    const { previousStop, nextStop } = projectNodeTestSection({
+      history: shown,
+      selected,
+      selectedStopVerified: true,
+      applicationClosed: false,
+    })
+    return { previousStop, nextStop }
+  }
+  const withoutStops = {
+    entries: [entries[0]!, entries[2]!, entries[4]!],
+    status: 'complete' as const,
+  }
+
+  // Act
+  const flags = {
+    atFirstOutput: stopFlagsAt(entries[0]),
+    atFirstStop: stopFlagsAt(entries[1]),
+    betweenStops: stopFlagsAt(entries[2]),
+    atLastStop: stopFlagsAt(entries[3]),
+    atResult: stopFlagsAt(entries[4]),
+    withoutStops: stopFlagsAt(entries[4], withoutStops),
+  }
+
+  // Assert
+  assert.deepEqual(flags, {
+    atFirstOutput: { previousStop: false, nextStop: true },
+    atFirstStop: { previousStop: false, nextStop: true },
+    betweenStops: { previousStop: true, nextStop: true },
+    atLastStop: { previousStop: true, nextStop: false },
+    atResult: { previousStop: true, nextStop: false },
+    withoutStops: { previousStop: false, nextStop: false },
+  })
+})

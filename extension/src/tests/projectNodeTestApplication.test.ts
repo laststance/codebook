@@ -185,3 +185,45 @@ test('the Application view says loading, nothing printed yet and no entries, and
     placeholder: 'No test output recorded.',
   })
 })
+
+// Value: protects=the Application pane tells the learner what it leaves out instead of hiding it: a long output keeps its last 65,536 characters with its first kept line cut, and a muted line counts the earlier characters not shown (4,465 here) while the Node inspector's own lines are counted in another; fails_when=a long output shows no cut line or a wrong count, the cut first line is not named, the kept end is longer or shorter than 65,536 characters, or hidden inspector lines are neither shown nor counted; why_new=PR-B1 keeps only the end of the recorded output (EN10) and folds the inspector's lines, and a view that truncates must disclose it (PRODUCT_GOAL: disclose truncated evidence; the README promises the last 65,536 characters); seam=none; no_claim=the wording for other counts or for a count of one, which describeNodeTestReplay's tests and the carried wording task F105 cover (also: the default limit, not a test limit)
+test('the Application view of a long output says how many earlier characters it leaves out and how many inspector lines it hides', () => {
+  // Arrange
+  const noisy: NodeTestHistoryEntry[] = [
+    {
+      type: 'output',
+      sequence: 1,
+      elapsedMs: 20,
+      outputSequence: 1,
+      channel: 'stderr',
+      text: 'Debugger listening on ws://127.0.0.1:9229/5f0c\nDebugger attached.\n',
+    },
+    output(2, 120, `${'x'.repeat(70_000)}\n`),
+    stop(3, 420),
+    result(4, 900, 0),
+  ]
+
+  // Act
+  const view = projectNodeTestApplication(
+    { header, entries: noisy },
+    indexNodeTestOutput(noisy),
+    noisy[2],
+    5,
+    false,
+  )
+
+  // Assert
+  assert.deepEqual(view, {
+    generation: 5,
+    state: 'event',
+    time: 'Recorded test output · 0.42 s',
+    test: 'src/theme.test.ts › theme › switches to dark',
+    name: 'Recorded test output · src/theme.test.ts › theme › switches to dark · 0.42 s',
+    region: 'Recorded test output up to 0.42 s',
+    lines: [
+      { channel: 'stdout', text: 'x'.repeat(65_535), number: 0, cut: true },
+    ],
+    cut: '… 4465 earlier characters not shown; the first line below is cut',
+    inspector: '2 Node inspector lines hidden',
+  })
+})

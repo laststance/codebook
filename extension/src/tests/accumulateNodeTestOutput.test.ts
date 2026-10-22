@@ -162,3 +162,31 @@ test('Node inspector lines are counted, not shown, and controls alone are no out
     { channel: 'stdout', text: 'RUN src/jobs.test.ts', number: 0 },
   ])
 })
+
+// Value: protects=a chunk of only terminal controls, written on the other stream while a line is still being printed (a reporter's erase or cursor move on standard error in the middle of a standard-output line), changes no line and no channel: the unfinished line stays one line of its own channel and the lines after it keep their numbers; fails_when=the controls-only chunk ends the unfinished line (the line shows in two halves and every later line number moves by one) or is read as an empty line of its own channel; why_new=indexNodeTestOutput skips a chunk that holds only controls so a terminal's cursor moves cannot cut a line (EN10), and the test above puts its controls-only chunk where no line is unfinished, so removing that skip changes nothing it asserts; seam=none; no_claim=how the controls are removed (stripTerminalControls's tests)
+test('a chunk of only terminal controls on the other stream leaves an unfinished line whole', () => {
+  // Arrange
+  const index = indexNodeTestOutput([
+    printed(1, 'stdout', 'job 1 sch'),
+    printed(2, 'stderr', '\u001b[2K\u001b[?25l'),
+    printed(3, 'stdout', 'eduled\n'),
+    printed(4, 'stdout', 'job 2 scheduled\n'),
+  ])
+
+  // Act
+  const whileControlsArrive = accumulateNodeTestOutput(index, 2)
+  const afterLineEnds = accumulateNodeTestOutput(index, 3)
+  const afterNextLine = accumulateNodeTestOutput(index, 4)
+
+  // Assert
+  assert.deepEqual(whileControlsArrive.lines, [
+    { channel: 'stdout', text: 'job 1 sch', number: 0 },
+  ])
+  assert.deepEqual(afterLineEnds.lines, [
+    { channel: 'stdout', text: 'job 1 scheduled', number: 0 },
+  ])
+  assert.deepEqual(afterNextLine.lines, [
+    { channel: 'stdout', text: 'job 1 scheduled', number: 0 },
+    { channel: 'stdout', text: 'job 2 scheduled', number: 1 },
+  ])
+})
