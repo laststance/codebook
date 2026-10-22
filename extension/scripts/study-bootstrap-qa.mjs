@@ -3356,6 +3356,132 @@ async function check(page, options, collected) {
           focusedTestLine.displayed === 'block' &&
           fittingTestLine.tabindex === null,
       })
+      // Value: protects=three cells of the Application document's follow state that no case read: a document that follows the output ignores an older view and stays at the end; a learner who stopped following and scrolls back to the end follows again, with Jump to latest gone; a document loaded again never uses the newer view another replay left in the kept state; fails_when=an older view moves a following document off its latest moment, scrolling back to the end leaves Jump to latest and the choice behind, or another replay's kept view (a newer generation) is shown in this replay's document; why_new=F125 (the document's following x an older view, not-following x a scroll back to the end) and F147 (another replay's newer kept view); seam=none; no_claim=VS Code's own state transport (stand-ins: a stub of the webview API with a kept state)
+      // Arrange: a document of its own in a page, as the cases above build one.
+      const cellPage = await page.context().newPage()
+      await cellPage.setViewportSize({ width: 760, height: 360 })
+      const loadCellDocument = async (kept) => {
+        await cellPage.goto(options.url)
+        await cellPage.evaluate((state) => {
+          window.savedState = state
+          window.acquireVsCodeApi = () => ({
+            getState: () => window.savedState,
+            setState(next) {
+              window.savedState = next
+            },
+            postMessage: () => {},
+          })
+        }, kept)
+        await cellPage.setContent(options.html.application)
+        await cellPage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      }
+      const postCellView = async (generation, view) => {
+        await cellPage.evaluate(
+          ({ generation, view }) =>
+            window.dispatchEvent(
+              new MessageEvent('message', {
+                data: {
+                  type: 'node-history-output',
+                  generation,
+                  view: { ...view, generation },
+                },
+              }),
+            ),
+          { generation, view },
+        )
+        await cellPage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      }
+      const readCell = () =>
+        cellPage.evaluate(() => {
+          const output = document.getElementById('test-output')
+          return {
+            time: document.getElementById('test-output-time').textContent,
+            atEnd:
+              output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
+            jumpHidden: document.getElementById('test-output-jump').hidden,
+            followKept: window.savedState?.testOutputFollow,
+          }
+        })
+      await loadCellDocument(undefined)
+      const ownHistory = await cellPage.evaluate(
+        () => window.savedState?.testOutputHistory,
+      )
+      // Act: a following document is told a newer moment, then an older one.
+      await postCellView(6, options.testReplayViews.result)
+      const followingAtNewest = await readCell()
+      await postCellView(4, {
+        ...options.testReplayViews.result,
+        time: 'Recorded test output · 0.05 s',
+      })
+      const followingAfterOlder = await readCell()
+      // Act: the learner scrolls up (not following), then back to the end.
+      await cellPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        output.scrollTop = 0
+        output.dispatchEvent(new Event('scroll'))
+      })
+      await cellPage.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      )
+      const notFollowing = await readCell()
+      await cellPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        output.scrollTop = output.scrollHeight
+        output.dispatchEvent(new Event('scroll'))
+      })
+      await cellPage.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      )
+      const followingAgain = await readCell()
+      // Act: a document of this replay loaded with the newer view another replay kept.
+      await loadCellDocument({
+        testOutputHistory: `${ownHistory}-another-replay`,
+        testOutputFollow: false,
+        testOutputView: {
+          ...options.testReplayViews.result,
+          time: 'Recorded test output · 9.99 s',
+          generation: 99,
+        },
+      })
+      const withOtherReplaysState = await readCell()
+      await cellPage.close()
+      // Assert
+      cases.push({
+        name: 'a following Application document ignores an older view, a learner who scrolls back to the end follows again, and another replay’s newer kept view is not used (DS20)',
+        actual: {
+          followingAtNewest,
+          followingAfterOlder,
+          notFollowing,
+          followingAgain,
+          withOtherReplaysState,
+        },
+        passed:
+          followingAtNewest.atEnd &&
+          followingAfterOlder.time === followingAtNewest.time &&
+          followingAfterOlder.atEnd &&
+          !notFollowing.atEnd &&
+          !notFollowing.jumpHidden &&
+          followingAgain.atEnd &&
+          followingAgain.jumpHidden &&
+          withOtherReplaysState.time !== 'Recorded test output · 9.99 s' &&
+          withOtherReplaysState.atEnd,
+      })
       await applicationPage.close()
       // Assert
       // Value: protects=the Application document never widens the page at 320, 480 or 760 px and keeps the test name to two lines; fails_when=a long test name or output line widens the page; why_new=PR-B1 (Design 8, DS19) added the document's widths; seam=none; no_claim=native pixels
