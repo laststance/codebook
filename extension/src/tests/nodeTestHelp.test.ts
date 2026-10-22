@@ -68,8 +68,8 @@ test('the node-test help names the minimum Vitest major in each of its three sen
 
   // Act
   const sentences = [
-    'its missing list names a root Vitest that is missing or older than 4)',
-    'PREREQUISITE_MISSING when the root Vitest is missing or older than 4.',
+    'its missing list names a root Vitest that is missing or older than 4, or the count and the limit',
+    'PREREQUISITE_MISSING when the root Vitest is missing or older than 4, or when the saved studies',
     'node-test runs the Vitest 4 or later installed at the repository root',
   ]
 

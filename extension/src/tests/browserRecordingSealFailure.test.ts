@@ -173,3 +173,35 @@ test('codebook_stop answers no seal failure for a browser run whose saved study 
   // Assert
   assert.equal(answer.sealFailure, undefined)
 })
+
+// Value: protects=one sanitized cause for a browser recording whose finish failed at the stop: state.recording.reason and the HISTORY_SEAL_FAILED cause of the same codebook_stop answer both read `<storage>` where the failure named the storage path; fails_when=recording.reason keeps the raw failure beside the sanitized seal cause, so one answer carries the storage path; why_new=recordingFailure was assigned raw beside the sanitized seal cause (F48); seam=the recording writer's finish fails with a message naming the service's storage root; no_claim=a real full disk
+test('a browser recording that failed to finish reports the same storage-free cause in recording.reason and in the HISTORY_SEAL_FAILED cause', async (context) => {
+  // Arrange
+  const { service, receipt, record } = await preparedRecordedRun(
+    context,
+    'browser-seal-path',
+  )
+  const storageRoot = service.causeRoots.storage[0]
+  context.mock.method(record.recording!, 'finish', async () => {
+    throw new Error(
+      `ENOSPC: no space left on device, write '${storageRoot}/run/events.jsonl'`,
+    )
+  })
+
+  // Act
+  const answer = await service.stopForTool(receipt)
+
+  // Assert
+  assert.deepEqual(
+    {
+      reason: answer.state.recording.reason,
+      cause: answer.sealFailure?.causeDetail,
+    },
+    {
+      reason:
+        "ENOSPC: no space left on device, write '<storage>/run/events.jsonl'",
+      cause:
+        "ENOSPC: no space left on device, write '<storage>/run/events.jsonl'",
+    },
+  )
+})

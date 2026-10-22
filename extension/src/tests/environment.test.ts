@@ -251,6 +251,11 @@ async function createNodeTestEnvironment(
       join(directory, 'node_modules', 'vitest', 'package.json'),
       JSON.stringify({ name: 'vitest', version: options.vitestVersion }),
     )
+    // The preparation check also needs the root Vitest's program file (F57).
+    await writeFile(
+      join(directory, 'node_modules', 'vitest', 'vitest.mjs'),
+      'export {}\n',
+    )
   }
   const sourceText = 'export const nextRun = schedule(job, 5_000)\n'
   const testText = 'test("runs a delayed job after its timer", () => {})\n'
@@ -281,6 +286,8 @@ async function createNodeTestEnvironment(
         workspace: {
           isTrusted: true,
           workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          // No cited source is open in the editor, so the preparation check compares nothing with the editor's text (F57).
+          textDocuments: [],
           getConfiguration: () => ({
             get: (key: string, fallback: string) =>
               key === 'chromeExecutable' ? chromeExecutable : fallback,
@@ -383,20 +390,24 @@ test('the environment refuses a node-test configuration whose test file changed 
   // Arrange
   const { environment, directory, configuration } =
     await createNodeTestEnvironment(context, { vitestVersion: '4.1.11' })
-  const unchanged = await environment.checkNodeTestFiles?.(configuration).then(
-    () => 'accepted',
-    (error: unknown) => String(error),
-  )
+  const unchanged = await environment
+    .checkNodeTestFiles?.(configuration, [])
+    .then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    )
   await writeFile(
     join(directory, 'src', 'scheduler.test.ts'),
     'test.skip("x")\n',
   )
 
   // Act
-  const changed = await environment.checkNodeTestFiles?.(configuration).then(
-    () => 'accepted',
-    (error: unknown) => String(error),
-  )
+  const changed = await environment
+    .checkNodeTestFiles?.(configuration, [])
+    .then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    )
 
   // Assert
   assert.equal(unchanged, 'accepted')

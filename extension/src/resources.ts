@@ -55,7 +55,7 @@ export const SOURCE_ANSWER_SINCE_API_1_7_HELP =
 
 /** What API 1.8 changed for node-test, said behind its marker in the server's instructions, the `codebook_stop` and `codebook_explain_node_history` descriptions and the node-test help, so a client written for API 1.7 learns that a test run can now be demonstrated and saved as a test replay. */
 export const NODE_TEST_SINCE_API_1_8_HELP =
-  'Since API 1.8 a node-test run reads demonstrated in finalOutcome once its test passed, and in studyOutcome and recordedStudyOutcome once its history sealed complete; a sealed history is a test replay the learner opens from Saved studies or Open replay (test output, executed source and recorded debugger stops; no application video). nodeTest.testResult (passed, failed, signal or none), nodeTest.learningCoverage (complete, partial or none) and nodeTest.learningMissing tell the result and the explanations the saved learning material still lacks; nextActions lists save-node-learning until coverage is complete. Claim saved learning only when studyOutcome is demonstrated and nodeTest.learningCoverage is complete; a run resource without nodeTest.learningCoverage supports no such claim.'
+  'Since API 1.8 a node-test run reads demonstrated in finalOutcome once its test passed, and in studyOutcome and recordedStudyOutcome once its history sealed complete; a sealed history is a test replay the learner opens from Saved studies or Open replay (test output, executed source and recorded debugger stops; no application video). nodeTest.testResult (passed, failed, signal or none), nodeTest.learningCoverage (complete, partial or none) and nodeTest.learningMissing tell the result and the explanations the saved learning material still lacks, and nodeTest.captureMissing lists recorded evidence the replay lacks (a stop whose debugger state was not captured, or an execution that ended before its result), which no explanation adds and which makes Save read partially saved; nextActions lists save-node-learning until coverage is complete. Claim saved learning only when studyOutcome is demonstrated, nodeTest.learningCoverage is complete and nodeTest.captureMissing is an empty list; a run resource without nodeTest.learningCoverage or nodeTest.captureMissing supports no such claim.'
 
 /** The complete node-test start the help shows, with every value that comes from another answer written as a placeholder that names that answer, and the start's new key as a placeholder too; a test replaces them and parses it with {@link nodeTestConfigSchema}. */
 const NODE_TEST_HELP_EXAMPLE = {
@@ -174,7 +174,7 @@ export async function readResource(
         : undefined
       return readJsonPage(`${baseUri}/learning-material`, data, cursor)
     }
-    // The result and the learning coverage come from the store's one summary, which Saved studies and Save read too (Design 13); only the history body shows them, so its events and learning-material pages never read it (F14).
+    // The result and the learning coverage come from the store's one summary, which Saved studies and Save read too (Design 13); only the history's own page needs them, not its events or learning material pages (F14).
     const summary = await service.nodeHistoryStore.summarize(
       nodeHistoryMatch[1],
     )
@@ -182,6 +182,7 @@ export async function readResource(
       testResult: summary?.testResult ?? 'none',
       learningCoverage: summary?.learningCoverage ?? 'none',
       learningMissing: summary?.learningMissing ?? [],
+      captureMissing: summary?.captureMissing ?? [],
     }
     const body = {
       header: history.header,
@@ -229,7 +230,7 @@ export async function readResource(
       since: NODE_TEST_SINCE_API_1_8_HELP,
       example: NODE_TEST_HELP_EXAMPLE,
       walkthrough: [
-        `codebook_status: copy instanceId; profiles node-test must be ready (its missing list names a root Vitest that is missing or older than ${NODE_TEST_MINIMUM_VITEST_MAJOR}).`,
+        `codebook_status: copy instanceId; profiles node-test must be ready (its missing list names a root Vitest that is missing or older than ${NODE_TEST_MINIMUM_VITEST_MAJOR}, or the count and the limit of a full saved-study capacity).`,
         'codebook://help/node-test (this resource): the configuration schema, the example and these steps.',
         'codebook_sources, then codebook_source for the test file and each cited source: copy each path and its hash, and choose the stop lines from numberedText.',
         'codebook_publish_book: publish the article whose node cites the stop sources; copy bookId, revision and the node id.',
@@ -244,13 +245,13 @@ export async function readResource(
       ],
       testSelection:
         'testTitles cites exactly one test: every enclosing describe title, outermost first, then the test title, exactly as Vitest reports them, for example ["job scheduler", "runs a delayed job after its timer"]. A title alone matches only a top-level test. testName is retired and refused for new runs. Before launch, Codebook asks Vitest which files its file filter would run, excludes every other file and passes the titles as one literal anchored name pattern; a file listed by several Vitest projects is refused. After the process exits, Vitest\'s JSON report must show exactly the cited test executed in the cited file, otherwise the run fails. A title path that selects no test ends the run before its first declared stop with the exit code.',
-      refusals: `A node-test start is answered with its receipt; its deterministic checks run during preparation, before its history begins, and a refusal there ends the run with its error before its first stop: SOURCE_CHANGED when a declared stop's source no longer has its cited hash (read it with codebook_source, publish the article with the current source), INVALID_CONFIGURATION when the test file changed or a path is not a file of the repository, PREREQUISITE_MISSING when the root Vitest is missing or older than ${NODE_TEST_MINIMUM_VITEST_MAJOR}. Each message names the field, the path and both hashes and ends with its fix. A refused run records nothing and frees its slot and its key: start again with a new key after the fix.`,
+      refusals: `A node-test start is answered with its receipt; its deterministic checks run during preparation, before its history begins, and a refusal there ends the run with its error before its first stop: SOURCE_CHANGED when a declared stop's source no longer has its cited hash (read it with codebook_source, publish the article with the current source), INVALID_CONFIGURATION when the test file changed, a path is not a file of the repository, or a stop's position does not fit its retained citation (the message names the stop as source or additionalStops[n], its anchorIndex, the cited path and lines, and which condition failed: the anchor, the path, the hash, the line or the column, with what to send), PREREQUISITE_MISSING when the root Vitest is missing or older than ${NODE_TEST_MINIMUM_VITEST_MAJOR}, or when the saved studies and test histories fill the Saved Study Limit (only the learner can raise it in the Settings of the running editor profile or delete a saved study; call codebook_status again afterwards, whose node-test missing list names the count and the limit). Each message names the field, the path and both hashes and ends with its fix. A refused run records nothing and frees its slot and its key: start again with a new key after the fix. The column of a declared stop is a preference: when the debugger binds the declared line at another column, the stop is accepted and captured at that column (nodeTest.stops[].column reports it); a binding on another line than the declared one refuses the stop and names the bound position.`,
       replay:
         "A sealed history is a test replay the learner opens from Saved studies or Open replay: its test output, the executed source and the native debugger's recorded values and stack at each stop, at one playhead; no application video. Times count from the run's start, paused time at stops included.",
       results:
         'nodeTest.testResult reads passed, failed, signal or none. When it reads failed or signal, tell the learner that the test did not pass, name its exit code or signal, and say that the replay holds the failing run; a failing run reads not-demonstrated and its replay can still be saved and opened.',
       learning:
-        "A stop's saved explanation is a learning-material step that references that stop; the result needs a step that references it too. nodeTest.learningCoverage reads none without material, partial while a stop or the result lacks a step, and complete once every one has one; nodeTest.learningMissing lists the missing parts as {kind: summary}, {kind: stop, stop: <n>} and {kind: result}, and nextActions lists save-node-learning until coverage is complete.",
+        "A stop's saved explanation is a learning-material step that references that stop; the result needs a step that references it too. nodeTest.learningCoverage reads none without material, partial while a stop or the result lacks a step, and complete once every one has one; nodeTest.learningMissing lists the missing parts as {kind: summary}, {kind: stop, stop: <n>} and {kind: result}, and nextActions lists save-node-learning until coverage is complete. nodeTest.captureMissing lists the evidence no explanation can add, as {kind: stop-state, stop: <n>} and {kind: execution}; the learner's Save reads partially saved while it is not empty, so claim saved learning only when it is empty too.",
       sequence: [
         'Read the returned manifest to verify the accepted configuration, complete article citation and test file/hash. Poll the run URI until a checked source stop appears or the run has an error. Read nodeTest.stops and the immutable node-stops/<index> snapshot, source and facts.',
         'Copy the current participants.server.continueArguments to continue. Every declared stop is required and captured in order. The final continuation runs the actual test and returns its exit code and bounded output.',

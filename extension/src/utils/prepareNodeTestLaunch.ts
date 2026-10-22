@@ -17,9 +17,8 @@ import type {
   ListVitestTestFilesRequest,
   VitestListedFile,
 } from './listVitestTestFiles'
-import { readVitestPrerequisite } from './readVitestPrerequisite'
 import { requireNodeTestTitles } from './requireNodeTestTitles'
-import { resolveOwnedRepositoryFile } from './resolveOwnedRepositoryFile'
+import { requireOwnedVitest } from './requireOwnedVitest'
 
 export type PreparedNodeTestStop = CheckedNodeTestStop
 /** A private folder owned by one run; `file` is where Vitest writes the JSON report that proves which test ran. */
@@ -51,7 +50,7 @@ const literalGlob = (path: string) => path.replace(/[\\*?[\]{}()!+@]/g, '\\$&')
  * Vitest's file filter is a substring match and its name filter a regular expression over the full test name, so the command excludes every
  * other file Vitest reports and anchors the literal title path. Vitest 5 joins titles with " > " and Vitest 4 with one space.
  * Called by the owned Node test run during preparation, before any test code executes.
- * The paths and hashes are checked by {@link checkNodeTestFiles} and the root Vitest by {@link readVitestPrerequisite}, the same checks the run's preparation made before its history began; they run again here because time passes between the two.
+ * The paths and hashes are checked by {@link checkNodeTestFiles} and the root Vitest and its program by {@link requireOwnedVitest}, the same checks the run's preparation made before its history began; they run again here because time passes between the two.
  *
  * @param workspace - Opened repository root.
  * @param configuration - Validated test intent of a new run.
@@ -74,18 +73,7 @@ export async function prepareNodeTestLaunch(
     workspace,
     configuration,
   )
-  // Older Vitest lacks the verified file listing, exclusion and report behavior this exact selection relies on.
-  const vitest = await readVitestPrerequisite(root)
-  if (!vitest.ready) throw new StudyError('PREREQUISITE_MISSING', vitest.reason)
-  const program = await resolveOwnedRepositoryFile(
-    root,
-    'node_modules/vitest/vitest.mjs',
-  )
-  if (!program)
-    throw new StudyError(
-      'PREREQUISITE_MISSING',
-      'node-test needs the root Vitest program node_modules/vitest/vitest.mjs inside the opened repository; reinstall Vitest at the repository root, then call codebook_status again.',
-    )
+  const { major, program } = await requireOwnedVitest(root)
   const excludes = await excludeOtherTestFiles(
     root,
     testFile,
@@ -93,7 +81,7 @@ export async function prepareNodeTestLaunch(
     program,
     listTestFiles,
   )
-  const separator = vitest.major >= 5 ? ' > ' : ' '
+  const separator = major >= 5 ? ' > ' : ' '
   // Created last so a refused preparation leaves nothing behind; the run removes it on release.
   const reportDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-vitest-report-'),

@@ -34,6 +34,22 @@ export function assertConfiguredDescriptor(
   )
 }
 
+/** The condition of a stop's position that failed against its selected citation: the anchor does not exist, the path or the hash differs from the anchor's, the line lies outside its range, or the column lies past the line's end. */
+export type CitedStopMismatch = 'anchor' | 'path' | 'hash' | 'line' | 'column'
+
+/**
+ * Marks a stop whose position differs from its selected citation, with the stop and the condition that failed; {@link assertCitedSourceStops} throws it with the browser profile's unchanged message, and {@link prepareNodeTestStudy} words it for the test agent through {@link describeCitedStopMismatch}.
+ * @example throw new CitedStopMismatchError(1, 'column') // stop 1 of the stops that were checked
+ */
+export class CitedStopMismatchError extends Error {
+  constructor(
+    readonly stopIndex: number,
+    readonly mismatch: CitedStopMismatch,
+  ) {
+    super('Configured position differs from its selected citation.')
+  }
+}
+
 /** Validates immutable article source bytes and every stop against its selected citation across runtime adapters. Called by {@link assertConfiguredDescriptor} and Node preparation. @example assertCitedSourceStops(descriptor, [{source,anchorIndex:0}]) */
 export function assertCitedSourceStops(
   descriptor: ConfiguredDescriptor,
@@ -73,22 +89,39 @@ export function assertCitedSourceStops(
   }
   if (cited.size !== sources.size)
     throw new Error('Configured descriptor has uncited sources.')
-  for (const stop of stops) {
-    const position = stop.source
-    const anchor = descriptor.anchors[stop.anchorIndex],
-      source = sources.get(position.path)
-    const selectedLine = source?.text.split(/\r\n|\r|\n/)[position.line - 1]
-    if (
-      !anchor ||
-      !source ||
-      source.hash !== position.hash ||
-      anchor.path !== position.path ||
-      anchor.hash !== position.hash ||
-      position.line < anchor.startLine ||
-      position.line > anchor.endLine ||
-      selectedLine === undefined ||
-      position.column > selectedLine.length + 1
+  for (const [stopIndex, stop] of stops.entries()) {
+    const mismatch = citedStopMismatch(
+      stop.source,
+      descriptor.anchors[stop.anchorIndex],
+      sources.get(stop.source.path),
     )
-      throw new Error('Configured position differs from its selected citation.')
+    if (mismatch) throw new CitedStopMismatchError(stopIndex, mismatch)
   }
+}
+
+/**
+ * Finds the first condition a stop's position fails against its selected citation, in the order an agent fixes them: anchor, path, hash, line, column; called by {@link assertCitedSourceStops} for each stop.
+ * @param position - What the stop sent.
+ * @param anchor - The citation the stop selected; `undefined` when its `anchorIndex` names none.
+ * @param source - The retained source at the stop's path; `undefined` when the article keeps none.
+ * @returns The failed condition, or `undefined` when the position fits its citation.
+ * @example citedStopMismatch({ path: 'a.ts', hash, line: 9, column: 1 }, anchorOfLines1To3, source) // => 'line'
+ */
+function citedStopMismatch(
+  position: { path: string; hash: string; line: number; column: number },
+  anchor: ConfiguredDescriptor['anchors'][number] | undefined,
+  source: ConfiguredDescriptor['sources'][number] | undefined,
+): CitedStopMismatch | undefined {
+  if (!anchor) return 'anchor'
+  if (!source || anchor.path !== position.path) return 'path'
+  if (source.hash !== position.hash || anchor.hash !== position.hash)
+    return 'hash'
+  const selectedLine = source.text.split(/\r\n|\r|\n/)[position.line - 1]
+  if (
+    position.line < anchor.startLine ||
+    position.line > anchor.endLine ||
+    selectedLine === undefined
+  )
+    return 'line'
+  return position.column > selectedLine.length + 1 ? 'column' : undefined
 }

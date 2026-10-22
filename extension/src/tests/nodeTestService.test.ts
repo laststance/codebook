@@ -877,7 +877,7 @@ test('a failed advance to the next Node stop names that failure in the continuat
           message:
             'The study operation failed. Cause: Owned Node source pause was resumed before the next declared stop.',
           cause:
-            'Error: Owned Node source pause was resumed before the next declared stop.',
+            'Owned Node source pause was resumed before the next declared stop.',
           recovery:
             'Read the terminal reason and captured history. Stop owned resources; do not retry the click automatically.',
           docs: 'codebook://help/errors',

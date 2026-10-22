@@ -156,10 +156,14 @@ export interface StudyEnvironment {
     control?: RuntimeControl,
   ): Promise<StudyRuntime>
   /**
-   * Checks the files a node-test configuration names against the opened repository before the run's history begins ({@link checkNodeTestFiles}); a refusal ends the run with its typed error and records nothing.
-   * @throws The typed refusal of a path that is not a file, a changed source or a changed test file.
+   * Checks the files a node-test configuration names against the opened repository, the editor's open documents of the cited sources and the root Vitest's program before the run's history begins ({@link checkNodeTestFiles}); a refusal ends the run with its typed error and records nothing.
+   * @param citedSources - The article's text of every source the selected node cites; an open editor document with other text refuses the start.
+   * @throws The typed refusal of a path that is not a file, a changed source or a changed test file, a cited source open in the editor with other text, or a missing root Vitest program.
    */
-  checkNodeTestFiles?(configuration: NodeTestConfiguration): Promise<void>
+  checkNodeTestFiles?(
+    configuration: NodeTestConfiguration,
+    citedSources: ConfiguredDescriptor['sources'],
+  ): Promise<void>
   createNodeTestRun?(
     configuration: NodeTestConfiguration,
     record: (type: string, detail?: unknown) => unknown,

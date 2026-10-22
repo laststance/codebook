@@ -25,6 +25,7 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
@@ -34,6 +35,7 @@ import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { homeRootNames, privateRootNames } from './utils/privateRootNames'
 import { readVitestPrerequisite } from './utils/readVitestPrerequisite'
+import { requireOwnedVitest } from './utils/requireOwnedVitest'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { sanitizeCause } from './utils/sanitizeCause'
 
@@ -373,8 +375,16 @@ export async function createEnvironment(
     },
     async checkNodeTestFiles(
       configuration: NodeTestConfiguration,
+      citedSources: ConfiguredDescriptor['sources'],
     ): Promise<void> {
-      await checkNodeTestFiles(workspace, configuration)
+      // The owned run's own checks, made before the history begins: a refusal leaves no zero-entry history behind (F57).
+      assertConfiguredSourceDocuments(
+        workspace,
+        citedSources,
+        vscode.workspace.textDocuments,
+      )
+      const { root } = await checkNodeTestFiles(workspace, configuration)
+      await requireOwnedVitest(root)
     },
     async createNodeTestRun(
       configuration: NodeTestConfiguration,

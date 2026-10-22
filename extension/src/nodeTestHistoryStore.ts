@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import {
   chmod,
   mkdir,
@@ -10,6 +11,7 @@ import {
 import { join } from 'node:path'
 
 import {
+  NODE_HISTORY_CITABLE_MEMO_LIMIT,
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_LIMIT_BYTES,
@@ -23,7 +25,11 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
 } from './constants'
-import { StudyError } from './errors'
+import {
+  NodeLearningRevisionChangedError,
+  SavedStudyStorageFullError,
+  StudyError,
+} from './errors'
 import {
   nodeTestHistoryEntrySchema,
   nodeTestHistoryHeaderSchema,
@@ -310,6 +316,8 @@ export class NodeTestHistoryStore {
       storage: [this.learningDirectory],
       home: homeRootNames(),
     })
+  /** The study ids whose memo still holds its citable events ({@link rememberSummary}). */
+  private readonly citableOrder = new Set<string>()
 
   constructor(
     /** The learning directory the histories live in; a private storage root that no cause shown to the learner or the agent names ({@link sanitizeCause}). */
@@ -340,6 +348,34 @@ export class NodeTestHistoryStore {
   }
 
   /**
+   * Says whether the saved study limit has room for one more test history, and how many places the saved studies and the listed histories take; called by {@link reserve} under the storage lock and by {@link StudyService.status} to read the node-test profile's readiness.
+   * @returns `admits` when the listed histories leave a place, `taken` as the saved studies plus the listed histories (the histories counted up to the places they may take), and the `limit` in force.
+   * @throws When the limit setting is invalid, the library cannot be counted or the history directory cannot be read.
+   * @example await store.admission() // => { admits: false, taken: 77, limit: 64 }
+   */
+  async admission(): Promise<{
+    admits: boolean
+    taken: number
+    limit: number
+  }> {
+    const limit = this.capacity()
+    const savedStudies = await this.savedArtifactCount()
+    // The histories may take the places the saved studies leave of the limit.
+    const places = limit - savedStudies
+    const histories = await this.listedHistoryCount(places).catch(
+      (error: unknown) => {
+        if (systemErrorCode(error) === 'ENOENT') return 0
+        throw error
+      },
+    )
+    return {
+      admits: histories < places,
+      taken: savedStudies + histories,
+      limit,
+    }
+  }
+
+  /**
    * Admits one history under the saved study limit and makes its folder with its first files; the body of {@link start}, run while the storage lock is held.
    * @param header - The validated header of this workspace.
    * @returns The writer of the reserved history.
@@ -355,11 +391,9 @@ export class NodeTestHistoryStore {
     })
     await chmod(this.directory, PRIVATE_DIRECTORY_MODE)
     // The histories may take the places the saved studies leave of the limit.
-    const places = this.capacity() - (await this.savedArtifactCount())
-    if ((await this.listedHistoryCount(places)) >= places)
-      throw new Error(
-        'Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
-      )
+    const admission = await this.admission()
+    if (!admission.admits)
+      throw new SavedStudyStorageFullError(admission.taken, admission.limit)
     // The header's size is checked before the history's folder is made, so a header above its limit leaves nothing behind.
     const headerBytes = Buffer.from(JSON.stringify(header))
     if (headerBytes.byteLength > HEADER_LIMIT_BYTES)
@@ -516,9 +550,10 @@ export class NodeTestHistoryStore {
       throw error
     })
     const studyIds = names.filter((name) => HISTORY_IDENTITY.test(name))
-    // A memo of a history whose folder is gone would keep a summary nobody lists.
-    for (const studyId of this.summaries.keys())
-      if (!studyIds.includes(studyId)) this.summaries.delete(studyId)
+    // A memo of a history whose folder is gone would keep a summary nobody lists; a set lookup keeps the prune linear (F77).
+    const present = new Set(studyIds)
+    for (const studyId of [...this.summaries.keys()])
+      if (!present.has(studyId)) this.forgetSummary(studyId)
     const summaries = await mapWithConcurrencyLimit(
       studyIds,
       NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
@@ -539,6 +574,16 @@ export class NodeTestHistoryStore {
    */
   isListedHistory(studyId: string): boolean {
     return this.summaries.has(studyId)
+  }
+
+  /**
+   * Says whether this workspace's history directory holds a folder for a study id, listed or not, without reading its files; read by {@link StudyService.playback}, so a test replay of an earlier session is refused before this window has listed it (F9).
+   * @param studyId - A study id an agent sent.
+   * @returns `true` for a study id named like a history whose folder exists.
+   * @example store.holdsHistoryFolder(earlierSessionStudyId) // => true before any list of this window
+   */
+  holdsHistoryFolder(studyId: string): boolean {
+    return HISTORY_IDENTITY.test(studyId) && existsSync(this.path(studyId))
   }
 
   /**
@@ -566,7 +611,7 @@ export class NodeTestHistoryStore {
         )
         // A material that could not be read for a transient reason is shown as none but not remembered (F63).
         if (!counted.transient)
-          this.summaries.set(studyId, {
+          this.rememberSummary(studyId, {
             ...memo,
             materialSignal,
             summary: counted.summary,
@@ -576,12 +621,50 @@ export class NodeTestHistoryStore {
     }
     const next = await this.readSummary(studyId, signals, memo?.scan)
     if (!next) {
-      this.summaries.delete(studyId)
+      this.forgetSummary(studyId)
       return undefined
     }
     // A read that failed for a transient reason (EBUSY, EMFILE, EIO …) is not remembered until a file changes: the next refresh and Save's Retry read again (F63).
-    if (!next.transient) this.summaries.set(studyId, next)
+    if (!next.transient) this.rememberSummary(studyId, next)
     return next.summary
+  }
+
+  /**
+   * Keeps a history's memo and bounds the memory of the citable maps: only the {@link NODE_HISTORY_CITABLE_MEMO_LIMIT} newest histories (by creation time, then study id) keep theirs, so a changed material of an older history reads its journal again instead of every listed history holding a map of all its events (F77).
+   * The history that loses its map is always the same one for the same set, so a list that reads one history again never makes another lose its map.
+   * @param studyId - The history's study id.
+   * @param memo - Its new memo.
+   * @example this.rememberSummary(studyId, memo)
+   */
+  private rememberSummary(studyId: string, memo: SummaryMemo): void {
+    this.summaries.set(studyId, memo)
+    if (memo.citable) this.citableOrder.add(studyId)
+    else this.citableOrder.delete(studyId)
+    while (this.citableOrder.size > NODE_HISTORY_CITABLE_MEMO_LIMIT) {
+      const creation = (id: string): string =>
+        `${this.summaries.get(id)?.summary.createdAt ?? ''}|${id}`
+      const oldest = [...this.citableOrder].reduce((left, right) =>
+        creation(left) <= creation(right) ? left : right,
+      )
+      this.citableOrder.delete(oldest)
+      const older = this.summaries.get(oldest)
+      if (older)
+        this.summaries.set(oldest, {
+          ...older,
+          citable: undefined,
+          needs: undefined,
+        })
+    }
+  }
+
+  /**
+   * Drops a history's memo with its place in the citable order; called when its folder is gone or its header no longer reads.
+   * @param studyId - The history's study id.
+   * @example this.forgetSummary(studyId)
+   */
+  private forgetSummary(studyId: string): void {
+    this.summaries.delete(studyId)
+    this.citableOrder.delete(studyId)
   }
 
   /**
@@ -1090,8 +1173,9 @@ export class NodeTestHistoryStore {
     const current = await this.readLearningMaterial(studyId)
     const currentRevision = current?.revision ?? 0
     if (expectedRevision !== currentRevision)
-      throw new Error(
-        `Node learning material revision changed; expected ${expectedRevision}, current ${currentRevision}.`,
+      throw new NodeLearningRevisionChangedError(
+        expectedRevision,
+        currentRevision,
       )
     const parsedContent = nodeTestLearningMaterialContentSchema.parse(content)
     assertLearningCitations(parsedContent, citableEvents(history), saveStepLead)
