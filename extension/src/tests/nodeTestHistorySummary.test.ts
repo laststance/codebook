@@ -14,6 +14,7 @@ import { test, type TestContext } from 'node:test'
 
 import { NODE_TEST_HISTORY_DIRECTORY } from '../constants'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
@@ -205,6 +206,51 @@ test('a history sealed with no entry is removed, listed nowhere and leaves its p
   assert.deepEqual(names, [])
   assert.equal(store.isListedHistory(empty.studyId), false)
   assert.equal(next.header.workspaceKey, workspaceKey)
+})
+
+// Value: protects=the saved study limit against a history sealed with no entry before Decision D6 (D28); fails_when=such a history on disk keeps a place of the limit that the learner can neither see nor delete, so a new test run is refused, or its folder stays; why_new=the list hid it but the count did not (F213); seam=the legacy seal is written by hand; no_claim=histories of other windows
+test('a legacy history sealed with no entry takes no place of the saved study limit and is removed when found', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 2)
+  const kept = nodeTestHistoryHeader(workspaceKey)
+  const keptWriter = await store.start(kept)
+  await keptWriter.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  await keptWriter.finish('partial', 'The learner stopped this run.')
+  const legacy = nodeTestHistoryHeader(workspaceKey)
+  const legacyWriter = await store.start(legacy)
+  legacyWriter.abandon()
+  const legacyFolder = join(
+    directory,
+    NODE_TEST_HISTORY_DIRECTORY,
+    legacy.studyId,
+  )
+  await writeFile(
+    join(legacyFolder, 'sealed.json'),
+    JSON.stringify({
+      version: 1,
+      studyId: legacy.studyId,
+      entryCount: 0,
+      journalBytes: 0,
+      journalHash: sha256(''),
+      status: 'partial',
+      endedAt: '2026-09-28T00:00:01.000Z',
+      reason: 'The learner stopped this run.',
+    }),
+  )
+
+  // Act
+  const admitted = await store.start(nodeTestHistoryHeader(workspaceKey))
+  const names = await readdir(join(directory, NODE_TEST_HISTORY_DIRECTORY))
+
+  // Assert
+  assert.equal(admitted.header.workspaceKey, workspaceKey)
+  assert.equal(names.includes(legacy.studyId), false)
+  assert.equal(names.includes(kept.studyId), true)
 })
 
 // Value: protects=Saved studies against a header that was corrupted or removed after the last list; fails_when=a history whose header.json now fails stays listed as verified from the memo although it cannot open; why_new=the summary memo did not watch header.json (F102); seam=none; no_claim=edits that keep the header's size and time

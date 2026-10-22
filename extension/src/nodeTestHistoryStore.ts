@@ -48,6 +48,7 @@ import {
   describeNodeTestResult,
   type NodeTestVerdict,
 } from './utils/describeNodeTestResult'
+import { isSealedEmptyHistory } from './utils/isSealedEmptyHistory'
 import { isTransientFileError } from './utils/isTransientFileError'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import {
@@ -442,6 +443,19 @@ export class NodeTestHistoryStore {
   }
 
   /**
+   * Removes the folder of a history sealed with no entry (one written before D6) when it is met by the list or the count, so that it holds no place of the saved study limit that the learner can neither see nor delete; the one rule behind {@link list} and {@link listedHistoryCount} for such a history.
+   * @param studyId - The name of an entry of the history directory.
+   * @returns `true` for a sealed empty history ({@link isSealedEmptyHistory}), also when its folder could not be removed (it is then neither listed nor counted); `false` for any other.
+   * @example if (await this.dropSealedEmpty(name)) return undefined
+   */
+  private async dropSealedEmpty(studyId: string): Promise<boolean> {
+    const folder = this.path(studyId)
+    if (!(await isSealedEmptyHistory(folder))) return false
+    await rm(folder, { recursive: true, force: true }).catch(() => undefined)
+    return true
+  }
+
+  /**
    * Counts the histories the list shows, so that nothing takes a place of the saved study limit that no list shows; called by {@link reserve} for every start, under the storage lock.
    * A history counts when {@link listedHeader} reads its header: a folder without one (made by hand, or left by a failed start of an earlier build), one whose header cannot be read, and any entry not named like a study id count nothing. A history that is being started is never met without its header here: its start holds the storage lock until the header is written.
    * It costs one read and one parse of a header for each folder named like a study id, one after another, so one header is in memory at a time; a header is some kilobytes as a rule and {@link HEADER_LIMIT_BYTES} at most. The count stops at `places`, because a start only needs to know whether they are taken.
@@ -454,7 +468,12 @@ export class NodeTestHistoryStore {
     let listed = 0
     for (const name of await readdir(this.directory)) {
       if (listed >= places) break
-      if (await this.listedHeader(name)) listed += 1
+      // A history sealed with no entry (written before D6) is removed when met and counts nothing, as the list shows nothing of it (D28, F213).
+      if (
+        (await this.listedHeader(name)) &&
+        !(await this.dropSealedEmpty(name))
+      )
+        listed += 1
     }
     return listed
   }
@@ -684,7 +703,10 @@ export class NodeTestHistoryStore {
       }
     }
     const verified = await this.read(studyId)
-    if (verified.seal && verified.entries.length === 0) return undefined
+    if (verified.seal && verified.entries.length === 0) {
+      await this.dropSealedEmpty(studyId)
+      return undefined
+    }
     return { history: verified, citable: citableEvents(verified) }
   }
 
