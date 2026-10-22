@@ -1838,3 +1838,48 @@ test('the node-history resource summarizes only for the history page, not for it
     await run.harness.close()
   }
 })
+
+// Value: protects=a run the library refused at its admission and that is then stopped while its preparation unwinds: it keeps refused-at-admission and its reason; fails_when=the stop overwrites the refusal with stopped-before-history, so the run reads "ended before its history began" and a repeat under its key is treated as a stop, not a refusal; why_new=the preparation catch assigned the stop's exclusion unconditionally (F222); seam=the exclusion is set on the record as the admission would set it, the file check is held and then rejects; no_claim=the admission itself (studyAdmission tests)
+test('a run refused at its admission and then stopped keeps refused-at-admission and its reason', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  let checkIsHeld = false,
+    letCheckFail!: () => void
+  const checkMayFail = new Promise<void>((resolve) => {
+    letCheckFail = resolve
+  })
+  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+    checkIsHeld = true
+    await checkMayFail
+    throw new Error('The operation was aborted.')
+  }
+  try {
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: 'refused-then-stopped',
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => checkIsHeld, 'the file check holds the preparation')
+    record.historyExcluded = 'refused-at-admission'
+
+    // Act
+    const stopping = run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    letCheckFail()
+    const state = await stopping
+
+    // Assert
+    assert.equal(record.historyExcluded, 'refused-at-admission')
+    assert.equal(
+      state.recording.reason,
+      'The run was refused before it started; nothing was saved.',
+    )
+  } finally {
+    letCheckFail()
+    await run.harness.close()
+  }
+})

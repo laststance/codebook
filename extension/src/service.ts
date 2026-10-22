@@ -3348,7 +3348,12 @@ export class StudyService {
         record.historyExcluded = await this.exclusionAfterEarlyFailure(record)
       // A stop cancelled this preparation: the run ends as stopped, with no error of its own and no refusal; a stop before the history began gives up its slot and keeps its start key (F97).
       if (record.profile === NODE_TEST_PROFILE && record.stopping) {
-        if (!record.nodeHistoryWriter)
+        // An exclusion that already explains the run (a refusal at the admission) stays (F222).
+        if (
+          !record.nodeHistoryWriter &&
+          (record.historyExcluded === undefined ||
+            record.historyExcluded === 'awaiting-admission')
+        )
           record.historyExcluded = 'stopped-before-history'
         record.nodePhase = 'failed'
         return
