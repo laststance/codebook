@@ -15,7 +15,9 @@
 //   <claude-home>/projects/<projectKey>/<session>/subagents/agent-<agentId>.jsonl
 // and, from agent-<agentId>.meta.json, only `description`, `agentType`, `finished` and `stoppedByUser`. It never opens an
 // output file or a transcript, so none of their text can reach its output. A task that has an output file and a transcript
-// is one row.
+// is one row. Only plain names count: a task id or a session folder with anything but letters, digits, `_`, `.` and `-` in
+// its name is skipped without a word, so that a file someone else put into the shared tasks folder (/tmp) cannot put
+// control characters on the terminal.
 //
 // <projectKey> is the project's absolute path with every character outside A-Za-z0-9 replaced by `-`. --project defaults to
 // $CLAUDE_PROJECT_DIR, else the working directory (so run it from the project's root, or pass --project); --tasks-root to
@@ -27,12 +29,12 @@
 // Exit 0: the folders were read, also when rows are SILENT. Exit 1: the project or session folders do not exist (one
 // stderr line names the paths looked in) or a folder could not be read. Exit 2: a bad option or a bad
 // $CLAUDE_CODE_SESSION_ID, named on stderr.
-import { realpathSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+
+import { isRunAsScript } from './utils/isRunAsScript.mjs'
 
 /** The silence limit when `--minutes` is not given: Issue #96 stops a review subagent that has no new output for 20 minutes. */
 const DEFAULT_SILENCE_LIMIT_MINUTES = 20
@@ -61,8 +63,9 @@ const MESSAGE_PREFIX = 'watch-background: '
 const SESSION_ID_PATTERN = /^(?!\.+$)[\w.-]+$/
 /** A plain decimal number; `1e3`, `0x10` and signs are refused. */
 const MINUTES_PATTERN = /^\d+(?:\.\d+)?$/
-const TASK_OUTPUT_NAME_PATTERN = /^(.+)\.output$/
-const TRANSCRIPT_NAME_PATTERN = /^agent-(.+)\.jsonl$/
+/** A task id as a file name carries it: letters, digits, `_`, `.` and `-`. A file named otherwise (control characters, brackets, spaces) is none of Claude Code's and is skipped without a word: the tasks root is shared space, and an id is printed as it is. */
+const TASK_OUTPUT_NAME_PATTERN = /^([\w.-]+)\.output$/
+const TRANSCRIPT_NAME_PATTERN = /^agent-([\w.-]+)\.jsonl$/
 /** Control, format (bidi) and line-separator characters: text from a meta must not break a row's line or steer the terminal. */
 const UNSAFE_TEXT_PATTERN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu
 
@@ -203,13 +206,13 @@ async function readSubagentMeta(subagentDirectory, id) {
 /**
  * Lists the files of a folder whose names match a pattern, with their modification time and size.
  *
- * Why: the task outputs and the transcripts are told apart by name, and only their metadata is read. Called by {@link readSessionSources} for the tasks folder and for the subagents folder.
+ * Why: the task outputs and the transcripts are told apart by name, and only their metadata is read. The patterns accept plain ids only, so a file that someone else put into the shared folder under a name with control characters is skipped, not printed. Called by {@link readSessionSources} for the tasks folder and for the subagents folder.
  *
  * @param directory - The folder to list; a folder that is not there lists nothing.
- * @param namePattern - A pattern with one capture group, the task id.
- * @returns One `{ id, mtimeMs, sizeBytes }` per matching regular file. `stat` follows links, so an agent's output file, which is a link to its transcript, answers with the transcript's time and size; a link whose target is gone is skipped.
+ * @param namePattern - A pattern with one capture group, the task id ({@link TASK_OUTPUT_NAME_PATTERN} or {@link TRANSCRIPT_NAME_PATTERN}).
+ * @returns One `{ id, mtimeMs, sizeBytes }` per matching regular file; a file whose name does not match is left out silently. `stat` follows links, so an agent's output file, which is a link to its transcript, answers with the transcript's time and size; a link whose target is gone is skipped.
  * @example
- * await listFiles('/tmp/claude-501/-p/s1/tasks', /^(.+)\.output$/)
+ * await listFiles('/tmp/claude-501/-p/s1/tasks', TASK_OUTPUT_NAME_PATTERN)
  * // => [{ id: 'b89sndto6', mtimeMs: 1792632190000, sizeBytes: 3062 }]
  */
 async function listFiles(directory, namePattern) {
@@ -372,11 +375,11 @@ async function newestFileTime(directory) {
 /**
  * Lists the session folders of one root of a project.
  *
- * Why: the projects root also holds folders that are no session (the project's `memory` folder), and taking one for the newest session would show nothing. A folder is a session when it holds the marker folder that this root keeps per session. Called by {@link chooseNewestSession}.
+ * Why: the projects root also holds folders that are no session (the project's `memory` folder), and taking one for the newest session would show nothing. A folder is a session when its name is a session id ({@link SESSION_ID_PATTERN}) and it holds the marker folder that this root keeps per session. The name rule also keeps a folder that someone else created in the shared tasks root, under a name with control characters, from being chosen and printed. Called by {@link chooseNewestSession}.
  *
  * @param projectDirectory - The project's folder in a root (`<tasks-root>/<key>` or `<claude-home>/projects/<key>`); one that is not there lists nothing.
  * @param markerName - `tasks` for the tasks root, `subagents` for the projects root.
- * @returns One `{ name, directory }` per session folder.
+ * @returns One `{ name, directory }` per session folder; a folder whose name is not a session id is left out silently.
  * @example
  * await listSessionFolders('/tmp/claude-501/-p', 'tasks') // => [{ name: 's1', directory: '/tmp/claude-501/-p/s1' }]
  */
@@ -387,7 +390,9 @@ async function listSessionFolders(projectDirectory, markerName) {
     )) ?? []
   const sessions = await Promise.all(
     entries
-      .filter((entry) => entry.isDirectory())
+      .filter(
+        (entry) => entry.isDirectory() && SESSION_ID_PATTERN.test(entry.name),
+      )
       .map(async ({ name }) => {
         const directory = join(projectDirectory, name)
         return (await isDirectory(join(directory, markerName)))
@@ -753,7 +758,7 @@ export function parseWatchOptions(
 /**
  * Runs the watchdog for one command line and answers what to print and which exit code to end with.
  *
- * Why: the script's entry point below only prints this answer, so the whole run, errors included, can be called without a process. Called by the entry point at the end of this file, and by tests.
+ * Why: the script's entry point below only prints this answer, so the whole run, errors included, is one function that returns what to print instead of writing to the process. Called by the entry point at the end of this file.
  *
  * @param argv - The arguments after the script's name.
  * @param context - `{ environment, workingDirectory, userId, homeDirectory, nowMs }`: the process facts that {@link parseWatchOptions} and {@link readReport} need.
@@ -792,29 +797,8 @@ export async function runCommand(argv, { nowMs, ...parseContext }) {
   }
 }
 
-/**
- * Says whether Node started this file as the program, as opposed to a test importing its functions.
- *
- * Why: the file both exports its functions for tests and runs as a script, and an import must print nothing. Called once, by the entry point below.
- *
- * It compares real paths, so a script reached through a symbolic link (`/tmp` is one on macOS) still runs; `import.meta.main` would need Node 24.2 or later, and the repository only requires Node 24.
- *
- * @returns `true` when the file named on Node's command line is this file.
- * @example
- * isRunAsScript() // => true under `node watch-background.mjs`, false when a test imports the file
- */
-function isRunAsScript() {
-  const entryPath = process.argv[1]
-  if (entryPath === undefined) return false
-  try {
-    return realpathSync(entryPath) === fileURLToPath(import.meta.url)
-  } catch {
-    // An entry that is not a file (`node -`) is not this file.
-    return false
-  }
-}
-
-if (isRunAsScript()) {
+// Only a run of this file as the program prints; a test that imports it gets the functions and no output ({@link isRunAsScript}).
+if (isRunAsScript(import.meta.url)) {
   const outcome = await runCommand(process.argv.slice(2), {
     environment: process.env,
     workingDirectory: process.cwd(),

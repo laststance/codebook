@@ -11,18 +11,22 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import {
   findClosingReferences,
   findPullRequestCommands,
+  listClosingKeywordRefusals,
   splitCommandSegments,
 } from '../refuse-closing-keywords.mjs'
 
 const HOOK_SCRIPT = fileURLToPath(
   new URL('../refuse-closing-keywords.mjs', import.meta.url),
 )
+/** A child process that does not end within this time is killed, so a hook that hangs fails its test instead of the run. */
+const CHILD_TIMEOUT_MS = 10_000
 /** The sentence that ends every refusal on standard error. */
 const REFUSAL_FIX =
   'Write a non-closing reference such as `Refs #N` instead, or allow a deliberate closing reference by prefixing the command with `CODEBOOK_ALLOW_CLOSING_KEYWORD=1`.'
@@ -77,7 +81,7 @@ function bashEvent(command, cwd) {
  *
  * @param input - The event object, or a raw string for input that is no JSON.
  * @param options - Options of the child process: `cwd` and `env`. The environment is empty unless given, so a variable of the developer's shell cannot change a result.
- * @returns The child's exit code and what it wrote to standard output and standard error.
+ * @returns The child's exit code and what it wrote to standard output and standard error. A child that does not end within {@link CHILD_TIMEOUT_MS} is killed and has the status `null`.
  *
  * @example
  * ```js
@@ -92,10 +96,30 @@ function runHook(input, options = {}) {
       input: typeof input === 'string' ? input : JSON.stringify(input),
       encoding: 'utf8',
       env: {},
+      timeout: CHILD_TIMEOUT_MS,
       ...options,
     },
   )
   return { status, stdout, stderr }
+}
+
+/**
+ * Reads the words of the commands of a command line, in the order they run; redirections, groups and substitutions are left out.
+ *
+ * Called by the lexer tests below.
+ *
+ * @param commandLine - The command line.
+ * @returns One list of words per command.
+ *
+ * @example
+ * ```js
+ * wordsOf('ls -l 2>&1 | wc') // => [['ls', '-l'], ['wc']]
+ * ```
+ */
+function wordsOf(commandLine) {
+  return splitCommandSegments(commandLine)
+    .events.filter((event) => event.type === 'segment')
+    .map((segment) => segment.words)
 }
 
 // Value: protects=Issues staying open until their closing comment: a pull request description that puts Close right before an Issue number is refused, naming the file and the line (PR #91's "Close #90" closed Issue #90 at the merge); fails_when=a --body-file whose line 3 says "Close #90 after the merge." is let through, the exit code is not 2, the message leaves out the file or the line number, or it prints a line of the file that does not match; why_new=Issue #98; seam=the hook as Claude Code starts it (child process, JSON on standard input) over a real temporary file; no_claim=that Claude Code blocks the command on exit code 2, which is its own contract
@@ -156,7 +180,7 @@ test('refuses an inline --body that says fixes #3, and names the option and the 
   })
 })
 
-// Value: protects=the check of a body file that the command names by a relative path, as a model usually does; fails_when=a relative path is read from the hook's own folder (the test runs it from extension/, where b.md does not exist) instead of the cwd of the hook input, so the file is not found and the keyword passes; why_new=Issue #98; seam=child process over a real temporary file; no_claim=a cd earlier in the command line, which the hook does not follow
+// Value: protects=the check of a body file that the command names by a relative path, as a model usually does; fails_when=a relative path is read from the hook's own folder (the test runs it from extension/, where b.md does not exist) instead of the cwd of the hook input, so the file is not found and the keyword passes; why_new=Issue #98; seam=child process over a real temporary file; no_claim=a directory change earlier in the command line (see the cd and pushd tests)
 test('resolves the relative --body-file of gh pr edit against the cwd of the hook input', async (context) => {
   // Arrange
   const directory = await temporaryDirectory(context, {
@@ -359,8 +383,8 @@ test('lets commands through that write no pull request text, comments on a pull 
   ])
 })
 
-// Value: protects=a pull request command inside $( … ) or ( … ), as when its URL is captured (PR_URL=$(gh pr create …)); fails_when=a parenthesis stays part of a word, so the command is never recognized, or its last word keeps a ")" and the file is not found; why_new=Issue #98; seam=child process over a real temporary file; no_claim=a command inside a double-quoted $( … ), which the hook does not look into
-test('refuses a closing keyword in a pull request command inside $( … ) or a subshell', async (context) => {
+// Value: protects=a pull request command inside $( … ), backticks or ( … ), as when its URL is captured (PR_URL=$(gh pr create …)), also when the substitution is in double quotes; fails_when=a parenthesis stays part of a word, or a double-quoted substitution is taken for plain text, so the command is never recognized, or its last word keeps a ")" and the file is not found; why_new=Issue #98; seam=child process over a real temporary file; no_claim=none beyond protects
+test('refuses a closing keyword in a pull request command inside $( … ), a double-quoted $( … ), backticks or a subshell', async (context) => {
   // Arrange
   const directory = await temporaryDirectory(context, {
     'body.md': 'Closes #1\n',
@@ -368,6 +392,8 @@ test('refuses a closing keyword in a pull request command inside $( … ) or a s
   const bodyFile = join(directory, 'body.md')
   const commands = [
     "PR_URL=$(gh pr create --title t --body 'Closes #1')",
+    'PR_URL="$(gh pr create --title t --body \'Closes #1\')"',
+    "PR_URL=`gh pr create --title t --body 'Closes #1'`",
     `(cd ${directory} && gh pr edit 12 --body-file ${bodyFile})`,
   ]
 
@@ -377,25 +403,33 @@ test('refuses a closing keyword in a pull request command inside $( … ) or a s
   )
 
   // Assert
-  assert.deepEqual(statuses, [2, 2])
+  assert.deepEqual(statuses, [2, 2, 2, 2])
 })
 
-// Value: protects=the hook staying fast and silent on a file that is no pull request text; fails_when=a file larger than 1 MiB (GitHub allows 65,536 characters; it may be a device or a pipe) is read, so a hook that must end within 5 s could hang or run out of memory; why_new=Issue #98; seam=child process over a real 1 MiB file; no_claim=that GitHub refuses such a text
-test('skips a body file larger than 1 MiB, which no pull request can carry', async (context) => {
+// Value: protects=the cap on the files the hook reads (GitHub allows 65,536 characters in a pull request text; the cap is 262,144 bytes); fails_when=a file of 262,145 bytes whose last line says "Closes #1" is read and refused, or the largest file within the cap (262,144 bytes) is skipped; why_new=Issue #98; seam=child process over two real files at the cap; no_claim=that the cap bounds the time or memory of a scan (the bounded patterns and the regular-file check do that), or what a device or a pipe does
+test('reads a body file of 262,144 bytes and skips one of 262,145, which no pull request can carry', async (context) => {
   // Arrange
+  const last = '\nCloses #1\n'
   const directory = await temporaryDirectory(context, {
-    'body.md': `${'x'.repeat(1_048_577)}\nCloses #1\n`,
+    'at-cap.md': `${'x'.repeat(262_144 - last.length)}${last}`,
+    'over-cap.md': `${'x'.repeat(262_145 - last.length)}${last}`,
   })
-  const event = bashEvent(
-    `gh pr edit 12 --body-file ${join(directory, 'body.md')}`,
-    directory,
-  )
 
   // Act
-  const result = runHook(event)
+  const atCap = runHook(
+    bashEvent('gh pr edit 12 --body-file at-cap.md', directory),
+  )
+  const overCap = runHook(
+    bashEvent('gh pr edit 12 --body-file over-cap.md', directory),
+  )
 
   // Assert
-  assert.deepEqual(result, { status: 0, stdout: '', stderr: '' })
+  assert.deepEqual(atCap, {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in ${join(directory, 'at-cap.md')}, line 2: Closes #1\n${REFUSAL_FIX}\n`,
+  })
+  assert.deepEqual(overCap, { status: 0, stdout: '', stderr: '' })
 })
 
 // Value: protects=the hook still running when the project folder is reached through a symbolic link (/tmp is one on macOS, and this repository's worktrees live there), where Node's argv[1] is the link and import.meta.url is the real file; fails_when=the entry check compares unresolved paths, so the script takes itself for an imported module, does nothing and lets every command through; why_new=Issue #98; seam=child process started through a real symbolic link; no_claim=Windows, where a link needs a privilege
@@ -411,6 +445,7 @@ test('refuses a closing keyword when Node starts the hook through a symbolic lin
     input: JSON.stringify(event),
     encoding: 'utf8',
     env: {},
+    timeout: CHILD_TIMEOUT_MS,
   })
 
   // Assert
@@ -437,6 +472,7 @@ test('the project settings register the hook for Bash, and the registered comman
     input: JSON.stringify(event),
     encoding: 'utf8',
     env: { PATH: process.env.PATH, CLAUDE_PROJECT_DIR: repositoryRoot },
+    timeout: CHILD_TIMEOUT_MS,
   })
 
   // Assert
@@ -545,13 +581,14 @@ test('lets a closing keyword through when the command line assigns CODEBOOK_ALLO
   assert.deepEqual(withAssignment, { status: 0, stdout: '', stderr: '' })
 })
 
-// Value: protects=the allow staying a deliberate act, given before the command it covers and with exactly the value 1; fails_when=an assignment after the command, or with another value, or one that only prefixes another command (as in a shell, where it reaches that command alone) allows the pull request command, or env and export before the command do not; why_new=Issue #98; seam=none; no_claim=a shell variable set in an earlier Bash call, which the tool does not keep
-test('allows a command only when the assignment of 1 stands before it: as its prefix, after env, or in an earlier export', () => {
+// Value: protects=the allow staying a deliberate act, given before the command it covers and with exactly the value 1; fails_when=an assignment after the command, or with another value, or one that only prefixes another command (as in a shell, where it reaches that command alone) allows the pull request command, or env, export and a plain assignment line before the command do not; why_new=Issue #98; seam=none; no_claim=a shell variable set in an earlier Bash call, which the tool does not keep
+test('allows a command only when the assignment of 1 stands before it: as its prefix, after env, or in an earlier export or assignment', () => {
   // Arrange
   const commandLines = [
     'CODEBOOK_ALLOW_CLOSING_KEYWORD=1 gh pr edit 3 --body x',
     'env CODEBOOK_ALLOW_CLOSING_KEYWORD=1 gh pr edit 3 --body x',
     'export CODEBOOK_ALLOW_CLOSING_KEYWORD=1 && gh pr edit 3 --body x',
+    'CODEBOOK_ALLOW_CLOSING_KEYWORD=1\ngh pr edit 3 --body x',
     'gh pr edit 3 --body x; CODEBOOK_ALLOW_CLOSING_KEYWORD=1',
     'CODEBOOK_ALLOW_CLOSING_KEYWORD=0 gh pr edit 3 --body x',
     'CODEBOOK_ALLOW_CLOSING_KEYWORD=1 echo hi; gh pr edit 3 --body x',
@@ -560,22 +597,113 @@ test('allows a command only when the assignment of 1 stands before it: as its pr
   // Act
   const allowed = commandLines.map(
     (commandLine) =>
-      findPullRequestCommands(commandLine, {})[0].isClosingKeywordAllowed,
+      findPullRequestCommands(commandLine, '/work', {})[0]
+        .isClosingKeywordAllowed,
   )
 
   // Assert
-  assert.deepEqual(allowed, [true, true, true, false, false, false])
+  assert.deepEqual(allowed, [true, true, true, true, false, false, false])
 })
 
-// Value: protects=the paths /ship and a model write with variables: $NAME and ${NAME} from an assignment earlier in the line or from the environment, ${NAME:-default}, and a variable nobody knows left as written so its file is skipped, not guessed; fails_when=an assignment is not chained into the next, the environment is not consulted, the line's own assignment does not win over the environment, a default is not used, an unknown name is replaced, or a name of Object.prototype ($constructor) expands to something; why_new=Issue #98 (the /ship template passes its files through variables); seam=none; no_claim=${NAME#…}, ${NAME%…} and arithmetic, which stay as written
-test('expands variables from earlier assignments and the environment, and leaves an unknown variable as written', () => {
+// Value: protects=the allow not being given by text that only mentions it; fails_when=an argument of another program (echo CODEBOOK_ALLOW_CLOSING_KEYWORD=1 gh pr edit …, printf …) counts as an assignment before the pull request command; why_new=Issue #98 (review finding: any word before the program allowed); seam=none; no_claim=none beyond protects
+test('does not allow a command by an assignment that is only an argument of another program', () => {
   // Arrange
-  const environment = { NOTES: '/env', ONLY_ENV: '/only' }
+  const commandLines = [
+    'echo CODEBOOK_ALLOW_CLOSING_KEYWORD=1 gh pr edit 3 --body x',
+    'CODEBOOK_ALLOW_CLOSING_KEYWORD=1 echo gh pr edit 3 --body x',
+    'printf %s CODEBOOK_ALLOW_CLOSING_KEYWORD=1; gh pr edit 3 --body x',
+    'git commit -m CODEBOOK_ALLOW_CLOSING_KEYWORD=1 && gh pr edit 3 --body x',
+  ]
+
+  // Act
+  const results = commandLines.map((commandLine) => {
+    const [command] = findPullRequestCommands(commandLine, '/work', {})
+    return {
+      isClosingKeywordAllowed: command.isClosingKeywordAllowed,
+      texts: command.texts.length,
+    }
+  })
+
+  // Assert
+  assert.deepEqual(results, [
+    { isClosingKeywordAllowed: false, texts: 1 },
+    { isClosingKeywordAllowed: false, texts: 1 },
+    { isClosingKeywordAllowed: false, texts: 1 },
+    { isClosingKeywordAllowed: false, texts: 1 },
+  ])
+})
+
+// Value: protects=the allow not being given by the body of a heredoc: a line "CODEBOOK_ALLOW_CLOSING_KEYWORD=1" in the text a command receives is data, not an assignment; fails_when=a heredoc body line comes back as a command of its own (an assignment-only command), so the pull request command after it is allowed; why_new=Issue #98 (review finding: heredoc bodies re-entered as command words); seam=child process; no_claim=none beyond protects
+test('does not allow a command by a heredoc line that reads CODEBOOK_ALLOW_CLOSING_KEYWORD=1', () => {
+  // Arrange
+  const command = [
+    "cat > notes.txt <<'EOF'",
+    'CODEBOOK_ALLOW_CLOSING_KEYWORD=1',
+    'EOF',
+    "gh pr edit 12 --body 'Closes #1'",
+  ].join('\n')
+
+  // Act
+  const result = runHook(bashEvent(command, '/tmp'))
+
+  // Assert
+  assert.deepEqual(result, {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in --body, line 1: Closes #1\n${REFUSAL_FIX}\n`,
+  })
+})
+
+// Value: protects=the allow ending where the shell ends it; fails_when=an unset later in the line before the command does not cancel an earlier export, an assignment made inside a subshell ( … ) or $( … ) reaches the commands after it, or a command inside a subshell does not see the allow its shell gave; why_new=Issue #98 (review finding); seam=none; no_claim=none beyond protects
+test('ends the allow with unset, and keeps an assignment of a subshell to the subshell', () => {
+  // Arrange
+  const commandLines = [
+    'export CODEBOOK_ALLOW_CLOSING_KEYWORD=1; unset CODEBOOK_ALLOW_CLOSING_KEYWORD; gh pr edit 3 --body x',
+    'export CODEBOOK_ALLOW_CLOSING_KEYWORD=1; unset OTHER; gh pr edit 3 --body x',
+    '(export CODEBOOK_ALLOW_CLOSING_KEYWORD=1); gh pr edit 3 --body x',
+    '(CODEBOOK_ALLOW_CLOSING_KEYWORD=1; true); gh pr edit 3 --body x',
+    'X=$(export CODEBOOK_ALLOW_CLOSING_KEYWORD=1); gh pr edit 3 --body x',
+    'export CODEBOOK_ALLOW_CLOSING_KEYWORD=1; (gh pr edit 3 --body x)',
+    'export CODEBOOK_ALLOW_CLOSING_KEYWORD=1 | cat; gh pr edit 3 --body x',
+    'echo hi | export CODEBOOK_ALLOW_CLOSING_KEYWORD=1; gh pr edit 3 --body x',
+  ]
+
+  // Act
+  const allowed = commandLines.map(
+    (commandLine) =>
+      findPullRequestCommands(commandLine, '/work', {})[0]
+        .isClosingKeywordAllowed,
+  )
+
+  // Assert
+  assert.deepEqual(allowed, [
+    false,
+    true,
+    false,
+    false,
+    false,
+    true,
+    false,
+    false,
+  ])
+})
+
+// Value: protects=the paths /ship and a model write with variables: $NAME and ${NAME} from an assignment earlier in the line or from the environment, ${NAME:-default}, $PWD as the line's own directory, $OLDPWD as unknown, and a variable nobody knows leaving its file unread, not guessed; fails_when=an assignment is not chained into the next, the environment is not consulted, the line's own assignment does not win over the environment, a default is not used, $PWD is the hook's directory, $OLDPWD is the hook's copy, an unknown name is replaced or read as a literal path, or a name of Object.prototype ($constructor) expands to something; why_new=Issue #98 (the /ship template passes its files through variables); seam=none; no_claim=${NAME#…}, ${NAME%…} and arithmetic, which stay unresolved
+test('expands variables from earlier assignments and the environment, and reads no file whose variable nobody knows', () => {
+  // Arrange
+  const environment = {
+    NOTES: '/env',
+    ONLY_ENV: '/only',
+    PWD: '/elsewhere',
+    OLDPWD: '/before',
+  }
   const commandLines = [
     'A=/a\nB=$A/b\ngh pr edit 3 --body-file $B/c.md',
     'gh pr edit 3 --body-file ${ONLY_ENV}/c.md',
     'NOTES=/line\ngh pr edit 3 --body-file $NOTES/c.md',
     'gh pr edit 3 --body-file ${MISSING:-/default}/c.md',
+    'gh pr edit 3 --body-file $PWD/c.md',
+    'gh pr edit 3 --body-file $OLDPWD/c.md',
     'gh pr edit 3 --body-file $MISSING/c.md',
     'gh pr edit 3 --body-file $constructor/c.md',
   ]
@@ -583,7 +711,8 @@ test('expands variables from earlier assignments and the environment, and leaves
   // Act
   const paths = commandLines.map(
     (commandLine) =>
-      findPullRequestCommands(commandLine, environment)[0].textOptions[0].value,
+      findPullRequestCommands(commandLine, '/work', environment)[0].texts[0]
+        ?.source,
   )
 
   // Assert
@@ -592,8 +721,10 @@ test('expands variables from earlier assignments and the environment, and leaves
     '/only/c.md',
     '/line/c.md',
     '/default/c.md',
-    '$MISSING/c.md',
-    '$constructor/c.md',
+    '/work/c.md',
+    undefined,
+    undefined,
+    undefined,
   ])
 })
 
@@ -704,6 +835,7 @@ test('lets a command through whose body file is missing, is a folder, or is stan
     'gh pr edit 12 --body-file folder',
     'gh pr edit 12 --body-file -',
     'gh pr edit 12 -F -',
+    'gh pr edit 12 --body-file /dev/stdin',
   ]
 
   // Act
@@ -713,6 +845,7 @@ test('lets a command through whose body file is missing, is a folder, or is stan
 
   // Assert
   assert.deepEqual(results, [
+    { status: 0, stdout: '', stderr: '' },
     { status: 0, stdout: '', stderr: '' },
     { status: 0, stdout: '', stderr: '' },
     { status: 0, stdout: '', stderr: '' },
@@ -811,37 +944,40 @@ test('reports no line that only refers to an Issue or only resembles a closing k
   assert.deepEqual(references, [])
 })
 
-// Value: protects=the commands of a line staying apart, so the options of one are never read as the options of the next; fails_when=a separator outside quotes (&&, ||, ;, |, a line break) does not end a command, one inside quotes does, or a single & (as in 2>&1) splits a word; why_new=Issue #98; seam=none; no_claim=shell features beyond the separators named
-test('splits a command line at &&, ||, ;, | and line breaks, but not inside quotes or at a single &', () => {
+// Value: protects=the commands of a line staying apart, so the options of one are never read as the options of the next; fails_when=a separator outside quotes (&&, ||, ;, |, a line break, a lone & for the background) does not end a command, one inside quotes does, or a redirection (2>&1, &>, >&2) is taken for a word or for a separator; why_new=Issue #98; seam=none; no_claim=shell features beyond the separators and redirections named
+test('splits a command line at &&, ||, ;, |, a lone & and line breaks, but not inside quotes or at 2>&1, &> and >&2', () => {
   // Arrange
   const commandLine =
-    'gh pr edit 12 --body "a b" && git status | cat; echo "x && y; z"\nls 2>&1 || true'
+    'gh pr edit 12 --body "a b" && git status | cat; echo "x && y; z"\nls 2>&1 || true\nsleep 1 & wait\nmake &> build.log >&2'
 
   // Act
-  const segments = splitCommandSegments(commandLine)
+  const words = wordsOf(commandLine)
 
   // Assert
-  assert.deepEqual(segments, [
+  assert.deepEqual(words, [
     ['gh', 'pr', 'edit', '12', '--body', 'a b'],
     ['git', 'status'],
     ['cat'],
     ['echo', 'x && y; z'],
-    ['ls', '2>&1'],
+    ['ls'],
     ['true'],
+    ['sleep', '1'],
+    ['wait'],
+    ['make'],
   ])
 })
 
-// Value: protects=the text a pull request command receives from quoted words; fails_when=a single or double quote, an escaped space or quote, an empty quoted word, or a backslash before a line break (outside or inside double quotes) gives a word other than the one a shell passes; why_new=Issue #98; seam=none; no_claim=$'…' strings and expansions, which stay as written
+// Value: protects=the text a pull request command receives from quoted words; fails_when=a single or double quote, an escaped space or quote, an empty quoted word, or a backslash before a line break (outside or inside double quotes) gives a word other than the one a shell passes; why_new=Issue #98; seam=none; no_claim=$'…' strings and substitutions, which have tests of their own
 test('resolves quotes, escapes and line continuations into the words a shell passes', () => {
   // Arrange
   const commandLine =
     'echo \'c d\' "say \\"hi\\"" e\\ f "" "a \\\nb" g\\\nh \'it\'"\'"\'s\''
 
   // Act
-  const segments = splitCommandSegments(commandLine)
+  const words = wordsOf(commandLine)
 
   // Assert
-  assert.deepEqual(segments, [
+  assert.deepEqual(words, [
     ['echo', 'c d', 'say "hi"', 'e f', '', 'a b', 'gh', "it's"],
   ])
 })
@@ -853,42 +989,108 @@ test('ignores a comment to the end of its line, but not a # inside a word', () =
     "git status # gh pr create --body 'Closes #1'\nls a#b # again"
 
   // Act
-  const segments = splitCommandSegments(commandLine)
+  const words = wordsOf(commandLine)
 
   // Assert
-  assert.deepEqual(segments, [
+  assert.deepEqual(words, [
     ['git', 'status'],
     ['ls', 'a#b'],
   ])
 })
 
-// Value: protects=a pull request body written as a heredoc inside a double-quoted word; fails_when=the quotes, apostrophes or parentheses of the heredoc text end the word early or split the commands around it; why_new=Issue #98; seam=none; no_claim=a heredoc without a delimiter line, which stays in the line as written
-test('keeps a heredoc body, with its quotes and parentheses, inside the word that holds it', () => {
+// Value: protects=the text of a heredoc staying with the command whose line opened it, and out of the commands; fails_when=a body line comes back as a command of its own (an assignment, a program, a pull request command), the body is cut at an apostrophe, quote or parenthesis in it, <<- keeps the tabs, a quoted delimiter is not marked as quoted, or the command after the delimiter line is lost; why_new=Issue #98 (review finding: heredoc marks became words of the commands); seam=none; no_claim=a heredoc with no delimiter line, which takes the rest of the line as a shell does
+test('gives a heredoc body to the command whose line opened it, and no body line becomes a command', () => {
   // Arrange
   const commandLine = [
-    "gh pr create --body \"$(cat <<'EOF'",
-    'It\'s "quoted two words" (open',
+    "cat > p.md <<'EOF' && tee -a q.md <<-END",
+    'It\'s a "note" with an open (',
+    'CODEBOOK_ALLOW_CLOSING_KEYWORD=1',
     'EOF',
-    ')" && git status',
+    '\tindented',
+    '\tEND',
+    'ls',
   ].join('\n')
 
   // Act
-  const segments = splitCommandSegments(commandLine)
+  const { events } = splitCommandSegments(commandLine)
 
   // Assert
-  assert.deepEqual(segments, [
-    [
-      'gh',
-      'pr',
-      'create',
-      '--body',
-      "$(cat <<'EOF'\nIt's \"quoted two words\" (open\nEOF\n)",
-    ],
-    ['git', 'status'],
+  assert.deepEqual(events, [
+    {
+      type: 'segment',
+      words: ['cat'],
+      redirections: [
+        {
+          operator: '>',
+          fd: undefined,
+          target: 'p.md',
+          isQuoted: false,
+          body: undefined,
+        },
+        {
+          operator: '<<',
+          fd: undefined,
+          target: 'EOF',
+          isQuoted: true,
+          body: 'It\'s a "note" with an open (\nCODEBOOK_ALLOW_CLOSING_KEYWORD=1\n',
+        },
+      ],
+      followedBy: '&&',
+    },
+    {
+      type: 'segment',
+      words: ['tee', '-a', 'q.md'],
+      redirections: [
+        {
+          operator: '<<-',
+          fd: undefined,
+          target: 'END',
+          isQuoted: false,
+          body: 'indented\n',
+        },
+      ],
+      followedBy: '\n',
+    },
+    { type: 'segment', words: ['ls'], redirections: [], followedBy: '' },
   ])
 })
 
-// Value: protects=every spelling of a text option that gh and gstack-post accept; fails_when=--name=value, -b, -F, -t, --subject or --title-file is read wrongly, a value that begins with a dash is taken for an option, an option of another kind is read as text, or gh pr merge is left out; why_new=Issue #98; seam=none; no_claim=short options joined to their value (-bTEXT) and clusters (-dF)
+// Value: protects=ANSI-C quoting, $'…', which gives a model the way to put a line break into an inline --body; fails_when=\n, \t, \\, \' or \" inside $'…' is not decoded, an escape this script does not know is changed, or the quote ends at an escaped \'; why_new=Issue #98 (review finding); seam=none; no_claim=\xHH, \uHHHH and octal escapes, which stay as written
+test("decodes $'…' strings: \\n, \\t, \\\\, \\' and \\\" become the characters they name", () => {
+  // Arrange
+  const commandLine = "echo $'a\\nb\\tc\\\\d\\'e\\\"f\\qg' next"
+
+  // Act
+  const words = wordsOf(commandLine)
+
+  // Assert
+  assert.deepEqual(words, [['echo', 'a\nb\tc\\d\'e"f\\qg', 'next']])
+})
+
+// Value: protects=the text of a pull request staying as written where the shell does not expand it; fails_when=a $ that single quotes, a backslash or $'…' made plain is expanded (so a body that mentions $HOME is read as another text), or a $ in double quotes is not (the control: the home folder replaces it); why_new=Issue #98 (review finding: expansion ignored the quotes); seam=none; no_claim=none beyond protects
+test("does not expand a $ that single quotes, a backslash or $'…' made plain, but expands one in double quotes", () => {
+  // Arrange
+  const environment = { HOME: '/home/me' }
+  const commandLines = [
+    "gh pr edit 3 --body '$HOME'",
+    'gh pr edit 3 --body \\$HOME',
+    'gh pr edit 3 --body "\\$HOME"',
+    "gh pr edit 3 --body $'$HOME'",
+    'gh pr edit 3 --body "$HOME"',
+  ]
+
+  // Act
+  const texts = commandLines.map(
+    (commandLine) =>
+      findPullRequestCommands(commandLine, '/work', environment)[0].texts[0]
+        .fragments[0].text,
+  )
+
+  // Assert
+  assert.deepEqual(texts, ['$HOME', '$HOME', '$HOME', '$HOME', '/home/me'])
+})
+
+// Value: protects=every spelling of a text option that gh and gstack-post accept; fails_when=--name=value, -b, -F, -t, --subject or --title-file is read wrongly, a value that begins with a dash is taken for an option, an option of another kind is read as text, a relative file does not start at the working directory, or gh pr merge is left out; why_new=Issue #98; seam=none; no_claim=clusters of short options (-dF)
 test('reads the text options of gh pr create, gh pr merge and gstack-post in each spelling', () => {
   // Arrange
   const commandLines = [
@@ -899,34 +1101,807 @@ test('reads the text options of gh pr create, gh pr merge and gstack-post in eac
   ]
 
   // Act
-  const textOptions = commandLines.map((commandLine) =>
-    findPullRequestCommands(commandLine, {}).map(
-      (command) => command.textOptions,
+  const texts = commandLines.map((commandLine) =>
+    findPullRequestCommands(commandLine, '/work', {}).map(
+      (command) => command.texts,
     ),
   )
 
   // Assert
-  assert.deepEqual(textOptions, [
+  assert.deepEqual(texts, [
     [
       [
-        { option: '--title', value: 'Add hook', isFile: false },
-        { option: '--body-file', value: '/tmp/b.md', isFile: true },
-        { option: '-F', value: '/tmp/c.md', isFile: true },
-        { option: '-b', value: 'inline', isFile: false },
+        {
+          option: '--title',
+          source: '--title',
+          fragments: [{ kind: 'text', text: 'Add hook' }],
+        },
+        {
+          option: '--body-file',
+          source: '/tmp/b.md',
+          fragments: [{ kind: 'file', path: '/tmp/b.md', isOptional: false }],
+        },
+        {
+          option: '-F',
+          source: '/tmp/c.md',
+          fragments: [{ kind: 'file', path: '/tmp/c.md', isOptional: false }],
+        },
+        {
+          option: '-b',
+          source: '-b',
+          fragments: [{ kind: 'text', text: 'inline' }],
+        },
       ],
     ],
     [
       [
-        { option: '--subject', value: 'S', isFile: false },
-        { option: '--body', value: '- B', isFile: false },
+        {
+          option: '--subject',
+          source: '--subject',
+          fragments: [{ kind: 'text', text: 'S' }],
+        },
+        {
+          option: '--body',
+          source: '--body',
+          fragments: [{ kind: 'text', text: '- B' }],
+        },
       ],
     ],
-    [[{ option: '-t', value: 'T', isFile: false }]],
     [
       [
-        { option: '--title-file', value: 'T', isFile: true },
-        { option: '--body-file', value: 'B', isFile: true },
+        {
+          option: '-t',
+          source: '-t',
+          fragments: [{ kind: 'text', text: 'T' }],
+        },
+      ],
+    ],
+    [
+      [
+        {
+          option: '--title-file',
+          source: '/work/T',
+          fragments: [{ kind: 'file', path: '/work/T', isOptional: false }],
+        },
+        {
+          option: '--body-file',
+          source: '/work/B',
+          fragments: [{ kind: 'file', path: '/work/B', isOptional: false }],
+        },
       ],
     ],
   ])
+})
+
+// Value: protects=the short options with their value attached, which gh accepts; fails_when=-b=TEXT, -bTEXT, -t=TEXT, -tTEXT, -F=FILE or -FFILE is not read as the option and its value, so a closing keyword written that way is never seen; why_new=Issue #98 (review finding); seam=none; no_claim=clusters of short options (-dF)
+test('reads the short options with the value attached: -b=TEXT, -bTEXT, -t=TEXT, -F=FILE and -FFILE', () => {
+  // Arrange
+  const commandLine =
+    'gh pr edit 3 -b=Refs\\ #1 -bFixes\\ #2 -t=Title -tOther -F=/tmp/f.md -F/tmp/g.md'
+
+  // Act
+  const [command] = findPullRequestCommands(commandLine, '/work', {})
+
+  // Assert
+  assert.deepEqual(command.texts, [
+    {
+      option: '-b',
+      source: '-b',
+      fragments: [{ kind: 'text', text: 'Refs #1' }],
+    },
+    {
+      option: '-b',
+      source: '-b',
+      fragments: [{ kind: 'text', text: 'Fixes #2' }],
+    },
+    {
+      option: '-t',
+      source: '-t',
+      fragments: [{ kind: 'text', text: 'Title' }],
+    },
+    {
+      option: '-t',
+      source: '-t',
+      fragments: [{ kind: 'text', text: 'Other' }],
+    },
+    {
+      option: '-F',
+      source: '/tmp/f.md',
+      fragments: [{ kind: 'file', path: '/tmp/f.md', isOptional: false }],
+    },
+    {
+      option: '-F',
+      source: '/tmp/g.md',
+      fragments: [{ kind: 'file', path: '/tmp/g.md', isOptional: false }],
+    },
+  ])
+})
+
+// Value: protects=a pull request body that the command line itself feeds to the command, gh pr create --body-file - <<'EOF' … EOF, which the reviews found unseen; fails_when=a heredoc of the pull request command is not read as its body, other redirections on the line (2>&1) hide it, or the refusal does not name the option and the line of the body; why_new=Issue #98 (review finding 1a); seam=child process; no_claim=a heredoc of another command (see the next tests)
+test('refuses a closing keyword in a heredoc fed to the command with --body-file -, and names the option and the line', () => {
+  // Arrange
+  const commands = [
+    [
+      "gh pr create --title t --body-file - <<'EOF'",
+      '## Summary',
+      'Closes #1',
+      'EOF',
+    ].join('\n'),
+    [
+      "gh pr create --title t --body-file - 2>&1 <<'EOF'",
+      '## Summary',
+      'Closes #1',
+      'EOF',
+    ].join('\n'),
+    [
+      "gh pr create --title t --body-file=/dev/stdin <<'EOF'",
+      '## Summary',
+      'Closes #1',
+      'EOF',
+    ].join('\n'),
+  ]
+
+  // Act
+  const results = commands.map((command) => runHook(bashEvent(command, '/tmp')))
+
+  // Assert
+  const refusalNaming = (source) => ({
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in ${source}, line 2: Closes #1\n${REFUSAL_FIX}\n`,
+  })
+  assert.deepEqual(results, [
+    refusalNaming('--body-file -'),
+    refusalNaming('--body-file -'),
+    refusalNaming('--body-file /dev/stdin'),
+  ])
+})
+
+// Value: protects=a pull request body read from a file or a string that the command line redirects into the command, --body-file - < body.md and -F - <<< "…"; fails_when=a < redirection is not read like a body file (relative to the working directory, named by its path), or a here-string is not read as the body; why_new=Issue #98 (review finding 1a); seam=child process over a real temporary file; no_claim=none beyond protects
+test('reads the file redirected into --body-file - and the here-string fed to -F -', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'body.md': 'Intro\nFixes #4\n',
+  })
+  const bodyFile = join(directory, 'body.md')
+  const commands = [
+    'gh pr edit 12 --body-file - < body.md',
+    'gh pr edit 12 -F - <body.md',
+    'gh pr edit 12 -F - <<< "Fixes #2"',
+  ]
+
+  // Act
+  const results = commands.map((command) =>
+    runHook(bashEvent(command, directory)),
+  )
+
+  // Assert
+  assert.deepEqual(results, [
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in ${bodyFile}, line 2: Fixes #4\n${REFUSAL_FIX}\n`,
+    },
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in ${bodyFile}, line 2: Fixes #4\n${REFUSAL_FIX}\n`,
+    },
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in -F -, line 1: Fixes #2\n${REFUSAL_FIX}\n`,
+    },
+  ])
+})
+
+// Value: protects=the binding of a heredoc to the command whose line opened it: a heredoc that feeds another command, a pipe and a terminal are not the body of --body-file -; fails_when=any heredoc of the line is taken as the body, so a command that reads nothing from it is refused for a text it never receives; why_new=Issue #98 (review finding 1a: bind a heredoc to the command on its line); seam=child process over a real temporary file; no_claim=standard input from a pipe, a blind spot named in the header
+test('reads standard input only from the command that has the option: not a heredoc of another command, a pipe or a terminal', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'body.md': 'Closes #1\n',
+  })
+  const commands = [
+    "cat <<'EOF'\nCloses #1\nEOF\ngh pr edit 12 --body-file -",
+    'cat body.md | gh pr edit 12 --body-file -',
+    'gh pr edit 12 --body-file -',
+  ]
+
+  // Act
+  const results = commands.map((command) =>
+    runHook(bashEvent(command, directory)),
+  )
+
+  // Assert
+  assert.deepEqual(results, [
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+  ])
+})
+
+// Value: protects=a body written and posted in one command line, cat > p.md <<'EOF' … EOF, then gh pr create --body-file p.md, where the file is not on the disk when the hook runs; fails_when=the heredoc is not taken as the content of p.md, so the file is missing and the keyword passes; why_new=Issue #98 (review finding 1b); seam=child process in an empty temporary folder; no_claim=none beyond protects
+test('reads the heredoc that cat > p.md writes earlier in the line, though the file is not on the disk', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {})
+  const command = [
+    "cat > p.md <<'EOF'",
+    'Intro',
+    'Closes #1',
+    'EOF',
+    'gh pr create --title t --body-file p.md',
+  ].join('\n')
+
+  // Act
+  const result = runHook(bashEvent(command, directory))
+
+  // Assert
+  assert.deepEqual(result, {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in ${join(directory, 'p.md')}, line 2: Closes #1\n${REFUSAL_FIX}\n`,
+  })
+})
+
+// Value: protects=the text that will be posted: when the line overwrites a file from a heredoc, the heredoc is the text, whatever an earlier run left on the disk; fails_when=the stale file is read instead, so a stale keyword refuses a clean body or a stale clean file lets a closing body through; why_new=Issue #98 (review finding 1b: check that heredoc body instead of the disk file); seam=child process over two real stale files; no_claim=none beyond protects
+test('reads the heredoc, not the stale file on the disk, when the line overwrites the file first', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'stale-closing.md': 'Closes #99\n',
+    'stale-clean.md': 'Refs #99\n',
+  })
+  const commands = [
+    "cat > stale-closing.md <<'EOF'\nRefs #1\nEOF\ngh pr edit 12 --body-file stale-closing.md",
+    "cat > stale-clean.md <<'EOF'\nCloses #1\nEOF\ngh pr edit 12 --body-file stale-clean.md",
+  ]
+
+  // Act
+  const results = commands.map((command) =>
+    runHook(bashEvent(command, directory)),
+  )
+
+  // Assert
+  assert.deepEqual(results, [
+    { status: 0, stdout: '', stderr: '' },
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in ${join(directory, 'stale-clean.md')}, line 1: Closes #1\n${REFUSAL_FIX}\n`,
+    },
+  ])
+})
+
+// Value: protects=a file that the line appends to, cat >> p.md <<'EOF', whose text is the disk content plus the heredoc; fails_when=the heredoc alone is read (a keyword already in the file passes), the disk content alone is read (a keyword in the appended text passes), the lines of the appended text are not numbered after those of the file, or a file that does not exist yet is skipped; why_new=Issue #98 (review finding 1b: for >>, the disk content plus the body); seam=child process over real files; no_claim=none beyond protects
+test('reads the file as it is on the disk plus the heredoc that cat >> appends to it, numbering the lines through both', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'keyword-first.md': 'Intro\nCloses #5\n',
+    'clean-first.md': 'Intro\nRefs #5\n',
+  })
+  const commands = [
+    "cat >> keyword-first.md <<'EOF'\nRefs #6\nEOF\ngh pr edit 12 --body-file keyword-first.md",
+    "cat >> clean-first.md <<'EOF'\nCloses #6\nEOF\ngh pr edit 12 --body-file clean-first.md",
+    "cat >> new.md <<'EOF'\nCloses #7\nEOF\ngh pr edit 12 --body-file new.md",
+  ]
+
+  // Act
+  const results = commands.map((command) =>
+    runHook(bashEvent(command, directory)),
+  )
+
+  // Assert
+  assert.deepEqual(results, [
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in ${join(directory, 'keyword-first.md')}, line 2: Closes #5\n${REFUSAL_FIX}\n`,
+    },
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in ${join(directory, 'clean-first.md')}, line 3: Closes #6\n${REFUSAL_FIX}\n`,
+    },
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in ${join(directory, 'new.md')}, line 1: Closes #7\n${REFUSAL_FIX}\n`,
+    },
+  ])
+})
+
+// Value: protects=every way a line writes a file from a heredoc, so none of them lets the body pass unread; fails_when=cat <<'EOF' > p, cat <<'EOF' >> p, tee p <<'EOF', tee -a p <<'EOF' or cat >| p <<'EOF' is not taken as the content of p.md; why_new=Issue #98 (review finding 1b: also cat >> p, tee p, cat <<'EOF' > p); seam=child process in an empty temporary folder; no_claim=cp, mv, sed -i and the like, which the header names
+test('reads the heredoc of cat <<EOF > p, cat <<EOF >> p, tee p, tee -a p and cat >| p like that of cat > p', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {})
+  const writers = [
+    "cat <<'EOF' > p.md\nCloses #1\nEOF",
+    "cat <<'EOF' >> p.md\nCloses #1\nEOF",
+    "tee p.md <<'EOF'\nCloses #1\nEOF",
+    "tee -a p.md <<'EOF'\nCloses #1\nEOF",
+    "cat >| p.md <<'EOF'\nCloses #1\nEOF",
+  ]
+
+  // Act
+  const results = writers.map((writer) =>
+    runHook(bashEvent(`${writer}\ngh pr edit 12 --body-file p.md`, directory)),
+  )
+
+  // Assert
+  const refusal = {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in ${join(directory, 'p.md')}, line 1: Closes #1\n${REFUSAL_FIX}\n`,
+  }
+  assert.deepEqual(results, [refusal, refusal, refusal, refusal, refusal])
+})
+
+// Value: protects=the rule of not guessing: a file that an earlier command of the line writes in a way this script cannot read has no content it can know, and the stale file on the disk is not it; fails_when=echo, printf, a pipe into tee, a redirected output of another command or cat of another file is followed by a read of the stale disk file, so a stale keyword refuses a body that the line has rewritten; why_new=Issue #98 (review finding 1b: do not guess, skip); seam=child process over a real stale file; no_claim=writers the script does not notice (cp, mv, sed -i), which the header names
+test('skips a file that something unreadable wrote earlier in the line, and does not guess from the stale file on the disk', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'stale.md': 'Closes #99\n',
+  })
+  const writers = [
+    "echo 'Refs #1' > stale.md",
+    "printf '%s\\n' 'Refs #1' > stale.md",
+    "echo 'Refs #1' | tee stale.md >/dev/null",
+    'gh pr view 12 --json body -q .body > stale.md',
+    'cat other.md > stale.md',
+  ]
+  const post = 'gh pr edit 12 --body-file stale.md'
+
+  // Act
+  const control = runHook(bashEvent(post, directory))
+  const results = writers.map((writer) =>
+    runHook(bashEvent(`${writer}\n${post}`, directory)),
+  )
+
+  // Assert
+  assert.equal(control.status, 2)
+  assert.deepEqual(results, [
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+  ])
+})
+
+// Value: protects=a file becoming known again once a heredoc overwrites it, whatever wrote it before; fails_when=an unreadable writer earlier in the line keeps the file skipped after cat > p.md <<'EOF' has replaced its content, or the stale disk text is read; why_new=Issue #98 (review finding 1b); seam=child process over a real stale file; no_claim=none beyond protects
+test('knows a file again when a heredoc overwrites it after something unreadable wrote it', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'stale.md': 'Closes #99\n',
+  })
+  const command = [
+    'echo x > stale.md',
+    "cat > stale.md <<'EOF'",
+    'Closes #1',
+    'EOF',
+    'gh pr edit 12 --body-file stale.md',
+  ].join('\n')
+
+  // Act
+  const result = runHook(bashEvent(command, directory))
+
+  // Assert
+  assert.deepEqual(result, {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in ${join(directory, 'stale.md')}, line 1: Closes #1\n${REFUSAL_FIX}\n`,
+  })
+})
+
+// Value: protects=a body kept in a variable that is assigned from a heredoc, BODY=$(cat <<'EOF' … EOF), then used as --body "$BODY"; fails_when=$( splits the word and --body becomes a literal "$", so the keyword in the body is never seen; why_new=Issue #98 (review finding 1c); seam=child process; no_claim=none beyond protects
+test('reads a variable assigned from $(cat <<EOF … EOF) as that heredoc when it is used as --body', () => {
+  // Arrange
+  const command = [
+    "BODY=$(cat <<'EOF'",
+    '## Summary',
+    'Closes #1',
+    'EOF',
+    ')',
+    'gh pr edit 12 --body "$BODY"',
+  ].join('\n')
+
+  // Act
+  const result = runHook(bashEvent(command, '/tmp'))
+
+  // Assert
+  assert.deepEqual(result, {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in --body, line 2: Closes #1\n${REFUSAL_FIX}\n`,
+  })
+})
+
+// Value: protects=the rule of not guessing about a command substitution: its output is unknown, and the command that makes it is not the text; fails_when=a value made of $( … ) or backticks is read as the text of the command inside (grep -c "fixes #3" is no body that says fixes #3), a $( … ) in a default is read as literal, or an unknown --body-file is read at all; why_new=Issue #98 (review finding 1c: any other $( … ) makes the value unknown); seam=child process; no_claim=none beyond protects
+test('reads nothing from a value made of another command substitution, and does not read the command as text', () => {
+  // Arrange
+  const commands = [
+    'BODY=$(grep -c "fixes #3" notes.txt)\ngh pr edit 12 --body "$BODY"',
+    'gh pr edit 12 --body "$(echo \'fixes #3\')"',
+    'gh pr edit 12 --body "`echo \'fixes #3\'`"',
+    'TITLE=$(date)\ngh pr edit 12 --title "$TITLE"',
+    'gh pr edit 12 --body-file "$(mktemp)"',
+    `gh pr edit 12 --body \${BODY:-$(echo "fixes #3")}`,
+  ]
+
+  // Act
+  const results = commands.map((command) => runHook(bashEvent(command, '/tmp')))
+
+  // Assert
+  assert.deepEqual(results, [
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+    { status: 0, stdout: '', stderr: '' },
+  ])
+})
+
+// Value: protects=a closing keyword that stands next to a substitution nobody can read (a backtick in a double-quoted body is one): the words around it are still the text; fails_when=the whole text is dropped because a part of it is unknown, or the unknown part is shown as if it were text; why_new=Issue #98 (review finding 1c, refined: only the unknown part is skipped); seam=child process; no_claim=a keyword that the unknown output would complete
+test('still reads the parts of a text around a command substitution it cannot read', () => {
+  // Arrange
+  const commands = [
+    'gh pr edit 12 --body "Closes #1 $(date)"',
+    'gh pr edit 12 --body "$(date) Fixes #2"',
+  ]
+
+  // Act
+  const results = commands.map((command) => runHook(bashEvent(command, '/tmp')))
+
+  // Assert
+  assert.deepEqual(results, [
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in --body, line 1: Closes #1 …\n${REFUSAL_FIX}\n`,
+    },
+    {
+      status: 2,
+      stdout: '',
+      stderr: `Closing keyword before an Issue number in --body, line 1: … Fixes #2\n${REFUSAL_FIX}\n`,
+    },
+  ])
+})
+
+// Value: protects=the file a relative path means after the line has changed directory, cd sub && gh pr edit --body-file b.md; fails_when=cd or pushd is not followed (the file of the hook's folder is read), a ~ or absolute target, a known variable or $(git rev-parse --show-toplevel) as target is not resolved, or cd .. does not undo cd sub; why_new=Issue #98 (review finding 2); seam=child process over a real folder tree; no_claim=cd inside if, loops and functions, which are read as plain commands
+test('resolves a relative file against the directory that cd and pushd reached earlier in the line', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    '.git/HEAD': 'ref: refs/heads/main\n',
+    'b.md': 'Fixes #3\n',
+    'sub/b.md': 'Closes #7\n',
+  })
+  const rootFile = join(directory, 'b.md')
+  const subFile = join(directory, 'sub', 'b.md')
+  const cases = [
+    { cwd: directory, command: 'cd sub && gh pr edit 12 --body-file b.md' },
+    {
+      cwd: directory,
+      command: 'pushd sub >/dev/null; gh pr edit 12 -F b.md',
+    },
+    {
+      cwd: directory,
+      command: 'cd sub; cd ..; gh pr edit 12 --body-file b.md',
+    },
+    {
+      cwd: '/tmp',
+      command: `cd ${directory}/sub && gh pr edit 12 --body-file b.md`,
+    },
+    {
+      cwd: '/tmp',
+      command: 'cd ~/sub && gh pr edit 12 --body-file b.md',
+      env: { HOME: directory },
+    },
+    {
+      cwd: directory,
+      command: 'D=sub; cd "$D" && gh pr edit 12 --body-file b.md',
+    },
+    {
+      cwd: join(directory, 'sub'),
+      command:
+        'cd "$(git rev-parse --show-toplevel)" && gh pr edit 12 --body-file b.md',
+    },
+    {
+      cwd: directory,
+      command: 'builtin cd sub && gh pr edit 12 --body-file b.md',
+    },
+    {
+      cwd: directory,
+      command: 'command cd -P sub && gh pr edit 12 --body-file b.md',
+    },
+  ]
+
+  // Act
+  const stderrs = cases.map(
+    ({ cwd, command, env }) =>
+      runHook(bashEvent(command, cwd), env === undefined ? {} : { env }).stderr,
+  )
+
+  // Assert
+  const inSub = `Closing keyword before an Issue number in ${subFile}, line 1: Closes #7\n${REFUSAL_FIX}\n`
+  const inRoot = `Closing keyword before an Issue number in ${rootFile}, line 1: Fixes #3\n${REFUSAL_FIX}\n`
+  assert.deepEqual(stderrs, [
+    inSub,
+    inSub,
+    inRoot,
+    inSub,
+    inSub,
+    inSub,
+    inRoot,
+    inSub,
+    inSub,
+  ])
+})
+
+// Value: protects=the rule of not guessing about the working directory: after a change the script cannot resolve, a relative file is skipped, not read from the hook's folder, where a different file of that name may be; fails_when=a cd to an unassigned variable, to -, to a substitution, a popd, a bare pushd, ~name or two targets leaves the hook's folder in force, so b.md of that folder is read and refused (the control line reads it); why_new=Issue #98 (review finding 2: an unresolvable target makes the directory unknown); seam=child process over a real file in the hook's folder; no_claim=none beyond protects
+test('reads no relative file after a directory change it cannot resolve, rather than from the hook folder', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'b.md': 'Fixes #3\n',
+  })
+  const post = 'gh pr edit 12 --body-file b.md'
+  const changes = [
+    'cd "$SOMEWHERE"',
+    'cd -',
+    'cd "$(mktemp -d)"',
+    'pushd >/dev/null',
+    'popd >/dev/null',
+    'cd ~nobody',
+    'cd a b',
+  ]
+
+  // Act
+  const control = runHook(bashEvent(post, directory))
+  const results = changes.map((change) =>
+    runHook(bashEvent(`${change} && ${post}`, directory)),
+  )
+
+  // Assert
+  assert.equal(control.status, 2)
+  assert.deepEqual(
+    results.map((result) => result.status),
+    [0, 0, 0, 0, 0, 0, 0],
+  )
+})
+
+// Value: protects=what stays readable when the directory is unknown: an absolute file, and a relative one after a cd that names an absolute folder again; fails_when=an unresolvable cd makes every later path unreadable for good; why_new=Issue #98 (review finding 2); seam=child process over a real file; no_claim=none beyond protects
+test('still reads an absolute file after an unresolvable cd, and a relative file after a later absolute cd', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'b.md': 'Fixes #3\n',
+  })
+  const bodyFile = join(directory, 'b.md')
+  const commands = [
+    `cd "$SOMEWHERE" && gh pr edit 12 --body-file ${bodyFile}`,
+    `cd "$SOMEWHERE"; cd ${directory}; gh pr edit 12 --body-file b.md`,
+  ]
+
+  // Act
+  const results = commands.map((command) => runHook(bashEvent(command, '/tmp')))
+
+  // Assert
+  const refusal = {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in ${bodyFile}, line 1: Fixes #3\n${REFUSAL_FIX}\n`,
+  }
+  assert.deepEqual(results, [refusal, refusal])
+})
+
+// Value: protects=a directory change staying with the shell it happens in; fails_when=a cd in a subshell ( … ), $( … ), the background (&) or a pipeline element reaches the commands after it, or a cd inside a subshell does not reach the command in it; why_new=Issue #98 (review finding 2, with finding 4: a subshell does not count); seam=child process over real files; no_claim=none beyond protects
+test('keeps the directory that a subshell, a background command or a pipeline element changed to itself', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'b.md': 'Fixes #3\n',
+    'sub/b.md': 'Closes #7\n',
+  })
+  const commands = [
+    '(cd sub); gh pr edit 12 --body-file b.md',
+    '(cd sub && gh pr edit 12 --body-file b.md)',
+    'cd sub & gh pr edit 12 --body-file b.md',
+    'cd sub | cat; gh pr edit 12 --body-file b.md',
+    'X=$(cd sub && pwd); gh pr edit 12 --body-file b.md',
+  ]
+
+  // Act
+  const stderrs = commands.map(
+    (command) => runHook(bashEvent(command, directory)).stderr,
+  )
+
+  // Assert
+  const inRoot = `Closing keyword before an Issue number in ${join(directory, 'b.md')}, line 1: Fixes #3\n${REFUSAL_FIX}\n`
+  const inSub = `Closing keyword before an Issue number in ${join(directory, 'sub', 'b.md')}, line 1: Closes #7\n${REFUSAL_FIX}\n`
+  assert.deepEqual(stderrs, [inRoot, inSub, inRoot, inRoot, inRoot])
+})
+
+// Value: protects=a line break put into an inline --body with $'…', the way a model writes a multi-line description on one line; fails_when=\n in $'…' stays two characters, so the keyword is reported on line 1 with the backslash in its text instead of on line 2; why_new=Issue #98 (review finding 3: decode $'…'); seam=child process; no_claim=none beyond protects
+test("reads a line break written as \\n inside $'…' as a line break, and numbers the line", () => {
+  // Arrange
+  const event = bashEvent("gh pr edit 12 --body $'Intro\\nCloses #1'", '/tmp')
+
+  // Act
+  const result = runHook(event)
+
+  // Assert
+  assert.deepEqual(result, {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in --body, line 2: Closes #1\n${REFUSAL_FIX}\n`,
+  })
+})
+
+// Value: protects=the options that follow a double-quoted command substitution whose inside has quotes and a ; of its own; fails_when=the quote inside $( … ) ends the double-quoted word early and the ; cuts the command, so the --body after it is never seen; why_new=Issue #98 (review finding 3: consume a balanced $( … ) inside double quotes); seam=child process; no_claim=none beyond protects
+test('keeps the options after a double-quoted $( … ) that has quotes and a ; of its own', () => {
+  // Arrange
+  const event = bashEvent(
+    'gh pr create --title "$(echo "a b; c")" --body \'Closes #1\'',
+    '/tmp',
+  )
+
+  // Act
+  const result = runHook(event)
+
+  // Assert
+  assert.deepEqual(result, {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in --body, line 1: Closes #1\n${REFUSAL_FIX}\n`,
+  })
+})
+
+// Value: protects=the hook staying inside its 5 s timeout on a body that the old pattern took quadratic time on; fails_when=a body file of 262,144 bytes made of "fix-" repeated takes a second or more to scan, because a bounded name pattern is unbounded again; why_new=Issue #98 (review finding 5: polynomial backtracking); seam=child process over a real file of the largest size the hook reads; no_claim=a time limit on every input (see the hostile command lines test)
+test('scans a 262,144-byte body made of "fix-" repeated in under a second', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'fix.md': 'fix-'.repeat(65_536),
+  })
+  const event = bashEvent(
+    `gh pr edit 12 --body-file ${join(directory, 'fix.md')}`,
+    directory,
+  )
+
+  // Act
+  const startedAt = performance.now()
+  const result = runHook(event)
+  const elapsedMs = performance.now() - startedAt
+
+  // Assert
+  assert.deepEqual(result, { status: 0, stdout: '', stderr: '' })
+  assert.ok(elapsedMs < 1000, `the scan took ${Math.round(elapsedMs)} ms`)
+})
+
+// Value: protects=the hook staying inside its 5 s timeout, and the stack, on command lines made to be slow; fails_when=an unclosed ${a:- repeated, $( or ( nested tens of thousands deep, thousands of heredocs, a long run of line breaks or of quotes takes a second or more, overflows the stack, or does not end; why_new=Issue #98 (review finding 5: a long ${a:- command must not hang); seam=child process; no_claim=a time limit on a body file (see the fix- test)
+test('reads hostile command lines (an unclosed ${a:-, deep $( and (, many heredocs, many line breaks) in under a second each', () => {
+  // Arrange
+  const commands = [
+    'gh pr edit 1 --body "' + `\${a:-`.repeat(40_000) + '"',
+    'gh pr edit 1 --body "' + '$('.repeat(40_000) + '"',
+    '('.repeat(100_000) + ' gh pr edit 1 --body x',
+    'cat <<A\n'.repeat(20_000),
+    '\n'.repeat(250_000) + 'gh pr edit 1 --body x',
+    "'".repeat(100_000),
+  ]
+
+  // Act
+  const outcomes = commands.map((command) => {
+    const startedAt = performance.now()
+    const { status } = runHook(bashEvent(command, '/tmp'))
+    return { status, isFast: performance.now() - startedAt < 1000 }
+  })
+
+  // Assert
+  assert.deepEqual(
+    outcomes,
+    commands.map(() => ({ status: 0, isFast: true })),
+  )
+})
+
+// Value: protects=the hook letting a command line through unread when it is longer than a pull request command can be; fails_when=a command line of 262,145 characters is parsed and refused, or one of exactly 262,144 characters is not; why_new=Issue #98 (review finding 5: skip, with exit 0, a longer command line); seam=child process; no_claim=what a shell does with such a line
+test('lets a command line over 262,144 characters through unread, and reads one of exactly 262,144', () => {
+  // Arrange
+  const refusing = "gh pr edit 1 --body 'Closes #1'\n"
+  const atCap = refusing + '#'.repeat(262_144 - refusing.length)
+  const overCap = `${atCap}#`
+
+  // Act
+  const readLine = runHook(bashEvent(atCap, '/tmp'))
+  const skippedLine = runHook(bashEvent(overCap, '/tmp'))
+
+  // Assert
+  assert.equal(atCap.length, 262_144)
+  assert.equal(readLine.status, 2)
+  assert.deepEqual(skippedLine, { status: 0, stdout: '', stderr: '' })
+})
+
+// Value: protects=the commands of a line staying apart at a lone & (the background), so the -F of the command after it is not an option of the pull request command; and the redirections 2>&1, >/dev/null 2>&1, &> and >&2 not cutting the command short; fails_when=gh pr edit 1 -F ok.md & git commit -F m.txt reads m.txt (a false refusal), or a redirection ends the command so the file before it is never read; why_new=Issue #98 (review finding 6); seam=child process over real files; no_claim=none beyond protects
+test('ends a command at a lone &, but not at 2>&1, &> or >&2', async (context) => {
+  // Arrange
+  const directory = await temporaryDirectory(context, {
+    'ok.md': 'Refs #1\n',
+    'm.txt': 'Fixes #3\n',
+    'body.md': 'Closes #4\n',
+  })
+  const background = runHook(
+    bashEvent('gh pr edit 1 -F ok.md & git commit -F m.txt', directory),
+  )
+  const redirected = [
+    'gh pr edit 1 -F body.md 2>&1',
+    'gh pr edit 1 -F body.md >/dev/null 2>&1 && true',
+    'gh pr edit 1 -F body.md &> out.log',
+    'gh pr edit 1 -F body.md >&2',
+  ].map((command) => runHook(bashEvent(command, directory)))
+
+  // Assert
+  assert.deepEqual(background, { status: 0, stdout: '', stderr: '' })
+  const refusal = {
+    status: 2,
+    stdout: '',
+    stderr: `Closing keyword before an Issue number in ${join(directory, 'body.md')}, line 1: Closes #4\n${REFUSAL_FIX}\n`,
+  }
+  assert.deepEqual(redirected, [refusal, refusal, refusal, refusal])
+})
+
+// Value: protects=a refusal that stays readable and keeps the match in view: a long matching line is cut to 200 characters around the words that matched, with … where it is cut; fails_when=a line of 600 characters is printed whole, the cut hides the match (it starts at the left end of a line whose match is far right), or the result is not 200 characters long; why_new=Issue #98 (review finding 7); seam=none; no_claim=none beyond protects
+test('cuts a long matching line to 200 characters around its match, with … where it is cut', () => {
+  // Arrange
+  const matchInTheMiddle = `${'a'.repeat(300)} Closes #1 ${'b'.repeat(300)}`
+  const matchAtTheStart = `Closes #1 ${'z'.repeat(400)}`
+
+  // Act
+  const [inTheMiddle] = findClosingReferences(matchInTheMiddle)
+  const [atTheStart] = findClosingReferences(matchAtTheStart)
+
+  // Assert
+  assert.deepEqual(inTheMiddle, {
+    lineNumber: 1,
+    lineText: `…${'a'.repeat(38)} Closes #1 ${'b'.repeat(149)}…`,
+  })
+  assert.deepEqual(atTheStart, {
+    lineNumber: 1,
+    lineText: `Closes #1 ${'z'.repeat(189)}…`,
+  })
+  assert.equal(inTheMiddle.lineText.length, 200)
+  assert.equal(atTheStart.lineText.length, 200)
+})
+
+// Value: protects=a refusal that stays short when a body has many closing lines: at most 20 are named, then one line counts the rest; fails_when=25 matching lines print 25 lines, the count is wrong or in the plural for one line, or the sentence of the fix is lost; why_new=Issue #98 (review finding 7); seam=the refusal function called with a real event; no_claim=none beyond protects
+test('names at most 20 matching lines, then counts the rest in one line', () => {
+  // Arrange
+  const body = (count) =>
+    Array.from({ length: count }, (_, index) => `Closes #${index + 1}`).join(
+      '\\n',
+    )
+  const eventWith = (count) =>
+    bashEvent(`gh pr edit 1 --body $'${body(count)}'`, '/tmp')
+
+  // Act
+  const twentyFive = listClosingKeywordRefusals(eventWith(25), {})
+  const twentyOne = listClosingKeywordRefusals(eventWith(21), {})
+  const twenty = listClosingKeywordRefusals(eventWith(20), {})
+
+  // Assert
+  assert.equal(twentyFive.length, 22)
+  assert.equal(
+    twentyFive[0],
+    'Closing keyword before an Issue number in --body, line 1: Closes #1',
+  )
+  assert.equal(
+    twentyFive[19],
+    'Closing keyword before an Issue number in --body, line 20: Closes #20',
+  )
+  assert.equal(
+    twentyFive[20],
+    '5 more lines have a closing keyword before an Issue number.',
+  )
+  assert.equal(twentyFive[21], REFUSAL_FIX)
+  assert.equal(
+    twentyOne[20],
+    '1 more line has a closing keyword before an Issue number.',
+  )
+  assert.equal(twenty.length, 21)
+  assert.equal(twenty[20], REFUSAL_FIX)
 })

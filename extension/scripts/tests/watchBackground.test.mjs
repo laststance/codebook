@@ -23,9 +23,8 @@ import {
   readReport,
 } from '../watch-background.mjs'
 
-const SCRIPT_PATH = fileURLToPath(
-  new URL('../watch-background.mjs', import.meta.url),
-)
+const SCRIPT_URL = new URL('../watch-background.mjs', import.meta.url)
+const SCRIPT_PATH = fileURLToPath(SCRIPT_URL)
 const PROJECT_PATH = '/Users/a.b/My Project'
 const PROJECT_KEY = '-Users-a-b-My-Project'
 const SESSION = '11111111-1111-4111-8111-111111111111'
@@ -35,6 +34,23 @@ const NOW_MS = Date.parse('2026-10-22T10:00:00.000Z')
 /** The text of a fake shell output (18 bytes) and of a fake transcript (17 bytes): it must never reach a report, and its length is the size a row shows. */
 const SHELL_OUTPUT_TEXT = 'TASK-OUTPUT-SECRET'
 const TRANSCRIPT_TEXT = 'TRANSCRIPT-SECRET'
+/** The review's example of a name that another user could create in the shared tasks folder: it clears the screen (`ESC [ 2 J`), sets the window title (`ESC ] 0 ; … BEL`) and ends in plain letters. */
+const HOSTILE_NAME = '\u001b[2J\u001b]0;pwned\u0007evil'
+/** Names that Claude Code never gives a task, a transcript or a session, each with one thing wrong: the review's example, a lone escape, a lone bell, a newline (it would start a fake row), DEL, the C1 control that starts an escape sequence on some terminals, a space, a bracket, a semicolon and non-ASCII letters. A rule that is widened by one character class lets exactly one of them through. */
+const ODD_NAMES = [
+  HOSTILE_NAME,
+  'odd\u001bescape',
+  'odd\u0007bell',
+  'odd\nnewline',
+  'odd\u007fdelete',
+  'odd\u009bcsi',
+  'odd space',
+  'odd[bracket',
+  'odd;semicolon',
+  'odd-ünïcode',
+]
+/** What would show in a report if any of the odd names reached it. */
+const ODD_NAME_MARKERS = /odd|evil|pwned/
 
 /** Creates the two fake roots (`tasksRoot`, `claudeHome`) in a temporary folder that the test context removes. @example const roots = await createRoots(context) // => { tasksRoot: '/tmp/…/tasks-root', claudeHome: '/tmp/…/claude-home' } */
 async function createRoots(context) {
@@ -105,17 +121,21 @@ const WATCH_ENVIRONMENT_NAMES = new Set([
   'CLAUDE_PROJECT_DIR',
 ])
 
+/** Copies the real environment for a child process, without the session and project variables and without `FORCE_COLOR`. @example inheritedEnvironment() // => { PATH: '/usr/bin', … } */
+function inheritedEnvironment() {
+  return Object.fromEntries(
+    Object.entries(plainOutputEnvironment(process.env)).filter(
+      ([name]) => !WATCH_ENVIRONMENT_NAMES.has(name),
+    ),
+  )
+}
+
 /** Runs the script (or a link to it, `scriptPath`) as a process for the fake roots and answers its exit code and both streams. The process gets the real environment without the session and project variables, plus `environment`. @example runWatch(roots, ['--json'], { environment: { CLAUDE_CODE_SESSION_ID: SESSION } }) // => { code: 0, stdout: '{…}', stderr: '' } */
 function runWatch(
   roots,
   extraArguments,
   { scriptPath = SCRIPT_PATH, environment = {} } = {},
 ) {
-  const inheritedEnvironment = Object.fromEntries(
-    Object.entries(plainOutputEnvironment(process.env)).filter(
-      ([name]) => !WATCH_ENVIRONMENT_NAMES.has(name),
-    ),
-  )
   const result = spawnSync(
     process.execPath,
     [
@@ -131,10 +151,17 @@ function runWatch(
     {
       encoding: 'utf8',
       timeout: 30_000,
-      env: { ...inheritedEnvironment, ...environment },
+      env: { ...inheritedEnvironment(), ...environment },
     },
   )
   return { code: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+/** Lists the control characters of a text other than the newline, as hexadecimal code points, so that a failure shows what leaked. @example controlCharactersIn('a\u001bb\n') // => ['1b'] */
+function controlCharactersIn(text) {
+  return [...text]
+    .filter((character) => character !== '\n' && /\p{Cc}/u.test(character))
+    .map((character) => character.codePointAt(0).toString(16))
 }
 
 /** Says whether a stream holds exactly one line, ended by a newline. @example isOneLine('watch-background: no folder\n') // => true; isOneLine('a\nb\n') // => false; isOneLine('a') // => false */
@@ -594,7 +621,7 @@ test('a row is an agent when a subagent meta or a transcript exists for its id, 
   )
 })
 
-// Value: protects=the report against one half-written meta, which Claude Code can leave while it writes: the agent is still listed, without a description, and the other rows are shown; fails_when=an unreadable meta ends the run, so one bad file hides every row; why_new=Issue #96 (the metas are small files written while the watchdog reads); seam=readReport on fake roots with a meta that is cut off; no_claim=what Claude Code writes into a meta (only three fields are read)
+// Value: protects=the report against one half-written meta, which Claude Code can leave while it writes: the agent is still listed, without a description, and the other rows are shown; fails_when=an unreadable meta ends the run, so one bad file hides every row; why_new=Issue #96 (the metas are small files written while the watchdog reads); seam=readReport on fake roots with a meta that is cut off; no_claim=what Claude Code writes into a meta (only four fields are read)
 test('a meta that is not valid JSON does not stop the report: its agent is listed without a description', async (context) => {
   // Arrange
   const roots = await createRoots(context)
@@ -1074,8 +1101,8 @@ test('a --minutes, --session or --project value that cannot be used exits 2 and 
   ])
 })
 
-// Value: protects=the rule that the watchdog reads metadata only: no text of an output file or a transcript, and no meta field beyond description, agentType and finished, may reach the report that a main agent (and the owner's terminal) reads; fails_when=the script prints or parses more of a file than the three meta fields, for example a tail of a transcript or a tool use id; why_new=Issue #96 (the files hold full transcripts); seam=the script started as a process on fake roots whose files and meta carry marker text; no_claim=files the script never lists
-test('neither report shows output text, transcript text or a meta field beyond description, agentType and finished', async (context) => {
+// Value: protects=the rule that the watchdog reads metadata only: no text of an output file or a transcript, and no meta field beyond description, agentType, finished and stoppedByUser, may reach the report that a main agent (and the owner's terminal) reads; fails_when=the script prints or parses more of a file than the four meta fields, for example a tail of a transcript or a tool use id; why_new=Issue #96 (the files hold full transcripts); seam=the script started as a process on fake roots whose files and meta carry marker text; no_claim=files the script never lists
+test('neither report shows output text, transcript text or a meta field beyond description, agentType, finished and stoppedByUser', async (context) => {
   // Arrange
   const roots = await createRoots(context)
   await writeShellOutput(roots, SESSION, 'bshell00001', minutesAgo(1))
@@ -1108,7 +1135,7 @@ test('neither report shows output text, transcript text or a meta field beyond d
   )
 })
 
-// Value: protects=the one-line-per-row report against a description that an agent wrote with a newline or a terminal escape, and against a very long one; fails_when=the control characters reach the text report (the row splits, or the terminal obeys the escape) or a description of any length is printed whole; why_new=Issue #96 (descriptions are free text from agents, read by an agent and printed to a terminal); seam=readReport and formatReportAsText on fake roots; no_claim=an id with such characters (the folders belong to the user alone)
+// Value: protects=the one-line-per-row report against a description that an agent wrote with a newline or a terminal escape, and against a very long one; fails_when=the control characters reach the text report (the row splits, or the terminal obeys the escape) or a description of any length is printed whole; why_new=Issue #96 (descriptions are free text from agents, read by an agent and printed to a terminal); seam=readReport and formatReportAsText on fake roots; no_claim=an id or a session name with such characters, which are skipped (the tests on names with control characters below)
 test('a description with a newline or a terminal escape is shown on one line without those characters, and a very long one is cut', async (context) => {
   // Arrange
   const roots = await createRoots(context)
@@ -1141,6 +1168,139 @@ test('a description with a newline or a terminal escape is shown on one line wit
   )
 })
 
+// Value: protects=the terminal, and the agent that reads the report, from a name that someone else put into the shared tasks folder (/tmp is shared space): a task output whose name has a control character, or any character beyond letters, digits, `_`, `.` and `-`, is skipped, and no character of that name reaches stdout; fails_when=such a name is listed (the text report prints an id as it is, so the escape sequence clears the screen and sets the window title, and a newline starts a fake row), or the rule is widened by one character class; why_new=Issue #96 review (ids from file names were printed raw); seam=the script started as a process on fake roots, with one task file for each name of the table, each with exactly one thing wrong (the review's example first); no_claim=that the script checks who owns the folders (it does not)
+test('a task output whose name has a control character or any character beyond letters, digits, "_", "." and "-" is skipped and nothing of its name reaches stdout', async (context) => {
+  // Arrange
+  const roots = await createRoots(context)
+  await writeShellOutput(roots, SESSION, 'bgood000001', minutesAgo(1))
+  const tasksDirectory = join(roots.tasksRoot, PROJECT_KEY, SESSION, 'tasks')
+  await Promise.all(
+    ODD_NAMES.map((name) =>
+      writeFile(join(tasksDirectory, `${name}.output`), SHELL_OUTPUT_TEXT),
+    ),
+  )
+
+  // Act
+  const text = runWatch(roots, ['--session', SESSION])
+  const json = runWatch(roots, ['--session', SESSION, '--json'])
+
+  // Assert
+  assert.deepEqual(
+    {
+      codes: [text.code, json.code],
+      stderrs: [text.stderr, json.stderr],
+      controlCharacters: controlCharactersIn(text.stdout),
+      mentionsAnOddName: ODD_NAME_MARKERS.test(text.stdout + json.stdout),
+      ids: JSON.parse(json.stdout).rows.map(({ id }) => id),
+    },
+    {
+      codes: [0, 0],
+      stderrs: ['', ''],
+      controlCharacters: [],
+      mentionsAnOddName: false,
+      ids: ['bgood000001'],
+    },
+  )
+})
+
+// Value: protects=the terminal, and the agent that reads the report, from a transcript name that someone else put into the projects folder: a transcript whose name has a control character, or any character beyond letters, digits, `_`, `.` and `-`, is skipped, and no character of that name reaches stdout; fails_when=such a name is listed as the id of an agent, so the text report prints it, or the rule is widened by one character class; why_new=Issue #96 review (ids from file names were printed raw); seam=the script started as a process on fake roots, with one transcript for each name of the table beside a good one; no_claim=a meta file with such a name, which is never listed (metas are opened by the id of a listed file)
+test('a subagent transcript whose name has a control character or any character beyond letters, digits, "_", "." and "-" is skipped and nothing of its name reaches stdout', async (context) => {
+  // Arrange
+  const roots = await createRoots(context)
+  await writeSubagent(roots, SESSION, 'agood0000001', {
+    lastWrite: minutesAgo(1),
+    meta: { description: 'Good agent', agentType: 'general-purpose' },
+  })
+  const subagentsDirectory = join(
+    roots.claudeHome,
+    'projects',
+    PROJECT_KEY,
+    SESSION,
+    'subagents',
+  )
+  await Promise.all(
+    ODD_NAMES.map((name) =>
+      writeFile(
+        join(subagentsDirectory, `agent-${name}.jsonl`),
+        TRANSCRIPT_TEXT,
+      ),
+    ),
+  )
+
+  // Act
+  const text = runWatch(roots, ['--session', SESSION])
+  const json = runWatch(roots, ['--session', SESSION, '--json'])
+
+  // Assert
+  assert.deepEqual(
+    {
+      codes: [text.code, json.code],
+      stderrs: [text.stderr, json.stderr],
+      controlCharacters: controlCharactersIn(text.stdout),
+      mentionsAnOddName: ODD_NAME_MARKERS.test(text.stdout + json.stdout),
+      ids: JSON.parse(json.stdout).rows.map(({ id }) => id),
+    },
+    {
+      codes: [0, 0],
+      stderrs: ['', ''],
+      controlCharacters: [],
+      mentionsAnOddName: false,
+      ids: ['agood0000001'],
+    },
+  )
+})
+
+// Value: protects=a main agent that gives no session from being shown, in the header, a folder name that someone else created in the shared tasks root or in the projects root: a folder whose name has a control character, or any character beyond letters, digits, `_`, `.` and `-`, is never taken for a session, even when it holds the newest file; fails_when=such a folder is chosen as the newest session and its name is printed, the rule covers only one of the two roots, or it is widened by one character class; why_new=Issue #96 review (the automatically chosen session name was printed raw); seam=the script started as a process on fake roots, with one such folder for each name of the table in both roots, holding the newest files; no_claim=a folder with a plain name that someone else created (it is a session like any other)
+test('a session folder whose name has a control character or any character beyond letters, digits, "_", "." and "-" is never taken for the newest session and nothing of its name reaches stdout', async (context) => {
+  // Arrange: the odd folders hold the newest files of both roots, so only the name rule keeps them from being chosen.
+  const roots = await createRoots(context)
+  await writeShellOutput(
+    roots,
+    SESSION,
+    'bgood000001',
+    new Date('2020-01-01T00:00:00.000Z'),
+  )
+  await Promise.all(
+    ODD_NAMES.flatMap((name) => [
+      writeShellOutput(
+        roots,
+        name,
+        'bodd00000001',
+        new Date('2020-01-01T05:00:00.000Z'),
+      ),
+      writeSubagent(roots, name, 'aodd000000001', {
+        lastWrite: new Date('2020-01-01T06:00:00.000Z'),
+      }),
+    ]),
+  )
+
+  // Act
+  const text = runWatch(roots, [])
+  const json = runWatch(roots, ['--json'])
+
+  // Assert
+  assert.deepEqual(
+    {
+      codes: [text.code, json.code],
+      stderrs: [text.stderr, json.stderr],
+      header: text.stdout.split('\n')[0],
+      controlCharacters: controlCharactersIn(text.stdout),
+      mentionsAnOddName: ODD_NAME_MARKERS.test(text.stdout + json.stdout),
+      session: JSON.parse(json.stdout).session,
+      ids: JSON.parse(json.stdout).rows.map(({ id }) => id),
+    },
+    {
+      codes: [0, 0],
+      stderrs: ['', ''],
+      header: `project ${PROJECT_KEY}  session ${SESSION}  silence limit 20 min`,
+      controlCharacters: [],
+      mentionsAnOddName: false,
+      session: SESSION,
+      ids: ['bgood000001'],
+    },
+  )
+})
+
 // Value: protects=the start of the script when it is reached through a symbolic link, as every path under /tmp is on macOS (/tmp is a link to /private/tmp, where a worktree like this one lives); fails_when=the check that tells the script from an import compares the link's path with the real path, so the script prints nothing and exits 0; why_new=Issue #96 (the file both exports functions for tests and runs as a script); seam=the script started as a process through a link to it; no_claim=a Node older than the repository's 24
 test('the script runs and prints its report when it is started through a symbolic link to it', async (context) => {
   // Arrange
@@ -1166,6 +1326,31 @@ test('the script runs and prints its report when it is started through a symboli
       ids: JSON.parse(result.stdout).rows.map(({ id }) => id),
     },
     { code: 0, stderr: '', ids: ['bshell00001'] },
+  )
+})
+
+// Value: protects=every test and tool that imports the script for its functions: the import must print nothing, read no folder and end with code 0; fails_when=the entry point runs on import (the guard is dropped, or asks about the wrong module), so the importing process prints a report or a refusal and ends with a failure code; why_new=Issue #96 review (the start-up check moved into a shared helper, which this test keeps wired to the right module); seam=an importer module in an empty folder, started as a process, that imports the script, with the session and project variables removed from its environment; no_claim=the helper's own cases, which isRunAsScript.test.mjs covers
+test('importing the script from another module prints nothing and ends with code 0', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-watch-background-import-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const importerPath = join(directory, 'importer.mjs')
+  await writeFile(importerPath, `import ${JSON.stringify(SCRIPT_URL.href)}\n`)
+
+  // Act
+  const result = spawnSync(process.execPath, [importerPath], {
+    cwd: directory,
+    encoding: 'utf8',
+    timeout: 30_000,
+    env: inheritedEnvironment(),
+  })
+
+  // Assert
+  assert.deepEqual(
+    { code: result.status, stdout: result.stdout, stderr: result.stderr },
+    { code: 0, stdout: '', stderr: '' },
   )
 })
 
