@@ -45,6 +45,7 @@ import {
 } from '../utils/wikiPageRefusalHtml'
 import type * as wikiPageWorkerModule from '../wikiPageWorker'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
@@ -986,7 +987,7 @@ test('a question of another origin, a question too long, a blank question and a 
 test(
   'the reader’s manifest read does not wait on a link to a named pipe at the manifest’s path: it refuses at once and names the file',
   {
-    timeout: 2_000,
+    timeout: 30_000,
     skip:
       process.platform === 'win32'
         ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
@@ -1017,12 +1018,12 @@ test(
       return context.skip(LINK_NOT_ALLOWED)
 
     // Act
-    const refusal = await readDeepWikiManifest(
-      outputDirectory,
-      projectRoot,
-    ).then(
-      () => 'read',
-      (error: Error) => error.message,
+    const refusal = await answeredAtOnce(
+      readDeepWikiManifest(outputDirectory, projectRoot).then(
+        () => 'read',
+        (error: Error) => error.message,
+      ),
+      'the manifest read',
     )
 
     // Assert
@@ -3469,9 +3470,9 @@ test('an image of the Wiki whose browser stops reading but keeps sending bytes i
   assert.equal(imageAnswer, 'closed')
 })
 
-// Value: protects=a learner whose browser receives a large image of the Wiki over a slow link, such as a remote window's forwarded port: the send limit counted the whole send, so every image larger than the link carries within the limit was cut on every load; fails_when=the reader ends an answer whose browser keeps reading at the send limit, instead of only one that has taken nothing for that long; why_new=Cycle 0047 row 230 (P2CLA-8); seam=the reader loaded with loadModule and a send limit of 250 ms, and a client that stops reading for 4 ms after each part it receives, so receiving the image takes far longer than the limit; no_claim=the shipped send limit of 30 s and a real remote link
+// Value: protects=a learner whose browser receives a large image of the Wiki over a slow link, such as a remote window's forwarded port: the send limit counted the whole send, so every image larger than the link carries within the limit was cut on every load; fails_when=the reader ends an answer whose browser keeps reading at the send limit, instead of only one that has taken nothing for that long; why_new=Cycle 0047 row 230 (P2CLA-8); seam=the reader loaded with loadModule and a send limit of 1,000 ms, and a client that stops reading for 8 ms after each part it receives, so receiving the image takes about twice the limit; the limit is 1,000 ms, not 250 ms, because a machine under heavy load can leave one part waiting longer than 250 ms (Cycle 0049 F113); no_claim=the shipped send limit of 30 s and a real remote link
 test('an image of the Wiki that its browser reads slowly but steadily is received whole, though receiving it takes longer than the send limit', async (context) => {
-  // Arrange: an image of 16 MiB that the manifest names, and a send limit of 250 ms.
+  // Arrange: an image of 16 MiB that the manifest names, and a send limit of 1,000 ms.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-asset-')),
   )
@@ -3493,7 +3494,7 @@ test('an image of the Wiki that its browser reads slowly but steadily is receive
     typeof deepWikiReaderModule
   >(
     join(__dirname, '..', 'deepWikiReader.js'),
-    { './constants': { ...constants, WIKI_RESPONSE_SEND_LIMIT_MS: 250 } },
+    { './constants': { ...constants, WIKI_RESPONSE_SEND_LIMIT_MS: 1_000 } },
     { URL },
   )
   const reader = await startReaderWithASendLimit(
@@ -3504,12 +3505,12 @@ test('an image of the Wiki that its browser reads slowly but steadily is receive
   context.after(() => reader.close())
 
   // Act
-  // gstack-timing-ok: the client's pause of 4 ms after each part of at most 64 KiB makes receiving 16 MiB take more than a second, four times the limit, while the reader's next part waits for one pause at a time, far within it.
+  // gstack-timing-ok: the client's pause of 8 ms after each part of at most 64 KiB makes receiving 16 MiB take about two seconds, twice the limit, while the reader's next part waits for one pause at a time, far within it.
   const startedAt = performance.now()
   const answer = await askAndReadSlowly(
     new URL('diagram.png', reader.url).href,
     { 'Sec-Fetch-Dest': 'image' },
-    4,
+    8,
   )
   const receivingTookMs = performance.now() - startedAt
 
@@ -3519,22 +3520,22 @@ test('an image of the Wiki that its browser reads slowly but steadily is receive
       status: answer.status,
       bodyIsTheImage:
         answer.body !== 'ended early' && answer.body.equals(imageBytes),
-      tookLongerThanTheLimit: receivingTookMs > 250,
+      tookLongerThanTheLimit: receivingTookMs > 1_000,
     },
     { status: 200, bodyIsTheImage: true, tookLongerThanTheLimit: true },
   )
 })
 
-// Value: protects=a learner whose browser receives a large page over a slow link: the send limit counted the whole send, so a page larger than the link carries within the limit was cut on every load; fails_when=the reader ends a page whose browser keeps reading at the send limit, or sends a page whole in one write, whose progress the reader cannot see; why_new=Cycle 0047 row 230 (P2CLA-8); seam=the reader loaded with loadModule, a send limit of 250 ms, one place for pages in hand, a stand-in page-worker module that prepares the first page as 16 MiB of text, and a client that stops reading for 4 ms after each part it receives; no_claim=the shipped send limit of 30 s and a real remote link
+// Value: protects=a learner whose browser receives a large page over a slow link: the send limit counted the whole send, so a page larger than the link carries within the limit was cut on every load; fails_when=the reader ends a page whose browser keeps reading at the send limit, or sends a page whole in one write, whose progress the reader cannot see; why_new=Cycle 0047 row 230 (P2CLA-8); seam=the reader loaded with loadModule, a send limit of 1,000 ms (not 250 ms, which a heavily loaded machine can exceed between two parts: Cycle 0049 F113), one place for pages in hand, a stand-in page-worker module that prepares the first page as 16 MiB of text, and a client that stops reading for 8 ms after each part it receives; no_claim=the shipped send limit of 30 s and a real remote link
 test('a page that its browser reads slowly but steadily is received whole, though receiving it takes longer than the send limit', async (context) => {
-  // Arrange: the overview, prepared as 16 MiB of text, and a send limit of 250 ms.
+  // Arrange: the overview, prepared as 16 MiB of text, and a send limit of 1,000 ms.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-slow-page-')),
   )
   context.after(() => rm(projectRoot, { recursive: true, force: true }))
   const { outputDirectory } = await writeMinimalWiki(projectRoot)
   const onePlace = await loadReaderWithOnePlaceAndALargeFirstPage({
-    WIKI_RESPONSE_SEND_LIMIT_MS: 250,
+    WIKI_RESPONSE_SEND_LIMIT_MS: 1_000,
   })
   const reader = await onePlace.startDeepWikiReader(
     outputDirectory,
@@ -3544,9 +3545,9 @@ test('a page that its browser reads slowly but steadily is received whole, thoug
   context.after(() => reader.close())
 
   // Act
-  // gstack-timing-ok: the client's pause of 4 ms after each part of at most 64 KiB makes receiving 16 MiB take more than a second, four times the limit, while the reader's next part waits for one pause at a time, far within it.
+  // gstack-timing-ok: the client's pause of 8 ms after each part of at most 64 KiB makes receiving 16 MiB take about two seconds, twice the limit, while the reader's next part waits for one pause at a time, far within it.
   const startedAt = performance.now()
-  const answer = await askAndReadSlowly(reader.url, {}, 4)
+  const answer = await askAndReadSlowly(reader.url, {}, 8)
   const receivingTookMs = performance.now() - startedAt
 
   // Assert
@@ -3556,7 +3557,7 @@ test('a page that its browser reads slowly but steadily is received whole, thoug
       bodyIsThePage:
         answer.body !== 'ended early' &&
         answer.body.equals(Buffer.from('x'.repeat(16_777_216))),
-      tookLongerThanTheLimit: receivingTookMs > 250,
+      tookLongerThanTheLimit: receivingTookMs > 1_000,
     },
     { status: 200, bodyIsThePage: true, tookLongerThanTheLimit: true },
   )
