@@ -45,6 +45,8 @@ type FakeRunSteps = {
   complete?: () => ReturnType<NodeTestRuntime['complete']>
   /** How many releases fail before one succeeds. */
   releaseFailures?: number
+  /** The Saved Study Limit in force and how many saved studies the library holds; the history store counts both. */
+  storage?: { limit: number; savedStudies: number }
 }
 
 /**
@@ -55,9 +57,12 @@ type FakeRunSteps = {
 async function testRunHarness(steps: FakeRunSteps = {}) {
   const harness = await createHarness(),
     { service } = harness
+  const storage = steps.storage
   service.nodeHistoryStore = new NodeTestHistoryStore(
     join(harness.directory, '.learning'),
     '0'.repeat(64),
+    storage ? () => storage.limit : undefined,
+    storage ? async () => storage.savedStudies : undefined,
   )
   service.environment.build.sourceHash = 'f'.repeat(64)
   const base = harness.configuration
@@ -1057,6 +1062,88 @@ test('a test run stopped before its history began offers no read-history and fre
     assert.ok(run.service.records.size <= 16)
   } finally {
     letCheckFinish()
+    await run.harness.close()
+  }
+})
+
+/** The sentence the node-test profile and its refusal give while the saved studies fill the limit, with the Trash available. */
+const FULL_STORAGE_REMEDY =
+  'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Only the learner can do either; an editor agent cannot. Existing learning was kept.'
+
+// Value: protects=codebook_status reading the node-test profile as not ready while the saved studies fill the Saved Study Limit (77 of 64), with a missing sentence naming the count, the limit and the remedy, and the browser profile unaffected; fails_when=the profile reads ready with no missing entry so the agent spends its preparation on a start that is refused, or the sentence names neither the count nor the limit; why_new=status ignored the saved-study capacity for the test profile (F92, D7); seam=the history store's limit and library count are injected; no_claim=the setting's lookup in the editor
+test('codebook_status reads the node-test profile as not ready, naming the count and the limit, while the saved studies fill the limit', async () => {
+  // Arrange
+  const run = await testRunHarness({ storage: { limit: 64, savedStudies: 77 } })
+  try {
+    // Act
+    const status = await run.service.status()
+
+    // Assert
+    const nodeTest = status.profiles.find(
+      (profile) => profile.id === NODE_TEST_PROFILE,
+    )
+    assert.deepEqual(
+      {
+        ready: nodeTest?.prerequisites.ready,
+        missing: [...(nodeTest?.prerequisites.missing ?? [])],
+      },
+      {
+        ready: false,
+        missing: [
+          `node-test cannot start: the saved studies and test histories take 77 places of the 64 that the Saved Study Limit allows. ${FULL_STORAGE_REMEDY}`,
+        ],
+      },
+    )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=the node-test profile staying ready below the limit, and its recording member (available, reason) in codebook_status; fails_when=the capacity check marks a library with room as full, or the recording member changes without notice; why_new=the recording member was asserted nowhere (F33) and the capacity check is new (F92); seam=as above; no_claim=the recording's own capture
+test('codebook_status reads the node-test profile as ready with its recording member while the library has room', async () => {
+  // Arrange
+  const run = await testRunHarness({ storage: { limit: 64, savedStudies: 63 } })
+  try {
+    // Act
+    const status = await run.service.status()
+
+    // Assert
+    const nodeTest = status.profiles.find(
+      (profile) => profile.id === NODE_TEST_PROFILE,
+    )
+    assert.equal(nodeTest?.prerequisites.ready, true)
+    assert.deepEqual([...(nodeTest?.prerequisites.missing ?? [])], [])
+    assert.deepEqual(
+      nodeTest && 'recording' in nodeTest && nodeTest.recording,
+      {
+        available: true,
+        reason:
+          'Test output, executed source and recorded debugger stops; no application video',
+      },
+    )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a node-test start refused while the saved studies fill the limit: a typed PREREQUISITE_MISSING worded as the study library's refusal (Settings of this profile, or delete a saved study; only the learner), no history folder, and the retained-run slot and start key freed; fails_when=the refusal is an untyped RUNTIME_FAILED with the setting named but not where or how, an agent is told to edit a settings file, or a zero-entry history is left; why_new=the refusal said "Saved study storage is full" as RUNTIME_FAILED (F92, F93, D7); seam=the history store's limit and library count are injected; no_claim=the setting's lookup in the editor
+test('a node-test start refused for full saved-study storage answers a typed PREREQUISITE_MISSING worded as the study library does and records no history', async () => {
+  // Arrange
+  const run = await testRunHarness({ storage: { limit: 64, savedStudies: 77 } })
+  try {
+    // Act
+    const { record } = await run.start('full-storage')
+    await waitUntil(() => record.stopped, 'the refused run released')
+
+    // Assert
+    const state = run.service.state(record)
+    assert.deepEqual(
+      { code: state.error?.code, message: state.error?.message },
+      { code: 'PREREQUISITE_MISSING', message: FULL_STORAGE_REMEDY },
+    )
+    assert.equal(record.historyExcluded, 'refused-at-preparation')
+    assert.deepEqual(await run.service.nodeHistoryStore!.list(), [])
+  } finally {
     await run.harness.close()
   }
 })

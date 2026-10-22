@@ -40,7 +40,7 @@ import {
   PRESENTATION_MODE_IDS,
   STUDY_PRESENTATIONS,
 } from './constants'
-import { StudyError, domainError } from './errors'
+import { SavedStudyStorageFullError, StudyError, domainError } from './errors'
 import {
   learningSummarySchema,
   type LearningSummary,
@@ -500,9 +500,27 @@ export class StudyService {
     }
     const nodeTestPrerequisites =
       profilePrerequisites?.[NODE_TEST_PROFILE] ?? commonPrerequisites
+    // A full saved-study capacity refuses the start at its preparation, so the profile is not ready then (D7, F92).
+    const nodeTestCapacity = await this.nodeHistoryStore
+      ?.admission()
+      .catch(() => undefined)
+    const nodeTestCapacityMissing =
+      nodeTestCapacity && !nodeTestCapacity.admits
+        ? [
+            `node-test cannot start: the saved studies and test histories take ${nodeTestCapacity.taken} places of the ${nodeTestCapacity.limit} that the Saved Study Limit allows. ${fullLibraryMessage('run', nodeTestCapacity.limit, this.removalAvailability)}`,
+          ]
+        : []
     const nodeTestAdapter =
       this.environment.createNodeTestRun && this.nodeHistoryStore
-        ? nodeTestPrerequisites
+        ? {
+            ready:
+              nodeTestPrerequisites.ready &&
+              nodeTestCapacityMissing.length === 0,
+            missing: [
+              ...nodeTestPrerequisites.missing,
+              ...nodeTestCapacityMissing,
+            ],
+          }
         : {
             ready: false,
             missing: [
@@ -2985,18 +3003,32 @@ export class StudyService {
         )
         if (this.stopping || record.stopping) return
         const studyId = `${this.instanceId}_${record.id}`
-        record.nodeHistoryWriter = await this.nodeHistoryStore.start({
-          profile: NODE_TEST_PROFILE,
-          workspaceKey: this.nodeHistoryStore.workspaceKey,
-          studyId,
-          instanceId: this.instanceId,
-          runId: record.id,
-          createdAt: new Date(record.createdAt).toISOString(),
-          configurationHash: record.nodePrepared.configurationHash,
-          configuration: record.nodePrepared.configuration,
-          descriptor: record.nodePrepared.descriptor,
-          sourceBuild: this.environment.build,
-        })
+        record.nodeHistoryWriter = await this.nodeHistoryStore
+          .start({
+            profile: NODE_TEST_PROFILE,
+            workspaceKey: this.nodeHistoryStore.workspaceKey,
+            studyId,
+            instanceId: this.instanceId,
+            runId: record.id,
+            createdAt: new Date(record.createdAt).toISOString(),
+            configurationHash: record.nodePrepared.configurationHash,
+            configuration: record.nodePrepared.configuration,
+            descriptor: record.nodePrepared.descriptor,
+            sourceBuild: this.environment.build,
+          })
+          .catch((error: unknown) => {
+            // A full storage is a typed refusal the learner can remedy, worded as the study library's is (D7, F93).
+            if (error instanceof SavedStudyStorageFullError)
+              throw new StudyError(
+                'PREREQUISITE_MISSING',
+                fullLibraryMessage(
+                  'run',
+                  error.limit,
+                  this.removalAvailability,
+                ),
+              )
+            throw error
+          })
         record.nodeHistoryStatus = 'recording'
         let sequence = 0,
           retainedEventBytes = 0,

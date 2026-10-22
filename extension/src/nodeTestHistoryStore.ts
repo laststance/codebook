@@ -23,7 +23,7 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
 } from './constants'
-import { StudyError } from './errors'
+import { SavedStudyStorageFullError, StudyError } from './errors'
 import {
   nodeTestHistoryEntrySchema,
   nodeTestHistoryHeaderSchema,
@@ -303,6 +303,34 @@ export class NodeTestHistoryStore {
   }
 
   /**
+   * Says whether the saved study limit has room for one more test history, and how many places the saved studies and the listed histories take; called by {@link reserve} under the storage lock and by {@link StudyService.status} to read the node-test profile's readiness.
+   * @returns `admits` when the listed histories leave a place, `taken` as the saved studies plus the listed histories (the histories counted up to the places they may take), and the `limit` in force.
+   * @throws When the limit setting is invalid, the library cannot be counted or the history directory cannot be read.
+   * @example await store.admission() // => { admits: false, taken: 77, limit: 64 }
+   */
+  async admission(): Promise<{
+    admits: boolean
+    taken: number
+    limit: number
+  }> {
+    const limit = this.capacity()
+    const savedStudies = await this.savedArtifactCount()
+    // The histories may take the places the saved studies leave of the limit.
+    const places = limit - savedStudies
+    const histories = await this.listedHistoryCount(places).catch(
+      (error: unknown) => {
+        if (systemErrorCode(error) === 'ENOENT') return 0
+        throw error
+      },
+    )
+    return {
+      admits: histories < places,
+      taken: savedStudies + histories,
+      limit,
+    }
+  }
+
+  /**
    * Admits one history under the saved study limit and makes its folder with its first files; the body of {@link start}, run while the storage lock is held.
    * @param header - The validated header of this workspace.
    * @returns The writer of the reserved history.
@@ -318,11 +346,9 @@ export class NodeTestHistoryStore {
     })
     await chmod(this.directory, PRIVATE_DIRECTORY_MODE)
     // The histories may take the places the saved studies leave of the limit.
-    const places = this.capacity() - (await this.savedArtifactCount())
-    if ((await this.listedHistoryCount(places)) >= places)
-      throw new Error(
-        'Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
-      )
+    const admission = await this.admission()
+    if (!admission.admits)
+      throw new SavedStudyStorageFullError(admission.taken, admission.limit)
     // The header's size is checked before the history's folder is made, so a header above its limit leaves nothing behind.
     const headerBytes = Buffer.from(JSON.stringify(header))
     if (headerBytes.byteLength > HEADER_LIMIT_BYTES)

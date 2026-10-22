@@ -132,6 +132,22 @@ export class NewerStudyFormatError extends Error {
   }
 }
 
+/**
+ * Marks the refusal of a test history's start because the saved studies and the test histories together fill the Saved Study Limit; the typed signal {@link NodeTestHistoryStore.start} gives {@link StudyService}, which words the refusal for the agent through {@link fullLibraryMessage} instead of matching this text.
+ *
+ * @example throw new SavedStudyStorageFullError(77, 64) // taken 77 of limit 64
+ */
+export class SavedStudyStorageFullError extends Error {
+  constructor(
+    readonly taken: number,
+    readonly limit: number,
+  ) {
+    super(
+      'Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
+    )
+  }
+}
+
 /** Normalizes unexpected boundary failures without pretending they succeeded; called by protocol handlers. @example domainError(new Error('disk')).code */
 export function domainError(error: unknown): StudyError {
   return error instanceof StudyError
