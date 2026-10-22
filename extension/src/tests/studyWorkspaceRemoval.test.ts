@@ -9958,6 +9958,12 @@ test('the line “History not saved: …” of a study whose capture failed and 
       'the save of the third run',
       2_000,
     )
+    // The reader publishes its view after the service reports the save, which a loaded machine can deliver later (F4): wait for that publish to drop the line; a line that stays fails the assertion below once the wait ends.
+    await waitUntil(
+      () => harness.reader.inspect().view!.errors.length === 0,
+      'the reader’s publish after the third run’s save',
+      5_000,
+    ).catch(() => undefined)
 
     // Assert
     assert.deepEqual(
