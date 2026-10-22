@@ -345,6 +345,13 @@ function studyClient(
   }
   const seconds = (elapsed: number) =>
     `${(elapsed / options.secondMs).toFixed(2)} s`
+  /** The range a transport's coverage strip draws: its gaps where source and debugger were not recorded and its recorded stops. */
+  type CoverageMarks = {
+    startMs: number
+    endMs: number
+    gaps: Array<{ startMs: number; endMs: number }>
+    recordedPoints: number[]
+  }
   /**
    * Draws a transport's coverage strip: striped spans where source and debugger were not recorded, a tick for each recorded stop, the legend and the strip's accessible name; called for the browser transport and the test replay transport, so both draw alike.
    * @param coverage - The strip element, hidden when there is nothing to mark.
@@ -356,14 +363,7 @@ function studyClient(
   const renderTimelineCoverage = (
     coverage: HTMLElement,
     label: HTMLElement,
-    marks:
-      | {
-          startMs: number
-          endMs: number
-          gaps: Array<{ startMs: number; endMs: number }>
-          recordedPoints: number[]
-        }
-      | undefined,
+    marks: CoverageMarks | undefined,
     legends: {
       gapsLegend: string
       noGapsLegend: string
@@ -376,6 +376,7 @@ function studyClient(
         ? legends.gapsLegend
         : legends.noGapsLegend
       : legends.unknownLegend
+    // Without known coverage the strip is emptied and says so.
     if (!marks) {
       coverage.replaceChildren()
       delete coverage.dataset.signature
@@ -385,20 +386,38 @@ function studyClient(
       )
       return
     }
+    coverage.setAttribute('aria-label', describeCoverageMarks(marks))
+    drawCoverageMarks(coverage, marks)
+  }
+  /**
+   * Names a coverage strip for assistive technology: how many gaps and recorded stops it marks, with their times; called by {@link renderTimelineCoverage}.
+   * @param marks - The range with its gaps and recorded stops.
+   * @returns The strip's accessible name.
+   * @example describeCoverageMarks({ startMs: 0, endMs: 900, gaps: [{ startMs: 0, endMs: 900 }], recordedPoints: [420] }) // => '1 source/debugger history gap: 0.00 s–0.90 s; 1 recorded stop: 0.42 s'
+   */
+  const describeCoverageMarks = (marks: CoverageMarks): string => {
+    const gapTimes = marks.gaps
+      .map((gap) => `${seconds(gap.startMs)}–${seconds(gap.endMs)}`)
+      .join(', ')
+    const stopTimes = marks.recordedPoints.map(seconds).join(', ')
+    return `${marks.gaps.length} source/debugger history gap${marks.gaps.length === 1 ? '' : 's'}${gapTimes ? `: ${gapTimes}` : ''}; ${marks.recordedPoints.length} recorded stop${marks.recordedPoints.length === 1 ? '' : 's'}${stopTimes ? `: ${stopTimes}` : ''}`
+  }
+  /**
+   * Draws a coverage strip's gap spans and stop ticks, once per distinct set of marks; called by {@link renderTimelineCoverage}.
+   * @param coverage - The strip element.
+   * @param marks - The range with its gaps and recorded stops.
+   * @example drawCoverageMarks(strip, { startMs: 0, endMs: 900, gaps: [], recordedPoints: [420] })
+   */
+  const drawCoverageMarks = (
+    coverage: HTMLElement,
+    marks: CoverageMarks,
+  ): void => {
     const signature = JSON.stringify([
       marks.startMs,
       marks.endMs,
       marks.gaps,
       marks.recordedPoints,
     ])
-    const gapTimes = marks.gaps
-      .map((gap) => `${seconds(gap.startMs)}–${seconds(gap.endMs)}`)
-      .join(', ')
-    const stopTimes = marks.recordedPoints.map(seconds).join(', ')
-    coverage.setAttribute(
-      'aria-label',
-      `${marks.gaps.length} source/debugger history gap${marks.gaps.length === 1 ? '' : 's'}${gapTimes ? `: ${gapTimes}` : ''}; ${marks.recordedPoints.length} recorded stop${marks.recordedPoints.length === 1 ? '' : 's'}${stopTimes ? `: ${stopTimes}` : ''}`,
-    )
     // The same marks are not drawn again.
     if (coverage.dataset.signature === signature) return
     coverage.replaceChildren()
@@ -2273,12 +2292,22 @@ function studyClient(
       message.nodeHistoryPlayback,
       !message.nodeHistory || replaying,
     )
-    // Marks belong to the shown replay only: none while a browser recording or no replay is shown.
-    const marks = unavailable ? undefined : section?.timeline
+    renderTestReplayTimeline(section, unavailable)
+  }
+  /**
+   * Draws the test replay slider's marks, the whole range unrecorded with a tick at each verified stop, and its legend; called by {@link renderTestReplayTransport}.
+   * @param section - The section's worded view, which carries the timeline of the shown replay.
+   * @param unavailable - Whether no test replay is shown: none, a browser recording shown, or the bottom panel held by a browser replay; the marks belong to the shown replay only.
+   * @example renderTestReplayTimeline(message.nodeHistorySection, false)
+   */
+  const renderTestReplayTimeline = (
+    section: StudyViewMessage['nodeHistorySection'],
+    unavailable: boolean,
+  ): void => {
     renderTimelineCoverage(
       element('node-history-coverage'),
       element('node-history-coverage-label'),
-      marks,
+      unavailable ? undefined : section?.timeline,
       {
         gapsLegend: options.testReplay.timelineLegend,
         noGapsLegend: options.testReplay.timelineLegend,
