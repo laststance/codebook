@@ -2340,9 +2340,7 @@ test('after a chosen saved study and a chosen Node test history each failed to o
     assert.equal(removalAfterFailedStudy, undefined)
     assert.equal(dialogsAfterFailedStudy, 1)
     assert.equal(
-      afterFailedNodeHistory.errors.includes(
-        'Error: The journal could not be read.',
-      ),
+      afterFailedNodeHistory.errors.includes('The journal could not be read.'),
       true,
     )
     assert.equal(afterFailedNodeHistory.nodeHistory, undefined)
