@@ -16,9 +16,8 @@ extension/coverage/
 extension/.fallow/
 extension/.eslintcache
 
-# Share this project's agent entry points despite user-global ignore rules
+# Share this project's agent entry point despite user-global ignore rules
 !/AGENTS.md
-!/CLAUDE.md
 
 # Share only the project compaction hook; keep other local Codex state private.
 !/.codex/

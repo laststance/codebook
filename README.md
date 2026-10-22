@@ -37,7 +37,7 @@ Until final acceptance begins, actual-editor development verification uses the o
 | How do development and review work?             | [Delivery](AGENTS.md#delivery)                                                                                    |
 | What is the current design authority?           | [Design target](PRODUCT_GOAL.md#design-target)                                                                    |
 
-Read [AGENTS.md](AGENTS.md) when starting or resuming work. Claude Code also enters through [CLAUDE.md](CLAUDE.md). PRODUCT_GOAL.md owns the outcomes, AGENTS.md the way of working, and the active cycle Issue the state.
+Read [AGENTS.md](AGENTS.md) when starting or resuming work; Codex loads it as its project instructions, and so does Claude Code while no `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` overrides it. PRODUCT_GOAL.md owns the outcomes, AGENTS.md the way of working, and the active cycle Issue the state.
 
 ## Tracking and continuation
 
