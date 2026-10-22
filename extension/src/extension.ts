@@ -34,6 +34,8 @@ import {
   WIKI_UPDATE_WATCH_POLL_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
   WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
+  OPEN_LEARNING_REPLAY_COMMAND,
+  SAVE_LEARNING_REPLAY_COMMAND,
 } from './constants'
 import {
   deployCursorSkill,
@@ -2126,7 +2128,7 @@ export function activate(
     registerCommand(WIKI_CHAT_WATCH_CANCEL_COMMAND, () => {
       cancelShownWikiChatWatch?.()
     }),
-    registerCommand('codebook.saveLearningReplay', async (studyId?: string) => {
+    registerCommand(SAVE_LEARNING_REPLAY_COMMAND, async (studyId?: string) => {
       try {
         await workspace().saveLearningReplay(studyId)
       } catch (error) {
@@ -2143,7 +2145,7 @@ export function activate(
     registerCommand('codebook.moveLearningSummary', () =>
       workspace().moveLearningSummary(),
     ),
-    registerCommand('codebook.openLearningReplay', (studyId: string) =>
+    registerCommand(OPEN_LEARNING_REPLAY_COMMAND, (studyId: string) =>
       workspace().openLearningReplay(studyId),
     ),
     registerCommand('codebook.closeRepositoryWiki', () =>

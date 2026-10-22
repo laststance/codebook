@@ -973,6 +973,10 @@ export const BOOK_PREPARE_TIMEOUT_MS = 20_000
 export const BOOK_SOURCE_CONCURRENCY = 4
 export const REPOSITORY_BROWSER_PROFILE = 'repository-browser'
 export const NODE_TEST_PROFILE = 'node-test'
+/** The command id of the status item's Save learning replay and its Retry; registered by the extension, run by a click. */
+export const SAVE_LEARNING_REPLAY_COMMAND = 'codebook.saveLearningReplay'
+/** The command id of the status item's Open replay and Open retained history. */
+export const OPEN_LEARNING_REPLAY_COMMAND = 'codebook.openLearningReplay'
 export const NODE_TEST_HISTORY_VERSION = 1
 export const NODE_TEST_READER_POSITION_VERSION = 1
 export const NODE_TEST_READER_POSITION_LIMIT_BYTES = 4_096

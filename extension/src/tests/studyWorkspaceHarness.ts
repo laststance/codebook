@@ -115,6 +115,9 @@ export async function workspaceHarness(
   let answerWarningDialog: (
     items: string[],
   ) => Promise<string | undefined> = async () => undefined
+  let answerErrorDialog: (
+    items: string[],
+  ) => Promise<string | undefined> = async () => undefined
   const informationMessages: { message: string; items: string[] }[] = []
   let answerInformationMessage: (
     items: string[],
@@ -188,10 +191,26 @@ export async function workspaceHarness(
   /** Builds one fake status bar item. It counts the assignments of its command, because the editor turns every assigned command object into a new internal command and disposes the one before. @example createStatusItem().commandAssignments // => 0 */
   const createStatusItem = () => {
     let assignedCommand: unknown
+    let shownText = ''
+    let shownTooltip = ''
     return {
       name: '',
-      text: '',
-      tooltip: '',
+      /** Every text or tooltip assignment, and every show or hide call: each one is a message to the status bar. */
+      redraws: 0,
+      get text(): string {
+        return shownText
+      },
+      set text(value: string) {
+        this.redraws++
+        shownText = value
+      },
+      get tooltip(): string {
+        return shownTooltip
+      },
+      set tooltip(value: string) {
+        this.redraws++
+        shownTooltip = value
+      },
       commandAssignments: 0,
       get command(): unknown {
         return assignedCommand
@@ -202,9 +221,11 @@ export async function workspaceHarness(
       },
       visible: false,
       show(): void {
+        this.redraws++
         this.visible = true
       },
       hide(): void {
+        this.redraws++
         this.visible = false
       },
       dispose(): void {
@@ -4361,10 +4382,13 @@ export async function workspaceHarness(
           informationMessages.push({ message, items })
           return answerInformationMessage(items)
         },
-        // An error notification of the reader has no button; it stays until the learner dismisses it.
-        showErrorMessage: async (message: string): Promise<undefined> => {
+        // An error notification stays until the learner dismisses it or answers one of its buttons ({@link answerErrorDialogs}).
+        showErrorMessage: async (
+          message: string,
+          ...items: string[]
+        ): Promise<string | undefined> => {
           errorMessages.push(message)
-          return undefined
+          return answerErrorDialog(items)
         },
         createTextEditorDecorationType: (options: { after?: unknown }) => ({
           ...disposable(),
@@ -4993,6 +5017,12 @@ export async function workspaceHarness(
       answer: (items: string[]) => Promise<string | undefined>,
     ): void {
       answerWarningDialog = answer
+    },
+    /** Decides how the learner answers the buttons of the reader's next native error notifications; unanswered ones are dismissed. @example harness.answerErrorDialogs(async ([button]) => button) */
+    answerErrorDialogs(
+      answer: (items: string[]) => Promise<string | undefined>,
+    ): void {
+      answerErrorDialog = answer
     },
     /** Every path the reader moved to the editor's Trash, with the options it passed. @example harness.trashMoves.map((move) => move.path) */
     trashMoves,

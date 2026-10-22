@@ -1,8 +1,13 @@
-import { NODE_TEST_PROFILE } from './constants'
+import {
+  NODE_TEST_PROFILE,
+  OPEN_LEARNING_REPLAY_COMMAND,
+  SAVE_LEARNING_REPLAY_COMMAND,
+} from './constants'
 import type { NodeTestHistoryStore } from './nodeTestHistoryStore'
 import type { StudyRecord, StudyService } from './service'
 import {
   describeNodeLearningSave,
+  NODE_LEARNING_SAVE_ACTION,
   type NodeLearningSaveMessage,
 } from './utils/describeNodeLearningSave'
 import type { NodeTestVerdict } from './utils/describeNodeTestResult'
@@ -22,10 +27,12 @@ export type NodeLearningSaveHost = {
   ask: (text: string, actions: readonly string[]) => Promise<string | undefined>
   /** Shows a notification; resolves to the action chosen, or `undefined`. */
   notify: (
-    severity: 'warning' | 'error',
+    severity: 'information' | 'warning' | 'error',
     text: string,
     actions: readonly string[],
   ) => Promise<string | undefined>
+  /** The material revision the store holds for a test history, from the summary projection the library lists (not this window's cache, which only this window's saves move); `undefined` while the history is not listed. */
+  materialRevision: (studyId: string) => number | undefined
   /** Opens a test replay (Open replay, Open retained history). */
   open: (studyId: string) => Promise<void>
   /** Reports one unexpected failure to the Output › Codebook channel. */
@@ -58,10 +65,6 @@ type SaveState =
     }
   | { stage: 'stop-rejected' | 'read-failed' | 'seal-failed'; cause: string }
 
-/** The command a status item click runs to save a test run's learning replay. */
-const SAVE_COMMAND = 'codebook.saveLearningReplay'
-/** The command a status item click runs to open a test replay. */
-const OPEN_COMMAND = 'codebook.openLearningReplay'
 /** The refusal of a Save for a test run that recorded nothing, worded as the browser run's ({@link StudyWorkspace.saveLearningReplay}). */
 const NOTHING_RECORDED =
   'No recorded Codebook session is available. Explain a real code path first.'
@@ -100,15 +103,17 @@ export class NodeLearningSave {
         cause: record.nodeHistoryFailure ?? 'unknown cause',
       })
     const reached = record.nodeStops?.length ?? 0
-    // Before the first stop the journal has nothing to save.
-    if (!record.stopped && reached === 0)
-      return this.itemOf(describeNodeLearningSave({ kind: 'preparing' }))
+    // Before the first stop the journal has nothing to save; a run that ended there (its continuation failed or its stop was rejected) is no longer preparing and shows nothing.
+    if (beforeFirstStop(record))
+      return record.nodePhase === 'failed' || record.cleanupError
+        ? undefined
+        : this.itemOf(describeNodeLearningSave({ kind: 'preparing' }))
     const message: NodeLearningSaveMessage = record.stopped
       ? { kind: 'finished' }
       : { kind: 'live', reached, declared: declaredStops(record) }
     return this.itemOf(describeNodeLearningSave(message), {
       title: 'Save learning replay',
-      command: SAVE_COMMAND,
+      command: SAVE_LEARNING_REPLAY_COMMAND,
       arguments: [studyId],
     })
   }
@@ -123,6 +128,20 @@ export class NodeLearningSave {
   save(record: StudyRecord): Promise<void> {
     const service = this.host.service()
     if (!service) return Promise.resolve()
+    // Before the first stop there is nothing to save, and a Save would end the preparing run; it does nothing and says so (D9).
+    if (beforeFirstStop(record)) {
+      const words = describeNodeLearningSave({ kind: 'nothing-yet' })
+      void this.host
+        .notify('information', words.text, [])
+        .catch((error: unknown) => {
+          this.logFailure(
+            `${service.instanceId}_${record.id}`,
+            'save:nothing-yet',
+            error,
+          )
+        })
+      return Promise.resolve()
+    }
     // The item is not shown for such a run; the command is refused as for a browser run without a recording.
     if (recordedNothing(record)) throw new Error(NOTHING_RECORDED)
     const studyId = `${service.instanceId}_${record.id}`
@@ -161,8 +180,8 @@ export class NodeLearningSave {
         reached: record.nodeStops?.length ?? 0,
         declared: declaredStops(record),
       })
-      const answer = await this.host.ask(question.text, ['Save now'])
-      if (answer !== 'Save now') return
+      const answer = await this.host.ask(question.text, question.actions ?? [])
+      if (answer !== NODE_LEARNING_SAVE_ACTION.saveNow) return
     }
     this.setState(studyId, { stage: 'saving' })
     try {
@@ -234,9 +253,13 @@ export class NodeLearningSave {
     void this.host
       .notify('warning', notice.text, notice.actions ?? [])
       .then((action) => {
-        if (action === 'Open replay') return this.host.open(studyId)
+        if (action === NODE_LEARNING_SAVE_ACTION.openReplay)
+          return this.host.open(studyId)
       })
-      .catch(() => undefined)
+      // A rejected notification or open is reported to the Output channel, not dropped.
+      .catch((error: unknown) => {
+        this.logFailure(studyId, 'save:open-replay', error)
+      })
   }
 
   /**
@@ -253,6 +276,19 @@ export class NodeLearningSave {
     stage: 'stop-rejected' | 'read-failed',
     error: unknown,
   ): void {
+    const cause = this.logFailure(studyId, surface, error)
+    this.setState(studyId, { stage, cause })
+  }
+
+  /**
+   * Writes one Output entry for a failure with its sanitized cause and stack; called by {@link fail} and by the rejected open of the partial notice.
+   * @param studyId - The run's study id.
+   * @param surface - The failed step's name in the entry.
+   * @param error - What was thrown.
+   * @returns The sanitized cause.
+   * @example this.logFailure(studyId, 'save:open-replay', error)
+   */
+  private logFailure(studyId: string, surface: string, error: unknown): string {
     const roots = this.host.service()?.causeRoots ?? { storage: [] }
     const cause = sanitizeCause(error, roots)
     const stack = sanitizedStack(error, roots)
@@ -263,7 +299,7 @@ export class NodeLearningSave {
       cause,
       ...(stack ? { stack } : {}),
     })
-    this.setState(studyId, { stage, cause })
+    return cause
   }
 
   /**
@@ -278,8 +314,12 @@ export class NodeLearningSave {
     record: StudyRecord,
   ): SaveState | undefined {
     const state = this.states.get(studyId)
+    // A rejected stop that a later codebook_stop (or any other change) settled no longer describes the run.
+    if (state?.stage === 'stop-rejected' && record.stopped) return undefined
     if (state?.stage !== 'saved' && state?.stage !== 'partial') return state
+    // The store's revision (the summary projection the library lists) counts, not this window's cache: material another window saved moves the store only.
     const revision =
+      this.host.materialRevision(studyId) ??
       record.nodeLearning?.materialRevision ??
       record.nodeLearningMaterial?.revision ??
       0
@@ -315,7 +355,11 @@ export class NodeLearningSave {
             verdict: state.verdict,
             stops: state.stops,
           }),
-          { title: 'Open replay', command: OPEN_COMMAND, arguments: [studyId] },
+          {
+            title: NODE_LEARNING_SAVE_ACTION.openReplay,
+            command: OPEN_LEARNING_REPLAY_COMMAND,
+            arguments: [studyId],
+          },
         )
       case 'partial':
         return this.itemOf(
@@ -324,14 +368,18 @@ export class NodeLearningSave {
             verdict: state.verdict,
             missing: state.missing,
           }),
-          { title: 'Open replay', command: OPEN_COMMAND, arguments: [studyId] },
+          {
+            title: NODE_LEARNING_SAVE_ACTION.openReplay,
+            command: OPEN_LEARNING_REPLAY_COMMAND,
+            arguments: [studyId],
+          },
         )
       case 'seal-failed':
         return this.itemOf(
           describeNodeLearningSave({ kind: 'seal-failed', cause: state.cause }),
           {
             title: 'Open retained history',
-            command: OPEN_COMMAND,
+            command: OPEN_LEARNING_REPLAY_COMMAND,
             arguments: [studyId],
           },
         )
@@ -339,7 +387,11 @@ export class NodeLearningSave {
       case 'read-failed':
         return this.itemOf(
           describeNodeLearningSave({ kind: state.stage, cause: state.cause }),
-          { title: 'Retry', command: SAVE_COMMAND, arguments: [studyId] },
+          {
+            title: 'Retry',
+            command: SAVE_LEARNING_REPLAY_COMMAND,
+            arguments: [studyId],
+          },
         )
     }
   }
@@ -376,6 +428,16 @@ function recordedNothing(record: StudyRecord): boolean {
     // The seal sets the count; a sealed history without an entry has nothing to replay.
     record.nodeHistoryEntryCount === 0
   )
+}
+
+/**
+ * Says whether a test run has not reached its first stop and is not stopped: its journal holds only preparation output, so a Save has nothing to keep and would only end the run; read by {@link NodeLearningSave.item} and {@link NodeLearningSave.save}.
+ * @param record - The node-test run.
+ * @returns `true` before the first stop of a run that is not stopped.
+ * @example beforeFirstStop(record) // => true for a run that still launches Vitest
+ */
+function beforeFirstStop(record: StudyRecord): boolean {
+  return !record.stopped && (record.nodeStops?.length ?? 0) === 0
 }
 
 /**
