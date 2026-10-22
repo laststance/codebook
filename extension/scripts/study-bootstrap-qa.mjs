@@ -754,12 +754,30 @@ async function check(page, options, collected) {
           ),
       })
       await page.screenshot({ path: `${options.output}/history-coverage.png` })
+      // Golden DOM (PR-B2, AC14): the browser transport's time slider with its gap and stop marks renders the markup it rendered before its drawing was shared with test replays.
+      const mappedTransportMarkup = await page.evaluate(
+        () =>
+          document.querySelector('#recording-transport .timeline-track')
+            .outerHTML,
+      )
       await publish({
         ...replay,
         recording: {
           ...replay.recording,
           historyTimeline: { status: 'unknown' },
         },
+      })
+      const unknownTransportMarkup = await page.evaluate(
+        () =>
+          document.querySelector('#recording-transport .timeline-track')
+            .outerHTML,
+      )
+      cases.push({
+        name: 'the browser transport’s slider with its gap and stop marks, mapped and unknown, renders the same markup as before its drawing was shared with test replays',
+        actual: `${mappedTransportMarkup}\n---\n${unknownTransportMarkup}`,
+        passed:
+          `${mappedTransportMarkup}\n---\n${unknownTransportMarkup}` ===
+          options.goldenHistoryTransport,
       })
       cases.push({
         name: 'an old replay without sealed history avoids invented coverage marks',
@@ -1844,6 +1862,13 @@ async function check(page, options, collected) {
         },
         events: 'Events (4)',
         verdict: 'Test passed · exit code 0',
+        // The whole range is one unrecorded span; the verified stop at 0.42 s is a tick (PR-B2, Design 4).
+        timeline: {
+          startMs: 100,
+          endMs: 900,
+          gaps: [{ startMs: 100, endMs: 900 }],
+          recordedPoints: [420],
+        },
       }
       const notRecordedLine = 'Source and debugger not recorded at this moment.'
       /** The Study message of the job scheduler's test replay at one selected event. */
@@ -1971,6 +1996,67 @@ async function check(page, options, collected) {
               current: ['verdict'],
               sameMoment: [],
               stepControls: 3,
+            },
+          }),
+      })
+      // Value: protects=the test replay's slider showing the whole recorded range as one unrecorded span with a tick at each verified stop and the catalog legend, and nothing for a one-event history; fails_when=the section's timeline is not drawn by the shared coverage drawing, the legend differs, or a one-event history shows a mark; why_new=Design 8's remaining part (gap mark at the first output), red first on the build without the shared drawing; seam=none; no_claim=native pixels or the browser transport (its golden DOM case)
+      // Arrange: the replay at its first output, then a replay of one event, which has nothing to mark.
+      await publish(atFirstOutput)
+      const readCoverage = () =>
+        page.evaluate(() => {
+          const strip = document.getElementById('node-history-coverage')
+          return {
+            hidden: strip.hidden,
+            gaps: strip.querySelectorAll('.history-gap').length,
+            stops: strip.querySelectorAll('.history-stop').length,
+            gapWidth: strip.querySelector('.history-gap')?.style.width ?? '',
+            stopLeft: strip.querySelector('.history-stop')?.style.left ?? '',
+            legend: document.getElementById('node-history-coverage-label')
+              .textContent,
+            name: strip.getAttribute('aria-label'),
+            // The strip is drawn inside the slider's track, below the slider.
+            insideTrack: Boolean(strip.closest('.timeline-track')),
+            height: Math.round(strip.getBoundingClientRect().height),
+          }
+        })
+      // Act
+      const firstOutputCoverage = await readCoverage()
+      await publish(
+        testReplayAt(
+          { sequence: 1, type: 'output', eventIndex: 0, elapsedMs: 100 },
+          { timeline: undefined, previousStop: false, nextStop: false },
+        ),
+      )
+      const oneEventCoverage = await readCoverage()
+      // Assert
+      cases.push({
+        name: 'the test replay’s first output shows its gap mark and a tick at the verified stop under the catalog legend, and a history without a span shows no mark',
+        actual: { firstOutputCoverage, oneEventCoverage },
+        passed:
+          JSON.stringify({ firstOutputCoverage, oneEventCoverage }) ===
+          JSON.stringify({
+            firstOutputCoverage: {
+              hidden: false,
+              gaps: 1,
+              stops: 1,
+              gapWidth: '100%',
+              stopLeft: '40%',
+              legend:
+                'Ticks mark recorded stops; source and debugger are not recorded between them.',
+              name: '1 source/debugger history gap: 0.10 s–0.90 s; 1 recorded stop: 0.42 s',
+              insideTrack: true,
+              height: 6,
+            },
+            oneEventCoverage: {
+              hidden: true,
+              gaps: 0,
+              stops: 0,
+              gapWidth: '',
+              stopLeft: '',
+              legend: '',
+              name: 'Historical source and debugger coverage unknown',
+              insideTrack: true,
+              height: 0,
             },
           }),
       })
@@ -8142,6 +8228,13 @@ try {
       goldenLearningSequence: (
         await readFile(
           new URL('./fixtures/learning-sequence-golden.txt', import.meta.url),
+          'utf8',
+        )
+      ).trimEnd(),
+      // The browser transport's slider markup before the shared drawing (PR-B2, AC14): a text fixture.
+      goldenHistoryTransport: (
+        await readFile(
+          new URL('./fixtures/history-transport-golden.txt', import.meta.url),
           'utf8',
         )
       ).trimEnd(),

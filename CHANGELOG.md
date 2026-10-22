@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.35.0] - 2026-10-23 (development candidate)
+
+Cycle 0049's third pull request ([Issue #107](https://github.com/laststance/codebook/issues/107)): a test replay's executed source in one recorded-source tab that the native debugger opens, moves that never show two moments at once, the unrecorded time on the slider and a bounded wait in Play. The native round in VS Code and Cursor follows this merge.
+
+**The executed source at the selected moment.**
+
+- **One recorded-source tab.** A test replay shows its executed source in one tab named after the stop's file (`Captured-<file name>`). At a stop whose recorded source verifies, the tab holds that file as it ran, with the stopped line highlighted and labelled `Recorded: <path>:<line> · <t> s`. A stop in a file with another name renames the tab and Codebook closes the tab it opened before, so a replay never leaves a tab per stop; returning to Live or opening another saved study closes it.
+- **The native debugger at the same moment.** At such a stop the debugger's thread reads `Recorded test stop <n> · <path>:<line>`, shows that stop's recorded values and stack, and its frames open the same tab. At an output, at the result and at a stop whose source does not verify, the tab holds `// Recorded source · Not recorded at this moment` and `// The test journal holds no source state for this moment.` (comments, so the editor reports no problem for them), and the debugger's thread reads `Not recorded at this moment` with no frames, also when the replay opens on such a moment.
+- **One moment at a time.** Each move first takes the earlier moment off the debugger and the tab, then shows the new moment's source in the tab, then presents the debugger at it, and then shows the stopped line, its label, the Study position and the Application output together. Quick moves, an overtaken move and a return to the moment already shown leave no other moment's stop in the debugger and no extra tab. If the tab cannot open, the Study pane says `Codebook could not open the recorded source of stop <n>: <cause>. Details: Output › Codebook.`, the moment stays selected with no stop in the debugger, and **Retry** opens the tab again; returning to Live takes that line with it.
+
+**The slider and Play.** The time slider marks the recording between its first and last event as unrecorded, with a tick at each stop whose recorded source verifies, under `Ticks mark recorded stops; source and debugger are not recorded between them.` (a test journal records when a stop paused, not when the test resumed). **Play** moves from event to event and waits at most 1.5 seconds for the next one, also across an unrecorded interval, which it neither pauses at nor asks about; each surface shows the selected event's own time.
+
+**Compatibility.** The MCP API stays 1.8 and the bundled skill 1.0.46. No stored format changes: test histories, learning materials and reader positions written by 0.2.34.0 open unchanged, and those written now open in 0.2.34.0.
+
+**Not observed.** The recorded-source tab was checked natively in VS Code 1.142.0 and Cursor 3.26.13 on macOS (one tab per replay, renamed per file, the label or the placeholder visible, the debugger's top frame opening the tab), on saved test replays recorded through Codebook's tools without a chat; no chat-driven run of this version has reached a stop yet. Motion between moments is not recorded natively yet. A tab the editor restores after a restart serves the placeholder until a replay shows its own tab. Windows and Linux are not run.
+
 ## [0.2.34.0] - 2026-10-22 (development candidate)
 
 Cycle 0049's second pull request ([Issue #107](https://github.com/laststance/codebook/issues/107)): a test replay's recorded test output in the Application pane, and the Study pane's test replay section rebuilt around the selected moment. The recorded source with its transitions and the native round in both editors come with the third pull request.

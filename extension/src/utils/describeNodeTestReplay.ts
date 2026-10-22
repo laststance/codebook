@@ -1,5 +1,6 @@
-import { MILLISECONDS_PER_SECOND } from '../constants'
 import type { NodeTestHistorySummary } from '../nodeTestHistoryStore'
+
+import { formatEventSeconds } from './formatEventSeconds'
 
 /**
  * The fixed words of a test replay's surfaces, the String catalog of plan version 7 (DS18); the Study pane receives them through {@link STUDY_UI_OPTIONS}, as its client code imports nothing, and the Application pane through {@link projectNodeTestApplication} and {@link testOutputHtml}.
@@ -32,6 +33,9 @@ export const NODE_TEST_REPLAY_TEXT = {
   play: 'Play',
   pause: 'Pause',
   stepDetails: 'Step details',
+  /** The slider's legend: a test journal records when a stop paused, not when the run resumed. */
+  timelineLegend:
+    'Ticks mark recorded stops; source and debugger are not recorded between them.',
   noSelection: 'Select an event to move through the recorded test history.',
   chooseReplay:
     'Choose a test replay from Saved studies to step through its output and debugger stops.',
@@ -130,8 +134,8 @@ export function describeNodeTestReplay(message: NodeTestReplayMessage): string {
       return positionWords(message.event, message.elapsedMs)
     case 'step-action':
       return message.event.type === 'stop'
-        ? `Inspect stop ${message.event.index + 1} · ${seconds(message.elapsedMs)} s`
-        : `Inspect ${message.event.type} · ${seconds(message.elapsedMs)} s`
+        ? `Inspect stop ${message.event.index + 1} · ${formatEventSeconds(message.elapsedMs)} s`
+        : `Inspect ${message.event.type} · ${formatEventSeconds(message.elapsedMs)} s`
     case 'events':
       return `Events (${message.count})`
     default:
@@ -150,15 +154,15 @@ function applicationWords(
 ): string {
   switch (message.kind) {
     case 'application-time':
-      return `Recorded test output · ${seconds(message.elapsedMs)} s`
+      return `Recorded test output · ${formatEventSeconds(message.elapsedMs)} s`
     case 'application-test':
       return testName(message.test)
     case 'application-name':
       return message.elapsedMs === undefined
         ? `Recorded test output · ${testName(message.test)}`
-        : `Recorded test output · ${testName(message.test)} · ${seconds(message.elapsedMs)} s`
+        : `Recorded test output · ${testName(message.test)} · ${formatEventSeconds(message.elapsedMs)} s`
     case 'application-region':
-      return `Recorded test output up to ${seconds(message.elapsedMs)} s`
+      return `Recorded test output up to ${formatEventSeconds(message.elapsedMs)} s`
     case 'application-cut':
       return `… ${message.characters} earlier characters not shown${message.startsMidLine ? '; the first line below is cut' : ''}`
     case 'application-inspector':
@@ -178,10 +182,10 @@ function positionWords(
   elapsedMs: number,
 ): string {
   if (event.type === 'stop')
-    return `Stop ${event.index + 1} of ${event.stopCount} · ${seconds(elapsedMs)} s`
+    return `Stop ${event.index + 1} of ${event.stopCount} · ${formatEventSeconds(elapsedMs)} s`
   return event.type === 'result'
-    ? `Result · ${event.verdict} · ${seconds(elapsedMs)} s`
-    : `Output · ${seconds(elapsedMs)} s`
+    ? `Result · ${event.verdict} · ${formatEventSeconds(elapsedMs)} s`
+    : `Output · ${formatEventSeconds(elapsedMs)} s`
 }
 
 /**
@@ -206,14 +210,4 @@ function studyStatus(
  */
 function testName(test: NodeTestReplayTestName): string {
   return [test.testFile, ...(test.testTitles ?? [])].join(' › ')
-}
-
-/**
- * Writes an event's time as the String catalog's `<t>`: seconds since the run started, with two decimals.
- * @param elapsedMs - The event's elapsed milliseconds.
- * @returns The seconds.
- * @example seconds(1234) // => '1.23'
- */
-function seconds(elapsedMs: number): string {
-  return (elapsedMs / MILLISECONDS_PER_SECOND).toFixed(2)
 }

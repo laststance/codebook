@@ -133,7 +133,7 @@ test('Open replay opens a sealed test replay in a closed Study pane on its first
   }
 })
 
-// Value: protects=a test replay's saved reader position, which wins over the landing on its first verified stop; fails_when=a replay the learner left on its result reopens on a stop; why_new=DS1 keeps the saved position first (AC4); seam=none; no_claim=a position saved in another window
+// Value: protects=a test replay's saved reader position, which wins over the landing on its first verified stop, and the replay debugger that opens on that moment with no recorded stack; fails_when=a replay the learner left on its result reopens on a stop, or opens with no "Not recorded at this moment" thread or with a stop's frames; why_new=DS1 keeps the saved position first (AC4); PR-B2 (Design 4) starts the debugger on the "Not recorded" thread when a replay opens on an output or the result; seam=none; no_claim=a position saved in another window
 test('Open replay opens a test replay at its saved reader position', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -155,13 +155,19 @@ test('Open replay opens a test replay at its saved reader position', async () =>
 
     // Assert
     assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 3)
-    assert.equal(harness.historicalDebugPresentations.length, 0)
+    assert.deepEqual(
+      harness.historicalDebugPresentations.map(({ snapshot, label }) => ({
+        snapshot,
+        label,
+      })),
+      [{ snapshot: undefined, label: 'Not recorded at this moment' }],
+    )
   } finally {
     await harness.close()
   }
 })
 
-// Value: protects=the landing of a test replay without a verified stop: its first event; fails_when=the open selects an unverified stop and presents another moment's source; why_new=DS1's fallback (AC4); seam=a stop whose captured text was edited after the seal; no_claim=none beyond protects
+// Value: protects=the landing of a test replay without a verified stop: its first event, with the debugger on the "Not recorded at this moment" thread; fails_when=the open selects an unverified stop and presents another moment's source; why_new=DS1's fallback (AC4); PR-B2 (Design 4) starts the debugger on the "Not recorded" thread at such a moment; seam=a stop whose captured text was edited after the seal; no_claim=none beyond protects
 test('a test replay whose stop does not verify opens on its first event', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -211,7 +217,13 @@ test('a test replay whose stop does not verify opens on its first event', async 
 
     // Assert
     assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 1)
-    assert.equal(harness.historicalDebugPresentations.length, 0)
+    assert.deepEqual(
+      harness.historicalDebugPresentations.map(({ snapshot, label }) => ({
+        snapshot,
+        label,
+      })),
+      [{ snapshot: undefined, label: 'Not recorded at this moment' }],
+    )
   } finally {
     context.mock.restoreAll()
     await harness.close()
@@ -322,6 +334,44 @@ test('Open replay of a test replay during a browser replay tells the learner one
       'Codebook shows one replay at a time. Close the browser replay to open this test replay.',
     )
     assert.equal(harness.reader.inspect().view?.nodeHistory, undefined)
+    assert.equal(harness.controller.state().studyId, harness.studyId)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Retry pressed while a browser replay holds the reader leaves the shared debugger and source with that replay: it never presents the stop of a test replay that was selected before the recording opened; fails_when=Retry re-selects the earlier test replay's moment, which puts its recorded stop on the shared debugger beside the browser replay's frame; why_new=/ship Step 11 (Codex structured review P2: Retry bypassed the browser replay's refusal); seam=none; no_claim=what Retry does for the browser replay's own rows
+test('Retry during a browser replay presents no stop of the test replay selected before it', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(nodeHistory.studyId)
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      'the test replay on its stop',
+      2_000,
+    )
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    const testStopPresentations = () =>
+      harness.historicalDebugPresentations.filter((presentation) =>
+        presentation.label.startsWith('Recorded test stop'),
+      ).length
+    const presentationsBeforeRetry = testStopPresentations()
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.equal(testStopPresentations(), presentationsBeforeRetry)
     assert.equal(harness.controller.state().studyId, harness.studyId)
   } finally {
     await harness.close()

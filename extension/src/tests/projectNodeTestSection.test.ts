@@ -184,6 +184,13 @@ test('at a stop the section shows its locator, its first step and the other step
     verdict: 'Test passed · exit code 0',
     previousStop: false,
     nextStop: true,
+    // The fixture's stops carry no captured source, so the whole range is one unrecorded span with no tick.
+    timeline: {
+      startMs: 100,
+      endMs: 900,
+      gaps: [{ startMs: 100, endMs: 900 }],
+      recordedPoints: [],
+    },
   })
 })
 

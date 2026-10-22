@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.34'
+export const EXTENSION_VERSION = '0.2.35'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -160,6 +160,7 @@ export const READER_ERROR_KINDS = [
   { kind: 'history-learning', retryable: true, choiceRetired: false },
   { kind: 'history-not-saved', retryable: true, choiceRetired: false },
   { kind: 'history-position', retryable: true, choiceRetired: false },
+  { kind: 'history-source', retryable: true, choiceRetired: false },
   { kind: 'layout', retryable: false, choiceRetired: false },
   { kind: 'node-history-control', retryable: false, choiceRetired: true },
   { kind: 'outline', retryable: true, choiceRetired: false },
@@ -655,6 +656,10 @@ export const MAX_UI_TEXT_CHARS = 8_192
 /** The most characters of a failure's cause a tooltip, a notification or an MCP message of the test replay shows; the Output › Codebook entry keeps the whole sanitized cause ({@link sanitizeCause}). */
 export const UI_CAUSE_MAX_CHARS = 300
 export const STUDY_SOURCE_SCHEME = 'codebook-source'
+/** The first path segment of a test replay's recorded-source slot ({@link nodeSourceSlotPath}): one Codebook-owned source document per opened test replay, whose text follows the selected moment (DS5). */
+export const NODE_SOURCE_SLOT_PATH_ROOT = 'node-history-slot'
+/** Longest wait for a test replay's recorded-source slot to show a selected moment's bytes before the selection reports that the slot could not open; the slot keeps its loading text meanwhile, never the earlier moment (EN8). */
+export const NODE_HISTORY_TRANSITION_BOUND_MS = 1_000
 /** Registered view types of the editor panes Codebook creates: Application, Study and Repository Wiki. */
 export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
   'codebook.scopedBrowser',
@@ -711,6 +716,8 @@ export const PNG_WIDTH_OFFSET = 16
 export const PNG_HEIGHT_OFFSET = 20
 export const PNG_SIGNATURE_HEX = '89504e470d0a1a0a0000000d49484452'
 export const PLAYBACK_TICK_INTERVAL_MS = 50
+/** The longest Play waits between two events of a test replay, however far apart the journal recorded them (the test ran unrecorded between stops). */
+export const NODE_HISTORY_PLAY_MAX_DWELL_MS = 1_500
 export const PLAYBACK_PREFERENCE_FILE = 'playback.v1.json'
 export const PLAYBACK_PREFERENCE_LIMIT_BYTES = 65_536
 /** Converts milliseconds to the seconds that playback labels, seek steps and run failure texts name. */

@@ -7754,6 +7754,14 @@ test('a Node test history opened while the neighbour of a removed study is being
     const removal = requestRemoval(harness, removed.id)
     await neighbourRead.started
     await sendChoice(harness, 'node-history', nodeHistory.studyId)
+    // The open ends with its own publish, which a loaded machine can deliver after the choice's answer.
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          nodeHistory.studyId && !harness.reader.inspect().view?.loading,
+      'the Node test history is open',
+      2_000,
+    )
     // The learner selects the history's recorded stop, which shows that stop's captured source in the historical debugger; the reader's `sourceUri` names only a saved study's source.
     const opened = harness.reader.inspect().view!
     await readerSeams(harness).receive(
@@ -7781,8 +7789,9 @@ test('a Node test history opened while the neighbour of a removed study is being
       inspected.view!.nodeHistory?.header.studyId,
       nodeHistory.studyId,
     )
+    // The stop's frames open the history's recorded-source slot (PR-B2, DS5).
     assert.equal(
-      presentedSource?.includes(`/node-history/${nodeHistory.studyId}/`),
+      presentedSource?.includes(`/node-history-slot/${nodeHistory.studyId}/`),
       true,
     )
     assert.equal(
@@ -7820,6 +7829,14 @@ test('refreshes after the background selection changed leave a selected test rep
     const removal = requestRemoval(harness, removed.id)
     await neighbourRead.started
     await sendChoice(harness, 'node-history', nodeHistory.studyId)
+    // The open ends with its own publish, which a loaded machine can deliver after the choice's answer.
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          nodeHistory.studyId && !harness.reader.inspect().view?.loading,
+      'the Node test history is open',
+      2_000,
+    )
     const opened = harness.reader.inspect().view!
     await readerSeams(harness).receive(
       {
