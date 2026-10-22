@@ -1075,7 +1075,7 @@ test('a move to a stop or event that does not exist is refused by name and keeps
     await waitUntil(
       () =>
         lastView(harness)?.errors[0] ===
-        'Error: There is no next event in this Node history.',
+        'Error: There is no next event in this test replay.',
       'the move past the result is refused',
       2_000,
     )
@@ -1086,7 +1086,7 @@ test('a move to a stop or event that does not exist is refused by name and keeps
     assert.equal(afterStopRefusal?.errors.length, 1)
     assert.equal(
       afterStopRefusal?.errors[0],
-      'Error: There is no previous stop in this Node history.',
+      'Error: There is no previous stop in this test replay.',
     )
     assert.equal(afterStopRefusal?.nodeHistoryPosition?.sequence, 2)
     assert.equal(
@@ -1102,7 +1102,7 @@ test('a move to a stop or event that does not exist is refused by name and keeps
     assert.equal(afterEventRefusal?.errors.length, 1)
     assert.equal(
       afterEventRefusal?.errors[0],
-      'Error: There is no next event in this Node history.',
+      'Error: There is no next event in this test replay.',
     )
     assert.equal(afterEventRefusal?.nodeHistoryPosition?.sequence, 5)
     assert.equal(

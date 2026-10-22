@@ -21770,7 +21770,7 @@ export class StudyWorkspace {
       )
       if (target === undefined)
         throw new Error(
-          `There is no ${message.direction} ${message.unit ?? 'event'} in this Node history.`,
+          `There is no ${message.direction} ${message.unit ?? 'event'} in this test replay.`,
         )
       // Next and Previous show the event's first step (DS21), once the move commits.
       await this.selectNodeHistoryEvent(history, target, {
@@ -22097,7 +22097,7 @@ export class StudyWorkspace {
    * Says why a saved study cannot be removed right now; checked when the request arrives and again after the confirmation dialog, which can stay open while the reader changes.
    * @param studyId - The entry the learner chose in Saved studies.
    * @returns The refusal sentence, first match wins: another entry that is still opening, a Node test history, an entry no catalog lists, a study a newer Codebook saved, the study of a run that has not stopped, a Recording that is open or opening. In a window without a Trash the sentence names the removal of the study's files by hand, because a request there asks for those files and nothing is deleted. `undefined` when the study can be removed.
-   * @example this.studyRemovalRefusal(nodeHistoryId) // => 'Node test histories cannot be deleted here yet.'
+   * @example this.studyRemovalRefusal(nodeHistoryId) // => 'Test replays cannot be deleted here yet.'
    */
   private studyRemovalRefusal(studyId: string): string | undefined {
     const sentences =

@@ -1227,7 +1227,6 @@ function studyClient(
     study: SavedStudyEntry,
     profiles: StudyViewMessage['profiles'],
   ): string => {
-    if (study.format === 'node-test-history') return 'Node test history'
     if (study.profile === 'repository-browser')
       return 'Repository browser study'
     return (
@@ -1254,7 +1253,7 @@ function studyClient(
     message.removalWithoutTrash
       ? options.studyRemovalRefusalsWithoutTrash
       : options.studyRemovalRefusals
-  /** Says why the chosen entry cannot be removed, first match wins, in the words of this window ({@link removalRefusals}); empty when it can. @example chosenStudyRefusal(message, nodeEntry) // => 'Node test histories cannot be deleted here yet.' */
+  /** Says why the chosen entry cannot be removed, first match wins, in the words of this window ({@link removalRefusals}); empty when it can. @example chosenStudyRefusal(message, nodeEntry) // => 'Test replays cannot be deleted here yet.' */
   const chosenStudyRefusal = (
     message: StudyViewMessage,
     chosen: SavedStudyEntry,

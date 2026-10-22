@@ -6182,7 +6182,7 @@ async function check(page, options, collected) {
     name: 'the delete button gives one reason at a time: Node history, then a run that has not stopped, then an open Recording; a removal in progress is named by the status line',
     actual: { nodeReason, liveReason, recordingReason, moving },
     passed:
-      nodeReason === 'Node test histories cannot be deleted here yet.' &&
+      nodeReason === 'Test replays cannot be deleted here yet.' &&
       liveReason === 'Stop the run before deleting its study.' &&
       recordingReason ===
         'Choose Overview or Live to leave Recording before deleting this study.' &&
@@ -7819,7 +7819,7 @@ async function check(page, options, collected) {
     },
     passed:
       nodeWithoutTrash.reason ===
-        'Codebook cannot list the files of a Node test history for removal by hand yet.' &&
+        'Codebook cannot list the files of a test replay for removal by hand yet.' &&
       liveWithoutTrash.reason ===
         "Stop the run before removing its study's files by hand." &&
       recordingWithoutTrash.reason ===
