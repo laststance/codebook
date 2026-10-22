@@ -63,7 +63,7 @@ The status bar remains available while reading standard chat or native source/de
 A Vitest test run that the chat explained (the `node-test` profile) is saved the same way, as a **test replay**: its test output, the executed source and the native debugger's recorded values and stack at each stop; it has no application video. Its status bar item reads:
 
 - No item while Codebook checks the run's article, files, hashes and Vitest; a run these checks refuse ends with its `error` and records nothing.
-- **Preparing the test run…** once those checks have passed and until the run records its first stop; there is nothing to save yet. **Codebook: Save Learning Replay** run then does nothing but say `Nothing to save yet: the test run has not reached its first stop.`, and the run keeps preparing.
+- **Preparing the test run…** once those checks have passed and until the run records its first stop; there is nothing to save yet. Running **Codebook: Save Learning Replay** then does nothing but say `Nothing to save yet: the test run has not reached its first stop.`, and the run keeps preparing.
 - `Recording explanation · stop <n> of <m> · Save learning replay` while the run records. Saving before the test's result asks first (`Saving ends the test run before its result (<n> of <m> stops reached). Save now?`), because it ends the run.
 - **Recording finished · Save learning replay** once the run has ended: Save reads the sealed history and the chat's learning material.
 - **Learning saved · Open replay** when the test passed, every stop's recorded debugger state verifies, and the learning material explains every stop and the result.
