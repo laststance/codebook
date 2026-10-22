@@ -1038,6 +1038,220 @@ test('opening another test replay leaves the shown replay’s output alone and n
   }
 })
 
+// Value: protects=the Application pane's presentation never throws into the reader when the pane's panel was disposed before the lease's release was seen: publish() runs inside catch and finally blocks and keeps going; fails_when=a write into the disposed panel ("Viewport lease is released" / "Webview is disposed") escapes publish(), so an open's error handling or finally block fails with it; why_new=F133: presentNodeHistoryApplication wrote the document unguarded; seam=the pane's document setter, made to throw as a disposed panel's does; no_claim=what a learner sees of a closed pane, which the section's Show recorded output line covers
+test('publishing a test replay into a disposed Application panel does not throw', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    Object.defineProperty(application!.webview, 'html', {
+      configurable: true,
+      get: () => '',
+      set: () => {
+        throw new Error('Webview is disposed')
+      },
+    })
+    const reader = harness.reader
+    // The document is written again, as after a presentation change.
+    reader['lastApplicationKey'] = undefined
+
+    // Act
+    const publishing = (): void => reader['publish']()
+
+    // Assert
+    assert.doesNotThrow(publishing)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a view the Application webview did not take (it answered `false`, as a webview that is reloading does) is posted again at the next publish, so the pane does not stay on an older moment until the moment changes; fails_when=the generation is recorded as shown before the post settles and never cleared, so no later publish posts the view again; why_new=F152: presentNodeHistoryApplication ignored the result of postMessage; seam=the pane's postMessage, answering false once; no_claim=a hidden pane, which reloads from its restore copy and asks for the view itself
+test('a view the Application webview did not take is posted again at the next publish', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+    const postMessage = application.webview.postMessage
+    const attempts: number[] = []
+    let refuseNext = true
+    application.webview.postMessage = (message) => {
+      if (message.type === 'node-history-output') {
+        attempts.push(message.generation)
+        if (refuseNext) {
+          refuseNext = false
+          return Promise.resolve(false)
+        }
+      }
+      return postMessage(message)
+    }
+
+    // Act: the next event is posted and refused, then the reader publishes again without a new moment.
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 5,
+    })
+    await waitUntil(() => attempts.length === 1, 'the view is posted', 2_000)
+    await waitUntil(
+      () =>
+        harness.reader['shownNodeHistoryApplicationGeneration'] === undefined,
+      'the refused view is forgotten',
+      2_000,
+    )
+    harness.reader['publish']()
+
+    // Assert
+    assert.equal(attempts.length, 2)
+    assert.equal(attempts[0], attempts[1])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the host files the learner's follow choice and scroll anchor under the replay the document shows and writes them into every document it writes for that replay (a presentation change, a Retry), ignores a report of another replay or a malformed one, and so a new document opens where the learner was and not where an earlier document's state left it; fails_when=the report is ignored (a rewritten pane follows the output again, F138), a report of another replay changes this replay's reading, or a malformed message throws; why_new=D22 moves the reading from the webview's state to the host; seam=none; no_claim=the document's own use of the reading, which the Reader DOM check covers
+test('a rewritten Application document takes the learner’s reading the host filed, and a report of another replay changes nothing', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+    const reader = harness.reader
+
+    // Act
+    harness.receiveApplication({
+      type: 'node-history-output-state',
+      history: history.studyId,
+      follow: false,
+      anchor: { line: 3, offsetPx: 4 },
+    })
+    harness.receiveApplication({
+      type: 'node-history-output-state',
+      history: 'another-replay',
+      follow: true,
+    })
+    harness.receiveApplication({ type: 'node-history-output-state', follow: 7 })
+    reader['lastApplicationKey'] = undefined
+    reader['publish']()
+
+    // Assert
+    assert.ok(
+      application.webview.html.includes(
+        '"reading":{"follow":false,"anchor":{"line":3,"offsetPx":4}}',
+      ),
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the document's ready message is answered with the host's current view and reading when the document's view is older or its follow choice differs (VS Code reloaded the page in place from an earlier write), and with nothing when the document is current; fails_when=a reloaded document stays on an earlier moment until the next move, a current document is sent the view again, or a ready message of another replay is answered; why_new=F141; seam=none; no_claim=the document's drawing of the answer, which the Reader DOM check covers
+test('a ready Application document that is behind is sent the current view and reading, one that is current is not', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 5,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
+      'the result is selected',
+      2_000,
+    )
+    const current = harness.reader['message']().nodeHistoryApplication!
+    const posted = harness.applicationOutputs().length
+
+    // Act
+    harness.receiveApplication({
+      type: 'node-history-output-ready',
+      history: history.studyId,
+      generation: current.generation,
+      follow: true,
+    })
+    const afterCurrent = harness.applicationOutputs().length
+    harness.receiveApplication({
+      type: 'node-history-output-ready',
+      history: 'another-replay',
+      generation: 0,
+      follow: true,
+    })
+    const afterOther = harness.applicationOutputs().length
+    harness.receiveApplication({
+      type: 'node-history-output-ready',
+      history: history.studyId,
+      generation: current.generation - 1,
+      follow: true,
+    })
+
+    // Assert
+    assert.equal(afterCurrent, posted)
+    assert.equal(afterOther, posted)
+    const answer = harness.applicationOutputs().at(-1)
+    assert.equal(harness.applicationOutputs().length, posted + 1)
+    assert.equal(answer?.generation, current.generation)
+    assert.equal(answer?.view.end, 'Test passed · exit code 0')
+    assert.equal(JSON.stringify(answer?.reading), '{"follow":true}')
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an open of another test replay that fails at its very start (its first publish throws, as a write into a released viewport lease can) ends its opening marker, so the replay still shown does not read as loading from then on; fails_when=the marker is set before the open's try and stays set, so every later moment of the shown replay posts "Loading recorded test output…" with no lines and removals stay refused; why_new=/ship Step 11's Claude adversarial review: a regression of 5359c28, which made the marker alone say that a replay opens; seam=the reader's publish, made to throw once; no_claim=why a publish throws, which F133 carries
 test('an open that fails at its first publish leaves the shown test replay not loading', async () => {
   // Arrange

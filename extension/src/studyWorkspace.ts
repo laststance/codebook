@@ -241,7 +241,10 @@ import {
   type NodeTestOutputIndex,
 } from './utils/indexNodeTestOutput'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
-import type { NodeTestOutputUpdate } from './utils/installNodeTestOutput'
+import type {
+  NodeTestOutputReading,
+  NodeTestOutputUpdate,
+} from './utils/installNodeTestOutput'
 import { isApplicationGroupMarkerProven } from './utils/isApplicationGroupMarkerProven'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isChatEditorTabInput } from './utils/isChatEditorTabInput'
@@ -280,6 +283,7 @@ import {
 } from './utils/projectNodeTestApplication'
 import { projectNodeTestSection } from './utils/projectNodeTestSection'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
+import { readNodeTestOutputReport } from './utils/readNodeTestOutputReport'
 import {
   type OpenRequestSettled,
   openRequestNumberSchema,
@@ -705,6 +709,8 @@ export class StudyWorkspace {
   }
   /** The generation of the view the Application pane's document shows, so each change is posted once. */
   private shownNodeHistoryApplicationGeneration?: number
+  /** The learner's follow choice and scroll anchor in each test replay's output, by study id (D22): the Application document reports them here, and every document written for the replay (a presentation change, a Retry, a reload) takes them from here and not from state an earlier document left (F120, F138, F151). */
+  private readonly nodeOutputReadings = new Map<string, NodeTestOutputReading>()
   private nodeHistoryPlaybackController?: NodeHistoryPlaybackController
   /** The selected test replay's recorded-source slot (DS5): its one Codebook-owned source document, the bytes it serves ({@link provideSource}) and the verified stop whose line and label it shows, `undefined` for the placeholder or its loading text. */
   private nodeSourceSlot?: {
@@ -7617,7 +7623,7 @@ export class StudyWorkspace {
       )
       this.viewport = viewport
       if (this.opened && !this.selection.follow && this.baselines)
-        viewport.showHistory(capturedAppHtml(this.message()))
+        viewport.showHistory(this.applicationHtml(this.message()))
       // A new live lease cannot replace the independently selected recording renderer.
       if (this.recordingActive) {
         this.dropReplayViewport()
@@ -10269,7 +10275,7 @@ export class StudyWorkspace {
             this.app
           ) {
             this.dropReplayViewport()
-            this.app.webview.html = capturedAppHtml(this.message())
+            this.app.webview.html = this.applicationHtml(this.message())
           }
           this.flushDeferredOpenReplies()
           this.publish()
@@ -11220,6 +11226,9 @@ export class StudyWorkspace {
       this.nodeHistoryPlaybackController?.dispose()
       this.replayDebugger?.invalidate()
       this.selectedNodeHistoryRequest++
+      // The reading of another replay is not kept: only the shown replay's is.
+      if (this.selectedNodeHistory?.header.studyId !== history.header.studyId)
+        this.nodeOutputReadings.clear()
       this.selectedNodeHistory = history
       // Admitting another history permanently retires the prior exact Wiki visit; refused reads leave it intact.
       this.repositoryObservation = undefined
@@ -11592,7 +11601,7 @@ export class StudyWorkspace {
     this.dropReplayViewport()
     try {
       this.viewport.showHistory(
-        capturedAppHtml({ ...this.message(), loading: true }),
+        this.applicationHtml({ ...this.message(), loading: true }),
       )
     } catch {
       // A lease whose panel the editor already closed has no document to write; the recording loads into a new panel.
@@ -11970,6 +11979,7 @@ export class StudyWorkspace {
     // The retired replay's output index goes with it, so its entries leave the extension host's memory.
     this.selectedNodeHistoryOutputIndex = undefined
     this.selectedNodeHistoryShown = undefined
+    this.nodeOutputReadings.clear()
     this.selectedNodeHistorySequence = undefined
     this.selectedNodeHistoryStepId = undefined
     this.selectedNodeHistoryDebugAvailable = false
@@ -14016,30 +14026,118 @@ export class StudyWorkspace {
     message: StudyViewMessage,
     view: NodeTestApplicationView,
   ): void {
-    if (!this.app) return
+    const panel = this.app
+    if (!panel) return
     const key = JSON.stringify([
       this.leaseId,
       'test-replay',
       message.nodeHistory?.header.studyId,
     ])
-    if (key !== this.lastApplicationKey) {
-      this.lastApplicationKey = key
+    // This runs inside catch and finally blocks and must not throw: the lease's panel can be disposed before its release is seen, and a write into it throws "Viewport lease is released" (F133). The pane is written again when it is next opened.
+    try {
+      if (key !== this.lastApplicationKey) {
+        this.lastApplicationKey = key
+        this.shownNodeHistoryApplicationGeneration = view.generation
+        const html = this.applicationHtml(message)
+        if (this.viewport) this.viewport.showHistory(html)
+        else panel.webview.html = html
+        return
+      }
+      if (view.generation === this.shownNodeHistoryApplicationGeneration) return
       this.shownNodeHistoryApplicationGeneration = view.generation
-      const html = capturedAppHtml(message)
-      if (this.viewport) this.viewport.showHistory(html)
-      else this.app.webview.html = html
+      this.postNodeHistoryOutput(panel, {
+        type: 'node-history-output',
+        generation: view.generation,
+        view,
+      })
+      // The restore copy is written only if a replacement panel needs it, not at every moment.
+      this.viewport?.updateHistory(() => this.applicationHtml(message))
+    } catch {
+      // Nothing to show a disposed pane.
+    }
+  }
+
+  /**
+   * Renders the Application pane's document for the selected moment with the learner's reading of a test replay's output (D22); the one place that writes it, so every document of a replay (a presentation change, a Retry, a restore copy) opens where the learner was.
+   * @param message - The Study message whose selection the pane shows.
+   * @returns The document.
+   * @example this.app.webview.html = this.applicationHtml(this.message())
+   */
+  private applicationHtml(message: StudyViewMessage): string {
+    const studyId = message.nodeHistory?.header.studyId
+    return capturedAppHtml(
+      message,
+      studyId === undefined ? undefined : this.nodeOutputReadings.get(studyId),
+    )
+  }
+
+  /**
+   * Posts a view into the Application document and, when the webview did not take it (not live, reloading) or refused it, forgets that the generation was shown, so the next publish posts it again and the pane does not stay on an older moment until the moment changes (F152).
+   * A hidden pane that did not take the message reloads from its restore copy and asks for the current view itself ({@link receiveApplicationMessage}), so nothing is posted again for it.
+   * @param panel - The Application pane the update is for.
+   * @param update - The update.
+   * @example this.postNodeHistoryOutput(panel, { type: 'node-history-output', generation: 3, view })
+   */
+  private postNodeHistoryOutput(
+    panel: vscode.WebviewPanel,
+    update: NodeTestOutputUpdate,
+  ): void {
+    const forget = (): void => {
+      if (
+        this.app === panel &&
+        this.shownNodeHistoryApplicationGeneration === update.generation
+      )
+        this.shownNodeHistoryApplicationGeneration = undefined
+    }
+    void Promise.resolve(panel.webview.postMessage(update)).then(
+      (delivered) => {
+        if (!delivered && panel.visible) forget()
+      },
+      forget,
+    )
+  }
+
+  /**
+   * Takes what the Application pane's document tells the host (D22, F141): the learner's follow choice and scroll anchor, which are filed under the replay, and the document's ready message, which is answered with the current view and reading when the document's is older (VS Code reloaded the page in place from an earlier write) or its follow choice differs.
+   * @param panel - The Application pane that posted the message.
+   * @param message - The message as the webview posted it; anything but the document's reports is ignored.
+   * @example panel.webview.onDidReceiveMessage((message) => this.receiveApplicationMessage(panel, message))
+   */
+  private receiveApplicationMessage(
+    panel: vscode.WebviewPanel,
+    message: unknown,
+  ): void {
+    const report = readNodeTestOutputReport(message)
+    // A document of a replay that is no longer selected has nothing to report.
+    if (
+      this.app !== panel ||
+      !report ||
+      report.history !== this.selectedNodeHistory?.header.studyId
+    )
+      return
+    if (report.type === 'node-history-output-state') {
+      this.nodeOutputReadings.set(report.history, {
+        follow: report.follow,
+        ...(report.anchor ? { anchor: report.anchor } : {}),
+      })
       return
     }
-    if (view.generation === this.shownNodeHistoryApplicationGeneration) return
+    const view = this.nodeHistoryApplicationMemo?.view
+    const reading = this.nodeOutputReadings.get(report.history) ?? {
+      follow: true,
+    }
+    if (
+      !view ||
+      (report.generation >= view.generation && report.follow === reading.follow)
+    )
+      return
     this.shownNodeHistoryApplicationGeneration = view.generation
-    const update: NodeTestOutputUpdate = {
+    this.postNodeHistoryOutput(panel, {
       type: 'node-history-output',
       generation: view.generation,
       view,
-    }
-    void this.app.webview.postMessage(update)
-    // The restore copy is written only if a replacement panel needs it, not at every moment.
-    this.viewport?.updateHistory(() => capturedAppHtml(message))
+      reading,
+    })
   }
 
   /**
@@ -17845,6 +17943,9 @@ export class StudyWorkspace {
     this.lastApplicationKey = undefined
     // A pane exists again, so the line about the closed one no longer describes the reader.
     if (this.errors.delete('application')) this.publish()
+    panel.webview.onDidReceiveMessage((message) =>
+      this.receiveApplicationMessage(panel, message),
+    )
     panel.onDidDispose(() => {
       if (this.app !== panel) return
       this.presentationTransition?.cancellation.abort(

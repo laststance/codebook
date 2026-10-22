@@ -5,10 +5,19 @@ import { STUDY_STYLES, STUDY_UI_OPTIONS } from '../ui/constants'
 import type { StudyViewMessage } from '../ui/studyHtml'
 
 import { escapeHtml } from './escapeHtml'
+import type { NodeTestOutputReading } from './installNodeTestOutput'
 import { testOutputHtml } from './testOutputHtml'
 
-/** Renders a labeled historical PNG, a test replay's recorded output, or explicit absence without granting a runtime paint receipt. @example capturedAppHtml(message) */
-export function capturedAppHtml(message: StudyViewMessage): string {
+/**
+ * Renders a labeled historical PNG, a test replay's recorded output, or explicit absence without granting a runtime paint receipt.
+ * @param message - The Study message whose selection the pane shows.
+ * @param reading - For a test replay, the learner's follow choice and scroll anchor as the host keeps them (D22); the document follows the output without it.
+ * @example capturedAppHtml(message)
+ */
+export function capturedAppHtml(
+  message: StudyViewMessage,
+  reading?: NodeTestOutputReading,
+): string {
   const nonce = randomUUID()
   // A test replay has no application to show; its pane is the recorded output, one document updated in place for each event (EN3).
   if (message.nodeHistoryApplication)
@@ -16,6 +25,7 @@ export function capturedAppHtml(message: StudyViewMessage): string {
       message.nodeHistoryApplication,
       nonce,
       message.nodeHistory?.header.studyId ?? '',
+      reading,
     )
   const image = message.model.image,
     observation = message.model.observation

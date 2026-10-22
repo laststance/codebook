@@ -2378,19 +2378,16 @@ async function check(page, options, collected) {
             learningAgain: withTheStop,
           }),
       })
-      // Arrange: the Application pane's document of the same replay at its first output (Design 3), in a page of its own with its saved webview state; the Study page stays as it is for the cases that follow.
+      // Arrange: the Application pane's document of the same replay at its first output (Design 3), in a page of its own; the stand-in for the webview API records what the document tells the host (D22); the Study page stays as it is for the cases that follow.
       const applicationPage = await page.context().newPage()
       await applicationPage.setViewportSize({ width: 760, height: 360 })
       await applicationPage.goto(options.url)
       await applicationPage.evaluate(() => {
         window.sent = []
-        window.savedState = undefined
         window.acquireVsCodeApi = () => ({
-          getState: () => window.savedState,
-          setState(state) {
-            window.savedState = state
-          },
-          postMessage: (message) => window.sent.push(message),
+          getState: () => undefined,
+          setState() {},
+          postMessage: (message) => window.sent.push(structuredClone(message)),
         })
       })
       await applicationPage.setContent(options.html.application)
@@ -2469,13 +2466,11 @@ async function check(page, options, collected) {
             output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
           jumpShown: !document.getElementById('test-output-jump').hidden,
           focused: document.activeElement?.id,
-          follow: window.savedState?.testOutputFollow,
+          follow: window.sent
+            .filter((message) => message.type === 'node-history-output-state')
+            .at(-1)?.follow,
         }
       })
-      // The webview state as the document left it at the result, for the reload case below.
-      const stateAtResult = await applicationPage.evaluate(
-        () => window.savedState,
-      )
       // Assert
       cases.push({
         name: 'the Application document of a test replay shows only the output up to its moment, and an in-place update to the result keeps the learner’s scroll position, selection and focus, ignores an older view and returns to the end with Jump to latest (Design 8)',
@@ -2522,7 +2517,11 @@ async function check(page, options, collected) {
         })
       }
       // Act: the host posts two views of a long recorded output, 32,768 one-character lines, the second without the first line and with one more (EN3: the update matches lines by their number in time linear in the lines).
-      const longUpdate = await applicationPage.evaluate(() => {
+      const longUpdate = await applicationPage.evaluate(async () => {
+        const frames = () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          )
         const lines = Array.from({ length: 32768 }, (_, index) => ({
           channel: 'stdout',
           text: String(index % 10),
@@ -2545,14 +2544,17 @@ async function check(page, options, collected) {
             }),
           )
         post(10, lines)
+        await frames()
         const started = performance.now()
         post(11, [
           ...lines.slice(1),
           { channel: 'stdout', text: 'last', number: 33768 },
         ])
+        await frames()
+        const elapsed = performance.now() - started
         return {
           // gstack-timing-ok: the bound guards a hang, not a speed: the earlier per-line lookup took 3.5 s and this update 61 ms on the Mac, so 1 s keeps a wide margin each way.
-          underASecond: performance.now() - started < 1000,
+          underASecond: elapsed < 1000,
           lines: document.querySelectorAll('#test-output .output-line').length,
           last: document.querySelector('#test-output .output-line:last-child')
             ?.textContent,
@@ -2567,311 +2569,364 @@ async function check(page, options, collected) {
           longUpdate.lines === 32768 &&
           longUpdate.last === 'last\n',
       })
-      // Value: protects=the follow choice belongs to its own test replay (DS20): a document of another replay written into the same Application pane starts at the end of its output, although the learner stopped following in the first one, while a document of the same replay, as its restore copy writes it, keeps the learner's choice; fails_when=the webview state keeps one follow choice for every replay, so the next replay opens at the top of its output with Jump to latest shown; why_new=Step 9's testing and maintainability reviews found the choice kept under one key that outlives a replay; seam=none; no_claim=VS Code's keeping of webview state across documents, which the page's saved-state stand-in plays
-      // Act: the pane's document written again, once for another replay and once for this one, each with a saved choice not to follow; each write gets a page of its own, as a webview loads a new document in a fresh page.
-      const sameReplay = await applicationPage.evaluate(
-        () => window.savedState?.testOutputHistory,
-      )
-      const followAfterWrite = async (savedState) => {
-        const writtenPage = await page.context().newPage()
-        await writtenPage.setViewportSize({ width: 760, height: 360 })
-        await writtenPage.goto(options.url)
-        await writtenPage.evaluate((state) => {
-          window.savedState = state
-          window.acquireVsCodeApi = () => ({
-            getState: () => window.savedState,
-            setState(next) {
-              window.savedState = next
-            },
-            postMessage() {},
-          })
-        }, savedState)
-        await writtenPage.setContent(options.html.application)
-        await writtenPage.evaluate(
+      // Arrange: Application documents the way the editor loads them, each in a page of its own (a webview loads a new document in a fresh page), with a stand-in for the webview API that records what the document tells the host.
+      /** Waits two frames, so a view queued for the next frame is drawn and the layout has settled. */
+      const settleFrames = (target) =>
+        target.evaluate(
           () =>
             new Promise((resolve) =>
               requestAnimationFrame(() => requestAnimationFrame(resolve)),
             ),
         )
-        const reading = await writtenPage.evaluate(() => {
-          const output = document.getElementById('test-output')
-          return {
-            atEnd:
-              output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
-            jumpShown: !document.getElementById('test-output-jump').hidden,
-          }
-        })
-        await writtenPage.close()
-        return reading
-      }
-      // Value: protects=an Application document that the editor loads again from its first write (the pane moved to another window, webviews reloaded) shows the latest moment it had received, with that moment's time and verdict, instead of the moment it was first written with; fails_when=the reloaded document shows its first moment or its loading line while the Study pane, the source and the debugger show the latest one; why_new=Step 9's state-machines review found the pane's html written once per replay and each later moment only posted; seam=none; no_claim=VS Code's own reload, which the fresh page with the kept state stands in for
-      // Act: the first write loaded again in a fresh page with the state the document kept at the result.
-      const reloadedPage = await page.context().newPage()
-      await reloadedPage.setViewportSize({ width: 760, height: 360 })
-      await reloadedPage.goto(options.url)
-      await reloadedPage.evaluate((state) => {
-        window.savedState = state
-        window.acquireVsCodeApi = () => ({
-          getState: () => window.savedState,
-          setState(next) {
-            window.savedState = next
-          },
-          postMessage() {},
-        })
-      }, stateAtResult)
-      await reloadedPage.setContent(options.html.application)
-      const reloaded = await reloadedPage.evaluate(() => ({
-        time: document.getElementById('test-output-time').textContent,
-        end: document.getElementById('test-output-end').textContent,
-        endShown: !document.getElementById('test-output-end').hidden,
-      }))
-      await reloadedPage.close()
-      // Assert
-      cases.push({
-        name: 'an Application document loaded again from its first write shows the latest moment it had received (EN3)',
-        actual: reloaded,
-        passed:
-          JSON.stringify(reloaded) ===
-          JSON.stringify({
-            time: 'Recorded test output · 0.90 s',
-            end: 'Test passed · exit code 0',
-            endShown: true,
-          }),
-      })
-      // Value: protects=an Application document the editor loads again after the learner stopped following shows the latest moment it had received and keeps not following: it stays where it starts, offers Jump to latest and keeps the choice in its state; fails_when=the reloaded document drops the learner's choice and scrolls to the end, hides Jump to latest, or shows its first moment; why_new=Step 9 pass 2's state-machines review: the reload case reloaded only a following document; seam=none; no_claim=VS Code's own reload, which the fresh page with the kept state stands in for
-      // Act: the first write loaded again with the state the document kept at the result, the learner not following.
-      const reloadedNotFollowingPage = await page.context().newPage()
-      await reloadedNotFollowingPage.setViewportSize({
-        width: 760,
-        height: 360,
-      })
-      await reloadedNotFollowingPage.goto(options.url)
-      await reloadedNotFollowingPage.evaluate(
-        (state) => {
-          window.savedState = state
+      /** Opens an Application document in a fresh page; `prepare` runs in the page before the document is set. */
+      const openApplication = async (html, prepare) => {
+        const documentPage = await page.context().newPage()
+        await documentPage.setViewportSize({ width: 760, height: 360 })
+        await documentPage.goto(options.url)
+        await documentPage.evaluate(() => {
+          window.sent = []
           window.acquireVsCodeApi = () => ({
-            getState: () => window.savedState,
-            setState(next) {
-              window.savedState = next
-            },
-            postMessage() {},
+            // State an earlier document of the replay left in the webview: the document must not read it (D22).
+            getState: () => window.priorState,
+            setState() {},
+            postMessage: (message) =>
+              window.sent.push(structuredClone(message)),
           })
-        },
-        { ...stateAtResult, testOutputFollow: false },
-      )
-      await reloadedNotFollowingPage.setContent(options.html.application)
-      await reloadedNotFollowingPage.evaluate(
-        () =>
-          new Promise((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(resolve)),
-          ),
-      )
-      const reloadedNotFollowing = await reloadedNotFollowingPage.evaluate(
-        () => {
+        })
+        if (prepare) await documentPage.evaluate(prepare)
+        await documentPage.setContent(html)
+        await settleFrames(documentPage)
+        return documentPage
+      }
+      /** Posts a message into a document as the host does. */
+      const postToDocument = (target, data) =>
+        target.evaluate(
+          (message) =>
+            window.dispatchEvent(
+              new MessageEvent('message', { data: message }),
+            ),
+          data,
+        )
+      /** Reads where a document stands: its header time, whether it is at the end of the output, whether Jump to latest shows, the first line in view with how far its top is above the region's, the last reported state and the scroll position. */
+      const readDocument = (target) =>
+        target.evaluate(() => {
           const output = document.getElementById('test-output')
+          const regionTop = output.getBoundingClientRect().top
+          const firstInView = Array.from(output.children).find(
+            (line) => line.getBoundingClientRect().bottom > regionTop,
+          )
+          const reports = window.sent.filter(
+            (message) => message.type === 'node-history-output-state',
+          )
           return {
             time: document.getElementById('test-output-time').textContent,
             atEnd:
               output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
             jumpShown: !document.getElementById('test-output-jump').hidden,
-            savedFollow: window.savedState?.testOutputFollow,
+            firstLine: Number(firstInView?.dataset.line),
+            offsetPx: Math.round(
+              regionTop - firstInView.getBoundingClientRect().top,
+            ),
+            lastReport: reports.at(-1) && {
+              follow: reports.at(-1).follow,
+              anchorLine: reports.at(-1).anchor?.line,
+            },
+            reportCount: reports.length,
+            scrollTop: output.scrollTop,
+          }
+        })
+      /** Gives the document's HTML another reading of the learner, as the host writes a document of the same replay. */
+      const withReading = (html, reading) =>
+        html.replace(
+          '"reading":{"follow":true}',
+          `"reading":${JSON.stringify(reading)}`,
+        )
+      const learnerScrolledTo = (target, top) =>
+        target.evaluate((scrollTop) => {
+          document.getElementById('test-output').scrollTop = scrollTop
+        }, top)
+      const resultView = options.testReplayViews.result
+      // Value: protects=a document written for a replay opens where the host says the learner was, and ignores state an earlier document left in the webview: a stored choice not to follow does not outlive the host's choice to follow (F151), a choice not to follow with a scroll anchor opens at that line with Jump to latest, and the learner's place is found again by the line's number and offset (F120, F138); fails_when=the document reads the webview state (it opens at the top of the output for a replay the learner left following), drops the anchor (it opens at the oldest kept line), or follows the output although the host kept the learner reading higher up; why_new=D22 moves the follow choice and the scroll anchor from the webview's state to the host, which passes them in the document's options; seam=none; no_claim=how the host files the reading (the workspace tests), VS Code's own webview state, which the stand-in plays
+      // Act: three documents of the same replay at its result: the host's reading is following (with stale webview state saying otherwise), not following at line 20 and 7 px, and the reading a scroll in a first document reported.
+      const followingPage = await openApplication(
+        options.html.applicationAtResult,
+        () => {
+          window.priorState = {
+            testOutputFollow: false,
+            testOutputHistory: 'an earlier document of this replay',
           }
         },
       )
-      await reloadedNotFollowingPage.close()
-      // Assert
-      cases.push({
-        name: 'an Application document loaded again after the learner stopped following shows the latest moment and keeps Jump to latest (DS20, EN3)',
-        actual: reloadedNotFollowing,
-        passed:
-          JSON.stringify(reloadedNotFollowing) ===
-          JSON.stringify({
-            time: 'Recorded test output · 0.90 s',
-            atEnd: false,
-            jumpShown: true,
-            savedFollow: false,
-          }),
-      })
-      const anotherReplay = await followAfterWrite({
-        testOutputFollow: false,
-        testOutputHistory: 'another-test-replay',
-      })
-      const sameReplayKept = await followAfterWrite({
-        testOutputFollow: false,
-        testOutputHistory: sameReplay,
-      })
-      // Assert
-      cases.push({
-        name: 'a test replay’s Application document follows its own output although the learner stopped following in another replay, and the same replay’s document keeps the learner’s choice (DS20)',
-        actual: { sameReplay, anotherReplay, sameReplayKept },
-        passed:
-          typeof sameReplay === 'string' &&
-          JSON.stringify({ anotherReplay, sameReplayKept }) ===
-            JSON.stringify({
-              anotherReplay: { atEnd: true, jumpShown: false },
-              sameReplayKept: { atEnd: false, jumpShown: true },
-            }),
-      })
-      // Value: protects=an Application document written again for the same replay with a newer moment keeps that moment over an older view its state kept (a document written again after the learner came back to the replay); fails_when=the kept view is applied whatever its generation, and the pane goes back to an older moment while the Study pane, the source and the debugger show the current one; why_new=Step 9 pass 2's testing review: only a newer kept view was tested; seam=none; no_claim=the host's generation counter, which only grows within a window
-      // Arrange: the state keeps the result's view at generation 0; the document is written with the first output at generation 1.
-      const olderKeptPage = await page.context().newPage()
-      await olderKeptPage.setViewportSize({ width: 760, height: 360 })
-      await olderKeptPage.goto(options.url)
-      await olderKeptPage.evaluate(
-        (state) => {
-          window.savedState = state
-          window.acquireVsCodeApi = () => ({
-            getState: () => window.savedState,
-            setState(next) {
-              window.savedState = next
-            },
-            postMessage() {},
-          })
-        },
-        {
-          testOutputHistory: sameReplay,
-          testOutputFollow: true,
-          testOutputView: { ...options.testReplayViews.result, generation: 0 },
-        },
+      const followingDespitePriorState = await readDocument(followingPage)
+      await followingPage.close()
+      const anchoredPage = await openApplication(
+        withReading(options.html.applicationAtResult, {
+          follow: false,
+          anchor: { line: 20, offsetPx: 7 },
+        }),
       )
-      // Act
-      await olderKeptPage.setContent(options.html.application)
-      const olderKept = await olderKeptPage.evaluate(() => ({
-        time: document.getElementById('test-output-time').textContent,
-        endShown: !document.getElementById('test-output-end').hidden,
-      }))
-      await olderKeptPage.close()
+      const openedAtAnchor = await readDocument(anchoredPage)
+      await anchoredPage.close()
+      const readingPage = await openApplication(
+        options.html.applicationAtResult,
+      )
+      await learnerScrolledTo(readingPage, 250)
+      await settleFrames(readingPage)
+      const whereLearnerRead = await readDocument(readingPage)
+      const reported = await readingPage.evaluate(() =>
+        window.sent
+          .filter((message) => message.type === 'node-history-output-state')
+          .at(-1),
+      )
+      await readingPage.close()
+      const restoredPage = await openApplication(
+        withReading(options.html.applicationAtResult, {
+          follow: reported.follow,
+          anchor: reported.anchor,
+        }),
+      )
+      const restoredReading = await readDocument(restoredPage)
+      await restoredPage.close()
       // Assert
       cases.push({
-        name: 'an Application document written again for the same replay keeps its own newer moment over an older view its state kept (EN3)',
-        actual: olderKept,
+        name: 'an Application document opens where the host says the learner was: following, at a scroll anchor, or where the learner’s own scroll had been reported, and ignores state an earlier document left (D22, F120, F138, F151)',
+        actual: {
+          followingDespitePriorState,
+          openedAtAnchor,
+          whereLearnerRead,
+          reported,
+          restoredReading,
+        },
         passed:
-          JSON.stringify(olderKept) ===
-          JSON.stringify({
-            time: 'Recorded test output · 0.10 s',
-            endShown: false,
-          }),
+          followingDespitePriorState.atEnd &&
+          !followingDespitePriorState.jumpShown &&
+          followingDespitePriorState.time === 'Recorded test output · 0.90 s' &&
+          !openedAtAnchor.atEnd &&
+          openedAtAnchor.jumpShown &&
+          openedAtAnchor.firstLine === 20 &&
+          openedAtAnchor.offsetPx === 7 &&
+          reported.follow === false &&
+          reported.anchor.line === whereLearnerRead.firstLine &&
+          restoredReading.firstLine === whereLearnerRead.firstLine &&
+          Math.abs(restoredReading.offsetPx - whereLearnerRead.offsetPx) <= 1 &&
+          restoredReading.jumpShown,
       })
-      // Value: protects=while moments stream into a test replay's Application document (Play posts up to twenty a second), the document writes its state, which copies the whole shown output, once for the stream, and writes the last moment when it is left; fails_when=each posted moment writes the state again (twenty serialized copies of the output for twenty moments), or a document left after the stream keeps an older moment; why_new=Step 9 pass 2's core checklist and performance review (C3): the state write copied the whole view at every moment; seam=none; no_claim=VS Code's own state transport, which the stand-in imitates by serializing each write, and the timer's interval, which no assertion here waits for
-      // Arrange: a document whose state writes are counted and serialized, as VS Code's webview serializes them.
-      const streamPage = await page.context().newPage()
-      await streamPage.setViewportSize({ width: 760, height: 360 })
-      await streamPage.goto(options.url)
-      await streamPage.evaluate(() => {
-        window.savedState = undefined
-        window.stateWrites = 0
-        window.acquireVsCodeApi = () => ({
-          getState: () =>
-            window.savedState === undefined
-              ? undefined
-              : JSON.parse(window.savedState),
-          setState(next) {
-            window.stateWrites += 1
-            window.savedState = JSON.stringify(next)
-          },
-          postMessage() {},
-        })
+      // Value: protects=a document that the editor reloads in place from an earlier write (Developer: Reload Webviews) tells the host it is ready with the generation it shows, and the host's answer with its current view and reading brings it to the host's moment and the learner's place; fails_when=the document sends no ready message (the host cannot tell its view is older), ignores the answer's view or reading, or draws it above an older generation; why_new=F141: the reloaded document showed an earlier moment until the next move; seam=none; no_claim=the host's decision to answer, which the workspace tests pin
+      // Act: a document written with the first moment; the host answers its ready message with the result and a reading not following at line 12 and 4 px.
+      const readyPage = await openApplication(options.html.application)
+      const readyMessage = await readyPage.evaluate(() =>
+        window.sent.find(
+          (message) => message.type === 'node-history-output-ready',
+        ),
+      )
+      const beforeAnswer = await readDocument(readyPage)
+      await postToDocument(readyPage, {
+        type: 'node-history-output',
+        generation: 2,
+        view: resultView,
+        reading: { follow: false, anchor: { line: 12, offsetPx: 4 } },
       })
-      await streamPage.setContent(options.html.application)
-      // Act: twenty moments posted in a row, as the host posts them during Play (each message is handled as it is dispatched); then the document is left.
-      const streamed = await streamPage.evaluate((result) => {
+      await settleFrames(readyPage)
+      const afterAnswer = await readDocument(readyPage)
+      await readyPage.close()
+      // Assert
+      cases.push({
+        name: 'an Application document tells the host it is ready, and the host’s answer brings it to the current moment and the learner’s place (F141)',
+        actual: { readyMessage, beforeAnswer, afterAnswer },
+        passed:
+          readyMessage?.generation === 1 &&
+          readyMessage.follow === true &&
+          typeof readyMessage.history === 'string' &&
+          beforeAnswer.time === 'Recorded test output · 0.10 s' &&
+          afterAnswer.time === 'Recorded test output · 0.90 s' &&
+          !afterAnswer.atEnd &&
+          afterAnswer.jumpShown &&
+          afterAnswer.firstLine === 12 &&
+          afterAnswer.offsetPx === 4,
+      })
+      // Value: protects=following is decided by the scroll position alone: a scroll to the end that moves nothing (a view of the same height) leaves no mark that swallows the learner's next scroll up, so Jump to latest shows, following is reported off and the next moment does not pull the output back to its end; fails_when=the document's scroll that moved nothing is remembered, the learner's scroll up is read as the document's own, and the next moment scrolls to the end (DS20); why_new=F106: `scrolledByDocument` stayed set when the scroll to the end caused no scroll event; seam=none; no_claim=a clamp to a shorter output, which the in-place case below pins
+      // Act: the result's output followed to its end; a view of the same height arrives (no scroll to make); the learner scrolls up; another view arrives.
+      const sameHeightPage = await openApplication(
+        options.html.applicationAtResult,
+      )
+      const changedLine = (generation, text) => ({
+        ...resultView,
+        generation,
+        lines: resultView.lines.map((line) =>
+          line.number === 1 ? { ...line, text } : line,
+        ),
+      })
+      await postToDocument(sameHeightPage, {
+        type: 'node-history-output',
+        generation: 3,
+        view: changedLine(3, 'job 1 changed'),
+      })
+      await settleFrames(sameHeightPage)
+      await sameHeightPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        output.scrollTop = output.scrollTop - 120
+      })
+      await settleFrames(sameHeightPage)
+      const afterScrollUp = await readDocument(sameHeightPage)
+      await postToDocument(sameHeightPage, {
+        type: 'node-history-output',
+        generation: 4,
+        view: changedLine(4, 'job 1 changed again'),
+      })
+      await settleFrames(sameHeightPage)
+      const afterNextMoment = await readDocument(sameHeightPage)
+      await sameHeightPage.close()
+      // Assert
+      cases.push({
+        name: 'a scroll up after a scroll to the end that moved nothing stops following, shows Jump to latest and is not undone by the next moment (DS20, F106)',
+        actual: { afterScrollUp, afterNextMoment },
+        passed:
+          afterScrollUp.jumpShown &&
+          afterScrollUp.lastReport?.follow === false &&
+          !afterNextMoment.atEnd &&
+          afterNextMoment.jumpShown &&
+          afterNextMoment.scrollTop === afterScrollUp.scrollTop,
+      })
+      // Value: protects=a clamp of the scroll position caused by hiding the verdict and muted lines is the document's own: at the result, scrolled 6 px above the end, the next moment (the same output without the verdict) leaves following off and Jump to latest shown; fails_when=the clamp is read as the learner's return to the end and turns following on; why_new=F142 (not reproduced in Cycle 0049; the host's native check in VS Code is the driving agent's, D25); seam=none; no_claim=the native editor's own scrolling, which the native check covers
+      // Act: the learner scrolls to 6 px above the end of the result's output; the same lines arrive without the verdict.
+      const clampPage = await openApplication(options.html.applicationAtResult)
+      await clampPage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        output.scrollTop = output.scrollHeight - output.clientHeight - 6
+      })
+      await settleFrames(clampPage)
+      const sixAboveEnd = await readDocument(clampPage)
+      const withoutVerdict = { ...resultView, generation: 3 }
+      delete withoutVerdict.end
+      await postToDocument(clampPage, {
+        type: 'node-history-output',
+        generation: 3,
+        view: withoutVerdict,
+      })
+      await settleFrames(clampPage)
+      const afterClamp = await readDocument(clampPage)
+      await clampPage.close()
+      // Assert
+      cases.push({
+        name: 'a clamp of the scroll position caused by hiding the verdict leaves following off (F142)',
+        actual: { sixAboveEnd, afterClamp },
+        passed:
+          sixAboveEnd.jumpShown &&
+          sixAboveEnd.lastReport?.follow === false &&
+          afterClamp.jumpShown &&
+          afterClamp.lastReport?.follow === false,
+      })
+      // Value: protects=moments posted in a burst, as Play posts them (up to twenty a second), are drawn once per animation frame, the newest only, and an older one that arrives after is ignored; fails_when=each moment is drawn in full (twenty draws of the output for twenty moments), or the older view that came last wins; why_new=F140: a log-heavy replay fell behind Play's 50 ms tick; seam=Element.prototype.setAttribute, counted for the document's main region, which every draw sets once; no_claim=the draw's cost, which the long-output case bounds
+      // Act: twenty moments in one task, then one older.
+      const burstPage = await openApplication(options.html.application, () => {
+        window.draws = 0
+        const setAttribute = Element.prototype.setAttribute
+        Element.prototype.setAttribute = function (name, value) {
+          if (this.id === 'test-output-main' && name === 'aria-label')
+            window.draws += 1
+          return setAttribute.call(this, name, value)
+        }
+      })
+      const drawsAtOpen = await burstPage.evaluate(() => window.draws)
+      await burstPage.evaluate((result) => {
         for (let generation = 2; generation <= 21; generation += 1)
           window.dispatchEvent(
             new MessageEvent('message', {
               data: {
                 type: 'node-history-output',
                 generation,
-                view: { ...result, generation },
+                view: {
+                  ...result,
+                  generation,
+                  time: `Recorded test output · burst ${generation}`,
+                },
               },
             }),
           )
-        const whileStreaming = window.stateWrites
-        window.dispatchEvent(new Event('pagehide'))
-        return {
-          whileStreaming,
-          afterLeaving: window.stateWrites,
-          keptGeneration: JSON.parse(window.savedState).testOutputView
-            .generation,
-        }
-      }, options.testReplayViews.result)
-      await streamPage.close()
-      // Assert
-      cases.push({
-        name: 'a test replay’s Application document writes its state once for a stream of moments and writes the last moment when it is left (DS20, EN3)',
-        actual: streamed,
-        passed:
-          JSON.stringify(streamed) ===
-          JSON.stringify({
-            whileStreaming: 1,
-            afterLeaving: 2,
-            keptGeneration: 21,
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'node-history-output',
+              generation: 5,
+              view: { ...result, generation: 5, time: 'older' },
+            },
           }),
-      })
-      // Value: protects=moments posted one by one, as the host posts them during Play, are joined into one state write per TEST_OUTPUT_STATE_WRITE_INTERVAL_MS (500 ms), and the joined last moment is written when the interval ends, without the document being left; fails_when=the interval is dropped or zero (a write per moment, each copying the whole output), or the timer forgets the moments joined during the interval, so a document reloaded later shows an older moment; why_new=Step 9 pass 3's testing review: the stream case posts every moment in one task and flushes by pagehide, so neither the interval nor the timer's write was tested; seam=the page's setTimeout, replaced to hold the document's timers of 100 ms or more until the case runs them; no_claim=the real passage of time, which the held timer stands in for
-      // Arrange: a document whose state writes are counted, with its long timers held.
-      const timerPage = await page.context().newPage()
-      await timerPage.setViewportSize({ width: 760, height: 360 })
-      await timerPage.goto(options.url)
-      await timerPage.evaluate(() => {
-        window.savedState = undefined
-        window.stateWrites = 0
-        window.heldTimers = []
-        const realSetTimeout = window.setTimeout.bind(window)
-        window.setTimeout = (callback, delay) => {
-          if (delay === undefined || delay >= 100) {
-            window.heldTimers.push({ callback, delay })
-            return window.heldTimers.length
-          }
-          return realSetTimeout(callback, delay)
-        }
-        window.acquireVsCodeApi = () => ({
-          getState: () => window.savedState,
-          setState(next) {
-            window.stateWrites += 1
-            window.savedState = structuredClone(next)
-          },
-          postMessage() {},
-        })
-      })
-      await timerPage.setContent(options.html.application)
-      // Act: three moments, each posted in its own task.
-      for (const generation of [2, 3, 4])
-        await timerPage.evaluate(
-          ({ generation, view }) =>
-            window.dispatchEvent(
-              new MessageEvent('message', {
-                data: {
-                  type: 'node-history-output',
-                  generation,
-                  view: { ...view, generation },
-                },
-              }),
-            ),
-          { generation, view: options.testReplayViews.result },
         )
-      const beforeInterval = await timerPage.evaluate(() => ({
-        writes: window.stateWrites,
-        stateTimers: window.heldTimers
-          .filter((timer) => timer.delay === 500)
-          .map((timer) => timer.delay),
+      }, resultView)
+      await settleFrames(burstPage)
+      const burst = await burstPage.evaluate(() => ({
+        draws: window.draws,
+        time: document.getElementById('test-output-time').textContent,
       }))
-      const afterInterval = await timerPage.evaluate(() => {
-        window.heldTimers.find((timer) => timer.delay === 500)?.callback()
-        return {
-          writes: window.stateWrites,
-          kept: window.savedState?.testOutputView?.generation,
-        }
-      })
-      await timerPage.close()
+      await burstPage.close()
       // Assert
       cases.push({
-        name: 'moments posted one by one are joined into one state write per interval, and the joined moment is written when the interval ends (DS20, EN3)',
-        actual: { beforeInterval, afterInterval },
+        name: 'moments posted in a burst are drawn once per frame, the newest only, and an older one that comes last is ignored (F140)',
+        actual: { drawsAtOpen, burst },
         passed:
-          JSON.stringify({ beforeInterval, afterInterval }) ===
+          drawsAtOpen === 1 &&
+          burst.draws === 2 &&
+          burst.time === 'Recorded test output · burst 21',
+      })
+      // Value: protects=the learner's scroll anchor reaches the host at most once per TEST_OUTPUT_STATE_REPORT_INTERVAL_MS (500 ms), the anchors of the scrolls in between are joined into one report when the interval ends, a change of the follow choice is reported at once, and the joined anchor is also reported when the document is left; fails_when=each scroll event reports (a message per event), the timer forgets the scrolls joined during the interval, or the pagehide report is missing; why_new=D22: the anchor is reported to the host, and scrolling produces events faster than the host needs them; seam=the page's setTimeout, replaced to hold the document's timers of 100 ms or more until the case runs them; no_claim=the real passage of time, which the held timer stands in for
+      // Act: the learner scrolls up (a change of the follow choice) and then scrolls four more times inside the interval.
+      const intervalPage = await openApplication(
+        options.html.applicationAtResult,
+        () => {
+          window.heldTimers = []
+          const realSetTimeout = window.setTimeout.bind(window)
+          window.setTimeout = (callback, delay) => {
+            if (delay === undefined || delay >= 100) {
+              window.heldTimers.push({ callback, delay })
+              return window.heldTimers.length
+            }
+            return realSetTimeout(callback, delay)
+          }
+        },
+      )
+      const stateReports = () =>
+        intervalPage.evaluate(
+          () =>
+            window.sent.filter(
+              (message) => message.type === 'node-history-output-state',
+            ).length,
+        )
+      for (const top of [300, 250, 200, 150, 100]) {
+        await learnerScrolledTo(intervalPage, top)
+        await settleFrames(intervalPage)
+      }
+      const duringInterval = {
+        reports: await stateReports(),
+        timers: await intervalPage.evaluate(() =>
+          window.heldTimers.map((timer) => timer.delay),
+        ),
+      }
+      await intervalPage.evaluate(() => window.heldTimers[0].callback())
+      const afterInterval = await stateReports()
+      await learnerScrolledTo(intervalPage, 60)
+      await settleFrames(intervalPage)
+      const beforeLeaving = await stateReports()
+      await intervalPage.evaluate(() =>
+        window.dispatchEvent(new Event('pagehide')),
+      )
+      const afterLeaving = await stateReports()
+      await intervalPage.close()
+      // Assert
+      cases.push({
+        name: 'the learner’s scroll anchor is reported to the host once per interval, the follow choice at once and the joined anchor when the document is left (D22)',
+        actual: { duringInterval, afterInterval, beforeLeaving, afterLeaving },
+        passed:
           JSON.stringify({
-            beforeInterval: { writes: 1, stateTimers: [500] },
-            afterInterval: { writes: 2, kept: 4 },
+            duringInterval,
+            afterInterval,
+            beforeLeaving,
+            afterLeaving,
+          }) ===
+          JSON.stringify({
+            duringInterval: { reports: 2, timers: [500] },
+            afterInterval: 3,
+            beforeLeaving: 3,
+            afterLeaving: 4,
           }),
       })
       await applicationPage.close()
@@ -2886,18 +2941,16 @@ async function check(page, options, collected) {
             reading.testLines <= 2,
         ),
       })
-      // Arrange: a second Application document of the same replay, in a page of its own with its saved webview state, for the in-place updates that move to another moment (Design 3, EN3, DS20); the page above is closed, and the cases below keep their own.
+      // Arrange: a second Application document of the same replay, in a page of its own, for the in-place updates that move to another moment (Design 3, EN3, DS20); the page above is closed, and the cases below keep their own.
       const updatePage = await page.context().newPage()
       await updatePage.setViewportSize({ width: 760, height: 360 })
       await updatePage.goto(options.url)
       await updatePage.evaluate(() => {
-        window.savedState = undefined
+        window.sent = []
         window.acquireVsCodeApi = () => ({
-          getState: () => window.savedState,
-          setState(state) {
-            window.savedState = state
-          },
-          postMessage: () => {},
+          getState: () => undefined,
+          setState() {},
+          postMessage: (message) => window.sent.push(structuredClone(message)),
         })
       })
       await updatePage.setContent(options.html.application)
@@ -3114,7 +3167,9 @@ async function check(page, options, collected) {
       const readFollow = () =>
         updatePage.evaluate(() => ({
           jumpShown: !document.getElementById('test-output-jump').hidden,
-          follow: window.savedState?.testOutputFollow,
+          follow: window.sent
+            .filter((message) => message.type === 'node-history-output-state')
+            .at(-1)?.follow,
         }))
       await postOutputView(8, atTheResult)
       await updatePage.evaluate(() => {
@@ -8212,6 +8267,10 @@ try {
         application: capturedAppHtml({
           ...message,
           nodeHistoryApplication: testReplayViews.first,
+        }),
+        applicationAtResult: capturedAppHtml({
+          ...message,
+          nodeHistoryApplication: testReplayViews.result,
         }),
       },
       testReplayViews,
