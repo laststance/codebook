@@ -396,9 +396,6 @@ export class StudyService {
   private readonly startKeys = new Map<string, StudyRecord>()
   private readonly maintenance: ReturnType<typeof setInterval>
   private stopping = false
-  /** Waits before the seal's one retry; a test replaces it so no clock runs. */
-  sealRetryDelay: (milliseconds: number) => Promise<void> = (milliseconds) =>
-    new Promise((resolve) => setTimeout(resolve, milliseconds))
   private shutdownPromise?: Promise<void>
 
   /**
@@ -486,6 +483,10 @@ export class StudyService {
     readonly environment: StudyEnvironment,
     readonly storageRoot: string,
     private readonly now = Date.now,
+    /** Waits before the seal's one retry ({@link StudyService.finishNodeHistory}); a test passes one that records the delay, so no clock runs. */
+    private readonly sealRetryDelay: (milliseconds: number) => Promise<void> = (
+      milliseconds,
+    ) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   ) {
     this.removalAvailability = initialStudyRemovalAvailability(
       environment.remoteName,

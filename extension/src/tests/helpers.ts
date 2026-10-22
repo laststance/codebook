@@ -75,6 +75,8 @@ export class ControlledRuntime extends ControlledConfiguredRuntime {
 export async function createHarness(
   options: {
     now?: () => number
+    /** Replaces the wait before a test history seal's one retry. */
+    sealRetryDelay?: (milliseconds: number) => Promise<void>
     prerequisites?: StudyEnvironment['prerequisites']
     create?: (
       directory: string,
@@ -137,7 +139,12 @@ export async function createHarness(
       return runtime
     },
   }
-  const service = new StudyService(environment, directory, options.now)
+  const service = new StudyService(
+    environment,
+    directory,
+    options.now,
+    options.sealRetryDelay,
+  )
   service.repository = books
   return {
     directory,

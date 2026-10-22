@@ -38,6 +38,8 @@ type FakeRunSteps = {
   stops?: 1 | 2
   /** The service clock, moved by a test to reach a deadline. */
   now?: () => number
+  /** Replaces the wait before the seal's one retry. */
+  sealRetryDelay?: (milliseconds: number) => Promise<void>
   /** Records no output before the first stop, so a run stopped there seals a history with no entry. */
   silent?: boolean
   /** Holds the preparation's first stop until it settles, or until a stop cancels it. */
@@ -62,7 +64,10 @@ type FakeRunSteps = {
  * @returns The harness, its service, a start function and counters of the run's releases.
  */
 async function testRunHarness(steps: FakeRunSteps = {}) {
-  const harness = await createHarness({ now: steps.now }),
+  const harness = await createHarness({
+      now: steps.now,
+      sealRetryDelay: steps.sealRetryDelay,
+    }),
     { service } = harness
   const storage = steps.storage
   service.nodeHistoryStore = new NodeTestHistoryStore(
@@ -1588,11 +1593,12 @@ for (const scenario of [
 ] as const)
   test(`a test history seal that fails with ${scenario.name}`, async (context) => {
     // Arrange
-    const run = await testRunHarness()
     const delays: number[] = []
-    run.service.sealRetryDelay = async (milliseconds): Promise<void> => {
-      delays.push(milliseconds)
-    }
+    const run = await testRunHarness({
+      sealRetryDelay: async (milliseconds): Promise<void> => {
+        delays.push(milliseconds)
+      },
+    })
     const finish = failSealAttempts(context, scenario.code, scenario.failures)
     try {
       const { record } = await run.start()
