@@ -28,6 +28,7 @@ import {
   resetFakeClock,
 } from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { shownTestOutput } from './utils/shownTestOutput'
 
 /**
@@ -245,7 +246,7 @@ test('saved Node history is selectable in the reader without entering browser pl
             ),
         ),
       'Node history appears in Saved studies',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert: the library lists the journal as a test replay with its verdict, capture and explained stops (DS14).
@@ -268,7 +269,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistory?.header.studyId ===
           header.studyId && !harness.postedMessages().slice(-1)[0]?.loading,
       'selected Node history is verified and displayed',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const message = harness.postedMessages().slice(-1)[0]!
 
@@ -326,7 +327,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryLearningDecision
           ?.understood === true,
       'learner understanding is saved',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const decisionMessage = harness.postedMessages().slice(-1)[0]!
     const reopenMessageIndex = harness.postedMessages().length
@@ -342,7 +343,7 @@ test('saved Node history is selectable in the reader without entering browser pl
           .slice(reopenMessageIndex)
           .some((view) => view.loading),
       'reopening the Node history enters its loading state',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     await waitUntil(
       () => {
@@ -355,7 +356,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         )
       },
       'learner choice and saved event are restored when the history reopens',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const restoredDecisionMessage = harness.postedMessages().slice(-1)[0]!
 
@@ -384,7 +385,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         20,
       'last event on the first page is selected',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receive({
       type: 'node-history-step',
@@ -397,7 +398,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         21,
       'next event crosses into the second page',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const pageBoundaryMessage = harness.postedMessages().slice(-1)[0]!
 
@@ -425,7 +426,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           23,
       'first historical Node stop reaches the native debugger and reader',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const firstPresentation = recordedStopPresentations(harness)[0]!
     assert.equal(firstPresentation.snapshot?.variables[0]?.name, 'nextTheme')
@@ -498,7 +499,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryLearningMaterial
           ?.revision === 1,
       'saved Node learning material refreshes the open reader',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const materialMessage = harness.postedMessages().slice(-1)[0]!
 
@@ -530,7 +531,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           25,
       'second historical Node stop replaces the selected native and reader state',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const secondPresentation = recordedStopPresentations(harness)[1]!
     assert.equal(secondPresentation.snapshot?.variables[0]?.name, 'themeName')
@@ -559,7 +560,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         24,
       'inter-stop output event is selected',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const interStopMessage = harness.postedMessages().slice(-1)[0]!
 
@@ -593,7 +594,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         25,
       'next recorded stop is restored',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receive({
       type: 'node-history-step',
@@ -606,7 +607,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         24,
       'backward navigation restores the output gap',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const invalidationsBeforeResult = harness.historicalDebugInvalidations()
     harness.receive({
@@ -620,7 +621,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         26,
       'terminal result event is selected',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -651,7 +652,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           25,
       'second stop is selected in the reader before reopening its history',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const library = await harness.reader.learningStorage()
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
@@ -671,7 +672,7 @@ test('saved Node history is selectable in the reader without entering browser pl
           25 &&
         !harness.postedMessages().slice(-1)[0]?.loading,
       'a new history store restores the saved stop and its native snapshot',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -714,7 +715,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         24,
       'output-only position replaces the saved stop',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const outputPositionMessage = harness.postedMessages().slice(-1)[0]!
     assert.equal(outputPositionMessage.nodeHistoryPosition?.type, 'output')
@@ -744,7 +745,7 @@ test('saved Node history is selectable in the reader without entering browser pl
           24 &&
         !harness.postedMessages().slice(-1)[0]?.loading,
       'a fresh history store restores the output-only cursor',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -773,7 +774,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     await waitUntil(
       () => Boolean(harness.reader.inspect().view?.errors.length),
       'browser playback refusal is reported to the reader',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     assert.match(
       harness.reader.inspect().view!.errors.at(-1)!,
@@ -792,7 +793,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     await waitUntil(
       () => harness.postedMessages().slice(-1)[0]?.nodeHistoryPage === 1,
       'next Node history page',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const lastPage = harness.postedMessages().slice(-1)[0]!
 
@@ -832,7 +833,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.reader.inspect().view?.model.selection.studyId ===
           browserStudy.id && !harness.reader.inspect().view?.loading,
       'browser study replaces the selected Node history',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert: learner-pinned, edited and unrelated tabs remain available.
@@ -2992,6 +2993,14 @@ test('live entry preserves a learner document sharing the former explanation gro
     await [...harness.service.records.values()][0]!.preparation
     // Act
     await harness.reader.open()
+    // The entry hands the keyboard back to the learner's draft after the open resolves; a loaded machine brings that later (F232).
+    await waitUntil(
+      () =>
+        harness.focusedSource()?.document.uri.toString() ===
+        draft.document.uri.toString(),
+      'the keyboard back on the learner’s draft',
+      READER_RESULT_BOUND_MS,
+    )
     // Assert
     assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
     assert.equal(harness.groups.length, 3)
