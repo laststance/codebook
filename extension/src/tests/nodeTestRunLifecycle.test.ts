@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -1473,3 +1473,85 @@ test('a diagnostics sink that throws does not leave the run unreleased when the 
     await run.harness.close()
   }
 })
+
+/**
+ * Makes the writer's seal fail with a file-system code for its first `failures` attempts, then run the real seal.
+ * @param context - Restores the writer when the test ends.
+ * @param code - The error code of each failure.
+ * @param failures - How many attempts fail before one runs.
+ * @returns The mock, whose call count is the number of seal attempts.
+ */
+function failSealAttempts(
+  context: TestContext,
+  code: string,
+  failures: number,
+) {
+  const original = NodeTestHistoryWriter.prototype.finish
+  let attempts = 0
+  return context.mock.method(
+    NodeTestHistoryWriter.prototype,
+    'finish',
+    function (
+      this: NodeTestHistoryWriter,
+      ...args: Parameters<typeof original>
+    ) {
+      attempts++
+      if (attempts <= failures)
+        throw Object.assign(new Error(`${code}: transient`), { code })
+      return original.apply(this, args)
+    },
+  )
+}
+
+// Value: protects=a transient seal failure (EMFILE) of a passing run: the seal is tried once more after 200 ms and the history seals complete; a code that waiting does not change (ENOSPC) fails at once; a transient code twice fails as before; fails_when=a passing run stays partial for an EMFILE that passed, or a non-transient code is retried, or the retry repeats more than once; why_new=a transient seal failure was permanent (F100, D14); seam=the writer's seal fails with a code for its first attempts and the delay is recorded, not waited; no_claim=a repeated codebook_stop (it makes no second attempt: the seal-failure test)
+for (const scenario of [
+  {
+    name: 'EMFILE once seals the passing run complete after one 200 ms retry',
+    code: 'EMFILE',
+    failures: 1,
+    expected: { status: 'complete', attempts: 2, delays: [200] },
+  },
+  {
+    name: 'ENOSPC is not retried and the seal fails',
+    code: 'ENOSPC',
+    failures: 1,
+    expected: { status: 'failed', attempts: 1, delays: [] },
+  },
+  {
+    name: 'EBUSY twice is retried once and then fails as before',
+    code: 'EBUSY',
+    failures: 2,
+    expected: { status: 'failed', attempts: 2, delays: [200] },
+  },
+] as const)
+  test(`a test history seal that fails with ${scenario.name}`, async (context) => {
+    // Arrange
+    const run = await testRunHarness()
+    const delays: number[] = []
+    run.service.sealRetryDelay = async (milliseconds): Promise<void> => {
+      delays.push(milliseconds)
+    }
+    const finish = failSealAttempts(context, scenario.code, scenario.failures)
+    try {
+      const { record } = await run.start()
+      await continueCurrentPause(run.service, record)
+
+      // Act
+      const state = await run.service.stop({
+        instanceId: run.service.instanceId,
+        runId: record.id,
+      })
+
+      // Assert
+      assert.deepEqual(
+        {
+          status: state.nodeTest?.historyStatus,
+          attempts: finish.mock.callCount(),
+          delays,
+        },
+        scenario.expected,
+      )
+    } finally {
+      await run.harness.close()
+    }
+  })

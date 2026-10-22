@@ -36,9 +36,11 @@ import {
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
   RETIRED_PRESENTATION_REFUSAL,
+  SEAL_RETRY_DELAY_MS,
   SELECTABLE_PRESENTATION_MODE,
   PRESENTATION_MODE_IDS,
   STUDY_PRESENTATIONS,
+  TRANSIENT_SEAL_ERROR_CODES,
 } from './constants'
 import {
   NodeLearningRevisionChangedError,
@@ -140,6 +142,7 @@ import { sanitizeCause, type CauseRoots } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { studyErrorNamingCause } from './utils/studyErrorNamingCause'
+import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 
@@ -393,6 +396,9 @@ export class StudyService {
   private readonly startKeys = new Map<string, StudyRecord>()
   private readonly maintenance: ReturnType<typeof setInterval>
   private stopping = false
+  /** Waits before the seal's one retry; a test replaces it so no clock runs. */
+  sealRetryDelay: (milliseconds: number) => Promise<void> = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds))
   private shutdownPromise?: Promise<void>
 
   /**
@@ -3591,7 +3597,8 @@ export class StudyService {
       record.nodeStops?.length === expectedStops
     const reason = complete ? undefined : this.partialHistoryReason(record)
     try {
-      record.nodeHistoryHash = await writer.finish(
+      record.nodeHistoryHash = await this.finishNodeHistory(
+        writer,
         complete ? 'complete' : 'partial',
         reason,
       )
@@ -3613,6 +3620,32 @@ export class StudyService {
         error,
         record.nodeHistoryFailure,
       )
+    }
+  }
+
+  /**
+   * Seals a test history, and once more after {@link SEAL_RETRY_DELAY_MS} when the first attempt failed with a transient file-system code ({@link TRANSIENT_SEAL_ERROR_CODES}); called by {@link StudyService.sealNodeHistory}.
+   * The writer's seal is safe to repeat after a failure, so a passing run does not stay `partial` for an `EMFILE` that passed a moment later (F100, D14). A repeated `codebook_stop` still makes no second attempt.
+   * @param writer - The history's writer.
+   * @param status - `complete` or `partial`, as {@link NodeTestHistoryWriter.finish} takes it.
+   * @param reason - Why a partial history ended.
+   * @returns The sealed journal's SHA-256.
+   * @throws The second attempt's failure, or the first attempt's when its code is not transient.
+   * @example await this.finishNodeHistory(writer, 'complete', undefined)
+   */
+  private async finishNodeHistory(
+    writer: NodeTestHistoryWriter,
+    status: 'complete' | 'partial',
+    reason: string | undefined,
+  ): Promise<string | undefined> {
+    try {
+      return await writer.finish(status, reason)
+    } catch (error) {
+      // Any other code is a failure that waiting does not change.
+      if (!TRANSIENT_SEAL_ERROR_CODES.includes(systemErrorCode(error)))
+        throw error
+      await this.sealRetryDelay(SEAL_RETRY_DELAY_MS)
+      return writer.finish(status, reason)
     }
   }
 
