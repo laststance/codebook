@@ -11417,6 +11417,9 @@ export class StudyWorkspace {
     this.replayLoadAwaitingReady = true
     await this.replaceUnavailableReplayDebugger(signal)
     signal.throwIfAborted()
+    // A recording that loads retires a selected test replay, as choosing a browser study does: the pane then shows the recording's own pages (D20).
+    await this.retireNodeHistorySelection()
+    signal.throwIfAborted()
     this.recordingActive = true
     this.pendingHistory = undefined
     // A study this window still holds (a run of this session) is selected with its own item: paired with the item shown before, every reader update until the recording is read failed with "Selected item belongs to another configured article.", and that line stayed.
@@ -13960,12 +13963,11 @@ export class StudyWorkspace {
 
   /**
    * Brings the Application pane to the front, building it again first when the learner closed it while a test replay is selected, so Show recorded output and Focus application show the selected moment's recorded output (DS7); called for the Study pane's `focus-app` action.
-   * The reader's own entry ({@link open}) rebuilds the closed pane and draws the selected moment into it. Outside a test replay a closed pane stays closed: a browser replay and a live run own their pane's lifecycle.
+   * The reader's own entry ({@link open}) rebuilds the closed pane and draws the selected moment into it. Outside a test replay a closed pane stays closed: a browser replay and a live run own their pane's lifecycle, and a browser recording that loads retires the selected test replay (D20), so no test replay is selected during one.
    * @example await this.focusApplication()
    */
   private async focusApplication(): Promise<void> {
-    if (!this.app && this.selectedNodeHistory && !this.recordingActive)
-      await this.open()
+    if (!this.app && this.selectedNodeHistory) await this.open()
     this.app?.reveal(undefined, false)
   }
 

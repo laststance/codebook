@@ -2169,7 +2169,7 @@ function studyClient(
     const section = suppressed ? undefined : message.nodeHistorySection
     renderTestReplayMoment(message, section, suppressed)
     renderTestReplayTransport(message, section, replaying, suppressed)
-    renderTestReplayLearning(message, section, replaying)
+    renderTestReplayLearning(message, section, replaying, suppressed)
     renderTestReplayUnderstanding(message, replaying)
     renderTestReplayEvents(message, section, replaying)
   }
@@ -2457,17 +2457,20 @@ function studyClient(
    * @param message - The current Study message.
    * @param section - The section's worded view.
    * @param replaying - Whether a browser recording is shown.
-   * @example renderTestReplayLearning(message, message.nodeHistorySection, false)
+   * @param suppressed - Whether a browser replay holds the bottom panel, which hides the block.
+   * @example renderTestReplayLearning(message, message.nodeHistorySection, false, false)
    */
   const renderTestReplayLearning = (
     message: StudyViewMessage,
     section: StudyViewMessage['nodeHistorySection'],
     replaying: boolean,
+    suppressed: boolean,
   ): void => {
-    const learning = message.nodeHistoryLearningSummary
+    // While a browser replay holds the bottom panel the block is not drawn: its steps would all read `No recorded event is linked to this step.` (F153).
+    const learning = suppressed ? undefined : message.nodeHistoryLearningSummary
     element('node-history-learning').hidden = !learning
     element('node-history-no-material').hidden =
-      !message.nodeHistory || Boolean(learning)
+      suppressed || !message.nodeHistory || Boolean(learning)
     if (!learning) {
       // A message without material keeps no earlier replay's diagram or steps in the page, hidden or not.
       renderKeys.delete('node-learning-sequence')
