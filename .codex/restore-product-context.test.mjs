@@ -80,11 +80,13 @@ test('compaction restores the re-entry rule and the Mandatory entry and Owner di
     context.length <= 10_000,
     `context has ${context.length} characters`,
   )
-  assert.ok(
-    context.indexOf(
-      'read PRODUCT_GOAL.md in full, every line, and open the approved PNG',
-    ) < 2_000,
+  // Both bounds: a missing rule gives -1, which alone would pass `< 2_000` (F84).
+  // The hook's own sentence, not the phrase that AGENTS.md's Mandatory entry section repeats further down.
+  const rulePosition = context.indexOf(
+    "The owner's most important rule: before any other work after this compaction, whatever the task, read PRODUCT_GOAL.md in full, every line, and open the approved PNG",
   )
+  assert.ok(rulePosition >= 0, 'the re-entry rule is missing')
+  assert.ok(rulePosition < 2_000, `the rule starts at ${rulePosition}`)
   assert.ok(context.includes(agentsSection(agents, '## Mandatory entry')))
   assert.ok(
     context.includes(agentsSection(agents, '## Owner directions in force')),
@@ -134,19 +136,80 @@ test('an AGENTS.md whose restored sections outgrow the limit still restores the 
   assert.ok(!context.includes('Read the goal.\nRead the goal.'))
 })
 
-// Value: protects=a renamed or removed section being noticed; fails_when=the hook restores a context without the Owner directions section; no_claim=which sections AGENTS.md should have
-test('an AGENTS.md without the Owner directions section reports failure without inventing restored context', () => {
+// Value: protects=the owner's re-entry rule reaching the agent when a restored section is renamed or removed (F74); fails_when=the hook fails or prints nothing instead of printing the rule and naming the missing section; no_claim=which sections AGENTS.md should have
+test('an AGENTS.md without the Owner directions section still restores the rule, the section it has, and names the missing one', () => {
   // Arrange
   const withoutDirections =
     '# codebook agent instructions\n\n## Mandatory entry\n\nRead the goal.\n'
   // Act
   const result = runHookBeside(withoutDirections)
+  const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext
   // Assert
-  assert.equal(result.status, 1)
-  assert.equal(result.stdout, '')
+  assert.equal(result.status, 0)
+  assert.match(
+    context,
+    /read PRODUCT_GOAL\.md in full, every line, and open the approved PNG/,
+  )
+  assert.ok(context.includes('## Mandatory entry\n\nRead the goal.'))
+  assert.match(
+    context,
+    /AGENTS\.md has no Owner directions in force section under that exact heading; read AGENTS\.md in full on disk now\./,
+  )
   assert.match(
     result.stderr,
     /AGENTS\.md is missing its Owner directions in force section\./,
+  )
+})
+
+// Value: protects=the restored sections on a Git for Windows checkout (CRLF) and with trailing spaces after a heading (F74); fails_when=a CRLF or padded heading is not found, so the sections are dropped; no_claim=the wording of the sections
+test('an AGENTS.md with CRLF line ends and padded headings restores both sections whole', () => {
+  // Arrange
+  const crlf = [
+    '# codebook agent instructions',
+    '',
+    '## Mandatory entry  ',
+    '',
+    'Read the goal.',
+    '',
+    '## Owner directions in force\t',
+    '',
+    'Keep the owner scope.',
+    '',
+    '## Native QA',
+    '',
+    'Record windows.',
+    '',
+  ].join('\r\n')
+  // Act
+  const result = runHookBeside(crlf)
+  const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext
+  // Assert
+  assert.equal(result.status, 0)
+  assert.equal(result.stderr, '')
+  assert.ok(context.includes('## Mandatory entry\n\nRead the goal.'))
+  assert.ok(
+    context.includes('## Owner directions in force\n\nKeep the owner scope.'),
+  )
+  assert.ok(!context.includes('Record windows.'))
+  assert.ok(!context.includes('\r'))
+})
+
+// Value: protects=the owner's rule when every restored heading was renamed (F74); fails_when=the hook prints nothing or fails; no_claim=any section text
+test('an AGENTS.md whose restored headings were all renamed still restores the rule and names both missing sections', () => {
+  // Arrange
+  const renamed = '# codebook agent instructions\n\n## Entry\n\nRead.\n'
+  // Act
+  const result = runHookBeside(renamed)
+  const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext
+  // Assert
+  assert.equal(result.status, 0)
+  assert.match(
+    context,
+    /read PRODUCT_GOAL\.md in full, every line, and open the approved PNG/,
+  )
+  assert.match(
+    context,
+    /AGENTS\.md has no Mandatory entry or Owner directions in force section under that exact heading/,
   )
 })
 
