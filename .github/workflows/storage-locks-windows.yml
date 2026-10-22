@@ -65,6 +65,7 @@ on:
       - extension/src/tests/runBoundedQuery.test.ts
       - extension/src/tests/runtime-profileProcesses.test.ts
       - extension/src/tests/utils/answerKernelBootId.ts
+      - extension/src/tests/utils/answeredAtOnce.ts
       - extension/src/tests/utils/createLinkIfAllowed.ts
       - extension/src/tests/utils/fileSystemWhoseLinksResistRemoval.ts
       - extension/src/tests/utils/fileSystemWithLargeFileIds.ts
@@ -79,6 +80,7 @@ on:
       - extension/src/tests/utils/requireOwnPidNamespace.ts
       - extension/src/tests/utils/standInForPs.ts
       - extension/src/tests/utils/startOfKilledWindow.ts
+      - extension/src/tests/utils/within.ts
       - extension/src/tests/withStorageLock.test.ts
       - extension/src/utils/atomicPrivateBytes.ts
       - extension/src/utils/atomicPrivateWrite.ts
