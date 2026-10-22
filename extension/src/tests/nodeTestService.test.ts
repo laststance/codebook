@@ -317,6 +317,13 @@ test('the saved Node history catalog stays readable after it spans several resou
   for (let index = 0; index < 6; index++) {
     const header = nodeTestHistoryHeader(workspaceKey)
     const writer = await store.start(header)
+    // One recorded output, so the history has something to replay and is listed (a history sealed with no entry is removed, D6).
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 1,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
     await writer.finish(
       'partial',
       `Interrupted run ${index}: ${'x'.repeat(900)}`,

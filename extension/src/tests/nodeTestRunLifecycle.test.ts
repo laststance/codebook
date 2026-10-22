@@ -788,9 +788,15 @@ test('codebook_playback refuses a test replay’s study before the presentation 
     const runStudyId = `${run.service.instanceId}_${record.id}`
     const store = run.service.nodeHistoryStore!
     const earlier = nodeTestHistoryHeader(store.workspaceKey)
-    await (
-      await store.start(earlier)
-    ).finish('partial', 'An earlier window stopped it.')
+    const earlierWriter = await store.start(earlier)
+    // One recorded output, so the history has something to replay and is listed (a history sealed with no entry is removed, D6).
+    await earlierWriter.appendOutput({
+      sequence: 1,
+      elapsedMs: 1,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    await earlierWriter.finish('partial', 'An earlier window stopped it.')
     await store.list()
     let presentationChecks = 0
     run.service.presentationController = {

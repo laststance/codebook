@@ -146,15 +146,6 @@ export async function readResource(
         'Node history storage is unavailable for this workspace.',
       )
     const history = await service.nodeHistoryStore.read(nodeHistoryMatch[1])
-    // The result and the learning coverage come from the store's one summary, which Saved studies and Save read too (Design 13).
-    const summary = await service.nodeHistoryStore.summarize(
-      nodeHistoryMatch[1],
-    )
-    const learning = {
-      testResult: summary?.testResult ?? 'none',
-      learningCoverage: summary?.learningCoverage ?? 'none',
-      learningMissing: summary?.learningMissing ?? [],
-    }
     const baseUri = `codebook://node-history/${nodeHistoryMatch[1]}`
     if (nodeHistoryMatch[2] === 'events')
       return readJsonPage(`${baseUri}/events`, history.entries)
@@ -181,6 +172,15 @@ export async function readResource(
         ? nodeHistoryMatch[2].slice('learning-material/'.length)
         : undefined
       return readJsonPage(`${baseUri}/learning-material`, data, cursor)
+    }
+    // The result and the learning coverage come from the store's one summary, which Saved studies and Save read too (Design 13); only the history body shows them, so its events and learning-material pages never read it (F14).
+    const summary = await service.nodeHistoryStore.summarize(
+      nodeHistoryMatch[1],
+    )
+    const learning = {
+      testResult: summary?.testResult ?? 'none',
+      learningCoverage: summary?.learningCoverage ?? 'none',
+      learningMissing: summary?.learningMissing ?? [],
     }
     const body = {
       header: history.header,

@@ -984,6 +984,15 @@ export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
+/** File system error codes that a retry can clear (a descriptor or lock shortage, a busy or antivirus-held file, a disk error): a read that fails with one is not remembered as the history's state ({@link isTransientFileError}). */
+export const TRANSIENT_FILE_ERROR_CODES: readonly string[] = [
+  'EMFILE',
+  'ENFILE',
+  'EBUSY',
+  'EAGAIN',
+  'EPERM',
+  'EIO',
+]
 /** How many test histories {@link NodeTestHistoryStore.list} reads at a time when a refresh finds new, still recording or changed ones; a sealed journal it already summarized is not read again. */
 export const NODE_HISTORY_SUMMARY_READ_CONCURRENCY = 4
 /** How much of a test replay's recorded output, counted in code points of the shown text (the `[stderr] ` marks and line feeds included), the Application pane keeps up to the selected event: its end, where the selected moment is. */
