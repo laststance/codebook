@@ -7,12 +7,15 @@ import {
   type NodeLearningSaveHost,
 } from '../nodeLearningSave'
 import type { NodeTestHistorySummary } from '../nodeTestHistoryStore'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { StudyRecord } from '../service'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 const INSTANCE_ID = '11111111-1111-4111-8111-111111111111'
 const RUN_ID = '22222222-2222-4222-8222-222222222222'
 const STUDY_ID = `${INSTANCE_ID}_${RUN_ID}`
+/** How long a test waits for work the Save leaves running after it returns; a break of the product fails within it. */
+const AWAITED_EFFECT_BOUND_MS = 3_000
 
 /** A node-test run of two declared stops, as the service keeps it, with the given facts. */
 function testRun(facts: Partial<StudyRecord> = {}): StudyRecord {
@@ -75,18 +78,21 @@ function recordingHost(
     notified: { severity: string; text: string; actions: readonly string[] }[] =
       [],
     opened: string[] = [],
-    logged: CodebookDiagnostic[] = [],
-    waiters: { count: number; resolve: () => void }[] = []
-  /** Resolves once the host's open was called; the gate for the open a notification's action starts after the Save returned. */
-  let resolveOpened!: () => void
-  const whenOpened = new Promise<void>((resolve) => {
-    resolveOpened = resolve
-  })
-  /** Resolves once the host logged `count` entries; the gate for work a Save leaves running after it returns. */
-  const whenLogged = (count: number): Promise<void> =>
-    logged.length >= count
-      ? Promise.resolve()
-      : new Promise<void>((resolve) => waiters.push({ count, resolve }))
+    logged: CodebookDiagnostic[] = []
+  /** Waits, within a bound, until the host's open was called; the work a notification's action starts after the Save returned. Rejects naming the missing open when the bound passes, so a broken product fails instead of hanging. */
+  const whenOpened = (): Promise<boolean> =>
+    waitUntil(
+      () => opened.length > 0,
+      'the host’s open of the test replay',
+      AWAITED_EFFECT_BOUND_MS,
+    )
+  /** Waits, within a bound, until the host logged `count` entries; the work a Save leaves running after it returns. Rejects naming the missing entry when the bound passes. */
+  const whenLogged = (count: number): Promise<boolean> =>
+    waitUntil(
+      () => logged.length >= count,
+      `${count} Output entries from the Save`,
+      AWAITED_EFFECT_BOUND_MS,
+    )
   let stopCalls = 0,
     summaryCalls = 0,
     seals = 0
@@ -128,13 +134,10 @@ function recordingHost(
     materialRevision: () => options.storeRevision?.(),
     open: async (studyId) => {
       opened.push(studyId)
-      resolveOpened()
       if (options.openFails) throw options.openFails
     },
     log: (entry) => {
       logged.push(entry)
-      for (const waiter of waiters)
-        if (logged.length >= waiter.count) waiter.resolve()
     },
     changed: () => undefined,
   }
@@ -1128,7 +1131,7 @@ test('choosing Open replay on the partial notice opens this run’s test replay'
 
   // Act
   await save.save(record)
-  await recorder.whenOpened
+  await recorder.whenOpened()
 
   // Assert
   assert.deepEqual(recorder.opened, [STUDY_ID])
