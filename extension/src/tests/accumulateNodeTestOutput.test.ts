@@ -234,6 +234,31 @@ test('standard-error marks count toward the kept tail and the characters left ou
   })
 })
 
+// Value: protects=the characters left out are counted from the text the pane keeps: a standard-error line whose text fits the room left but whose `[stderr] ` mark does not is kept without its mark, and the left-out count includes the mark; fails_when=the cut line is counted as the room it was offered (9 characters and a line feed) although it keeps 8, so the count undercounts by one; why_new=F114 (limit 15 over `first line`, stderr `warn one` and `last` said 19 left out for 20); seam=none; no_claim=the wording of the muted line
+test('the characters left out count the kept text of a cut standard-error line', () => {
+  // Arrange
+  const index = indexNodeTestOutput([
+    printed(1, 'stdout', 'first line\n'),
+    printed(2, 'stderr', 'warn one\n'),
+    printed(3, 'stdout', 'last\n'),
+  ])
+
+  // Act
+  const shown = accumulateNodeTestOutput(index, 3, 15)
+
+  // Assert
+  assert.deepEqual(shown, {
+    lines: [
+      { channel: 'stderr', text: 'warn one', number: 1, cut: true },
+      { channel: 'stdout', text: 'last', number: 2 },
+    ],
+    omittedCharacters: 20,
+    startsMidLine: true,
+    inspectorLines: 0,
+    hasOutput: true,
+  })
+})
+
 // Value: protects=an unfinished last line longer than the tail, such as a progress line a reporter redraws with carriage returns and never ends, keeps its end, is marked cut and counts no line feed; fails_when=the cut of an unfinished line loses a character or counts a line feed it does not have, so its kept end or the left-out count is off by one; why_new=Step 9's testing review found only lines ending with a line feed cut in the tests; seam=none; no_claim=how the pane renders the cut line
 test('an unfinished last line longer than the tail keeps its end and counts no line feed', () => {
   // Arrange
@@ -285,6 +310,44 @@ test('an unfinished line printed across many entries is kept once, not once per 
   assert.equal(
     accumulateNodeTestOutput(index, 800, 2_500).lines[0]?.text,
     'x'.repeat(2_500),
+  )
+})
+
+/** How many distinct objects (arrays included) a value holds at any depth, so a test can bound what an index keeps per line. */
+const heldObjects = (value: unknown, seen = new Set<unknown>()): number => {
+  if (typeof value !== 'object' || value === null || seen.has(value)) return 0
+  seen.add(value)
+  return Object.values(value).reduce<number>(
+    (count, member) => count + heldObjects(member, seen),
+    1,
+  )
+}
+
+// Value: protects=the output index keeps its lines as numbers (offsets into the recorded text), not as one object per line, so a history of millions of short lines is not millions of objects while the replay is selected, and the kept tail's lines are made only when a moment is shown; fails_when=the index holds an object for each complete line (262,144 lines held 262,144 objects), or a line read from offsets differs from the line printed; why_new=F149 (the index turned every complete line into a `{ channel, text }` object before the 65,536-character view applied); seam=none; no_claim=the heap itself, which this bound on held objects stands in for
+test('the output index keeps no object per line and still shows the right lines', () => {
+  // Arrange
+  const entries = Array.from({ length: 64 }, (_, index) =>
+    printed(
+      index + 1,
+      index % 2 === 0 ? 'stdout' : 'stderr',
+      'x\n'.repeat(4_096),
+    ),
+  )
+
+  // Act
+  const index = indexNodeTestOutput(entries)
+  const shown = accumulateNodeTestOutput(index, 64, 33)
+
+  // Assert
+  const held = heldObjects(index)
+  assert.ok(held < 1_000, `the index holds ${held} objects for 262,144 lines`)
+  assert.deepEqual(
+    shown.lines.map((line) => [line.channel, line.text, line.number]),
+    [
+      ['stderr', 'x', 262_141],
+      ['stderr', 'x', 262_142],
+      ['stderr', 'x', 262_143],
+    ],
   )
 })
 
