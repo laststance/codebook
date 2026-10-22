@@ -576,3 +576,59 @@ test('returning to Live closes the test replay’s recorded-source slot', async 
     await harness.close()
   }
 })
+
+/**
+ * Reads what an editor tab shows: a text document's URI, a webview's view type, or its label.
+ * @param tab - A tab of the fake editor.
+ * @returns The URI, the view type or the label.
+ * @example tabIdentity(tab) // => 'codebook-source://…/node-history-slot/<studyId>/Captured-theme.ts'
+ */
+function tabIdentity(tab: Harness['groups'][number]['tabs'][number]): string {
+  const input = tab.input as
+    { uri?: { toString(): string }; viewType?: string } | undefined
+  return input?.uri?.toString() ?? input?.viewType ?? tab.label
+}
+
+// Value: protects=a slot renamed for a stop in another file opens in the group that held the earlier slot before Codebook closes the earlier tab, so a source group the slot alone filled stays and no other pane's group receives the slot; fails_when=the earlier tab closes first, the editor (with `workbench.editor.closeEmptyGroups` on) removes the emptied group, and the renamed slot opens in another group; why_new=PR-B2's own OCR review (the rename's order); seam=the workspace harness's native layout with its closeEmptyGroups model (useNativeLayout, closeDisposedPanelTabsLater) and the test taking the article's source tab out of the slot's group, so the slot fills it alone; no_claim=a group the learner locked or pinned
+test('a slot renamed for another file stays in its own group when it alone filled that group', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    harness.closeDisposedPanelTabsLater()
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slotGroup = harness.groups.find((group) =>
+      group.tabs.some((tab) =>
+        tabIdentity(tab).includes('/node-history-slot/'),
+      ),
+    )!
+    // The slot alone fills its group: the article's source tab that the Study's open also showed there is taken out.
+    const slotTab = slotGroup.tabs.find((tab) =>
+      tabIdentity(tab).includes('/node-history-slot/'),
+    )!
+    slotGroup.tabs.splice(0, slotGroup.tabs.length, slotTab)
+    slotGroup.activeTab = slotTab
+    const groupsBefore = harness.groups.map((group) =>
+      group.tabs.map(tabIdentity),
+    )
+
+    // Act
+    await selectMoment(harness, history.studyId, 4)
+
+    // Assert
+    const groupsAfter = harness.groups.map((group) =>
+      group.tabs.map(tabIdentity),
+    )
+    assert.equal(groupsAfter.length, groupsBefore.length)
+    const slotGroupIndex = groupsBefore.findIndex((tabs) =>
+      tabs.some((tab) => tab.includes('/node-history-slot/')),
+    )
+    assert.equal(groupsAfter[slotGroupIndex]!.length, 1)
+    assert.match(groupsAfter[slotGroupIndex]![0]!, /\/Captured-theme-next\.ts$/)
+  } finally {
+    await harness.close()
+  }
+})

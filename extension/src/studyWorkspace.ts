@@ -23365,17 +23365,18 @@ export class StudyWorkspace {
     // The stopped line and label wait for the commit ({@link selectNodeHistoryEvent}), so no editor event draws them before the debugger shows the stop.
     this.nodeSourceSlot = { studyId, uri, text }
     try {
-      // A slot named after another file, or another replay's slot, gives way: Codebook's earlier tab closes.
-      if (earlier && earlier.uri.toString() !== uri.toString())
-        await this.closeNodeSourceSlotTabs(earlier.uri)
       this.sourceChanges.fire(uri)
       const document = await vscode.workspace.openTextDocument(uri)
       if (request !== this.selectedNodeHistoryRequest) return undefined
+      // A renamed slot opens where the earlier one is, before that tab closes: a group the slot alone filled is never emptied, which `workbench.editor.closeEmptyGroups` would remove.
       await vscode.window.showTextDocument(document, {
-        viewColumn: this.nodeSourceSlotColumn(uri),
+        viewColumn: this.nodeSourceSlotColumn(uri, earlier?.uri),
         preserveFocus: true,
         preview: false,
       })
+      // A slot named after another file, or another replay's slot, gives way: Codebook's earlier tab closes.
+      if (earlier && earlier.uri.toString() !== uri.toString())
+        await this.closeNodeSourceSlotTabs(earlier.uri)
       await this.awaitNodeSourceSlotText(document, text, request)
     } catch (error) {
       if (request !== this.selectedNodeHistoryRequest) return undefined
@@ -23584,21 +23585,27 @@ export class StudyWorkspace {
   }
 
   /**
-   * Chooses the editor column the recorded-source slot shows in: the group that already shows it (the learner may have moved it), else the source group, else the Study arrangement's source column; called by {@link showNodeSourceSlot}.
+   * Chooses the editor column the recorded-source slot shows in: the group that already shows it, else the group that shows the slot it replaces (the learner may have moved either), else the source group, else the Study arrangement's source column; called by {@link showNodeSourceSlot}.
    * @param uri - The slot's URI.
+   * @param earlierUri - The URI of the slot it replaces at a rename, if any.
    * @returns The view column.
-   * @example this.nodeSourceSlotColumn(slotUri) // => 2
+   * @example this.nodeSourceSlotColumn(slotUri, earlierSlotUri) // => 2
    */
-  private nodeSourceSlotColumn(uri: vscode.Uri): vscode.ViewColumn {
-    const showing = vscode.window.tabGroups.all.find((group) =>
-      group.tabs.some(
-        (tab) =>
-          tab.input instanceof vscode.TabInputText &&
-          tab.input.uri.toString() === uri.toString(),
-      ),
-    )
+  private nodeSourceSlotColumn(
+    uri: vscode.Uri,
+    earlierUri?: vscode.Uri,
+  ): vscode.ViewColumn {
+    const groupShowing = (shown: vscode.Uri | undefined) =>
+      shown &&
+      vscode.window.tabGroups.all.find((group) =>
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            tab.input.uri.toString() === shown.toString(),
+        ),
+      )
     return (
-      showing?.viewColumn ??
+      (groupShowing(uri) || groupShowing(earlierUri))?.viewColumn ??
       this.sourceGroup?.viewColumn ??
       STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
     )
