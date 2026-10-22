@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { stripTerminalControls } from '../utils/stripTerminalControls'
+import {
+  stripTerminalControls,
+  stripTerminalControlsAcross,
+} from '../utils/stripTerminalControls'
 
 // Value: protects=the Application pane shows a test's recorded output as text: colors, cursor moves, window titles and links of a terminal are removed while the printed text, tabs and line feeds stay; fails_when=an escape sequence survives in part (such as `[32m` or `(B`) or a tab or line feed is lost; why_new=PR-B1 shows recorded output in the Application pane (Design 3, EN10); seam=none; no_claim=how a terminal would have rendered the output
 test('recorded test output keeps its text, tabs and line feeds and loses terminal escape sequences', () => {
@@ -31,7 +34,7 @@ test('recorded test output loses bidirectional and other invisible controls', ()
   assert.equal(shown, 'bell evil done x\nbackfeed ok\n')
 })
 
-// Value: protects=recorded output loses DEL and the C1 controls too, and an 8-bit color sequence (CSI written as U+009B) goes whole, so the Application pane keeps the README's promise that control characters are removed; fails_when=DEL, NEL or another C1 control reaches the pane, or an 8-bit sequence leaves its parameters, such as `31m`, as text; why_new=Step 9 pass 2's maintainability review: the class lost DEL and C1, which sanitizeCause removes, and only the 7-bit ESC form of CSI was recognized; seam=none; no_claim=the C1 string escapes other than OSC (DCS, SOS, PM and APC), whose introducers alone are removed
+// Value: protects=recorded output loses DEL and the C1 controls too, and an 8-bit color sequence (CSI written as U+009B) goes whole, so the Application pane keeps the README's promise that control characters are removed; fails_when=DEL, NEL or another C1 control reaches the pane, or an 8-bit sequence leaves its parameters, such as `31m`, as text; why_new=Step 9 pass 2's maintainability review: the class lost DEL and C1, which sanitizeCause removes, and only the 7-bit ESC form of CSI was recognized; seam=none; no_claim=the C1 string escapes other than OSC, which the DCS, SOS, PM and APC test below pins
 test('recorded test output loses DEL, C1 controls and 8-bit color sequences', () => {
   // Arrange
   const printed = 'a\u007Fb\u0085c\u009B31md\u009B0m ok\n'
@@ -43,7 +46,7 @@ test('recorded test output loses DEL, C1 controls and 8-bit color sequences', ()
   assert.equal(shown, 'abcd ok\n')
 })
 
-// Value: protects=an OSC sequence ended by the 8-bit string terminator (U+009C), and an 8-bit OSC (U+009D … U+009C), goes whole: the text printed after it and its line feed stay, and a window title or a link's address is not shown as output; fails_when=the OSC body runs past U+009C to the next escape or the chunk's end and deletes the printed text and line feeds after it, or an 8-bit OSC leaves its payload as text; why_new=Step 9 pass 3's testing review and red team: pass 2 recognized the 8-bit CSI but not the 8-bit string forms; seam=none; no_claim=DCS, SOS, PM and APC strings, whose C1 introducers alone are removed
+// Value: protects=an OSC sequence ended by the 8-bit string terminator (U+009C), and an 8-bit OSC (U+009D … U+009C), goes whole: the text printed after it and its line feed stay, and a window title or a link's address is not shown as output; fails_when=the OSC body runs past U+009C to the next escape or the chunk's end and deletes the printed text and line feeds after it, or an 8-bit OSC leaves its payload as text; why_new=Step 9 pass 3's testing review and red team: pass 2 recognized the 8-bit CSI but not the 8-bit string forms; seam=none; no_claim=DCS, SOS, PM and APC strings, which the test below pins
 test('recorded test output loses an OSC ended by the 8-bit string terminator and an 8-bit OSC, and keeps the text after them', () => {
   // Arrange
   const printed =
@@ -55,4 +58,59 @@ test('recorded test output loses an OSC ended by the 8-bit string terminator and
 
   // Assert
   assert.equal(shown, 'link done\nvisible line\n')
+})
+
+// Value: protects=a control string that the launcher's 4,096-character entry limit split across two output entries goes whole: a color sequence's tail such as `2m` and an OSC's payload such as a forged window title never show as output; fails_when=a piece of a split sequence stays as text, or the text around it is lost; why_new=F109 (controls were removed per entry); seam=none; no_claim=the entries' lines, which the index test pins
+test('a terminal sequence split across two output entries is removed whole', () => {
+  // Arrange
+  const entries = [
+    'ok \u001b[3',
+    '2m green\n\u001b]0;forged ti',
+    'tle\u0007after\n',
+  ]
+
+  // Act
+  const shown = stripTerminalControlsAcross(entries)
+
+  // Assert
+  assert.deepEqual(shown, ['ok ', ' green\n', 'after\n'])
+})
+
+// Value: protects=DCS, SOS, PM and APC strings, in their 7-bit and 8-bit forms, go up to their terminator with their payload, and a string terminated in a later entry goes across both; fails_when=a payload such as `secret` stays as output text; why_new=F148 (only the introducers were removed); seam=none; no_claim=text after the terminator, which stays
+test('DCS, SOS, PM and APC strings are removed with their payload in both forms and across entries', () => {
+  // Arrange
+  const printed = [
+    'a\u001bPsecret\u001b\\b',
+    'c\u0090secret\u009cd',
+    'e\u001bXsecret\u001b\\f\u0098secret\u009cg',
+    'h\u001b^secret\u001b\\i\u009esecret\u009cj',
+    'k\u001b_secret\u001b\\l\u009fsecret\u009cm',
+    'n\u001b_sec',
+    'ret\u001b\\o',
+  ]
+
+  // Act
+  const shown = stripTerminalControlsAcross(printed)
+
+  // Assert
+  assert.deepEqual(shown, ['ab', 'cd', 'efg', 'hij', 'klm', 'n', 'o'])
+})
+
+// Value: protects=an introducer with no terminator within the next 4,096 code points is a stray: only its own code points go and the text after it stays, so one stray U+009D no longer deletes the rest of its entry; fails_when=a stray introducer removes the following text, or a string closed exactly at the bound stays; why_new=F148 and closure rule 7's bounds; seam=none; no_claim=how a terminal would treat a stray
+test('an introducer with no terminator within 4,096 code points removes only itself', () => {
+  // Arrange
+  const text = 'a'.repeat(5_000)
+  const closedAtBound = '\u009d' + 'b'.repeat(4_096) + '\u009c'
+
+  // Act
+  const strayEightBit = stripTerminalControls(`x\u009d${text}\u0007y`)
+  const straySevenBit = stripTerminalControls(`x\u001b]0;${text}\u0007y`)
+  const closed = stripTerminalControls(`${closedAtBound}z`)
+  const strayAtEnd = stripTerminalControls('p\u009dq')
+
+  // Assert
+  assert.equal(strayEightBit, `x${text}y`)
+  assert.equal(straySevenBit, `x0;${text}y`)
+  assert.equal(closed, 'z')
+  assert.equal(strayAtEnd, 'pq')
 })

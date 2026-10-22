@@ -988,6 +988,8 @@ export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
 export const NODE_HISTORY_SUMMARY_READ_CONCURRENCY = 4
 /** How much of a test replay's recorded output, counted in code points of the shown text (the `[stderr] ` marks and line feeds included), the Application pane keeps up to the selected event: its end, where the selected moment is. */
 export const NODE_TEST_OUTPUT_TAIL_CHARS = 65_536
+/** How many code points after its introducer a terminal control string (CSI, OSC, DCS, SOS, PM, APC) may run to its terminator in recorded test output; an introducer with no terminator within them is a stray, and only its own code points are removed (F109, F148). */
+export const TERMINAL_CONTROL_STRING_LOOKAHEAD_CODE_POINTS = 4_096
 /** How close to its end, in CSS pixels, a test replay's output region counts as at its end, so the Application pane follows the latest output (DS20); subpixel scroll positions never land exactly on it. */
 export const TEST_OUTPUT_END_TOLERANCE_PX = 2
 /** At most how often a test replay's Application document writes its follow choice and latest moment into the webview's state: Play posts up to twenty moments a second, and each write copies the whole shown output, so the writes in between are joined into one (the last moment is also written when the document is left). */

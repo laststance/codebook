@@ -295,6 +295,7 @@ import { recordingNotShownReason } from './utils/recordingNotShownReason'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
+import { sanitizeNodeTestHistory } from './utils/sanitizeNodeTestHistory'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
 import { settledWithin } from './utils/settledWithin'
@@ -689,6 +690,11 @@ export class StudyWorkspace {
   private selectedNodeHistoryOutputIndex?: {
     history: NodeTestHistoryIndex
     index: NodeTestOutputIndex
+  }
+  /** The selected test replay with the terminal and bidirectional controls of every recorded text removed ({@link sanitizeNodeTestHistory}), made once per opened history; the Study message and the Application view print this one (F131). */
+  private selectedNodeHistoryShown?: {
+    history: NodeTestHistoryIndex
+    shown: NodeTestHistoryIndex
   }
   /** The count of the Application pane's test replay views, and what the last one showed, so its generation changes only when the shown moment does. */
   private nodeHistoryApplicationGeneration = 0
@@ -11959,6 +11965,7 @@ export class StudyWorkspace {
     this.selectedNodeHistoryLearningMaterial = undefined
     // The retired replay's output index goes with it, so its entries leave the extension host's memory.
     this.selectedNodeHistoryOutputIndex = undefined
+    this.selectedNodeHistoryShown = undefined
     this.selectedNodeHistorySequence = undefined
     this.selectedNodeHistoryStepId = undefined
     this.selectedNodeHistoryDebugAvailable = false
@@ -12155,6 +12162,10 @@ export class StudyWorkspace {
     | 'nodeHistoryLearningSummary'
   > {
     if (!history) return {}
+    // The recorded texts the surfaces print come without terminal and bidirectional controls (F131).
+    const shown = this.shownNodeHistory(history)
+    selected = selected && shown.entries[history.entries.indexOf(selected)]
+    history = shown
     if (this.selectedNodeHistoryOutputIndex?.history !== history)
       this.selectedNodeHistoryOutputIndex = {
         history,
@@ -12203,6 +12214,23 @@ export class StudyWorkspace {
       }),
       ...(learning ? { nodeHistoryLearningSummary: learning } : {}),
     }
+  }
+
+  /**
+   * Gives the selected test replay as its surfaces print it: every recorded text without terminal and bidirectional controls, made once per opened history (F131).
+   * @param history - The selected test replay as the store read it.
+   * @returns The history {@link sanitizeNodeTestHistory} made of it.
+   * @example this.shownNodeHistory(history).entries[0] // => the first event with its text free of controls
+   */
+  private shownNodeHistory(
+    history: NodeTestHistoryIndex,
+  ): NodeTestHistoryIndex {
+    if (this.selectedNodeHistoryShown?.history !== history)
+      this.selectedNodeHistoryShown = {
+        history,
+        shown: sanitizeNodeTestHistory(history),
+      }
+    return this.selectedNodeHistoryShown.shown
   }
 
   /** Joins compact live state with the selected archive; event logs never enter webview messages. @example this.message().model */
@@ -12364,9 +12392,9 @@ export class StudyWorkspace {
         applicationCovered: this.replayApplicationCovered,
       },
       nodeHistoryCatalog: this.nodeHistoryCatalog,
-      nodeHistory: this.selectedNodeHistory && {
-        ...this.selectedNodeHistory,
-        entries: this.selectedNodeHistory.entries.slice(
+      nodeHistory: selectedNodeHistory && {
+        ...this.shownNodeHistory(selectedNodeHistory),
+        entries: this.shownNodeHistory(selectedNodeHistory).entries.slice(
           this.selectedNodeHistoryPage * NODE_HISTORY_READER_PAGE_SIZE,
           (this.selectedNodeHistoryPage + 1) * NODE_HISTORY_READER_PAGE_SIZE,
         ),

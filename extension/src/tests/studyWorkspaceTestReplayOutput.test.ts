@@ -26,11 +26,16 @@ function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
  * @returns The history's header.
  * @example const history = await saveTwoStopNodeHistory(harness.service.nodeHistoryStore!)
  */
-async function saveTwoStopNodeHistory(store: NodeTestHistoryStore) {
+async function saveTwoStopNodeHistory(
+  store: NodeTestHistoryStore,
+  options: { forged?: boolean } = {},
+) {
   const oneStop = nodeTestHistoryHeader(store.workspaceKey)
   // The second stop is declared at the same line, as a loop's second pass stops there again.
   const configuration = {
     ...oneStop.configuration,
+    // A forged recording carries a right-to-left override in its title path, output and result tail (F131).
+    ...(options.forged ? { testTitles: ['suite \u202Etitle', 'works'] } : {}),
     additionalStops: [
       {
         ...oneStop.configuration.source,
@@ -84,7 +89,9 @@ async function saveTwoStopNodeHistory(store: NodeTestHistoryStore) {
     sequence: 1,
     elapsedMs: 100,
     channel: 'stdout',
-    text: 'RUN src/theme.test.ts\n',
+    text: options.forged
+      ? 'RUN\u202E src/theme.test.ts\n'
+      : 'RUN src/theme.test.ts\n',
   })
   await writer.appendStop(stopAt(0, 200))
   await writer.appendOutput({
@@ -95,7 +102,11 @@ async function saveTwoStopNodeHistory(store: NodeTestHistoryStore) {
   })
   await writer.appendStop(stopAt(1, 300))
   await writer.appendResult(
-    { exitCode: 0, signal: null, output: 'Tests 1 passed' },
+    {
+      exitCode: 0,
+      signal: null,
+      output: options.forged ? 'Tests\u202E 1 passed' : 'Tests 1 passed',
+    },
     400,
   )
   await writer.finish('complete')
@@ -904,6 +915,52 @@ test('an unchanged moment of a test replay reuses its Application view at each S
     // Assert
     assert.ok(first)
     assert.equal(second, first)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a right-to-left override (U+202E) in a recorded test title, output entry or result tail reaches no replay surface: the Study section's event rows, the result's tail and the Application header read the same text in logical order as the output region; fails_when=the Study message's entries or the Application view's header lines still carry U+202E; why_new=F131 (only the output region was stripped); seam=none; no_claim=how the Study pane draws a row
+test('a test replay’s Study message and Application header carry no bidirectional controls from the recording', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const header = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+      { forged: true },
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(header.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence !== undefined &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first event',
+      2_000,
+    )
+    const message = lastView(harness)
+    const application = harness.reader['message']().nodeHistoryApplication
+
+    // Assert
+    const entries = message?.nodeHistory?.entries ?? []
+    const first = entries[0]
+    assert.equal(
+      first?.type === 'output' ? first.text : undefined,
+      'RUN src/theme.test.ts\n',
+    )
+    const result = entries.find((entry) => entry.type === 'result')
+    assert.equal(
+      result?.type === 'result' ? result.outputTail.includes('\u202E') : true,
+      false,
+    )
+    assert.deepEqual(message?.nodeHistory?.header.configuration.testTitles, [
+      'suite title',
+      'works',
+    ])
+    assert.equal(application?.test.includes('\u202E'), false)
+    assert.equal(application?.name.includes('\u202E'), false)
   } finally {
     await harness.close()
   }

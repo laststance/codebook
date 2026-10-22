@@ -1,7 +1,7 @@
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
 import { nodeTestOutputLineCost } from './nodeTestOutputLineCost'
-import { stripTerminalControls } from './stripTerminalControls'
+import { stripTerminalControlsAcross } from './stripTerminalControls'
 
 /** One line of a test's recorded output, as the Application pane shows it: the channel that wrote it and its text without a line end. */
 export type NodeTestOutputLine = {
@@ -50,7 +50,7 @@ const INSPECTOR_LINES = [
 
 /**
  * Reads a test replay's output entries once into lines, so the Application pane can show the output up to any selected event without reading every entry again (S1-2); called by the Study workspace once per opened test replay.
- * A line-state machine joins the entries: a chunk of the same channel continues an unfinished line, a chunk of the other channel ends it first, terminal controls are removed ({@link stripTerminalControls}) and the Node inspector's own standard-error lines are counted instead of shown.
+ * A line-state machine joins the entries: a chunk of the same channel continues an unfinished line, a chunk of the other channel ends it first, terminal controls are removed across the entries of each channel ({@link stripTerminalControlsAcross}) and the Node inspector's own standard-error lines are counted instead of shown.
  * @param entries - The history's events in sequence order; only output entries are read.
  * @returns The index: the output entries' sequences, the complete lines, their running totals and what each output entry leaves behind.
  * @example
@@ -116,9 +116,10 @@ export function indexNodeTestOutput(
     }
     if (pending && !pending.chunks.length) pending = undefined
   }
+  const shownText = stripOutputEntries(entries)
   for (const entry of entries) {
     if (entry.type !== 'output') continue
-    const text = stripTerminalControls(entry.text)
+    const text = shownText.get(entry.sequence)!
     // A chunk that held only controls changes no line, not even the channel of an unfinished one.
     if (text) read(entry.channel, text)
     index.sequences.push(entry.sequence)
@@ -138,4 +139,28 @@ export function indexNodeTestOutput(
     })
   }
   return index
+}
+
+/**
+ * Removes the terminal controls of every output entry, reading each channel's entries as one stream so a control string split across entries goes whole (F109, F148); called by {@link indexNodeTestOutput} and {@link sanitizeNodeTestHistory}.
+ * @param entries - The history's events in sequence order; only output entries are read.
+ * @returns Each output entry's shown text, by the entry's sequence.
+ * @example stripOutputEntries([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: '\u001b[3' }, { type: 'output', sequence: 2, elapsedMs: 6, channel: 'stdout', text: '2mok' }]) // => Map { 1 => '', 2 => 'ok' }
+ */
+export function stripOutputEntries(
+  entries: readonly NodeTestHistoryIndex['entries'][number][],
+): Map<number, string> {
+  const shown = new Map<number, string>()
+  for (const channel of ['stdout', 'stderr'] as const) {
+    const stream = entries.filter(
+      (entry) => entry.type === 'output' && entry.channel === channel,
+    )
+    const stripped = stripTerminalControlsAcross(
+      stream.map((entry) => (entry.type === 'output' ? entry.text : '')),
+    )
+    stream.forEach((entry, position) =>
+      shown.set(entry.sequence, stripped[position]!),
+    )
+  }
+  return shown
 }

@@ -191,6 +191,28 @@ test('a chunk of only terminal controls on the other stream leaves an unfinished
   ])
 })
 
+// Value: protects=a color sequence and a window-title string that the launcher's 4,096-character entry limit split across entries leave no tail or forged title in the lines, and the entries of the other channel between them do not break the string; fails_when=`2m` or `forged title` shows as output, or a line is lost; why_new=F109 and F148 (controls were removed per entry); seam=none; no_claim=the bounds of a stray introducer, which stripTerminalControls's tests pin
+test('terminal strings split across output entries leave no text in the lines', () => {
+  // Arrange
+  const index = indexNodeTestOutput([
+    printed(1, 'stdout', 'green \u001b[3'),
+    printed(2, 'stderr', 'warn\n'),
+    printed(3, 'stdout', '2mtext\n\u001b]0;forged '),
+    printed(4, 'stdout', 'title\u0007next\n'),
+  ])
+
+  // Act
+  const shown = accumulateNodeTestOutput(index, 4)
+
+  // Assert
+  assert.deepEqual(shown.lines, [
+    { channel: 'stdout', text: 'green ', number: 0 },
+    { channel: 'stderr', text: 'warn', number: 1 },
+    { channel: 'stdout', text: 'text', number: 2 },
+    { channel: 'stdout', text: 'next', number: 3 },
+  ])
+})
+
 // Value: protects=each standard-error line's `[stderr] ` mark counts toward the kept tail and toward the characters left out, so the pane never shows more than its limit of shown text and says exactly how much it left out; fails_when=the mark is left out of a line's cost, so a tail of standard-error lines keeps more than the limit and the left-out count is too small; why_new=Step 9's testing review found every limit test written with standard-output lines only; seam=none; no_claim=the cut of a standard-error line whose mark does not fit (F114)
 test('standard-error marks count toward the kept tail and the characters left out', () => {
   // Arrange
