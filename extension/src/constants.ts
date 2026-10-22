@@ -1010,9 +1010,9 @@ export const VITEST_LIST_ERROR_LIMIT_CHARS = 2_048
 export const VITEST_REPORT_LIMIT_BYTES = 8_388_608
 /** Largest `node_modules/vitest/package.json` read for its version; Vitest's own file is a few kilobytes, and a larger one is reported as an unreadable version. */
 export const VITEST_PACKAGE_JSON_LIMIT_BYTES = 65_536
-/** The version the root Vitest's package must name before it is printed to the agent: a short semantic version, so a package's `version` field cannot carry other text into `codebook_status` ({@link readVitestPrerequisite}). */
+/** The version the root Vitest's package must name before it is printed to the agent: a short semantic version (each number at most nine digits, a suffix at most 64 characters), so a package's `version` field cannot carry other text or kilobytes of digits into `codebook_status` ({@link readVitestPrerequisite}). */
 export const PRINTABLE_VITEST_VERSION =
-  /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]{1,64})?$/
+  /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.-]{1,64})?$/
 /** Wait for the owned test process to report its exit after its debugger session ended early. */
 export const NODE_TEST_EXIT_GRACE_MS = 2_000
 /** Budget for each owned Node test phase: attach through the entry pause, reaching a declared stop while the test runs, and capturing it. */
