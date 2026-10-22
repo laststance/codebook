@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
  * Says whether Node started the module with the given URL as the program, as opposed to another module importing it.
  *
  * Why: a script that also exports its functions for tests must do its work only when it is started directly, and must print nothing when a test imports it. `import.meta.main` would tell, but it needs Node 24.2 or later and the repository only requires Node 24; and a comparison of `import.meta.url` with the path on Node's command line fails when that path runs through a symbolic link (`/tmp` is one on macOS, where worktrees live).
- * Called once, at the entry point of such a script (`watch-background.mjs`, `refuse-closing-keywords.mjs`).
+ * Called once, at the entry point of such a script (`watch-background.mjs`).
  *
  * It compares real paths on both sides, so a script reached through a link to the file, or through a link to a folder above it, still counts.
  *
