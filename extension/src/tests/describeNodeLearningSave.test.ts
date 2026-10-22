@@ -143,7 +143,7 @@ test('the question names the stops reached, and the partial notice composes only
   // Assert
   assert.deepEqual(question, {
     text: 'Saving ends the test run before its result (1 of 3 stops reached). Save now?',
-    actions: ['Save now', 'Cancel'],
+    actions: ['Save now'],
   })
   assert.deepEqual(failingWithGaps, {
     text: 'Learning partially saved. The test did not pass (exit code 1); the replay holds the failing run. Ask the chat for an explanation step for stop 2, then save again. Not recorded: recorded debugger state of stop 2. An explanation cannot add them; only a new test run records them.',

@@ -270,6 +270,7 @@ test('stepping through an opened Node history saves each reader position without
   }
 })
 
+// Value: protects=the learner's understanding decision of a test history being an explicit private record that survives a store restart; fails_when=the decision is lost on restart or readable without the learner's choice; why_new=the decision file moved with the test history store; seam=a real store on a temporary folder; no_claim=the Study pane's drawing of it
 test('Node history understanding is an explicit private decision that survives store restart', async () => {
   // Arrange
   const directory = await mkdtemp(

@@ -51,6 +51,7 @@ function installPlayback(service: StudyService, store: RecordingStore) {
   return controller
 }
 
+// Value: protects=a stored recording being discovered and replayed through new server credentials with no live run or original service; fails_when=a recording needs its original service or live run to be listed or replayed; why_new=credentials are new at every server start; seam=a real server over a stored recording; no_claim=the Study pane's replay
 test('new server credentials discover and replay a stored recording with no live run or original service', async () => {
   // Arrange: fixed PNG input is a storage fixture, not claimed real native recording.
   const harness = await createHarness(),

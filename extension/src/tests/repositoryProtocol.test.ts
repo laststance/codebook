@@ -812,7 +812,7 @@ test('the source-only help and the repository-browser help tell an agent to take
   }
 })
 
-// Value: protects=a client written for API 1.6, which read text from a source answer, learning from the server it connects to that the lines are in numberedText now; fails_when=the server reports another API version than 1.8 while its source answer has no text, or its instructions no longer say what 1.7 changed (the instructions now open with API 1.8); why_new=Cycle 0046 row 54: row 6 took text out of both source answers while the server still reported API 1.6, the version that promised both members; seam=none
+// Value: protects=a client written for API 1.6, which read text from a source answer, learning from the server it connects to that the lines are in numberedText now; fails_when=the server reports another API version than 1.8 while its source answer has no text, or its instructions no longer say what 1.7 changed (the instructions now open with API 1.8); why_new=Cycle 0046 row 54: row 6 took text out of both source answers while the server still reported API 1.6, the version that promised both members; seam=none; no_claim=the wording of later API versions
 test('the server reports API 1.8 and its instructions say that since API 1.7 codebook_source and a book’s cited source answer numberedText and no longer text', async () => {
   // Arrange
   const harness = await repositoryProtocolHarness()

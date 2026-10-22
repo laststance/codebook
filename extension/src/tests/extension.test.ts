@@ -1508,6 +1508,7 @@ test('a released study with failed evidence can retire its dead connection and e
   }
 })
 
+// Value: protects=an owner whose physical release failed staying owned, so a dead endpoint is neither started on nor copied until an explicit cleanup succeeds; fails_when=the owner is dropped after the failed release or a start or copy is accepted on the dead endpoint; why_new=release failure left a half-owned endpoint; seam=the release fails by a stand-in; no_claim=a real process group
 test('a failed physical release keeps its owner and rejects starting or copying a dead endpoint until explicit cleanup succeeds', async () => {
   // Arrange
   const harness = await createHarness(),

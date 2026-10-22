@@ -88,6 +88,7 @@ function replaceFile(entries, path, content) {
   )
 }
 
+// Value: protects=the packaged VSIX loading outside the checkout with no bundled application, its patch identity and dependency notices; fails_when=the package carries an application fixture, loses its patch identity or its notices, or needs the checkout to load; why_new=the package contract grew with each release; seam=a real package build; no_claim=an installed editor's behavior
 test('a real VSIX loads outside the checkout and excludes bundled applications and preserves patch identity and dependency notices', async () => {
   // Arrange / Act
   const checked = await verifyPackageContent(original)

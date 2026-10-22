@@ -7,12 +7,15 @@ import {
   type NodeLearningSaveHost,
 } from '../nodeLearningSave'
 import type { NodeTestHistorySummary } from '../nodeTestHistoryStore'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { StudyRecord } from '../service'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 const INSTANCE_ID = '11111111-1111-4111-8111-111111111111'
 const RUN_ID = '22222222-2222-4222-8222-222222222222'
 const STUDY_ID = `${INSTANCE_ID}_${RUN_ID}`
+/** How long a test waits for work the Save leaves running after it returns; a break of the product fails within it. */
+const AWAITED_EFFECT_BOUND_MS = 3_000
 
 /** A node-test run of two declared stops, as the service keeps it, with the given facts. */
 function testRun(facts: Partial<StudyRecord> = {}): StudyRecord {
@@ -61,13 +64,34 @@ function recordingHost(
     answer?: string
     summaries?: (() => Promise<NodeTestHistorySummary | undefined>)[]
     stops?: ((record: StudyRecord) => Promise<void>)[]
+    /** What the notification's action prompt answers (the action the learner clicks). */
+    notifyAnswer?: string
+    /** Makes the host's open reject with this error. */
+    openFails?: Error
+    /** The material revision the store's summary projection lists; `undefined` while the history is not listed. */
+    storeRevision?: () => number | undefined
   } = {},
 ) {
   const asked: string[] = [],
+    askedActions: (readonly string[])[] = [],
     notified: { severity: string; text: string; actions: readonly string[] }[] =
       [],
     opened: string[] = [],
     logged: CodebookDiagnostic[] = []
+  /** Waits, within a bound, until the host's open was called; the work a notification's action starts after the Save returned. Rejects naming the missing open when the bound passes, so a broken product fails instead of hanging. */
+  const whenOpened = (): Promise<boolean> =>
+    waitUntil(
+      () => opened.length > 0,
+      'the host’s open of the test replay',
+      AWAITED_EFFECT_BOUND_MS,
+    )
+  /** Waits, within a bound, until the host logged `count` entries; the work a Save leaves running after it returns. Rejects naming the missing entry when the bound passes. */
+  const whenLogged = (count: number): Promise<boolean> =>
+    waitUntil(
+      () => logged.length >= count,
+      `${count} Output entries from the Save`,
+      AWAITED_EFFECT_BOUND_MS,
+    )
   let stopCalls = 0,
     summaryCalls = 0,
     seals = 0
@@ -97,24 +121,32 @@ function recordingHost(
         return read()
       },
     }),
-    ask: async (text) => {
+    ask: async (text, actions) => {
       asked.push(text)
+      askedActions.push(actions)
       return options.answer
     },
     notify: async (severity, text, actions) => {
       notified.push({ severity, text, actions })
-      return undefined
+      return options.notifyAnswer
     },
+    materialRevision: () => options.storeRevision?.(),
     open: async (studyId) => {
       opened.push(studyId)
+      if (options.openFails) throw options.openFails
     },
-    log: (entry) => logged.push(entry),
+    log: (entry) => {
+      logged.push(entry)
+    },
     changed: () => undefined,
   }
   let currentRecord: StudyRecord | undefined
   return {
     host,
     asked,
+    askedActions,
+    whenLogged,
+    whenOpened,
     notified,
     opened,
     logged,
@@ -515,8 +547,8 @@ test('a run that recorded nothing shows no Save item, and its Save reads no hist
   assert.deepEqual(recorder.logged, [])
 })
 
-// Value: protects=a Save now answered while a test run still prepares, whose stop seals its history with no entry: the Save ends as for a run that recorded nothing (the refusal, no receipt, no partial notice with Open replay, no item); fails_when=the Save reads the empty sealed history and keeps a partial receipt or raises the partial notice whose Open replay opens nothing; why_new=the recorded-nothing test refuses a run already sealed empty before any stop, and every question test saves a run paused at a stop (Step 9 pass 2 state-machines, wrong row preparing-empty x save-now); seam=none; no_claim=the real seal (the stop is a stand-in that seals no entry, as a Save while Vitest still launches does)
-test('Save now while a test run prepares, whose stop seals no entry, ends as for a run that recorded nothing', async () => {
+// Value: protects=a Save now answered at a stop whose stop seals its history with no entry (the entry was lost before the seal): the Save ends as for a run that recorded nothing (the refusal, no receipt, no partial notice with Open replay, no item); fails_when=the Save reads the empty sealed history and keeps a partial receipt or raises the partial notice whose Open replay opens nothing; why_new=the recorded-nothing test refuses a run already sealed empty before any stop, and every question test saves a run whose stop seals entries (Step 9 pass 2 state-machines, wrong row; a Save before the first stop is refused now, D9); seam=none; no_claim=the real seal (the stop is a stand-in that seals no entry)
+test('Save now at a stop whose stop seals no entry ends as for a run that recorded nothing', async () => {
   // Arrange
   const recorder = recordingHost({
     answer: 'Save now',
@@ -542,7 +574,7 @@ test('Save now while a test run prepares, whose stop seals no entry, ends as for
     ],
   })
   const save = new NodeLearningSave(recorder.host)
-  const record = testRun({ nodePhase: 'preparing', nodeStops: [] })
+  const record = testRun()
   recorder.use(record)
 
   // Act
@@ -553,7 +585,7 @@ test('Save now while a test run prepares, whose stop seals no entry, ends as for
 
   // Assert
   assert.deepEqual(recorder.asked, [
-    'Saving ends the test run before its result (0 of 2 stops reached). Save now?',
+    'Saving ends the test run before its result (1 of 2 stops reached). Save now?',
   ])
   assert.equal(recorder.stopCalls(), 1)
   assert.equal(
@@ -616,6 +648,512 @@ test('the Retry of a stop rejected before the result stops the run again without
   assert.equal(
     save.item(record)?.text,
     '$(warning) Learning partially saved · Open replay',
+  )
+})
+
+/** A partial summary that lacks the explanation of stop 2, as a chat that explained only stop 1 leaves it. */
+function summaryMissingStopTwo(
+  facts: Partial<NodeTestHistorySummary> = {},
+): NodeTestHistorySummary {
+  return summary({
+    learningCoverage: 'partial',
+    learningMissing: [{ kind: 'stop', stop: 2 }],
+    explainedStopCount: 1,
+    ...facts,
+  })
+}
+
+// Value: protects=a Save before the first stop (the palette command, or a click while the journal holds only preparation output): it does nothing, says there is nothing to save yet, asks no question and leaves the preparing run running; fails_when=the Save asks "Save now?", stops the preparing run, or seals a partial history of boilerplate output; why_new=a Save during preparation ended the agent's run and left an error the skill read as a refusal (F89, D9; matrix cells preparing x save-now, preparing x cancel and preparing-empty x cancel are this refusal); seam=the service's stop is counted; no_claim=the real preparation
+test('Save before the first stop does nothing, says there is nothing to save yet and leaves the run preparing', async () => {
+  // Arrange
+  const recorder = recordingHost({ answer: 'Save now' })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodeStops: [], nodePhase: 'preparing' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(recorder.asked, [])
+  assert.equal(recorder.stopCalls(), 0)
+  assert.equal(record.stopped, false)
+  assert.deepEqual(recorder.notified, [
+    {
+      severity: 'information',
+      text: 'Nothing to save yet: the test run has not reached its first stop.',
+      actions: [],
+    },
+  ])
+  assert.equal(save.item(record)?.text, '$(sync~spin) Preparing the test run…')
+})
+
+// Value: protects=the Retry row of a rejected stop following the run: once a later codebook_stop released and sealed the run, the item reads Recording finished with Save instead of Retry; fails_when=the item keeps "Learning save failed · Retry" for a run that is stopped and sealed; why_new=the status item kept a Save state that a change outside Save made stale (F90); seam=the service's first stop rejects, then the run is sealed as codebook_stop does; no_claim=codebook_stop itself (service tests)
+test('the Retry row of a rejected stop reads Recording finished once codebook_stop sealed the run', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    stops: [
+      async (record): Promise<void> => {
+        record.cleanupError = new StudyError(
+          'RUNTIME_FAILED',
+          'process group still running',
+        )
+        throw new Error('process group still running')
+      },
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'completed' })
+  recorder.use(record)
+  await save.save(record)
+  const rejected = save.item(record)?.text
+
+  // Act
+  record.cleanupError = undefined
+  record.stopped = true
+  record.nodeHistoryStatus = 'complete'
+  const afterStop = save.item(record)
+
+  // Assert
+  assert.equal(rejected, '$(error) Learning save failed · Retry')
+  assert.equal(
+    afterStop?.text,
+    '$(save) Recording finished · Save learning replay',
+  )
+  assert.equal(afterStop?.command?.title, 'Save learning replay')
+})
+
+// Value: protects=a run that ended before its first stop (its continuation failed, or its stop failed and left a release error) showing no Preparing item; fails_when=the item keeps "Preparing the test run…" for a run that is dead; why_new=Preparing stayed for a dead run whose stop failed (F90); seam=none; no_claim=how the run reports its failure (service tests)
+test('a run that ended before its first stop shows no Preparing item', () => {
+  // Arrange
+  const save = new NodeLearningSave(recordingHost().host)
+  const failedContinuation = testRun({ nodeStops: [], nodePhase: 'failed' })
+  const failedStop = testRun({
+    nodeStops: [],
+    nodePhase: 'preparing',
+    cleanupError: new StudyError('RUNTIME_FAILED', 'process group running'),
+  })
+
+  // Act
+  const items = [save.item(failedContinuation), save.item(failedStop)]
+
+  // Assert
+  assert.deepEqual(items, [undefined, undefined])
+})
+
+// Value: protects=a Save receipt that compares with the store's material revision (the summary projection the library lists), so material another window saved, which this window's cache never sees, does not return the saved item to Save, while a later store revision still does; fails_when=the item returns to Save right after a Save because this window's cache says revision 0 while the store says 2, or it keeps "Learning saved" after the store moved on; why_new=the receipt held only while its revision equalled this window's cache (F52, D10); seam=the store's revision is a fake that this test moves; no_claim=how the library lists the revision (store tests)
+test('a Save receipt holds against the store revision that another window moved, and a later store revision returns the item to Save', async () => {
+  // Arrange
+  let storeRevision: number | undefined = 2
+  const recorder = recordingHost({
+    summaries: [async () => summary({ materialRevision: 2 })],
+    storeRevision: () => storeRevision,
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({
+    nodePhase: 'completed',
+    nodeLearning: {
+      needs: { stopSequences: [2, 3], resultSequence: 4 },
+      materialRevision: 0,
+      missing: [],
+      coverage: 'none',
+    },
+  })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+  const afterSave = save.item(record)?.text
+  storeRevision = 3
+  const afterLaterRevision = save.item(record)?.text
+
+  // Assert
+  assert.equal(afterSave, '$(check) Learning saved · Open replay')
+  assert.equal(
+    afterLaterRevision,
+    '$(save) Recording finished · Save learning replay',
+  )
+})
+
+// Value: protects=partial x Save: a later material revision returns a partially saved item to Save, and Save then reads the new revision and ends saved; fails_when=the partial receipt keeps vouching after the chat saved the missing explanation, or the next Save stays partial; why_new=partial x Save was untested (F53, F70); seam=the store's revision and summaries are fakes; no_claim=the notification's look
+test('a later material revision returns a partially saved item to Save, and Save then ends saved', async () => {
+  // Arrange
+  let storeRevision: number | undefined = 1
+  const recorder = recordingHost({
+    summaries: [
+      async () => summaryMissingStopTwo({ materialRevision: 1 }),
+      async () => summary({ materialRevision: 2 }),
+    ],
+    storeRevision: () => storeRevision,
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ stopped: true, nodePhase: 'completed' })
+  recorder.use(record)
+  await save.save(record)
+  const partial = save.item(record)?.text
+
+  // Act
+  storeRevision = 2
+  const returned = save.item(record)?.text
+  await save.save(record)
+
+  // Assert
+  assert.equal(partial, '$(warning) Learning partially saved · Open replay')
+  assert.equal(returned, '$(save) Recording finished · Save learning replay')
+  assert.equal(save.item(record)?.text, '$(check) Learning saved · Open replay')
+})
+
+// Value: protects=saved-revised x Save: after the store's revision moved, Save reads the new revision without asking and without a second seal, and ends saved for it; fails_when=the Save asks again, seals again, or the item stays at Save; why_new=saved-revised x Save was untested (F70); seam=the store's revision and summaries are fakes; no_claim=none beyond protects
+test('Save after the revision moved reads the new revision without a second seal', async () => {
+  // Arrange
+  let storeRevision: number | undefined = 1
+  const recorder = recordingHost({
+    summaries: [
+      async () => summary({ materialRevision: 1 }),
+      async () => summary({ materialRevision: 2 }),
+    ],
+    storeRevision: () => storeRevision,
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'completed' })
+  recorder.use(record)
+  await save.save(record)
+  storeRevision = 2
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(recorder.asked, [])
+  assert.equal(recorder.seals(), 1)
+  assert.equal(recorder.summaryCalls(), 2)
+  assert.equal(save.item(record)?.text, '$(check) Learning saved · Open replay')
+})
+
+// Value: protects=saved x Save: a Save of an item already saved asks nothing, seals nothing again, reads the history once more and stays saved with no notification; fails_when=the second Save asks, seals again or raises a notification; why_new=saved x Save was untested (F70); seam=the service's stop is a fake that seals once; no_claim=none beyond protects
+test('Save of an already saved test run asks nothing, seals nothing again and stays saved', async () => {
+  // Arrange
+  const recorder = recordingHost()
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'completed' })
+  recorder.use(record)
+  await save.save(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(recorder.asked, [])
+  assert.equal(recorder.seals(), 1)
+  assert.equal(recorder.summaryCalls(), 2)
+  assert.deepEqual(recorder.notified, [])
+  assert.equal(save.item(record)?.text, '$(check) Learning saved · Open replay')
+})
+
+// Value: protects=partial x Save: saving a partially saved run again raises the partial notice again, so the learner is told what is still missing; fails_when=the second Save is silent; why_new=partial x Save raised its notice once in the only test (F70); seam=the store's summaries are fakes; no_claim=the notification's look
+test('Save of a partially saved test run raises the partial notice again', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    summaries: [
+      async () => summaryMissingStopTwo(),
+      async () => summaryMissingStopTwo(),
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ stopped: true, nodePhase: 'completed' })
+  recorder.use(record)
+  await save.save(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.equal(recorder.notified.length, 2)
+  assert.equal(recorder.notified[1]?.text, recorder.notified[0]?.text)
+  assert.equal(recorder.seals(), 0)
+})
+
+// Value: protects=seal-failed x Save: a Save of a run whose history could not be sealed seals nothing again, reads nothing, writes no second Output entry and keeps Open retained history; fails_when=the Save reads the unsealed history, seals again or turns the item into Retry; why_new=seal-failed x Save was untested (F70); seam=the first stop leaves the history failed as the service does; no_claim=the open itself (workspace tests)
+test('Save of a run whose seal failed seals nothing again and keeps Open retained history', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    stops: [
+      async (record): Promise<void> => {
+        record.stopped = true
+        record.nodeHistoryStatus = 'failed'
+        record.nodeHistoryFailure = 'ENOSPC: no space left on device, write'
+      },
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'completed' })
+  recorder.use(record)
+  await save.save(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.equal(recorder.seals(), 0)
+  assert.equal(recorder.summaryCalls(), 0)
+  assert.deepEqual(recorder.logged, [])
+  assert.equal(
+    save.item(record)?.text,
+    '$(error) Learning save failed · Open retained history',
+  )
+})
+
+// Value: protects=sealed-without-entry x Save: a Save of a run whose history sealed with no entry is refused as for a run that recorded nothing, with no stop, no read and no Output entry; fails_when=the Save reads an empty history or stops again; why_new=only a run stopped before its history was saved through the command (F70); seam=none; no_claim=none beyond protects
+test('Save of a run whose history sealed with no entry is refused and reads nothing', async () => {
+  // Arrange
+  const recorder = recordingHost()
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({
+    stopped: true,
+    nodePhase: 'failed',
+    nodeStops: [],
+    nodeHistoryStatus: 'partial',
+    nodeHistoryEntryCount: 0,
+  })
+  recorder.use(record)
+
+  // Act
+  const outcome = await Promise.resolve()
+    .then(() => save.save(record))
+    .then(
+      () => 'saved',
+      (error: unknown) => (error instanceof Error ? error.message : 'refused'),
+    )
+
+  // Assert
+  assert.equal(
+    outcome,
+    'No recorded Codebook session is available. Explain a real code path first.',
+  )
+  assert.equal(recorder.stopCalls(), 0)
+  assert.equal(recorder.summaryCalls(), 0)
+  assert.deepEqual(recorder.logged, [])
+})
+
+// Value: protects=advancing x Cancel: a Save answered with Cancel while the run advances between stops leaves it advancing, with no stop; fails_when=a Cancel stops the advancing run; why_new=advancing x Save was untested (F70); seam=the modal answer is the test's; no_claim=the host's dialog
+test('Cancel on the Save question while the run advances leaves it running', async () => {
+  // Arrange
+  const recorder = recordingHost({ answer: undefined })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'advancing' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.equal(recorder.asked.length, 1)
+  assert.equal(recorder.stopCalls(), 0)
+  assert.equal(record.stopped, false)
+})
+
+// Value: protects=advancing x Save now: a Save now while the run advances between stops stops it, seals the stops reached and ends saved; fails_when=the stop is skipped or the receipt is missing; why_new=advancing x Save was untested (F70); seam=the service's stop is a fake that seals; no_claim=the real continuation (service tests)
+test('Save now while the run advances stops it and saves the stops reached', async () => {
+  // Arrange
+  const recorder = recordingHost({ answer: 'Save now' })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'advancing' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.equal(recorder.stopCalls(), 1)
+  assert.equal(record.stopped, true)
+  assert.equal(save.item(record)?.text, '$(check) Learning saved · Open replay')
+})
+
+// Value: protects=another run's Save in flight: a Save for a different test run is refused at once, synchronously, with the wait-for-the-result sentence, and the first Save is unharmed; fails_when=a second run's Save starts, stops its run, or waits silently; why_new=the guard had no test (F19, gap E2); seam=the first run's stop is held; no_claim=none beyond protects
+test('a Save for another test run while one Save runs is refused at once', async () => {
+  // Arrange
+  let releaseStop!: () => void
+  const recorder = recordingHost({
+    stops: [
+      (record): Promise<void> =>
+        new Promise<void>((resolve) => {
+          releaseStop = (): void => {
+            record.stopped = true
+            record.nodeHistoryStatus = 'complete'
+            resolve()
+          }
+        }),
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const first = testRun({ nodePhase: 'completed' })
+  const other = testRun({
+    id: '33333333-3333-4333-8333-333333333333',
+    nodePhase: 'completed',
+  })
+  recorder.use(first)
+  const firstSave = save.save(first)
+
+  // Act
+  const refusal = (() => {
+    try {
+      void save.save(other)
+      return 'accepted'
+    } catch (error) {
+      return error instanceof Error ? error.message : 'refused'
+    }
+  })()
+  releaseStop()
+  await firstSave
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Another learning session is being saved. Wait for its result.',
+  )
+  assert.equal(recorder.stopCalls(), 1)
+  assert.equal(save.item(first)?.text, '$(check) Learning saved · Open replay')
+})
+
+// Value: protects=a failed seal shown before any click: when the service already failed to seal the history, the item reads Open retained history with the cause and no Save has run; fails_when=the item offers Save for a history that cannot be sealed; why_new=the failed seal was only reached through a Save click (F19, gap E2); seam=none; no_claim=the open itself (workspace tests)
+test('a failed seal is shown as Open retained history before any Save click', () => {
+  // Arrange
+  const recorder = recordingHost()
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({
+    stopped: true,
+    nodePhase: 'completed',
+    nodeHistoryStatus: 'failed',
+    nodeHistoryFailure: 'ENOSPC: no space left on device, write',
+  })
+
+  // Act
+  const item = save.item(record)
+
+  // Assert
+  assert.equal(
+    item?.text,
+    '$(error) Learning save failed · Open retained history',
+  )
+  assert.equal(item?.command?.command, 'codebook.openLearningReplay')
+  assert.equal(recorder.stopCalls(), 0)
+})
+
+// Value: protects=an unverified summary after the seal: the item ends at Retry with the store's reason, and Retry reads again; fails_when=an unverified history reads saved, or Retry seals again; why_new=the verification branch had no test (F19, gap E2); seam=the store's first summary is unavailable; no_claim=how the store verifies
+test('an unverified summary ends at Retry with the store reason, and Retry reads again', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    summaries: [
+      async () =>
+        summary({
+          verification: 'unavailable',
+          reason: 'The sealed journal does not verify.',
+        }),
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'completed' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+  const failed = save.item(record)
+  await save.save(record)
+
+  // Assert
+  assert.equal(failed?.text, '$(error) Learning save failed · Retry')
+  assert.match(failed?.tooltip ?? '', /The sealed journal does not verify\./)
+  assert.equal(failed?.command?.title, 'Retry')
+  assert.equal(recorder.seals(), 1)
+  assert.equal(save.item(record)?.text, '$(check) Learning saved · Open replay')
+})
+
+// Value: protects=the Output entry of a read after the seal that failed: one entry named save:read-failed with the study and a cause free of storage paths; fails_when=the failure is silent or the entry shows the storage path; why_new=the read-back failure's Output entry was untested (F19, gap E2); seam=the store's read rejects; no_claim=the channel's look
+test('a read after the seal that failed writes one Output entry without storage paths', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    summaries: [
+      async () => {
+        throw new Error(
+          "EACCES: permission denied, open '/Users/ada/Library/codebook/agent/sealed.json'",
+        )
+      },
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'completed' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(
+    recorder.logged.map((entry) => [entry.surface, entry.studyId, entry.cause]),
+    [
+      [
+        'save:read-failed',
+        STUDY_ID,
+        "EACCES: permission denied, open '<storage>/agent/sealed.json'",
+      ],
+    ],
+  )
+})
+
+// Value: protects=the question offering exactly the catalog's actions, so the modal's own Cancel is the only other choice; fails_when=the question is asked with a literal label of its own, or the catalog and the question disagree; why_new=the question's labels were retyped by their consumers (F39); seam=the modal is the test's; no_claim=the host's dialog
+test('the Save question offers the catalog action Save now and nothing else', async () => {
+  // Arrange
+  const recorder = recordingHost({ answer: undefined })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun()
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+
+  // Assert
+  assert.deepEqual(recorder.askedActions, [['Save now']])
+})
+
+// Value: protects=the partial notice's Open replay: choosing it opens the saved test replay of this run; fails_when=the action is dropped and nothing opens; why_new=the Save tests' host recorded opened but no test read it (F88); seam=the notification answer and the host's open are fakes; no_claim=the Study pane's open (workspace tests)
+test('choosing Open replay on the partial notice opens this run’s test replay', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    notifyAnswer: 'Open replay',
+    summaries: [async () => summaryMissingStopTwo()],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ stopped: true, nodePhase: 'completed' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+  await recorder.whenOpened()
+
+  // Assert
+  assert.deepEqual(recorder.opened, [STUDY_ID])
+})
+
+// Value: protects=a rejected Open replay of the partial notice: it is written to the Output channel with a cause free of storage paths instead of being dropped; fails_when=the rejection vanishes; why_new=the rejection was swallowed (F40); seam=the host's open rejects; no_claim=the learner-facing failure notification of the workspace's open (workspace tests)
+test('a rejected Open replay of the partial notice is written to the Output channel', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    notifyAnswer: 'Open replay',
+    openFails: new Error("cannot read '/Users/ada/Library/codebook/agent/h'"),
+    summaries: [async () => summaryMissingStopTwo()],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ stopped: true, nodePhase: 'completed' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+  await recorder.whenLogged(1)
+
+  // Assert
+  assert.deepEqual(
+    recorder.logged.map((entry) => [entry.surface, entry.studyId, entry.cause]),
+    [['save:open-replay', STUDY_ID, "cannot read '<storage>/agent/h'"]],
   )
 })
 

@@ -2600,7 +2600,7 @@ test('an interpretation that names the paused line in full-width digits is saved
   assert.equal(savedExplanationEntries(runtime)[0].placeNamed, true)
 })
 
-// Value: protects=the help an agent reads before its first start naming the fields of the three places, the place sentence and the check, with the API and extension versions the constants hold; fails_when=the help still describes requestedSource only, or its entry repeats version numbers typed beside the constants; why_new=Cycle 0045 ER-8, ER-5 (4) and DX-19 (first clause); seam=none
+// Value: protects=the help an agent reads before its first start naming the fields of the three places, the place sentence and the check, with the API and extension versions the constants hold; fails_when=the help still describes requestedSource only, or its entry repeats version numbers typed beside the constants; why_new=Cycle 0045 ER-8, ER-5 (4) and DX-19 (first clause); seam=none; no_claim=the help's wording beyond the three places and the check
 test('configured help names the declared, the requested and the bound place, says that a moved stop’s inspection carries place and that its first interpretation must name the paused line, and takes its versions from the constants', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)

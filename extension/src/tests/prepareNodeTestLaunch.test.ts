@@ -423,6 +423,7 @@ test('a retired testName or a missing test identity is refused before any Vitest
   }
 })
 
+// Value: protects=a repository whose Vitest is older than 4 being refused before any Vitest process starts; fails_when=an old Vitest is launched or the refusal comes after a process started; why_new=the Vitest prerequisite is checked at preparation; seam=a repository fixture with an old Vitest; no_claim=other package metadata
 test('a repository whose Vitest is older than 4 is refused before any Vitest process starts', async () => {
   // Arrange
   const { root, sourceHash, testHash } = await createVitestRepository('3.2.4')

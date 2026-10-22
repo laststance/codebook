@@ -520,7 +520,7 @@ test('a Node history seek made while a played stop is failing presents its own e
   controller.dispose()
 })
 
-// Value: protects=a closed Node reader from a late publish; fails_when=a presentation that settles after dispose() still calls changed(); why_new=Cycle 0044 (0033-OCR3); seam=none
+// Value: protects=a closed Node reader from a late publish; fails_when=a presentation that settles after dispose() still calls changed(); why_new=Cycle 0044 (0033-OCR3); seam=none; no_claim=the native presentation itself
 test('a Node stop that finishes presenting after the reader closed publishes nothing', async () => {
   // Arrange
   let finishPresentation = (): void => {}

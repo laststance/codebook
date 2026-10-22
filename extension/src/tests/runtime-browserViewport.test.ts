@@ -1689,6 +1689,7 @@ test('pane handoff refuses unleased, unreserved, aborted and already closed view
   unleased.viewport.close()
 })
 
+// Value: protects=rebinding the live-history and replay leases keeping the independent recorder alive and painting only the chosen presentation; fails_when=a rebinding stops the recorder or paints the other presentation; why_new=two leases share one viewport; seam=a fake browser viewport; no_claim=real pixels
 test('rebinding both live-history and replay leases preserves the independent recorder and paints only the chosen presentation', async () => {
   // Arrange
   const original = viewportPanel(),

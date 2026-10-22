@@ -183,7 +183,7 @@ function everyCombination(): NodeTestOutcomeInput[] {
   return combinations
 }
 
-// Value: protects=every row of Design 1's outcome table for a test run, and that each input combination lands on exactly one row; fails_when=a row reads other outcomes than the table, two rows overlap, or a combination falls between rows; why_new=the run's outcomes were a three-way branch that stopped at partial (service.ts:2043-2053); seam=none; no_claim=how the service derives the facts from its record (service tests)
+// Value: protects=every row of Design 1's outcome table for a test run, and that each input combination lands on exactly one row; fails_when=a row reads other outcomes than the table, two rows overlap, or a combination falls between rows; why_new=the run's outcomes were a three-way branch that stopped at partial (the service's three-way outcome branch); seam=none; no_claim=how the service derives the facts from its record (service tests)
 test('every combination of a test run’s facts lands on exactly one row of the outcome table, with that row’s outcomes', () => {
   // Arrange
   const combinations = everyCombination()

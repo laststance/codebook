@@ -7,6 +7,7 @@ import { RecordingStore } from '../recordingStore'
 import { RepositoryBookStore } from '../repositoryBook'
 import { StudyService } from '../service'
 import { createRecordingObserver } from '../utils/createRecordingObserver'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 
@@ -114,6 +115,44 @@ test('codebook_stop answers HISTORY_SEAL_FAILED when a browser run’s recording
     ],
   )
   assert.equal(finish.mock.callCount(), 1)
+})
+
+// Value: protects=the Output entry and the answer of a browser run whose recording could not be finished: one entry named HISTORY_SEAL_FAILED for the run's study, and a cause in both the answer and the entry that shows no storage path; fails_when=the failed finish is silent in Output › Codebook, or the cause names the learner's storage folder; why_new=the existing test's stub error names no path and no test read the Output entry (F24, gap E7); seam=the recording writer's finish fails with a path inside the service's storage; no_claim=a real full disk
+test('a browser run’s failed recording finish writes one Output entry and shows no storage path', async (context) => {
+  // Arrange
+  const { service, receipt, record } = await preparedRecordedRun(
+    context,
+    'browser-seal-output',
+  )
+  const entries: CodebookDiagnostic[] = []
+  service.diagnostics = (entry) => entries.push(entry)
+  const storage = service.causeRoots.storage[0]!
+  context.mock.method(record.recording!, 'finish', async () => {
+    throw new Error(`EACCES: permission denied, open '${storage}/sealed.json'`)
+  })
+
+  // Act
+  const answer = await service.stopForTool(receipt)
+
+  // Assert
+  assert.equal(
+    answer.sealFailure?.causeDetail,
+    "EACCES: permission denied, open '<storage>/sealed.json'",
+  )
+  assert.deepEqual(
+    entries.map(({ surface, studyId, cause }) => ({
+      surface,
+      studyId,
+      cause,
+    })),
+    [
+      {
+        surface: 'HISTORY_SEAL_FAILED',
+        studyId: `${service.instanceId}_${record.id}`,
+        cause: "EACCES: permission denied, open '<storage>/sealed.json'",
+      },
+    ],
+  )
 })
 
 // Value: protects=a browser run whose saved study the learner removed: its stop answers no seal failure, because nothing of that study is to be sealed; fails_when=a removed study's recording, whose finish fails on its gone folder, is reported to the agent as a failed seal; why_new=X1 names the removed study as never answering HISTORY_SEAL_FAILED (AC2); seam=the recording writer's finish, which fails as on a removed folder; no_claim=the removal itself (studyRemoval tests)
