@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.34.0] - 2026-10-22 (development candidate)
+
+Cycle 0049's second pull request ([Issue #107](https://github.com/laststance/codebook/issues/107)): a test replay's recorded test output in the Application pane, and the Study pane's test replay section rebuilt around the selected moment. The recorded source with its transitions and the native round in both editors come with the third pull request.
+
+**The Application pane shows the recorded test output.**
+
+- **Up to the selected moment.** A test replay's Application pane shows the output the test printed up to the selected moment and nothing printed after it, under the header `Recorded test output · <t> s` and the test's file and title path. At the result it ends with the verdict (`Test passed · exit code 0`, `Test failed · exit code <n>` or `Ended by signal <SIGNAL>`); a replay that ended before its result says `Recording ended before the test result.`, and one still recording says nothing of an end.
+- **Readable as text.** Lines written to standard error start with `[stderr] `. Terminal colors, cursor moves and other control characters (C0 and C1 controls, DEL and bidirectional controls) are removed. The Node inspector's own lines fold into one muted line such as `2 Node inspector lines hidden`, and the pane keeps the last 65,536 characters, with a line such as `… 1200 earlier characters not shown` before them.
+- **In place.** Moving through the replay updates the same page, so your scroll position, text selection and keyboard focus stay. The pane follows the latest output until you scroll up, and **Jump to latest** follows it again; moving back to a shorter moment does not turn following back on. A page the editor loads again (the pane moved to another window, webviews reloaded) shows the latest moment it had and keeps your choice; a pane the editor replaces follows again.
+- **Long output.** Moving through a long recorded output costs about the end the pane keeps: many short lines, or one very long line printed without line feeds, no longer slow the editor at each step or fill its memory.
+
+**The Study pane's test replay section.** It names the result, the capture and the explained stops, then the selected moment (`Stop <n> of <m> · <t> s`, `Output · <t> s` or `Result · <verdict> · <t> s`) with the explanation the chat saved for it, or `No saved explanation for this stop.`, and says `Source and debugger not recorded at this moment.` where they are not. **Previous stop** and **Next stop** come first in its transport, then **Play**, the time slider, **Previous event** and **Next event**. The learning summary is drawn as a browser replay's: a sequence diagram and its numbered steps under **Step details**, where the selected step is marked and the other steps of the same moment read `Same recorded moment`; a step's link selects its moment and that step. The events are listed under the collapsed **Events (<n>)**. When you close the Application pane, the section says `The Application pane is closed.`, and **Show recorded output** opens it again at the selected moment.
+
+**Compatibility.** The MCP API stays 1.8 and the bundled skill 1.0.46. No stored format changes: test histories, learning materials and reader positions written by 0.2.33.0 open unchanged, and those written now open in 0.2.33.0.
+
+**Not observed.** No native run of this version has reached a test stop yet; the native round in VS Code and Cursor comes with the third pull request. A pane that Show recorded output opens again after you closed it can open beside the source rather than above it; its placement is checked natively in that round.
+
 ## [0.2.33.0] - 2026-10-22 (development candidate)
 
 Cycle 0049 is a feature cycle ([Issue #107](https://github.com/laststance/codebook/issues/107)): a Vitest test run that the editor chat explained becomes a learning replay, a **test replay**. It is delivered in three pull requests, merged in order; this version holds the first, the loop and its contracts. The recorded test output in the Application pane and the summary's selected step come with the second, the recorded source with its transitions and the native round in both editors with the third.
