@@ -3457,6 +3457,8 @@ test('a Cancel pressed while the watch reads a site the chat has published stops
     wiki.setFreshness(CURRENT)
     read.release()
     const ended = await waitForEnd(wiki.status)
+    // The run's end is published before its marker change, which runs under the marker's claim and finishes later on a loaded machine (F82): wait for that change's answer, whichever it is; a reservation it keeps fails the assertion below.
+    await waitForMarkerAnswer(wiki, true)
     // Another window reads a reservation from this marker file.
     const isReservedForOtherWindows = await access(
       `${wiki.outputDirectory}.update-run.json`,
@@ -3901,7 +3903,8 @@ test('a press that finds another window’s stopped watch and this window’s ow
     progress[0]!.cancel()
     await waitForEnd(wiki.status)
     await secondWindow.clickUpdate()
-    const deadline = Date.now() + 2_000
+    // A loaded machine can take longer than a second or two for the takeover to run (F5): the waits below end on what they wait for, with a bound only against a hang.
+    const deadline = Date.now() + 10_000
     while (secondWindow.status().state !== 'running' && Date.now() < deadline)
       await new Promise((resolveWait) => setTimeout(resolveWait, 20))
     progress[1]!.cancel()
@@ -3913,7 +3916,7 @@ test('a press that finds another window’s stopped watch and this window’s ow
     isOverrideChosen = true
     await wiki.clickUpdate()
     isOverrideChosen = false
-    const refusalDeadline = Date.now() + 2_000
+    const refusalDeadline = Date.now() + 10_000
     while (
       wiki.offeredActions.length < refusalsBefore + 2 &&
       wiki.status().state !== 'running' &&
