@@ -779,3 +779,85 @@ test('a slot renamed for another file stays in its own group when it alone fille
     await harness.close()
   }
 })
+
+// Value: protects=a slot tab of another replay (one an editor restart restored or an earlier replay left) is closed when the open replay shows its slot, so only the open replay's slot tab stays; fails_when=the close skips slot tabs of other study ids and the stale tab stays beside the slot; why_new=the unit test of isNodeSourceSlotPath covers the path only, no workspace test plants a foreign slot tab; seam=none (the fake editor's showTextDocument as the learner's restored tab); no_claim=a slot tab the learner pinned or edited, which stays
+test('a slot tab of another replay is closed once the open replay shows its slot', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const openSlot = slotTabs(harness)[0]!
+    const foreignSlot = openSlot.replace(
+      `/${history.studyId}/Captured-theme.ts`,
+      '/other-replay-study/Captured-old.ts',
+    )
+    const parsed = new URL(foreignSlot)
+    await harness.editor.window.showTextDocument(
+      new harness.editor.Uri(
+        parsed.protocol.slice(0, -1),
+        parsed.host,
+        parsed.pathname,
+      ),
+      { viewColumn: 1, preserveFocus: true, preview: false },
+    )
+    assert.equal(slotTabs(harness).length, 2)
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+
+    // Assert
+    assert.deepEqual(slotTabs(harness), [openSlot])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=returning to Live after a slot that could not open leaves no slot tab and no recorded-source failure row in the Study pane; fails_when=the retire keeps the failed open's history-source row, which names a replay the learner left and offers a Retry that has nothing to retry; why_new=the open-failure test ends inside the replay, no test retires after a failure; seam=the workspace harness's injected failure of a non-file document open; no_claim=the Retry wording
+test('returning to Live after a recorded-source slot failed to open leaves no failure row behind', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    harness.failCurrentSourceOpen()
+    await selectMoment(harness, history.studyId, 2)
+    harness.restoreCurrentSourceOpen()
+    assert.equal(lastView(harness)?.errors.length, 1)
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert
+    assert.deepEqual(slotTabs(harness), [])
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=returning to Live from a moment that shows the placeholder (an output) closes the placeholder's slot tab; fails_when=the retire closes the slot tab only when it held a verified stop; why_new=the retire test starts from a verified stop; seam=none; no_claim=a slot tab the learner pinned or edited, which stays
+test('returning to Live closes the recorded-source slot a placeholder moment showed', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    const openedSlots = slotTabs(harness)
+
+    // Act
+    await harness.reader['retireNodeHistorySelection']()
+
+    // Assert
+    assert.equal(openedSlots.length, 1)
+    assert.deepEqual(slotTabs(harness), [])
+  } finally {
+    await harness.close()
+  }
+})

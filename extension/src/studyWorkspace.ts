@@ -11966,6 +11966,8 @@ export class StudyWorkspace {
     this.replayDebugger?.invalidate()
     const slot = this.nodeSourceSlot
     this.nodeSourceSlot = undefined
+    // A slot that could not open belonged to the retired replay: its row and Retry go with it.
+    this.errors.delete('history-source')
     // The retired replay's recorded-source slot goes with it, with any slot tab a rename still opening or one that failed left.
     if (slot)
       await this.closeNodeSourceSlotTabs().catch((error: unknown) =>
