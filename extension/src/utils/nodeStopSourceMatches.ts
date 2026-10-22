@@ -11,8 +11,8 @@ const verdicts = new WeakMap<NodeTestHistoryStop, boolean>()
  * Tells whether a saved Node stop's captured source is verified and matches where it stopped, independently of whether the native session shows it.
  *
  * {@link StudyWorkspace.selectNodeHistoryEvent} requires it before presenting the stop natively, and the reader payload uses
- * it so "captured source unavailable" appears only for a real mismatch, never because the session ended or another
- * recording took the debugger.
+ * it so `Recorded source unavailable for this stop.` appears only for a real mismatch, never because the session ended
+ * or another recording took the debugger.
  *
  * @param entry - The saved stop from the Node test journal.
  * @returns
