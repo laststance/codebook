@@ -459,6 +459,7 @@ async function nodeRunHarness({
     if (verifiedByNews?.when === 'after the reply') announceVerified()
   }
   const outputSurfaces: { closeByLearner(): void }[] = []
+  let outputReveals = 0
   class OutputTerminal {
     readonly terminal = { name: 'Codebook · Test output' }
     private closed = false
@@ -475,6 +476,7 @@ async function nodeRunHarness({
     }
     reveal(): void {
       this.refuseOnceClosed()
+      outputReveals += 1
     }
     dispose(): void {
       this.closed = true
@@ -708,6 +710,8 @@ async function nodeRunHarness({
     debugStartOptions,
     launchPreparations: (): number => launchPreparations,
     closeRequests: (): number => closeRequests,
+    /** How many times the run brought its test output tab back to the front. */
+    outputReveals: (): number => outputReveals,
     stopRequests: (): number => stopRequests,
     /** The ids of the sessions the run asked the editor to stop, one entry for each request, in order. */
     stoppedSessionIds: (): string[] => [...stoppedSessionIds],
@@ -806,6 +810,31 @@ test('advancing to the next declared stop retires the captured breakpoint before
     assert.deepEqual(harness.calls, ['retire', 'arm', 'continue'])
     assert.equal(next.index, 1)
     assert.equal(harness.run.hasNextStop(), false)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the test output tab coming back to the front after each captured stop and after the result, because the native debugger opens its own console over it (F80); fails_when=a captured stop or the result no longer reveals the output tab, so the learner is left on the debug console instead of the test's output; why_new=no test counted the reveals (F80, EN5); seam=the output terminal stand-in counts reveals; no_claim=VS Code's real terminal focus
+test('a live run brings its test output tab back after each captured stop and after its result', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({ declaredStops: 2 })
+  try {
+    await harness.run.prepare()
+    const afterFirstStop = harness.outputReveals()
+    await harness.run.advance()
+    const afterSecondStop = harness.outputReveals()
+    await writeFile(harness.launch.report.file, '{}')
+
+    // Act
+    await harness.run.complete()
+
+    // Assert
+    assert.deepEqual(
+      { afterFirstStop, afterSecondStop, afterResult: harness.outputReveals() },
+      { afterFirstStop: 1, afterSecondStop: 2, afterResult: 3 },
+    )
   } finally {
     await harness.run.stop()
     await harness.cleanup()
@@ -1313,11 +1342,21 @@ test('a stop while the report is being checked removes the report only after the
 
     // Act
     const stopping = harness.run.stop()
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    const reportKeptDuringCheck = await stat(harness.launch.report.file).then(
-      () => true,
-      () => false,
+    // Gate: the release has stopped the session and closed the process, so the next step of the release is the wait for the check (no timer).
+    await waitUntil(
+      () =>
+        harness.calls.includes('stop-debugging') &&
+        harness.closeRequests() >= 1,
+      'the release reaching the wait for the report check',
+      1_000,
     )
+    // A release that removed the folder at once would finish this I/O before the reads below do; three reads in turn give it that chance.
+    let reportKeptDuringCheck = true
+    for (let read = 0; read < 3; read++)
+      reportKeptDuringCheck &&= await stat(harness.launch.report.file).then(
+        () => true,
+        () => false,
+      )
     finishRead()
     const result = await completing
     await stopping
@@ -1362,6 +1401,12 @@ test('a stop while the report is being checked keeps the passing result although
 
     // Act
     const stopping = harness.run.stop()
+    // Gate: the release has stopped the session (and so disposed the terminal) before the check ends, not by microtask order.
+    await waitUntil(
+      () => harness.calls.includes('stop-debugging'),
+      'the release stopping the debug session',
+      1_000,
+    )
     finishRead()
     const outcome = await completing.then(
       (result) => result.exitCode,

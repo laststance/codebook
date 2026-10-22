@@ -6,6 +6,7 @@ import { test } from 'node:test'
 
 import { NODE_TEST_HISTORY_DIRECTORY } from '../constants'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
@@ -126,20 +127,24 @@ test('a learning material saved after the last list is counted without reading i
   }
 })
 
-// Value: protects=the bound on histories read at a time when a list finds new ones; fails_when=more than four journals are read at once; why_new=NODE_HISTORY_SUMMARY_READ_CONCURRENCY (EN7, AC20); seam=the store's read is held briefly and counted; no_claim=the order of the reads
+// Value: protects=the bound on histories read at a time when a list finds new ones; fails_when=more than four journals are read at once; why_new=NODE_HISTORY_SUMMARY_READ_CONCURRENCY (EN7, AC20); seam=the store’s read is held by a gate the test opens one at a time and counted; no_claim=the order of the reads
 test('a list reads at most four new histories at a time', async (context) => {
   // Arrange
   const { store, cleanup } = await storeWithSealedHistories(9)
   const read = NodeTestHistoryStore.prototype.read
+  const held: (() => void)[] = []
   let reading = 0,
+    started = 0,
     mostReadingAtOnce = 0
   context.mock.method(
     store,
     'read',
     async function (this: NodeTestHistoryStore, studyId: string) {
       reading++
+      started++
       mostReadingAtOnce = Math.max(mostReadingAtOnce, reading)
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      // Gate: each read waits until the test lets it go (no timer).
+      await new Promise<void>((resolve) => held.push(resolve))
       try {
         return await read.call(this, studyId)
       } finally {
@@ -148,11 +153,23 @@ test('a list reads at most four new histories at a time', async (context) => {
     },
   )
   try {
-    // Act
-    const listed = await store.list()
+    // Act: the list runs; the test lets one held read go at a time and waits for the next to start.
+    const listing = store.list()
+    await waitUntil(() => started === 4, 'the first four reads', 2_000)
+    for (let letGo = 0; letGo < 9; letGo++) {
+      held.shift()?.()
+      if (started < 9)
+        await waitUntil(
+          () => started === Math.min(9, 4 + letGo + 1),
+          'the next read after one finished',
+          2_000,
+        )
+    }
+    const listed = await listing
 
     // Assert
     assert.equal(listed.length, 9)
+    assert.equal(started, 9)
     assert.equal(mostReadingAtOnce, 4)
   } finally {
     context.mock.restoreAll()
