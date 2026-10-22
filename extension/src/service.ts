@@ -2981,6 +2981,7 @@ export class StudyService {
         // Every deterministic check refuses before the history exists, so a refused run records nothing and holds no slot (EN1).
         await this.environment.checkNodeTestFiles?.(
           record.nodePrepared.configuration,
+          record.nodePrepared.descriptor.sources,
         )
         if (this.stopping || record.stopping) return
         const studyId = `${this.instanceId}_${record.id}`
