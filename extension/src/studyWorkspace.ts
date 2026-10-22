@@ -12372,7 +12372,6 @@ export class StudyWorkspace {
         ),
       },
       nodeHistoryLearningDecision: this.selectedNodeHistoryLearningDecision,
-      nodeHistoryLearningMaterial: this.selectedNodeHistoryLearningMaterial,
       // The reader cannot hash captured text, so every shown stop whose source fails verification is named here and gets no Inspect.
       nodeHistoryUnverifiedStops: this.selectedNodeHistory?.entries
         .slice(

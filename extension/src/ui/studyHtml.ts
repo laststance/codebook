@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto'
 import type {
   NodeTestHistoryIndex,
   NodeTestHistoryLearningDecision,
-  NodeTestLearningMaterial,
 } from '../nodeTestHistorySchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { PlaybackState, PlaybackBundle } from '../playbackController'
@@ -118,7 +117,6 @@ export interface StudyViewMessage {
   nodeHistoryPageCount?: number
   nodeHistoryEventCount?: number
   nodeHistoryLearningDecision?: NodeTestHistoryLearningDecision
-  nodeHistoryLearningMaterial?: NodeTestLearningMaterial
   /** Sequences of the shown Node stops whose captured source failed the extension's verification (path, line or text hash); they get no Inspect. */
   nodeHistoryUnverifiedStops?: number[]
   nodeHistoryPlayback?: {

@@ -495,8 +495,8 @@ test('saved Node history is selectable in the reader without entering browser pl
     })
     await waitUntil(
       () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryLearningMaterial
-          ?.revision === 1,
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryLearningSummary
+          ?.content.title === 'Theme application',
       'saved Node learning material refreshes the open reader',
       1_000,
     )
@@ -504,9 +504,11 @@ test('saved Node history is selectable in the reader without entering browser pl
 
     // Assert
     assert.deepEqual(
-      materialMessage.nodeHistoryLearningMaterial?.content,
+      materialMessage.nodeHistoryLearningSummary?.content,
       nodeLearningMaterial,
     )
+    // F110: the raw material stays out of the Study message; the summary is the one reader.
+    assert.equal('nodeHistoryLearningMaterial' in materialMessage, false)
     assert.equal(
       materialMessage.nodeHistoryPosition?.sequence,
       23,
@@ -686,8 +688,8 @@ test('saved Node history is selectable in the reader without entering browser pl
       'themeName',
     )
     assert.equal(
-      reopenedHistoryMessage.nodeHistoryLearningMaterial?.revision,
-      1,
+      reopenedHistoryMessage.nodeHistoryLearningSummary?.content.title,
+      'Theme application',
       'a fresh history store restores the saved explanation',
     )
     assert.equal(
