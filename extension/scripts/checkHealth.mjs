@@ -7,8 +7,8 @@
 //
 // Exit 0: no finding beyond the baseline. Exit 1: Fallow's findings. Exit 2: refused, with no health verdict, because the
 // evidence is missing, stale, mixed, failed or partial, or a producer or setting differs from the reference. The build,
-// the suite and this script's own lines go to stderr. No baseline is ever written; `pnpm health:static` keeps the old
-// static comparison against fallow-health-baseline.json.
+// the suite and this script's own lines go to stderr. No baseline is ever written; `pnpm health:static` is the fast
+// pre-check of the same complexity limits without coverage, per function, against fallow-health-baseline.json.
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises'

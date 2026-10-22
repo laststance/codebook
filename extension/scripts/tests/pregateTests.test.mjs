@@ -402,6 +402,7 @@ test('the pre-gate policy runs package.test.mjs for every file its package build
     {
       manifest: [
         'extension/scripts/tests/package.test.mjs',
+        'extension/scripts/tests/staticHealth.test.mjs',
         'extension/scripts/tests/workflowPins.test.mjs',
       ],
       patch: ['extension/scripts/tests/package.test.mjs'],
@@ -533,7 +534,10 @@ test('the pre-gate policy declares the script test that starts or copies each sc
     wrongLookStandIn: publishWiki,
     crlfShellStandIn: publishWiki,
     codecov: workflowPins,
-    extensionManifest: workflowPinsAndPackage,
+    extensionManifest: [
+      ...workflowPinsAndPackage,
+      `${scriptTests}staticHealth.test.mjs`,
+    ],
     pnpmWorkspace: workflowPinsAndPackage,
   })
   // Every browser check, whatever its name, is in the lane of workflowPins.test.mjs: a sixth check passes when its name is read by that test and fails when it is not.
