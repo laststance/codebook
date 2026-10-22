@@ -9,10 +9,21 @@ export type NodeTestOutputLine = {
   text: string
 }
 
+/**
+ * A line the output left unfinished at one entry, as its chunks so far: `chunks` is shared with the later entries that continue the line, and this entry's part of it is its first `chunkCount` chunks, so the index keeps one copy of the line however many entries continue it.
+ * `codePoints` counts the code points of those chunks.
+ */
+export type NodeTestOutputPendingLine = {
+  channel: NodeTestOutputLine['channel']
+  chunks: readonly string[]
+  chunkCount: number
+  codePoints: number
+}
+
 /** What one output entry leaves behind once it is read: the complete lines so far, the line it left unfinished and the Node inspector lines so far. */
 export type NodeTestOutputAfterEntry = {
   lineCount: number
-  pending?: NodeTestOutputLine
+  pending?: NodeTestOutputPendingLine
   inspectorLines: number
 }
 
@@ -30,7 +41,9 @@ export type NodeTestOutputIndex = {
 /** The Node inspector's own lines on standard error; the pane folds them into one muted line with their count instead of dropping them silently. */
 const INSPECTOR_LINES = [
   /^Debugger listening on \S+$/,
-  /^For help, see: https:\/\/nodejs\.org\/en\/docs\/inspector$/,
+  // Node's help address changed (Node 24: https://nodejs.org/learn/getting-started/debugging), so any nodejs.org address counts.
+  /^For help, see: https:\/\/nodejs\.org\/\S+$/,
+  /^Debugger ending on \S+$/,
   /^Debugger attached\.$/,
   /^Waiting for the debugger to disconnect\.\.\.$/,
 ]
@@ -42,7 +55,7 @@ const INSPECTOR_LINES = [
  * @returns The index: the output entries' sequences, the complete lines, their running totals and what each output entry leaves behind.
  * @example
  * indexNodeTestOutput([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: 'RUN\nok' }]).after[0]
- * // => { lineCount: 1, pending: { channel: 'stdout', text: 'ok' }, inspectorLines: 0 }
+ * // => { lineCount: 1, pending: { channel: 'stdout', chunks: ['ok'], chunkCount: 1, codePoints: 2 }, inspectorLines: 0 }
  */
 export function indexNodeTestOutput(
   entries: readonly NodeTestHistoryIndex['entries'][number][],
@@ -53,7 +66,14 @@ export function indexNodeTestOutput(
     lineTotals: [0],
     after: [],
   }
-  let pending: NodeTestOutputLine | undefined,
+  /** The unfinished line: its chunks (shared with every entry's record of it) and their code points. */
+  let pending:
+      | {
+          channel: NodeTestOutputLine['channel']
+          chunks: string[]
+          codePoints: number
+        }
+      | undefined,
     inspectorLines = 0
   const complete = (line: NodeTestOutputLine): void => {
     if (
@@ -68,20 +88,33 @@ export function indexNodeTestOutput(
       index.lineTotals.at(-1)! + nodeTestOutputLineCost(line, true),
     )
   }
+  /** Ends the unfinished line: its chunks are joined once, when the line is complete. */
+  const completePending = (): void => {
+    if (pending)
+      complete({ channel: pending.channel, text: pending.chunks.join('') })
+    pending = undefined
+  }
+  /** Adds a part to the unfinished line of a channel, starting the line when there is none. */
+  const continuePending = (
+    channel: NodeTestOutputLine['channel'],
+    part: string,
+  ): void => {
+    pending ??= { channel, chunks: [], codePoints: 0 }
+    // An empty part continues nothing: a chunk that ends with a line feed leaves no unfinished line.
+    if (!part) return
+    pending.chunks.push(part)
+    pending.codePoints += Array.from(part).length
+  }
   /** Joins one output chunk to the lines: a chunk of the other channel ends the unfinished line first, so no line mixes the two channels; the first part continues the unfinished line and each later part starts a new one after a line feed. */
   const read = (channel: NodeTestOutputLine['channel'], text: string): void => {
-    if (pending && pending.channel !== channel) {
-      complete(pending)
-      pending = undefined
-    }
+    if (pending && pending.channel !== channel) completePending()
     const parts = text.split('\n')
-    pending = { channel, text: (pending?.text ?? '') + parts[0] }
+    continuePending(channel, parts[0]!)
     for (const part of parts.slice(1)) {
-      complete(pending)
-      pending = { channel, text: part }
+      completePending()
+      continuePending(channel, part)
     }
-    // A chunk that ended with a line feed leaves no unfinished line.
-    if (!pending.text) pending = undefined
+    if (pending && !pending.chunks.length) pending = undefined
   }
   for (const entry of entries) {
     if (entry.type !== 'output') continue
@@ -91,7 +124,16 @@ export function indexNodeTestOutput(
     index.sequences.push(entry.sequence)
     index.after.push({
       lineCount: index.lines.length,
-      ...(pending ? { pending: { ...pending } } : {}),
+      ...(pending
+        ? {
+            pending: {
+              channel: pending.channel,
+              chunks: pending.chunks,
+              chunkCount: pending.chunks.length,
+              codePoints: pending.codePoints,
+            },
+          }
+        : {}),
       inspectorLines,
     })
   }

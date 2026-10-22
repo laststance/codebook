@@ -879,6 +879,80 @@ test('a render that settles while a test replay opens keeps its loading line unt
   }
 })
 
+// Value: protects=while the selected moment of a test replay stays the same, building the Study message again (every 250 ms refresh publishes it) reuses the Application view and does not assemble the recorded output again; fails_when=each Study message projects the Application view anew, so a replay whose kept tail holds many short lines costs its whole assembly at every refresh (about 0.5 s for 65,536 lines, every 250 ms); why_new=/ship Step 11's Codex adversarial review with the carried F111; seam=none; no_claim=the cost of one assembly, which accumulateNodeTestOutput's tests bound
+test('an unchanged moment of a test replay reuses its Application view at each Study message', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+
+    // Act
+    const first = harness.reader['message']().nodeHistoryApplication
+    const second = harness.reader['message']().nodeHistoryApplication
+
+    // Assert
+    assert.ok(first)
+    assert.equal(second, first)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an open of another test replay that fails at its very start (its first publish throws, as a write into a released viewport lease can) ends its opening marker, so the replay still shown does not read as loading from then on; fails_when=the marker is set before the open's try and stays set, so every later moment of the shown replay posts "Loading recorded test output…" with no lines and removals stay refused; why_new=/ship Step 11's Claude adversarial review: a regression of 5359c28, which made the marker alone say that a replay opens; seam=the reader's publish, made to throw once; no_claim=why a publish throws, which F133 carries
+test('an open that fails at its first publish leaves the shown test replay not loading', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const shown = await saveTwoStopNodeHistory(store)
+    const other = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(shown.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the first test replay lands on its first stop',
+      2_000,
+    )
+    const reader = harness.reader
+    const publish = reader['publish'].bind(reader)
+    let thrown = false
+    reader['publish'] = (): void => {
+      if (!thrown) {
+        thrown = true
+        throw new Error('Viewport lease is released')
+      }
+      publish()
+    }
+
+    // Act
+    await reader.openLearningReplay(other.studyId).catch(() => undefined)
+    reader['publish'] = publish
+
+    // Assert
+    assert.equal(thrown, true)
+    assert.equal(reader['pendingNodeHistory'], undefined)
+    assert.equal(
+      reader['message']().nodeHistoryApplication?.placeholder,
+      undefined,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a background render while a test replay is selected (Retry storage / refresh writes the Application document again) keeps the selected moment's output in the pane: the document is written with that moment and no loading view is posted; fails_when=the render's loading flag reads as the replay opening, so the pane shows "Loading recorded test output…" and loses its lines, the learner's scroll position and selection; why_new=Step 9 pass 2's state-machines review (source render × pending and settled): the opening flag's reason was untested; seam=none; no_claim=a render that fails or is superseded, which ends the same way and is carried as a task
 test('a background render while a test replay is selected keeps its Application output', async () => {
   // Arrange

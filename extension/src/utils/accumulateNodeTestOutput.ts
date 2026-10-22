@@ -1,11 +1,12 @@
 import { NODE_TEST_OUTPUT_TAIL_CHARS } from '../constants'
 
 import { cutTextToTail } from './cutTextToTail'
+import { NODE_TEST_REPLAY_TEXT } from './describeNodeTestReplay'
 import type {
   NodeTestOutputIndex,
   NodeTestOutputLine,
+  NodeTestOutputPendingLine,
 } from './indexNodeTestOutput'
-import { nodeTestOutputLineCost } from './nodeTestOutputLineCost'
 
 /** A kept line of the Application pane: its absolute number in the replay's output (an unfinished last line takes the next number), and `cut` when only its end fits. */
 export type NodeTestOutputViewLine = NodeTestOutputLine & {
@@ -47,30 +48,33 @@ export function accumulateNodeTestOutput(
       hasOutput: false,
     }
   const { lineCount, pending, inspectorLines } = index.after[position]!
-  const total =
-    index.lineTotals[lineCount]! +
-    (pending ? nodeTestOutputLineCost(pending, false) : 0)
-  const kept: NodeTestOutputViewLine[] = []
+  const pendingCost = pending
+    ? markCost(pending.channel) + pending.codePoints
+    : 0
+  const total = index.lineTotals[lineCount]! + pendingCost
+  // The kept lines are gathered from the end backward and put in order once.
+  const keptFromEnd: NodeTestOutputViewLine[] = []
   let used = 0,
     startsMidLine = false
-  /** Keeps a line whole when it fits, else its end, and says whether an earlier line can still be kept. */
+  /** Keeps a line whole when it fits, else its end, and says whether an earlier line can still be kept; `cost` is the line's shown code points, read from the index, never counted again. */
   const keep = (
-    line: NodeTestOutputLine,
+    line: () => NodeTestOutputLine,
+    tail: (characters: number) => string,
+    cost: number,
     number: number,
     lineFeed: boolean,
   ): boolean => {
-    const cost = nodeTestOutputLineCost(line, lineFeed)
     if (used + cost <= limit) {
-      kept.unshift({ ...line, number })
+      keptFromEnd.push({ ...line(), number })
       used += cost
       return used < limit
     }
     // A cut line keeps its end and no `[stderr] ` mark, which belongs to its start.
     const characters = limit - used - (lineFeed ? 1 : 0)
     if (characters > 0) {
-      kept.unshift({
-        ...line,
-        text: cutTextToTail(line.text, characters),
+      keptFromEnd.push({
+        channel: line().channel,
+        text: tail(characters),
         number,
         cut: true,
       })
@@ -80,17 +84,79 @@ export function accumulateNodeTestOutput(
     return false
   }
   // From the end backward: the unfinished line first, then the complete lines, until the tail is full.
-  let earlierFits = pending ? keep(pending, lineCount, false) : true
-  for (let number = lineCount - 1; earlierFits && number >= 0; number--)
-    earlierFits = keep(index.lines[number]!, number, true)
+  let earlierFits = pending
+    ? keep(
+        () => ({ channel: pending.channel, text: pendingText(pending) }),
+        (characters) => pendingTail(pending, characters),
+        pendingCost,
+        lineCount,
+        false,
+      )
+    : true
+  for (let number = lineCount - 1; earlierFits && number >= 0; number--) {
+    const line = index.lines[number]!
+    earlierFits = keep(
+      () => line,
+      (characters) => cutTextToTail(line.text, characters),
+      index.lineTotals[number + 1]! - index.lineTotals[number]!,
+      number,
+      true,
+    )
+  }
   return {
-    lines: kept,
+    lines: keptFromEnd.reverse(),
     omittedCharacters: total - used,
     startsMidLine,
     inspectorLines,
     // Output of only Node inspector lines or terminal controls shows no line, so the pane says that nothing was printed.
     hasOutput: lineCount > 0 || pending !== undefined,
   }
+}
+
+/**
+ * The code points the `[stderr] ` mark adds to a line of a channel; called by {@link accumulateNodeTestOutput} for the unfinished line, whose own code points the index counted.
+ * @param channel - The line's channel.
+ * @returns The mark's length for standard error, else 0.
+ * @example markCost('stderr') // => 9
+ */
+function markCost(channel: NodeTestOutputLine['channel']): number {
+  return channel === 'stderr' ? NODE_TEST_REPLAY_TEXT.stderrMark.length : 0
+}
+
+/**
+ * Joins the unfinished line as an entry left it; called by {@link accumulateNodeTestOutput} only when the whole line fits the tail.
+ * @param pending - The unfinished line at the selected entry.
+ * @returns Its text.
+ * @example pendingText({ channel: 'stdout', chunks: ['1 ', '2 ', '3'], chunkCount: 2, codePoints: 4 }) // => '1 2 '
+ */
+function pendingText(pending: NodeTestOutputPendingLine): string {
+  return pending.chunks.slice(0, pending.chunkCount).join('')
+}
+
+/**
+ * Keeps the end of the unfinished line as an entry left it, reading its chunks from the last one backward only until they hold enough, so a line printed without line feeds costs its tail, not its length; called by {@link accumulateNodeTestOutput} when the line does not fit whole.
+ * @param pending - The unfinished line at the selected entry.
+ * @param characters - How many code points of its end to keep.
+ * @returns Its last `characters` code points.
+ * @example pendingTail({ channel: 'stdout', chunks: ['1 2 ', '3 4 '], chunkCount: 2, codePoints: 8 }, 3) // => ' 4 '
+ */
+function pendingTail(
+  pending: NodeTestOutputPendingLine,
+  characters: number,
+): string {
+  const parts: string[] = []
+  let held = 0
+  // A code point is at most two UTF-16 units, so chunks holding twice the units hold at least the code points asked for.
+  for (
+    let chunk = pending.chunkCount - 1;
+    chunk >= 0 && held < characters * 2;
+    chunk--
+  ) {
+    const text = pending.chunks[chunk]!
+    parts.push(text)
+    held += text.length
+  }
+  return cutTextToTail(parts.reverse().join(''), characters)
 }
 
 /**

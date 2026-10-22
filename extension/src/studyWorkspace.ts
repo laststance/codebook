@@ -680,7 +680,11 @@ export class StudyWorkspace {
   }
   /** The count of the Application pane's test replay views, and what the last one showed, so its generation changes only when the shown moment does. */
   private nodeHistoryApplicationGeneration = 0
-  private nodeHistoryApplicationMemo?: { key: string; generation: number }
+  private nodeHistoryApplicationMemo?: {
+    key: string
+    generation: number
+    view: NodeTestApplicationView
+  }
   /** The generation of the view the Application pane's document shows, so each change is posted once. */
   private shownNodeHistoryApplicationGeneration?: number
   private nodeHistoryPlaybackController?: NodeHistoryPlaybackController
@@ -11159,10 +11163,11 @@ export class StudyWorkspace {
   > {
     const request = ++this.historyRequest
     this.studyChoices++
-    this.pendingNodeHistory = request
-    this.loading = true
-    this.publish()
     try {
+      // The opening marker is set inside the try, so its finally ends it even when the first publish throws.
+      this.pendingNodeHistory = request
+      this.loading = true
+      this.publish()
       await this.replaceUnavailableReplayDebugger()
       const opening = await this.readNodeHistoryOpening(
         studyId,
@@ -12120,26 +12125,31 @@ export class StudyWorkspace {
     const key = JSON.stringify([
       history.header.studyId,
       history.entries.length,
+      history.status,
       selected?.sequence,
       opening,
     ])
-    if (this.nodeHistoryApplicationMemo?.key !== key)
+    // The view is projected once per shown moment: every refresh publishes, and assembling the output again each time would cost its whole tail (F111).
+    if (this.nodeHistoryApplicationMemo?.key !== key) {
+      const generation = ++this.nodeHistoryApplicationGeneration
       this.nodeHistoryApplicationMemo = {
         key,
-        generation: ++this.nodeHistoryApplicationGeneration,
+        generation,
+        view: projectNodeTestApplication(
+          history,
+          this.selectedNodeHistoryOutputIndex.index,
+          selected,
+          generation,
+          opening,
+        ),
       }
+    }
     const learning = projectNodeLearningSummary(
       this.selectedNodeHistoryLearningMaterial,
       history,
     )
     return {
-      nodeHistoryApplication: projectNodeTestApplication(
-        history,
-        this.selectedNodeHistoryOutputIndex.index,
-        selected,
-        this.nodeHistoryApplicationMemo.generation,
-        opening,
-      ),
+      nodeHistoryApplication: this.nodeHistoryApplicationMemo.view,
       nodeHistorySection: projectNodeTestSection({
         history,
         ...(selected ? { selected } : {}),
