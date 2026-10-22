@@ -104,10 +104,9 @@ export class NodeLearningSave {
       })
     const reached = record.nodeStops?.length ?? 0
     // Before the first stop the journal has nothing to save; a run that ended there (its continuation failed or its stop was rejected) is no longer preparing and shows nothing.
+    if (endedBeforeFirstStop(record)) return undefined
     if (beforeFirstStop(record))
-      return record.nodePhase === 'failed' || record.cleanupError
-        ? undefined
-        : this.itemOf(describeNodeLearningSave({ kind: 'preparing' }))
+      return this.itemOf(describeNodeLearningSave({ kind: 'preparing' }))
     const message: NodeLearningSaveMessage = record.stopped
       ? { kind: 'finished' }
       : { kind: 'live', reached, declared: declaredStops(record) }
@@ -323,7 +322,8 @@ export class NodeLearningSave {
       record.nodeLearning?.materialRevision ??
       record.nodeLearningMaterial?.revision ??
       0
-    return state.materialRevision === revision ? state : undefined
+    // Only a greater revision is a later one: the catalog lags the store by up to a refresh, so an older listed revision does not undo a receipt read from the store.
+    return revision > state.materialRevision ? undefined : state
   }
 
   /**
@@ -437,7 +437,27 @@ function recordedNothing(record: StudyRecord): boolean {
  * @example beforeFirstStop(record) // => true for a run that still launches Vitest
  */
 function beforeFirstStop(record: StudyRecord): boolean {
-  return !record.stopped && (record.nodeStops?.length ?? 0) === 0
+  return (
+    !record.stopped &&
+    (record.nodeStops?.length ?? 0) === 0 &&
+    !endedBeforeFirstStop(record)
+  )
+}
+
+/**
+ * Says whether a test run ended without reaching its first stop and is not stopped yet: its continuation failed, its stop was rejected or it was refused at preparation. It will never reach a stop, so "Nothing to save yet" would name no way forward; its Save is answered as a run that recorded nothing (or stops it without asking, where it can still be released); read by {@link beforeFirstStop} and {@link NodeLearningSave.item}.
+ * @param record - The node-test run.
+ * @returns `true` for a run that ended before its first stop.
+ * @example endedBeforeFirstStop(record) // => true for a run whose continuation failed while it prepared
+ */
+function endedBeforeFirstStop(record: StudyRecord): boolean {
+  return (
+    !record.stopped &&
+    (record.nodeStops?.length ?? 0) === 0 &&
+    (record.nodePhase === 'failed' ||
+      Boolean(record.cleanupError) ||
+      Boolean(record.historyExcluded))
+  )
 }
 
 /**

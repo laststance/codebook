@@ -8761,7 +8761,10 @@ export class StudyWorkspace {
       const history = this.selectedNodeHistory,
         sequence = this.selectedNodeHistorySequence
       if (history && sequence !== undefined && !this.recordingActive) {
-        await this.selectNodeHistoryEvent(history, sequence)
+        // A debugger that fails to start again updates its own row instead of failing the Retry.
+        await this.selectNodeHistoryEvent(history, sequence, {
+          keepOpenWithoutDebugger: true,
+        })
         return
       }
       await this.renderSelection(true, true)
@@ -23404,6 +23407,9 @@ export class StudyWorkspace {
       return presented
     } catch (error) {
       if (!keepOpenWithoutDebugger) throw error
+      // The owner that failed to start is retired and waited for, so the next presentation (Retry) creates a new one and starts it instead of finding this object, invalidating it and reporting success.
+      if (this.replayDebugger)
+        await this.retireReplayDebugger(this.replayDebugger)
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
       this.reportTestReplayFailure(

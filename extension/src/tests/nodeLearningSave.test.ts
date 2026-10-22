@@ -723,6 +723,75 @@ test('the Retry row of a rejected stop reads Recording finished once codebook_st
   assert.equal(afterStop?.command?.title, 'Save learning replay')
 })
 
+/**
+ * Saves a run that ended before its first stop and reports what the learner is told.
+ * @param facts - The run's facts that make it end before its first stop.
+ * @returns The outcome of the Save, the notifications and the stop calls.
+ * @example const { outcome } = await saveEndedRun({ nodePhase: 'failed' })
+ */
+async function saveEndedRun(facts: Partial<StudyRecord>) {
+  const recorder = recordingHost({
+    stops: [
+      async (record): Promise<void> => {
+        // The stop seals a history that holds no entry, as a release of a run that never stopped does.
+        record.stopped = true
+        record.nodeHistoryStatus = 'partial'
+        record.nodeHistoryEntryCount = 0
+      },
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodeStops: [], ...facts })
+  recorder.use(record)
+  const outcome = await Promise.resolve()
+    .then(() => save.save(record))
+    .then(
+      () => 'saved',
+      (error: unknown) => (error instanceof Error ? error.message : 'refused'),
+    )
+  return { outcome, recorder }
+}
+
+const NOTHING_RECORDED_SENTENCE =
+  'No recorded Codebook session is available. Explain a real code path first.'
+
+// Value: protects=Save on a run whose continuation failed before its first stop: it is answered as a run that recorded nothing, not as "Nothing to save yet" (which names no way forward); fails_when=the Save says the run has not reached its first stop although it never will; why_new=Save tested the preparing state before the ended states (F221); seam=the service's stop seals no entry; no_claim=the real release
+test('Save on a run whose continuation failed before its first stop is answered as a run that recorded nothing', async () => {
+  // Arrange / Act
+  const { outcome, recorder } = await saveEndedRun({ nodePhase: 'failed' })
+
+  // Assert
+  assert.equal(outcome, NOTHING_RECORDED_SENTENCE)
+  assert.deepEqual(recorder.notified, [])
+  assert.deepEqual(recorder.asked, [])
+})
+
+// Value: protects=Save on a run whose stop failed before its first stop (a release error stands): it is answered as a run that recorded nothing; fails_when=the Save says the run has not reached its first stop; why_new=F221; seam=the service's stop seals no entry; no_claim=the real release
+test('Save on a run whose stop failed before its first stop is answered as a run that recorded nothing', async () => {
+  // Arrange / Act
+  const { outcome, recorder } = await saveEndedRun({
+    cleanupError: new StudyError('RUNTIME_FAILED', 'process group running'),
+  })
+
+  // Assert
+  assert.equal(outcome, NOTHING_RECORDED_SENTENCE)
+  assert.deepEqual(recorder.notified, [])
+  assert.deepEqual(recorder.asked, [])
+})
+
+// Value: protects=Save on a run refused at preparation that is not marked stopped: it is answered as a run that recorded nothing, with no stop; fails_when=the Save says the run has not reached its first stop; why_new=F221; seam=none; no_claim=the refusal itself (service tests)
+test('Save on a run refused at preparation is answered as a run that recorded nothing', async () => {
+  // Arrange / Act
+  const { outcome, recorder } = await saveEndedRun({
+    historyExcluded: 'refused-at-preparation',
+  })
+
+  // Assert
+  assert.equal(outcome, NOTHING_RECORDED_SENTENCE)
+  assert.deepEqual(recorder.notified, [])
+  assert.equal(recorder.stopCalls(), 0)
+})
+
 // Value: protects=a run that ended before its first stop (its continuation failed, or its stop failed and left a release error) showing no Preparing item; fails_when=the item keeps "Preparing the test run…" for a run that is dead; why_new=Preparing stayed for a dead run whose stop failed (F90); seam=none; no_claim=how the run reports its failure (service tests)
 test('a run that ended before its first stop shows no Preparing item', () => {
   // Arrange
@@ -771,6 +840,32 @@ test('a Save receipt holds against the store revision that another window moved,
   assert.equal(afterSave, '$(check) Learning saved · Open replay')
   assert.equal(
     afterLaterRevision,
+    '$(save) Recording finished · Save learning replay',
+  )
+})
+
+// Value: protects=a Save receipt read from the store while the catalog the 250 ms refresh updates still lists an older revision: the item stays saved until the catalog shows a greater one; fails_when=the item flashes back to Save right after a Save because the catalog lags the store; why_new=the receipt was compared for equality with the catalog's revision (F225, D10); seam=the catalog's revision is a fake that this test moves; no_claim=how the refresh updates the catalog
+test('a Save receipt stays saved while the catalog still lists an older revision than the one Save read', async () => {
+  // Arrange
+  let catalogRevision: number | undefined = 1
+  const recorder = recordingHost({
+    summaries: [async () => summary({ materialRevision: 2 })],
+    storeRevision: () => catalogRevision,
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'completed' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+  const whileCatalogLags = save.item(record)?.text
+  catalogRevision = 3
+  const afterNewerRevision = save.item(record)?.text
+
+  // Assert
+  assert.equal(whileCatalogLags, '$(check) Learning saved · Open replay')
+  assert.equal(
+    afterNewerRevision,
     '$(save) Recording finished · Save learning replay',
   )
 })
