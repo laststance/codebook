@@ -199,3 +199,18 @@ test('a root given by several names hides each of them', () => {
   // Assert
   assert.equal(cause, 'EACCES <workspace>/a.ts via <workspace>/a.ts')
 })
+
+// Value: protects=a storage folder inside another root that is also named by its macOS realpath alias: the path still reads <storage>; fails_when=the alias spelling (/private/var/…) counts its eight extra characters, so the enclosing workspace sorts before the storage folder and the path reads <workspace>/.cb/…; why_new=Cycle 0050 F214 (found by integrating F58's real paths with F49's test); seam=none; no_claim=which roots the service gathers
+test('a storage folder inside a workspace named by both its spellings still reads as storage', () => {
+  // Arrange
+  const message = "ENOENT: open '/private/var/folders/ab/T/run-1/.cb/x/a.json'"
+
+  // Act
+  const cause = sanitizeCause(message, {
+    storage: ['/var/folders/ab/T/run-1/.cb'],
+    workspace: ['/var/folders/ab/T/run-1', '/private/var/folders/ab/T/run-1'],
+  })
+
+  // Assert
+  assert.equal(cause, "ENOENT: open '<storage>/x/a.json'")
+})

@@ -23,6 +23,21 @@ const REALPATH_ALIASES: readonly (readonly [string, string])[] = [
   ['/private/tmp/', '/tmp/'],
 ]
 
+/**
+ * Measures a root as its macOS realpath alias's short form spells it, so that a root named by both spellings sorts as one root.
+ * Why: {@link sanitizeCause} replaces the longest root first; the long spelling (`/private/var/…`) would otherwise outrank a storage folder inside the same root (F214).
+ * Called by {@link sanitizeCause} when it orders its roots.
+ * @param root - A root as a cause's roots name it.
+ * @returns Its length, less the extra characters of a long alias spelling.
+ * @example shortSpellingLength('/private/var/folders/ab') // => 15, the length of '/var/folders/ab'
+ */
+function shortSpellingLength(root: string): number {
+  for (const [long, short] of REALPATH_ALIASES)
+    if (`${root}/`.startsWith(long))
+      return root.length - (long.length - short.length)
+  return root.length
+}
+
 /** A Windows root: a drive letter, optionally behind the `\\?\` prefix, with either separator. */
 const WINDOWS_ROOT = /^(?:\\\\\?\\)?[A-Za-z]:[\\/]/
 
@@ -98,8 +113,11 @@ export function sanitizeCause(error: unknown, roots: CauseRoots): string {
   for (const root of [roots.workspace ?? []].flat())
     replacements.push([root, '<workspace>'])
   for (const root of [roots.home ?? []].flat()) replacements.push([root, '~'])
-  // The longest root first, so a storage folder inside the home directory reads <storage>, not ~/….
-  replacements.sort((left, right) => right[0].length - left[0].length)
+  // The longest root first, so a storage folder inside the home directory reads <storage>, not ~/…; an alias spelling counts as its short form, so /private/var/… does not outrank a folder inside it (F214).
+  replacements.sort(
+    (left, right) =>
+      shortSpellingLength(right[0]) - shortSpellingLength(left[0]),
+  )
   for (const [root, words] of replacements)
     for (const pattern of rootPatterns(root))
       text = text.replace(pattern, words)
