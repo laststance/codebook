@@ -48,17 +48,7 @@ export const NODE_TEST_REPLAY_TEXT = {
 
 /** What a test replay shows the learner outside its Save, keyed by surface and value (the String catalog of plan version 7). */
 export type NodeTestReplayMessage =
-  | {
-      kind: 'saved-row'
-      summary: Pick<
-        NodeTestHistorySummary,
-        | 'status'
-        | 'verification'
-        | 'verdict'
-        | 'stopCount'
-        | 'explainedStopCount'
-      >
-    }
+  | { kind: 'saved-row'; summary: NodeTestReplayMessageSummary }
   | {
       kind: 'study-status'
       summary: Omit<NodeTestReplayMessageSummary, 'verification'>

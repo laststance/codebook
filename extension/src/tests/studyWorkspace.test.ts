@@ -440,8 +440,10 @@ test('saved Node history is selectable in the reader without entering browser pl
     )
     const firstStopMessage = harness.postedMessages().slice(-1)[0]!
     assert.equal(firstStopMessage.nodeHistoryPosition?.sequence, 23)
-    assert.equal(firstStopMessage.nodeHistoryPosition?.index, 0)
-    assert.equal(firstStopMessage.nodeHistoryPosition?.elapsedMs, 23)
+    assert.match(
+      firstStopMessage.nodeHistorySection?.position ?? '',
+      /^Stop 1 of \d+ · 0\.02 s$/,
+    )
     assert.match(shownTestOutput(harness), /output 22/)
     assert.doesNotMatch(
       shownTestOutput(harness),
@@ -543,8 +545,10 @@ test('saved Node history is selectable in the reader without entering browser pl
     )
     const secondStopMessage = harness.postedMessages().slice(-1)[0]!
     assert.equal(secondStopMessage.nodeHistoryPosition?.sequence, 25)
-    assert.equal(secondStopMessage.nodeHistoryPosition?.index, 1)
-    assert.equal(secondStopMessage.nodeHistoryPosition?.elapsedMs, 25)
+    assert.match(
+      secondStopMessage.nodeHistorySection?.position ?? '',
+      /^Stop 2 of \d+ · 0\.03 s$/,
+    )
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
 
@@ -566,7 +570,10 @@ test('saved Node history is selectable in the reader without entering browser pl
     const interStopMessage = harness.postedMessages().slice(-1)[0]!
 
     // Assert
-    assert.equal(interStopMessage.nodeHistoryPosition?.type, 'output')
+    assert.match(
+      interStopMessage.nodeHistorySection?.position ?? '',
+      /^Output /,
+    )
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     assert.ok(
@@ -627,7 +634,7 @@ test('saved Node history is selectable in the reader without entering browser pl
 
     // Assert
     const terminalMessage = harness.postedMessages().slice(-1)[0]!
-    assert.equal(terminalMessage.nodeHistoryPosition?.type, 'result')
+    assert.match(terminalMessage.nodeHistorySection?.position ?? '', /^Result /)
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     assert.ok(
@@ -678,7 +685,10 @@ test('saved Node history is selectable in the reader without entering browser pl
 
     // Assert
     const reopenedHistoryMessage = harness.postedMessages().slice(-1)[0]!
-    assert.equal(reopenedHistoryMessage.nodeHistoryPosition?.type, 'stop')
+    assert.match(
+      reopenedHistoryMessage.nodeHistorySection?.position ?? '',
+      /^Stop /,
+    )
     assert.equal(
       reopenedHistoryMessage.nodeHistoryPosition?.debuggerAvailable,
       true,
@@ -719,7 +729,10 @@ test('saved Node history is selectable in the reader without entering browser pl
       1_000,
     )
     const outputPositionMessage = harness.postedMessages().slice(-1)[0]!
-    assert.equal(outputPositionMessage.nodeHistoryPosition?.type, 'output')
+    assert.match(
+      outputPositionMessage.nodeHistorySection?.position ?? '',
+      /^Output /,
+    )
     assert.equal(
       outputPositionMessage.nodeHistoryPosition?.debuggerAvailable,
       undefined,
@@ -751,7 +764,10 @@ test('saved Node history is selectable in the reader without entering browser pl
 
     // Assert
     const reopenedOutputMessage = harness.postedMessages().slice(-1)[0]!
-    assert.equal(reopenedOutputMessage.nodeHistoryPosition?.type, 'output')
+    assert.match(
+      reopenedOutputMessage.nodeHistorySection?.position ?? '',
+      /^Output /,
+    )
     assert.equal(
       reopenedOutputMessage.nodeHistoryPosition?.debuggerAvailable,
       undefined,
@@ -1012,7 +1028,7 @@ test('Node journal time seeking restores exact stops and clears debugger across 
     // Assert: the historical debugger, output prefix and durable cursor all identify the same event.
     const secondStop = harness.postedMessages().slice(-1)[0]!
     assert.equal(secondStop.nodeHistoryPosition?.sequence, 4)
-    assert.equal(secondStop.nodeHistoryPosition?.type, 'stop')
+    assert.match(secondStop.nodeHistorySection?.position ?? '', /^Stop /)
     assert.equal(secondStop.nodeHistoryPosition?.debuggerAvailable, true)
     assert.equal(
       harness.historicalDebugPresentations.at(-1)?.snapshot?.variables[0]?.name,
@@ -1055,7 +1071,7 @@ test('Node journal time seeking restores exact stops and clears debugger across 
 
     // Assert: output and result do not imply application video or retain a stale debugger.
     const resultEvent = harness.postedMessages().slice(-1)[0]!
-    assert.equal(resultEvent.nodeHistoryPosition?.type, 'result')
+    assert.match(resultEvent.nodeHistorySection?.position ?? '', /^Result /)
     assert.equal(resultEvent.nodeHistoryPlayback?.mode, 'paused')
     assert.equal(resultEvent.recording, undefined)
     assert.equal(resultEvent.nodeHistoryPosition?.debuggerAvailable, undefined)
@@ -1167,7 +1183,7 @@ test('time seeking in a second opened Node history presents its own stop instead
     // Assert: the native debugger shows the second history's captured value.
     const seeked = harness.postedMessages().slice(-1)[0]!
     assert.equal(seeked.nodeHistory?.header.studyId, secondHistory.studyId)
-    assert.equal(seeked.nodeHistoryPosition?.type, 'stop')
+    assert.match(seeked.nodeHistorySection?.position ?? '', /^Stop /)
     assert.equal(
       harness.historicalDebugPresentations.at(-1)?.snapshot?.variables[0]
         ?.value,
@@ -1345,10 +1361,8 @@ test('returning to the current run leaves a selected Node history so its missing
       applicationPanel,
       'the application pane stays open for the live run',
     )
-    assert.doesNotMatch(
-      applicationPanel.webview.html,
-      /Recorded test output for this test replay is in the Study pane/,
-    )
+    // The pane no longer shows the test replay's output document: the live run takes it back.
+    assert.doesNotMatch(applicationPanel.webview.html, /id="test-output"/)
     assert.equal(
       harness.groups.flatMap((group) => group.tabs).includes(preview),
       false,
@@ -1640,9 +1654,9 @@ test('moving to another Node history event while a stop still loads its native v
       Array.from(harness.reader.inspect().view?.errors ?? []),
       [],
     )
-    assert.equal(
-      harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.type,
-      'result',
+    assert.match(
+      harness.postedMessages().slice(-1)[0]?.nodeHistorySection?.position ?? '',
+      /^Result /,
     )
     assert.equal(recordedStopPresentations(harness).length, 1)
   } finally {
@@ -3840,7 +3854,7 @@ test('a Node stop selected on the timeline whose captured source differs from it
     const selectedStop = harness.postedMessages().slice(-1)[0]!
 
     // Assert
-    assert.equal(selectedStop.nodeHistoryPosition?.type, 'stop')
+    assert.match(selectedStop.nodeHistorySection?.position ?? '', /^Stop /)
     assert.equal(selectedStop.nodeHistoryPosition?.sourceAvailable, false)
     assert.equal(selectedStop.nodeHistoryPosition?.debuggerAvailable, false)
     assert.equal(recordedStopPresentations(harness).length, 0)
@@ -3849,8 +3863,8 @@ test('a Node stop selected on the timeline whose captured source differs from it
   }
 })
 
-// Value: protects=a truthful Run and Debug hint once browser replay takes the shared historical debugger; fails_when=opening a recording keeps the Node stop's hint and disabled Inspect although the stop no longer owns Run and Debug; why_new=Cycle 0032 H1; seam=none
-test('opening a recording drops the Run and Debug hint of a saved Node stop and re-enables its Inspect', async () => {
+// Value: protects=a truthful Run and Debug hint once browser replay takes the shared historical debugger: the recording that loads retires the selected test replay (D20, F132), so the stop's hint and Inspect leave with it; fails_when=opening a recording keeps the Node stop's position, hint and Inspect although the stop no longer owns Run and Debug; why_new=Cycle 0032 H1, changed by Cycle 0050 D20 (the test replay used to stay selected beside the recording); seam=none
+test('opening a recording retires a saved Node stop, so its Run and Debug hint and Inspect leave with it', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true, true)
   try {
@@ -3896,17 +3910,14 @@ test('opening a recording drops the Run and Debug hint of a saved Node stop and 
 
     // Assert
     const view = harness.postedMessages().slice(-1)[0]!
-    assert.equal(view.nodeHistoryPosition?.sequence, 2)
-    assert.equal(view.nodeHistoryPosition?.nativeValuesUninspected, false)
-    assert.equal(view.nodeHistoryPosition?.debuggerAvailable, false)
-    // The stop no longer owns Run and Debug, but its captured source is still verified (Cycle 0033 T1).
-    assert.equal(view.nodeHistoryPosition?.sourceAvailable, true)
+    assert.equal(view.nodeHistory, undefined)
+    assert.equal(view.nodeHistoryPosition, undefined)
   } finally {
     await harness.close()
   }
 })
 
-// Value: protects=the Node timeline and its selected event agreeing after browser replay supersedes a loading stop; fails_when=the abandoned Node presentation later commits its event in the Node timeline only; why_new=Cycle 0032 H1 (typed supersession deferred as D4); seam=none
+// Value: protects=the Node timeline and its selected event agreeing after browser replay supersedes a loading stop: the recording retires the test replay (D20), and the abandoned Node presentation commits nothing later; fails_when=the abandoned Node presentation later commits its event in a Node timeline that the recording retired; why_new=Cycle 0032 H1 (typed supersession deferred as D4), changed by Cycle 0050 D20; seam=none
 test('a Node stop still loading when a recording opens never becomes the Node timeline position', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true, true)
@@ -3950,8 +3961,8 @@ test('a Node stop still loading when a recording opens never becomes the Node ti
 
     // Assert
     const view = harness.postedMessages().slice(-1)[0]!
-    assert.equal(view.nodeHistoryPosition?.sequence, 1)
-    assert.equal(view.nodeHistoryPlayback?.sequence, 1)
+    assert.equal(view.nodeHistoryPosition, undefined)
+    assert.equal(view.nodeHistoryPlayback, undefined)
   } finally {
     await harness.close()
   }
@@ -4242,7 +4253,7 @@ test('a Node stop selected before the reader closed keeps its matching captured 
 
     // Assert
     const reopened = harness.postedMessages().slice(-1)[0]!
-    assert.equal(reopened.nodeHistoryPosition?.type, 'stop')
+    assert.match(reopened.nodeHistorySection?.position ?? '', /^Stop /)
     assert.equal(reopened.nodeHistoryPosition?.sourceAvailable, true)
   } finally {
     await harness.close()

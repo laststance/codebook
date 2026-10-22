@@ -72,6 +72,11 @@ test('a test replay’s Application document is written once and each later mome
       ['RUN src/theme.test.ts'],
     )
     const later = harness.applicationOutputs().slice(updatesAtOpen)
+    // Every later moment reaches the Application pane itself, not another pane (F126).
+    assert.deepEqual(
+      later.map((update) => update.panel),
+      ['codebook.scopedBrowser', 'codebook.scopedBrowser'],
+    )
     assert.deepEqual(
       later.map((update) => update.view.time),
       ['Recorded test output · 0.40 s', 'Recorded test output · 0.30 s'],

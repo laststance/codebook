@@ -141,10 +141,10 @@ test('summary steps lead to the event their reference names, even at a shared ti
 
   // Assert
   assert.deepEqual(projected?.positions, [
-    { stepId: 'start', elapsedMs: 100, sequence: 1 },
-    { stepId: 'read', elapsedMs: 100, sequence: 2 },
-    { stepId: 'note', elapsedMs: 100, sequence: 2 },
-    { stepId: 'verdict', elapsedMs: 900, sequence: 5 },
+    { stepId: 'start', sequence: 1 },
+    { stepId: 'read', sequence: 2 },
+    { stepId: 'note', sequence: 2 },
+    { stepId: 'verdict', sequence: 5 },
   ])
   assert.deepEqual(strayProjection?.positions, [])
   assert.equal(nothing, undefined)

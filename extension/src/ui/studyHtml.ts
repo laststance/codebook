@@ -129,10 +129,7 @@ export interface StudyViewMessage {
   }
   nodeHistoryPosition?: {
     sequence: number
-    type: 'output' | 'stop' | 'result'
-    index?: number
     eventIndex: number
-    elapsedMs: number
     /** The stop's captured source is verified and matches it; unlike {@link debuggerAvailable}, ending the session never clears it. */
     sourceAvailable?: boolean
     /** The owned native session shows this stop now. */
@@ -1804,16 +1801,10 @@ function studyClient(
       ...Array.from(element(owed.section).querySelectorAll('button,input')),
     ].find(
       (control): control is HTMLElement =>
-        (control instanceof HTMLButtonElement ||
-          control instanceof HTMLInputElement ||
-          (control instanceof HTMLElement &&
-            control.localName === 'summary')) &&
+        control instanceof HTMLElement &&
+        control.matches('button,input,summary') &&
         control !== owed.leaving &&
-        !(
-          (control instanceof HTMLButtonElement ||
-            control instanceof HTMLInputElement) &&
-          control.disabled
-        ) &&
+        !control.matches(':disabled') &&
         // Shown: a control inside a closed disclosure still has boxes, and cannot take the focus.
         control.checkVisibility(),
     )
@@ -2794,31 +2785,7 @@ function studyClient(
     }
   }
   /**
-   * Says whether a stop's first recorded frame names the stop's own source, hash, line and column, so the native debugger can show it at its captured source; called by {@link testReplayInspectControl}.
-   * @param entry - The stop.
-   * @returns `true` when the frame, the stop's frame and its source agree.
-   * @example stopFrameNamesItsSource(stop) // => true
-   */
-  const stopFrameNamesItsSource = (
-    entry: Extract<
-      NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
-      { type: 'stop' }
-    >,
-  ): boolean => {
-    const frame = entry.debuggerSnapshot.frames[0]
-    if (!frame?.source) return false
-    return (
-      frame.source.name === entry.source.path &&
-      frame.source.hash === entry.source.hash &&
-      frame.source.line === entry.source.line &&
-      entry.frame.line === entry.source.line &&
-      entry.frame.column === entry.source.column &&
-      frame.line === entry.frame.line &&
-      frame.column === entry.frame.column
-    )
-  }
-  /**
-   * Says whether a stop can be inspected in the native debugger: its first recorded frame names its own source ({@link stopFrameNamesItsSource}), the extension verified its captured text, and a selected stop's source is available; called by {@link testReplayInspectControl}.
+   * Says whether a stop can be inspected in the native debugger: the extension verified its captured source (the host names every shown stop that failed in `nodeHistoryUnverifiedStops`), and a selected stop's source is available; called by {@link testReplayInspectControl} and {@link renderTestReplayInspect}.
    * @param entry - The stop.
    * @param message - The current Study message.
    * @param isSelected - Whether the stop is the selected event.
@@ -2833,13 +2800,12 @@ function studyClient(
     message: StudyViewMessage,
     isSelected: boolean,
   ): boolean =>
-    stopFrameNamesItsSource(entry) &&
-    // The extension hashed every shown stop's captured text; a mismatch there cannot be inspected either.
+    // The extension verified every shown stop's captured source (path, line, column and text hash); one that failed cannot be inspected.
     !(message.nodeHistoryUnverifiedStops ?? []).includes(entry.sequence) &&
     !(isSelected && message.nodeHistoryPosition?.sourceAvailable === false)
   /**
    * Builds a stop row's Inspect in native debugger, or the line that its captured source cannot be inspected; called by {@link testReplayEventRow}.
-   * A stop is inspectable when its first recorded frame names the stop's own source, hash, line and column and the extension verified its captured text.
+   * A stop is inspectable when the extension verified its captured source.
    * @param entry - The stop.
    * @param message - The current Study message.
    * @param isSelected - Whether the stop is the selected event.
