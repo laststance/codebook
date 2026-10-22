@@ -385,3 +385,43 @@ test('a summary step named __proto__ keeps its action label through the message 
   assert.equal(posted['__proto__'], 'Inspect stop 1 · 0.42 s')
   assert.equal(view.selectedStepId, '__proto__')
 })
+
+// Value: protects=an interrupted or partial test replay tells why its capture ended, on its own line under the status, in the String catalog's words (no "Node", DS14), and a complete capture or a missing reason shows no such line; fails_when=the reason is dropped (the regression of PR-B1), a "Node history" survives into the line, or a complete capture shows a reason; why_new=F130: the old status line added the history's reason and the section lost it; seam=none; no_claim=how the pane places the line (the Reader DOM check)
+test('an interrupted or partial capture shows its reason in test replay words and a complete one shows none', () => {
+  // Arrange
+  const reasoned = (
+    status: 'complete' | 'partial' | 'interrupted',
+    reason?: string,
+  ) => ({
+    history: { ...history, status, ...(reason ? { reason } : {}) },
+    selectedStopVerified: false,
+    applicationClosed: false,
+  })
+
+  // Act
+  const interrupted = projectNodeTestSection(
+    reasoned(
+      'interrupted',
+      'Interrupted Node history after its verified prefix: Error: EIO',
+    ),
+  )
+  const partial = projectNodeTestSection(
+    reasoned('partial', 'The debugger\nended the Node test history early.'),
+  )
+  const complete = projectNodeTestSection(
+    reasoned('complete', 'A reason a complete capture never shows.'),
+  )
+  const withoutReason = projectNodeTestSection(reasoned('partial'))
+
+  // Assert
+  assert.equal(
+    interrupted.captureReason,
+    'Capture interrupted: Interrupted test replay after its verified prefix: Error: EIO',
+  )
+  assert.equal(
+    partial.captureReason,
+    'Capture partial: The debugger ended the test replay early.',
+  )
+  assert.equal(complete.captureReason, undefined)
+  assert.equal(withoutReason.captureReason, undefined)
+})

@@ -704,6 +704,8 @@ export const MAX_RECORDING_PENDING_BYTES = 8_388_608
 export const MAX_RECORDING_JOURNAL_BYTES = 8_388_608
 export const RECORDING_TERMINAL_RESERVE_BYTES = 16_384
 export const RECORDING_REASON_LIMIT_CHARS = 1_024
+// How many characters of an interrupted or partial test replay's reason the Study section shows on its one line.
+export const NODE_CAPTURE_REASON_LIMIT_CHARS = 240
 export const MAX_RECORDING_CONTEXT_BYTES = 8_388_608
 export const MAX_RECORDING_HEADER_BYTES = 65_536
 export const MAX_RECORDING_TOTAL_BYTES = 570_425_344

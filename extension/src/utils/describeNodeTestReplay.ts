@@ -87,6 +87,11 @@ export type NodeTestReplayMessage =
       elapsedMs: number
     }
   | { kind: 'events'; count: number }
+  | {
+      kind: 'capture-reason'
+      status: 'partial' | 'interrupted'
+      reason: string
+    }
 
 /** The parts of a history's summary its Study status line names. */
 type NodeTestReplayMessageSummary = Pick<
@@ -138,6 +143,8 @@ export function describeNodeTestReplay(message: NodeTestReplayMessage): string {
         : `Inspect ${message.event.type} · ${formatEventSeconds(message.elapsedMs)} s`
     case 'events':
       return `Events (${message.count})`
+    case 'capture-reason':
+      return `Capture ${CAPTURE_WORDS[message.status]}: ${message.reason}`
     default:
       return applicationWords(message)
   }

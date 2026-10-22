@@ -208,7 +208,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled><div id="node-history-coverage" class="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="node-history-coverage-label" class="history-coverage-label muted"></span></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
+<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><p id="node-history-capture-reason" class="muted"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled><div id="node-history-coverage" class="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="node-history-coverage-label" class="history-coverage-label muted"></span></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
 <section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
@@ -577,7 +577,8 @@ function studyClient(
     if (target.dataset.nodeHistorySequence && current?.nodeHistory) {
       // A summary step's action selects its event and that step (DS21); an Inspect selects the stop in the native debugger.
       send(
-        target.dataset.inspectNodeHistoryStop
+        target.dataset.inspectNodeHistoryStop ||
+          target.id === 'node-history-inspect'
           ? {
               type: 'node-history-stop',
               studyId: current.nodeHistory.header.studyId,
@@ -2167,7 +2168,7 @@ function studyClient(
   ): void => {
     const suppressed = isReplayInBottomPanel(message)
     const section = suppressed ? undefined : message.nodeHistorySection
-    renderTestReplayMoment(message, section, suppressed)
+    renderTestReplayMoment(message, section, suppressed, replaying)
     renderTestReplayTransport(message, section, replaying, suppressed)
     renderTestReplayLearning(message, section, replaying, suppressed)
     renderTestReplayUnderstanding(message, replaying)
@@ -2184,6 +2185,7 @@ function studyClient(
     message: StudyViewMessage,
     section: StudyViewMessage['nodeHistorySection'],
     suppressed: boolean,
+    replaying: boolean,
   ): void => {
     const idle = suppressed
       ? ''
@@ -2202,6 +2204,42 @@ function studyClient(
       options.nodeTransportFocus,
       'node-history',
     )
+    renderTestReplayInspect(message, uninspected, replaying)
+  }
+  /**
+   * Offers Inspect in native debugger beside the values hint and Show Variables (DS6) for the selected stop whose values are not loaded, so the learner finds it without opening the event list; called by {@link renderTestReplayMoment} for every Study message.
+   * @param message - The current Study message.
+   * @param uninspected - Whether the selected stop's values are not loaded, so the hint is shown.
+   * @param replaying - Whether a browser recording is shown, which disables the control.
+   * @example renderTestReplayInspect(message, true, false)
+   */
+  const renderTestReplayInspect = (
+    message: StudyViewMessage,
+    uninspected: boolean,
+    replaying: boolean,
+  ): void => {
+    const inspect = element('node-history-inspect')
+    const stop = message.nodeHistory?.entries.find(
+      (entry) =>
+        entry.type === 'stop' &&
+        entry.sequence === message.nodeHistoryPosition?.sequence,
+    )
+    const offered =
+      uninspected &&
+      inspect instanceof HTMLButtonElement &&
+      stop?.type === 'stop' &&
+      testReplayStopInspectable(stop, message, true)
+    inspect.hidden = !offered
+    if (!offered) return
+    const shown = Boolean(message.nodeHistoryPosition?.debuggerAvailable)
+    inspect.dataset.nodeHistorySequence = String(stop.sequence)
+    inspect.textContent = shown
+      ? 'Debugger stop selected'
+      : 'Inspect in native debugger'
+    // As the event list's control: the pressed Inspect stays focusable and sends nothing.
+    inspect.disabled = replaying
+    inspect.setAttribute('aria-disabled', String(shown))
+    inspect.setAttribute('aria-pressed', String(shown))
   }
   /**
    * Places the section's worded lines: status, locator, explanation, the not-recorded and unavailable-source lines, the output pointer and the closed pane's action; called by {@link renderTestReplayMoment}.
@@ -2230,24 +2268,18 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     idle: string,
   ): Record<string, string> =>
-    section
-      ? {
-          'node-history-status': section.status,
-          'node-history-position':
-            section.position ?? options.testReplay.noSelection,
-          'node-history-explanation': section.explanation ?? '',
-          'node-history-not-recorded': section.notRecorded ?? '',
-          'node-history-unverified': section.unverified ?? '',
-          'node-history-pointer': section.pointer ?? '',
-        }
-      : {
-          'node-history-status': idle,
-          'node-history-position': '',
-          'node-history-explanation': '',
-          'node-history-not-recorded': '',
-          'node-history-unverified': '',
-          'node-history-pointer': '',
-        }
+    // Without a section every line is empty and the status line says `idle`.
+    ({
+      'node-history-status': section?.status ?? idle,
+      'node-history-capture-reason': section?.captureReason ?? '',
+      'node-history-position': section
+        ? (section.position ?? options.testReplay.noSelection)
+        : '',
+      'node-history-explanation': section?.explanation ?? '',
+      'node-history-not-recorded': section?.notRecorded ?? '',
+      'node-history-unverified': section?.unverified ?? '',
+      'node-history-pointer': section?.pointer ?? '',
+    })
   /**
    * Enables or disables a control of the section by its id; called by the transport's renderers.
    * @param id - The control's id.

@@ -1422,6 +1422,68 @@ async function check(page, options, collected) {
           inspectAfterSessionEnd.label === 'Inspect in native debugger' &&
           inspectAfterSessionEnd.disabled === false,
       })
+      // Value: protects=a selected stop whose values are not loaded offers Inspect in native debugger beside the hint and Show Variables (DS6), not only in the collapsed event list, and a press asks the host to select that stop; the control leaves with the hint once values load and is not offered for a stop whose captured source does not match; fails_when=the row has no Inspect, it stays after the values load or for a source mismatch, or its press sends another stop or nothing; why_new=F121: Inspect lived in the collapsed event list only; seam=none; no_claim=the host's selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
+      // Arrange
+      const rowInspect = page.locator('#node-history-inspect')
+      const rowInspectState = async () => ({
+        visible: await rowInspect.isVisible(),
+        label: (await rowInspect.textContent()) ?? '',
+        followsShowVariables: await rowInspect.evaluate(
+          (button) =>
+            button.previousElementSibling?.id === 'node-history-show-variables',
+        ),
+      })
+      // Act
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          debuggerAvailable: false,
+          nativeValuesUninspected: true,
+        },
+      })
+      const rowInspectOffered = await rowInspectState()
+      await page.evaluate(() => {
+        window.sent.length = 0
+      })
+      await rowInspect.click()
+      const rowInspectRequests = await page.evaluate(() =>
+        window.sent.filter((message) => message.type === 'node-history-stop'),
+      )
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: false },
+      })
+      const rowInspectAfterValues = await rowInspectState()
+      await publish({
+        ...nodeReader,
+        nodeHistorySection: unverifiedNodeSection,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          sourceAvailable: false,
+          debuggerAvailable: false,
+          nativeValuesUninspected: true,
+        },
+      })
+      const rowInspectForMismatch = await rowInspectState()
+      // Assert
+      cases.push({
+        name: 'a selected Node stop whose values are not loaded offers Inspect in native debugger beside Show Variables, and a press selects that stop',
+        actual: {
+          rowInspectOffered,
+          rowInspectRequests,
+          rowInspectAfterValues,
+          rowInspectForMismatch,
+        },
+        passed:
+          rowInspectOffered.visible &&
+          rowInspectOffered.label === 'Inspect in native debugger' &&
+          rowInspectOffered.followsShowVariables &&
+          rowInspectRequests.length === 1 &&
+          rowInspectRequests[0].sequence === 2 &&
+          !rowInspectAfterValues.visible &&
+          !rowInspectForMismatch.visible,
+      })
       // Act: the selected stop's captured source no longer matches its recorded hash.
       await publish({
         ...nodeReader,
@@ -1997,6 +2059,43 @@ async function check(page, options, collected) {
               sameMoment: [],
               stepControls: 3,
             },
+          }),
+      })
+      // Value: protects=an interrupted or partial test replay shows why its capture ended on its own line under the status, and the line takes no room (it is not displayed) when the capture has no reason; fails_when=the reason never reaches the page (the regression of PR-B1), it is shown for a complete capture, or the empty line keeps its margin; why_new=F130: the section lost the old status line's reason; seam=none; no_claim=how the host words the reason (projectNodeTestSection's tests) (stand-ins: the Study messages the host posts)
+      // Arrange
+      const readCaptureReason = () =>
+        page.evaluate(() => {
+          const line = document.getElementById('node-history-capture-reason')
+          return {
+            text: line.textContent,
+            displayed: getComputedStyle(line).display !== 'none',
+          }
+        })
+      // Act
+      await publish(
+        testReplayAt(
+          { sequence: 1, type: 'output', eventIndex: 0, elapsedMs: 100 },
+          {
+            captureReason:
+              'Capture interrupted: Interrupted test replay after its verified prefix: Error: EIO',
+          },
+        ),
+      )
+      const interruptedReason = await readCaptureReason()
+      await publish(atFirstOutput)
+      const completeReason = await readCaptureReason()
+      // Assert
+      cases.push({
+        name: 'an interrupted test replay shows why its capture ended under the status, and a complete one shows no such line',
+        actual: { interruptedReason, completeReason },
+        passed:
+          JSON.stringify({ interruptedReason, completeReason }) ===
+          JSON.stringify({
+            interruptedReason: {
+              text: 'Capture interrupted: Interrupted test replay after its verified prefix: Error: EIO',
+              displayed: true,
+            },
+            completeReason: { text: '', displayed: false },
           }),
       })
       // Value: protects=the test replay's slider showing the whole recorded range as one unrecorded span with a tick at each verified stop and the catalog legend, and nothing for a one-event history; fails_when=the section's timeline is not drawn by the shared coverage drawing, the legend differs, or a one-event history shows a mark; why_new=Design 8's remaining part (gap mark at the first output), red first on the build without the shared drawing; seam=none; no_claim=native pixels or the browser transport (its golden DOM case)

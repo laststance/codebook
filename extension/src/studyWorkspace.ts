@@ -366,6 +366,14 @@ const openRequestShape = { openRequest: openRequestNumberSchema.optional() }
 const NODE_HISTORY_READER_PAGE_SIZE = 20
 /** A saved test stop, the only journal entry with captured source and a debugger snapshot. */
 type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
+
+/** How one selection of a test replay's moment behaves; see {@link StudyWorkspace.selectNodeHistoryEvent}. */
+type NodeHistorySelectionOptions = {
+  requireDebugger?: boolean
+  publish?: boolean
+  alignPlayback?: boolean
+  stepChoice?: { stepId: string | undefined }
+}
 const messageSchema = z.discriminatedUnion('type', [
   webviewFocusReceiptSchema,
   z.strictObject({ type: z.literal('ready') }),
@@ -8750,7 +8758,7 @@ export class StudyWorkspace {
       const history = this.selectedNodeHistory,
         sequence = this.selectedNodeHistorySequence
       if (history && sequence !== undefined && !this.recordingActive) {
-        await this.selectNodeHistoryEvent(history, sequence)
+        await this.requestNodeHistoryEvent(history, sequence)
         return
       }
       await this.renderSelection(true, true)
@@ -11234,7 +11242,7 @@ export class StudyWorkspace {
             throw new Error(
               'The selected Node history changed during playback.',
             )
-          await this.selectNodeHistoryEvent(selectedHistory, sequence, {
+          await this.requestNodeHistoryEvent(selectedHistory, sequence, {
             publish: false,
             alignPlayback: false,
           })
@@ -11256,7 +11264,7 @@ export class StudyWorkspace {
       )
       if (positionError) this.report('history-position', positionError)
       if (initialSequence !== undefined)
-        await this.selectNodeHistoryEvent(history, initialSequence, {
+        await this.requestNodeHistoryEvent(history, initialSequence, {
           publish: false,
           alignPlayback: false,
         })
@@ -21779,7 +21787,7 @@ export class StudyWorkspace {
           `There is no ${message.direction} ${message.unit ?? 'event'} in this test replay.`,
         )
       // Next and Previous show the event's first step (DS21), once the move commits.
-      await this.selectNodeHistoryEvent(history, target, {
+      await this.requestNodeHistoryEvent(history, target, {
         stepChoice: { stepId: undefined },
       })
     }
@@ -21794,7 +21802,7 @@ export class StudyWorkspace {
           'Select the matching saved Node history before navigating its timeline.',
         )
       // A step's action selects its event and that step; an event's own control, the event's first step (DS21), once the selection commits.
-      await this.selectNodeHistoryEvent(history, message.sequence, {
+      await this.requestNodeHistoryEvent(history, message.sequence, {
         stepChoice: { stepId: message.stepId },
       })
     }
@@ -21815,7 +21823,7 @@ export class StudyWorkspace {
         throw new Error(
           'The requested Node history event is not a debugger stop.',
         )
-      await this.selectNodeHistoryEvent(history, message.sequence, {
+      await this.requestNodeHistoryEvent(history, message.sequence, {
         requireDebugger: true,
       })
     }
@@ -23237,7 +23245,31 @@ export class StudyWorkspace {
   }
 
   /**
-   * Selects one moment of a test replay on every surface in the browser replay's order (EN8); called by the Study pane's moves, step actions and Inspect, by Play and seeks, and by the replay's open.
+   * Selects one moment of a test replay through {@link selectNodeHistoryEvent} and keeps the moment it is going to in {@link requestedNodeHistorySequence} until the selection ends, so two quick Next or Previous presses add up (F129); called by the Study pane's moves, step actions and Inspect, by Play and seeks, and by the replay's open.
+   * @param history - The selected test replay.
+   * @param sequence - The event to select.
+   * @param options - As {@link selectNodeHistoryEvent}.
+   * @example await this.requestNodeHistoryEvent(history, 24, { stepChoice: { stepId: 'read' } })
+   */
+  private async requestNodeHistoryEvent(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+    options: NodeHistorySelectionOptions = {},
+  ): Promise<void> {
+    // The token the selection below takes with its first statement; a newer selection takes the next one and owns the requested moment from then on.
+    const request = this.selectedNodeHistoryRequest + 1
+    this.requestedNodeHistorySequence = sequence
+    try {
+      await this.selectNodeHistoryEvent(history, sequence, options)
+    } finally {
+      // A selection that committed, was refused or failed gives the requested moment back, so the next Next or Previous press moves on from the shown one.
+      if (this.selectedNodeHistoryRequest === request)
+        this.requestedNodeHistorySequence = undefined
+    }
+  }
+
+  /**
+   * Selects one moment of a test replay on every surface in the browser replay's order (EN8); called by {@link requestNodeHistoryEvent}, which the Study pane's moves, step actions and Inspect, Play, seeks and the replay's open call.
    *
    * (1) Every surface leaves the earlier moment at once: the replay debugger shows no stop and the recorded-source slot drops the earlier stop's line, label and text ({@link leaveNodeHistoryMoment}); (2) the slot's bytes for this moment are confirmed in its document ({@link showNodeSourceSlot}); (3) the debugger is presented at the slot ({@link presentNodeHistoryDebugger}); (4) the slot's line and label, the Study position and the Application view commit together; the reader position is written after the commit. Every step re-checks that no newer selection took over.
    * The selection commits the step it shows with its moment ({@link nextNodeHistoryStepId}): a refused, failed or superseded selection leaves the learner's chosen step as it was.
@@ -23249,41 +23281,12 @@ export class StudyWorkspace {
   private async selectNodeHistoryEvent(
     history: NodeTestHistoryIndex,
     sequence: number,
-    options: Parameters<StudyWorkspace['runNodeHistorySelection']>[2] = {},
-  ): Promise<void> {
-    // The token the selection below takes with its first statement; a newer selection takes the next one and owns the requested moment from then on.
-    const request = this.selectedNodeHistoryRequest + 1
-    this.requestedNodeHistorySequence = sequence
-    try {
-      await this.runNodeHistorySelection(history, sequence, options)
-    } finally {
-      // A selection that committed, was refused or failed gives the requested moment back, so the next Next or Previous press moves on from the shown one (F129).
-      if (this.selectedNodeHistoryRequest === request)
-        this.requestedNodeHistorySequence = undefined
-    }
-  }
-
-  /**
-   * Runs one selection of {@link selectNodeHistoryEvent} through its surfaces, one token for the whole run.
-   * @param history - The selected test replay.
-   * @param sequence - The event to select.
-   * @param options - As {@link selectNodeHistoryEvent}.
-   * @example await this.runNodeHistorySelection(history, 24, { publish: false })
-   */
-  private async runNodeHistorySelection(
-    history: NodeTestHistoryIndex,
-    sequence: number,
     {
       requireDebugger = false,
       publish = true,
       alignPlayback = true,
       stepChoice,
-    }: {
-      requireDebugger?: boolean
-      publish?: boolean
-      alignPlayback?: boolean
-      stepChoice?: { stepId: string | undefined }
-    } = {},
+    }: NodeHistorySelectionOptions = {},
   ): Promise<void> {
     const request = ++this.selectedNodeHistoryRequest
     if (publish) this.nodeHistoryPlaybackController?.pause()
