@@ -34,3 +34,5 @@ export const PROGRESS_LINE_INTERVAL_MS = 30_000
 export const TEST_OUTPUT_KEEP_CHARS = 4_000_000
 /** How long a line of a run's output may grow in the pre-gate runner before it is written in pieces. A test that prints without a line break must not grow the runner's memory either. */
 export const TEST_LINE_FLUSH_CHARS = 100_000
+/** How many failed tests a refused recording names; the rest are counted ("and 3 more"), so the refusal stays one readable line. */
+export const MAX_NAMED_FAILED_TESTS = 10

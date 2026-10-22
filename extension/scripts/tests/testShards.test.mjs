@@ -19,6 +19,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { buildTestTimings } from '../utils/buildTestTimings.mjs'
+import { describeFailedRecording } from '../utils/describeFailedRecording.mjs'
 import { describeUnendedRecording } from '../utils/describeUnendedRecording.mjs'
 import { endProcessTree } from '../utils/endProcessTree.mjs'
 import { killProcessIds } from '../utils/killProcessIds.mjs'
@@ -3331,7 +3332,8 @@ test(
       },
       {
         code: 1,
-        stderr: '✖ 1 tests failed; timings were not recorded.\n',
+        stderr:
+          '✖ 1 tests failed; timings were not recorded: throwing-hook.test.js › first.\n',
         processesLeft: [],
         timings: 'no file',
       },
@@ -4007,7 +4009,10 @@ test('the timings recording is refused with the number of failed tests and write
 
   // Assert
   assert.equal(result.code, 1)
-  assert.equal(result.stderr, '✖ 1 tests failed; timings were not recorded.\n')
+  assert.equal(
+    result.stderr,
+    '✖ 1 tests failed; timings were not recorded: failing.test.js › breaks.\n',
+  )
   assert.equal(
     await readFile(join(root, 'test-timings.json'), 'utf8').catch(
       () => 'no file',
@@ -4624,3 +4629,33 @@ test(
     )
   },
 )
+
+// Value: protects=the reader of a refused recording: the sentence names the failed tests (file and test), so the reader need not rerun the suite to find them (F60); fails_when=the sentence only counts them, names a passing test, keeps a line break of a test name, or lists more than ten; why_new=Cycle 0050 F60 (the EN20 recording refused with "2 tests failed" and no name); seam=describeFailedRecording with hard-coded results; no_claim=a real failing run, which the recording test above covers
+test('the failed-recording sentence names each failed test on one line, at most ten, and counts the rest', () => {
+  // Arrange
+  const passing = { file: 'a.test.js', name: 'passes', failed: false }
+  const two = [
+    passing,
+    { file: 'a.test.js', name: 'breaks', failed: true },
+    { file: 'b.test.js', name: 'two\nlines', failed: true },
+  ]
+  const twelve = Array.from({ length: 12 }, (_, index) => ({
+    file: 'c.test.js',
+    name: `t${index}`,
+    failed: true,
+  }))
+
+  // Act
+  const sentences = [
+    describeFailedRecording([passing]),
+    describeFailedRecording(two),
+    describeFailedRecording(twelve),
+  ]
+
+  // Assert
+  assert.deepEqual(sentences, [
+    undefined,
+    '2 tests failed; timings were not recorded: a.test.js › breaks; b.test.js › two lines.',
+    '12 tests failed; timings were not recorded: c.test.js › t0; c.test.js › t1; c.test.js › t2; c.test.js › t3; c.test.js › t4; c.test.js › t5; c.test.js › t6; c.test.js › t7; c.test.js › t8; c.test.js › t9; and 2 more.',
+  ])
+})

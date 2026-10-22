@@ -17,6 +17,7 @@ import { parseArgs } from 'node:util'
 
 import { buildTestTimings } from './utils/buildTestTimings.mjs'
 import { collectTestRun } from './utils/collectTestRun.mjs'
+import { describeFailedRecording } from './utils/describeFailedRecording.mjs'
 import { describeUnendedRecording } from './utils/describeUnendedRecording.mjs'
 import { parseSilenceSeconds } from './utils/parseSilenceSeconds.mjs'
 import { planTestShards } from './utils/planTestShards.mjs'
@@ -120,11 +121,8 @@ async function recordTimings(files, silenceSeconds) {
   const { results } = recording
   const unended = describeUnendedRecording(recording, silenceSeconds)
   if (unended) throw new RecordingRefusal(unended)
-  const failed = results.filter((result) => result.failed).length
-  if (failed > 0)
-    throw new RecordingRefusal(
-      `${failed} tests failed; timings were not recorded.`,
-    )
+  const failedSentence = describeFailedRecording(results)
+  if (failedSentence) throw new RecordingRefusal(failedSentence)
   await writeFile(
     timingsPath,
     `${JSON.stringify(buildTestTimings(results), null, 2)}\n`,
