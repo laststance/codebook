@@ -35,6 +35,8 @@ const PASSING_RESULT = {
 /** What a fake owned run does at each step, each held or answered as a case needs. */
 type FakeRunSteps = {
   stops?: 1 | 2
+  /** Holds the preparation's first stop until it settles, or until a stop cancels it. */
+  prepareHeld?: Promise<void>
   /** Holds the advance to the second stop until it settles, or until a stop cancels it. */
   advanceHeld?: Promise<void>
   /** Holds the final continuation (the process's result and the report check) until it settles. */
@@ -120,6 +122,8 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
   const runtime: NodeTestRuntime = {
     id: 'node-run',
     async prepare() {
+      // A stop aborts the owned run: a preparation under way rejects, as the debugger's wait does.
+      await Promise.race([steps.prepareHeld, cancelled])
       return stops[cursor]!
     },
     hasNextStop() {
@@ -901,6 +905,156 @@ test('a test run stopped while it is still preparing records no history, and its
     assert.equal(afterStop.nodeTest?.historyStatus, 'unavailable')
     assert.equal(afterStop.nodeTest?.replayAvailable, false)
     assert.deepEqual(await run.service.nodeHistoryStore!.list(), [])
+  } finally {
+    letCheckFinish()
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a learner's Stop while a test run is still preparing, before its history began: the run reads stopped (no error of its own, not refused-at-preparation), offers no read-history, gives up its retained-run slot, and keeps its start key (a repeat under the key replays the receipt); fails_when=the preparation's cancelled check becomes the run's error, the run reads refused-at-preparation and frees its key, or the stopped run keeps read-history and its slot so the 17th start answers LIMIT_EXCEEDED; why_new=the preparation catch never asked record.stopping (service.ts prepare, F97) and a stop with no history left historyExcluded unset (F56); seam=the environment's file check is a fake that rejects once the stop is under way; no_claim=the real file check's abort wording
+test('a learner’s stop while a test run prepares before its history reads as stopped, offers no read-history, frees its slot and keeps its start key', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  let checkIsHeld = false,
+    letCheckFail!: () => void
+  const checkMayFail = new Promise<void>((resolve) => {
+    letCheckFail = resolve
+  })
+  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+    checkIsHeld = true
+    await checkMayFail
+    throw new Error('The operation was aborted.')
+  }
+  try {
+    const startKey = 'stopped-before-history-key'
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: startKey,
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => checkIsHeld, 'the file check holds the preparation')
+
+    // Act
+    const stopping = run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    letCheckFail()
+    const afterStop = await stopping
+    run.service.environment.checkNodeTestFiles = async () => undefined
+    const repeated = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: startKey,
+      configuration: run.configuration,
+    })
+
+    // Assert
+    assert.equal(afterStop.error, undefined)
+    assert.equal(record.historyExcluded, 'stopped-before-history')
+    assert.equal(afterStop.state, 'stopped')
+    assert.deepEqual(afterStop.nextActions, [])
+    assert.equal(repeated.runId, receipt.runId)
+    // Sixteen such stopped runs leave room for a seventeenth start.
+    for (let index = 1; index <= 16; index++) {
+      const other = run.service.start({
+        instanceId: run.service.instanceId,
+        profile: NODE_TEST_PROFILE,
+        key: `stopped-filler-${index}`,
+        configuration: run.configuration,
+      })
+      await run.service.stop({
+        instanceId: run.service.instanceId,
+        runId: other.runId,
+      })
+    }
+    assert.ok(run.service.records.size <= 16)
+  } finally {
+    letCheckFail()
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a learner's Stop after the test history began and before the first stop: the cancelled preparation is no error of the run, which reads stopped and seals its history partial; fails_when=the cancelled first-stop wait becomes record.error (a failed run with the debugger's cancellation as its cause); why_new=after the history began a stop still left an error on the run (F97); seam=the owned run is a fake whose first stop a stop cancels; no_claim=the native debugger's own cancellation
+test('a learner’s stop after the test history began and before the first stop leaves no error on the run', async () => {
+  // Arrange
+  const run = await testRunHarness({ prepareHeld: new Promise<void>(() => {}) })
+  try {
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: 'stopped-before-first-stop',
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => record.nodeRun !== undefined, 'the owned run exists')
+
+    // Act
+    const state = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+
+    // Assert
+    assert.equal(state.error, undefined)
+    assert.equal(state.state, 'stopped')
+    assert.equal(record.historyExcluded, undefined)
+    assert.equal(state.nodeTest?.historyStatus, 'partial')
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a test run stopped while its file check is held and then passes: no history was begun, so the run reads ended (no read-history in nextActions) and its retained-run slot is free; fails_when=the stopped run leaves historyExcluded unset, keeps read-history, and a seventeenth start answers LIMIT_EXCEEDED; why_new=a stop with no history left the exclusion unset (F56); seam=the environment's file check is held by the test; no_claim=the start key (the rejecting-check test above)
+test('a test run stopped before its history began offers no read-history and frees its retained-run slot', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  let checkIsHeld = false,
+    letCheckFinish!: () => void
+  const checkMayFinish = new Promise<void>((resolve) => {
+    letCheckFinish = resolve
+  })
+  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+    checkIsHeld = true
+    await checkMayFinish
+  }
+  try {
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: 'stopped-while-checking',
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => checkIsHeld, 'the file check holds the preparation')
+
+    // Act
+    const stopping = run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    letCheckFinish()
+    const afterStop = await stopping
+
+    // Assert
+    assert.equal(record.historyExcluded, 'stopped-before-history')
+    assert.equal(afterStop.nextActions.includes('read-history'), false)
+    run.service.environment.checkNodeTestFiles = async () => undefined
+    for (let index = 1; index <= 16; index++) {
+      const other = run.service.start({
+        instanceId: run.service.instanceId,
+        profile: NODE_TEST_PROFILE,
+        key: `slot-filler-${index}`,
+        configuration: run.configuration,
+      })
+      await run.service.stop({
+        instanceId: run.service.instanceId,
+        runId: other.runId,
+      })
+    }
+    assert.ok(run.service.records.size <= 16)
   } finally {
     letCheckFinish()
     await run.harness.close()

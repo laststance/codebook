@@ -225,6 +225,7 @@ export type StudyRecord = StudyRecordState &
  * - `awaiting-admission`: the study library has not answered yet whether it can keep this run's study.
  * - `refused-at-admission`: the library was full or its limit setting invalid, so the run never started.
  * - `refused-at-preparation`: a node-test run whose preparation refused it before its history began (a changed source or test file, a path that is not a file, a missing prerequisite), so nothing was recorded and its slot and start key are free.
+ * - `stopped-before-history`: a learner's stop (or a stop of the window) ended a node-test run before its history began, so nothing was recorded; its slot is free, but its start key stays with it, so a repeat under the same key replays the receipt.
  * - `removed-by-learner`: the learner moved the run's saved study to the system Trash with this window's delete.
  * - `archive-removed`: the run's saved study left the library without a removal of this window, so its archive is gone: its files were removed by hand (a window without a Trash offers nothing else), or another window removed it.
  */
@@ -232,6 +233,7 @@ export type HistoryExclusion =
   | 'awaiting-admission'
   | 'refused-at-admission'
   | 'refused-at-preparation'
+  | 'stopped-before-history'
   | StudyRemovalExclusion
 /** The two exclusions that say a run's saved study was removed; each has its own sentence for the agent that reads the run, see {@link historyExclusionReason}. */
 export type StudyRemovalExclusion = 'removed-by-learner' | 'archive-removed'
@@ -3239,6 +3241,13 @@ export class StudyService {
       // A failure before the admission answered is saved as an ordinary preparation failure only where the library has room for it.
       if (record.historyExcluded === 'awaiting-admission')
         record.historyExcluded = await this.exclusionAfterEarlyFailure(record)
+      // A stop cancelled this preparation: the run ends as stopped, with no error of its own and no refusal; a stop before the history began gives up its slot and keeps its start key (F97).
+      if (record.profile === NODE_TEST_PROFILE && record.stopping) {
+        if (!record.nodeHistoryWriter)
+          record.historyExcluded = 'stopped-before-history'
+        record.nodePhase = 'failed'
+        return
+      }
       // A test run refused before its history began recorded nothing: it gives up its slot and its start key (EN1).
       if (record.profile === NODE_TEST_PROFILE && !record.nodeHistoryWriter)
         record.historyExcluded = 'refused-at-preparation'
@@ -3441,6 +3450,13 @@ export class StudyService {
       }
       if (record.nodeHistoryWriter && record.nodeHistoryStatus === 'recording')
         await this.sealNodeHistory(record, record.nodeHistoryWriter)
+      // A test run stopped before its history began recorded nothing: it reads ended, so it offers no history and frees its slot (F56).
+      if (
+        record.profile === NODE_TEST_PROFILE &&
+        !record.nodeHistoryWriter &&
+        record.historyExcluded === undefined
+      )
+        record.historyExcluded = 'stopped-before-history'
       // What the evidence failed with by the end is the run's; a later write's failure is not (row 699).
       record.evidenceFailureAtStop = record.runtime?.evidence.failure
       record.stopped = true
