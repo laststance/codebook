@@ -679,6 +679,8 @@ export class StudyWorkspace {
   private selectedNodeHistoryLearningMaterial?: NodeTestLearningMaterial
   private selectedNodeHistoryPage = 0
   private selectedNodeHistorySequence?: number
+  /** The moment the latest selection is going to, set before its first await and cleared when it commits, fails or is retired; a Next or Previous press moves on from it, so two quick presses add up (F129). */
+  private requestedNodeHistorySequence?: number
   private selectedNodeHistoryDebugAvailable = false
   /** The selected Node stop reached native Run and Debug without its values loading; the reader shows how to load them. */
   private selectedNodeHistoryValuesUninspected = false
@@ -11218,6 +11220,7 @@ export class StudyWorkspace {
       this.selectedNodeHistoryLearningMaterial = learningMaterial
       this.selectedNodeHistoryPage = 0
       this.selectedNodeHistorySequence = undefined
+      this.requestedNodeHistorySequence = undefined
       this.selectedNodeHistoryStepId = undefined
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
@@ -11963,6 +11966,7 @@ export class StudyWorkspace {
     // The retired replay's output index goes with it, so its entries leave the extension host's memory.
     this.selectedNodeHistoryOutputIndex = undefined
     this.selectedNodeHistorySequence = undefined
+    this.requestedNodeHistorySequence = undefined
     this.selectedNodeHistoryStepId = undefined
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
@@ -21766,7 +21770,7 @@ export class StudyWorkspace {
         )
       const target = nodeHistoryStepTarget(
         history.entries,
-        this.selectedNodeHistorySequence,
+        this.requestedNodeHistorySequence ?? this.selectedNodeHistorySequence,
         message.direction,
         message.unit,
       )
@@ -23243,6 +23247,30 @@ export class StudyWorkspace {
    * @example await this.selectNodeHistoryEvent(history, 24, { stepChoice: { stepId: 'read' } })
    */
   private async selectNodeHistoryEvent(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+    options: Parameters<StudyWorkspace['runNodeHistorySelection']>[2] = {},
+  ): Promise<void> {
+    // The token the selection below takes with its first statement; a newer selection takes the next one and owns the requested moment from then on.
+    const request = this.selectedNodeHistoryRequest + 1
+    this.requestedNodeHistorySequence = sequence
+    try {
+      await this.runNodeHistorySelection(history, sequence, options)
+    } finally {
+      // A selection that committed, was refused or failed gives the requested moment back, so the next Next or Previous press moves on from the shown one (F129).
+      if (this.selectedNodeHistoryRequest === request)
+        this.requestedNodeHistorySequence = undefined
+    }
+  }
+
+  /**
+   * Runs one selection of {@link selectNodeHistoryEvent} through its surfaces, one token for the whole run.
+   * @param history - The selected test replay.
+   * @param sequence - The event to select.
+   * @param options - As {@link selectNodeHistoryEvent}.
+   * @example await this.runNodeHistorySelection(history, 24, { publish: false })
+   */
+  private async runNodeHistorySelection(
     history: NodeTestHistoryIndex,
     sequence: number,
     {

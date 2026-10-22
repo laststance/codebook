@@ -4914,6 +4914,76 @@ async function check(page, options, collected) {
               understood: false,
             }),
       })
+      // Value: protects=while a browser replay holds the bottom panel the test replay's learning block is not drawn, so no step reads `No recorded event is linked to this step.` beside the recording, and the block returns with the replay's own Study message; fails_when=the block stays visible under the recording, its steps read the missing-event line, or it does not return when the browser replay is left; why_new=F153 (D20): a suppressed section still drew the learning block of the retired replay; seam=none; no_claim=the host's retiring of the test replay (studyWorkspaceTestReplayBrowser.test.ts) (stand-ins: the Study messages the host posts)
+      // Arrange: a test replay with learning material and a browser replay in the bottom panel.
+      const journalWithLearning = {
+        ...nodeJournalWithoutReplay,
+        nodeHistoryLearningSummary: {
+          content: {
+            question: 'Why does the job wait?',
+            title: 'Job wait',
+            summary: 'The job waits for its timer.',
+            participants: [
+              { id: 'test', label: 'Test' },
+              { id: 'job', label: 'Job' },
+            ],
+            steps: [
+              {
+                id: 'wait',
+                from: 'test',
+                to: 'job',
+                label: 'Wait for the timer',
+                explanation: 'The timer fires after the delay.',
+                evidence: 'observed',
+                reference: {
+                  type: 'stop',
+                  sequence: 9,
+                  sourceHash: 'a'.repeat(64),
+                },
+              },
+            ],
+          },
+          positions: [],
+        },
+      }
+      const learningBlock = () =>
+        page.evaluate(() => ({
+          blockHidden: document.getElementById('node-history-learning').hidden,
+          noMaterialHidden: document.getElementById('node-history-no-material')
+            .hidden,
+          missingEventLines: Array.from(
+            document.querySelectorAll('#node-learning-steps .muted'),
+          ).filter((line) =>
+            line.textContent.includes('No recorded event is linked'),
+          ).length,
+        }))
+      // Act
+      await publish({
+        ...panelReplay,
+        ...journalWithLearning,
+        recording: panelReplay.recording,
+      })
+      const learningDuringReplay = await learningBlock()
+      await publish(journalWithLearning)
+      const learningAfterReplay = await learningBlock()
+      // Assert
+      cases.push({
+        name: 'while a browser replay holds the bottom panel the test replay’s learning block and its missing-material line are not drawn, and the block returns when the replay is left',
+        actual: { learningDuringReplay, learningAfterReplay },
+        passed:
+          JSON.stringify(learningDuringReplay) ===
+            JSON.stringify({
+              blockHidden: true,
+              noMaterialHidden: true,
+              missingEventLines: 0,
+            }) &&
+          JSON.stringify(learningAfterReplay) ===
+            JSON.stringify({
+              blockHidden: false,
+              noMaterialHidden: true,
+              missingEventLines: 1,
+            }),
+      })
     }
   }
   // The keyboard focus when a part of the pane leaves while it holds it (row 85): each case puts the focus on a control of that part, publishes the Study message under which the part leaves, and reads where the focus is; the same step with the focus on a control that stays must move nothing.
