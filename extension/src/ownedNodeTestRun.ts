@@ -686,8 +686,16 @@ export class OwnedNodeTestRun {
       column: stop.frame.column,
       variableNames: stop.variables.map((value) => value.name),
     })
-    this.outputTerminal?.reveal()
+    this.revealOutput()
     return stop
+  }
+
+  /**
+   * Restores this run's output tab after the native debugger opened its console, unless a stop already began the release, which disposed the tab: the stop or result just observed stands without the reveal (EN5); called by {@link captureStop} and {@link completeOwned}.
+   * @example this.revealOutput()
+   */
+  private revealOutput(): void {
+    if (!this.releaseBegun) this.outputTerminal?.reveal()
   }
 
   /**
@@ -764,7 +772,7 @@ export class OwnedNodeTestRun {
       elapsedMs,
       output: result.output,
     })
-    this.outputTerminal?.reveal()
+    this.revealOutput()
     // A failing exit is a fact of its own; the report's problem goes beside it.
     return report.failure === undefined
       ? { ...result, elapsedMs }

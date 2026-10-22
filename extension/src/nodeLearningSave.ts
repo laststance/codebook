@@ -62,6 +62,9 @@ type SaveState =
 const SAVE_COMMAND = 'codebook.saveLearningReplay'
 /** The command a status item click runs to open a test replay. */
 const OPEN_COMMAND = 'codebook.openLearningReplay'
+/** The refusal of a Save for a test run that recorded nothing, worded as the browser run's ({@link StudyWorkspace.saveLearningReplay}). */
+const NOTHING_RECORDED =
+  'No recorded Codebook session is available. Explain a real code path first.'
 
 /**
  * Owns the Save of a test run's learning replay from the status item: its stages, the question before the result, the receipts with the material revision each read, the retry of each failed stage and the notifications, so the Study workspace only wires its status item and commands to it (EN14).
@@ -121,10 +124,7 @@ export class NodeLearningSave {
     const service = this.host.service()
     if (!service) return Promise.resolve()
     // The item is not shown for such a run; the command is refused as for a browser run without a recording.
-    if (recordedNothing(record))
-      throw new Error(
-        'No recorded Codebook session is available. Explain a real code path first.',
-      )
+    if (recordedNothing(record)) throw new Error(NOTHING_RECORDED)
     const studyId = `${service.instanceId}_${record.id}`
     if (this.operation) {
       if (this.operation.studyId !== studyId)
@@ -146,6 +146,7 @@ export class NodeLearningSave {
    * @param service - The service that stops the run.
    * @param record - The node-test run.
    * @param studyId - Its study id.
+   * @throws When the stop sealed a history with no entry (a Save now while the run still prepared): the Save ends as for a run that recorded nothing ({@link recordedNothing}), with no receipt and no notice.
    * @example await this.saveOnce(service, record, studyId)
    */
   private async saveOnce(
@@ -177,6 +178,11 @@ export class NodeLearningSave {
         cause: record.nodeHistoryFailure ?? 'unknown cause',
       })
       return
+    }
+    // A stop before the first entry sealed a history that holds nothing to save or open.
+    if (recordedNothing(record)) {
+      this.states.delete(studyId)
+      throw new Error(NOTHING_RECORDED)
     }
     await this.readSaved(record, studyId)
   }

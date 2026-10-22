@@ -514,3 +514,54 @@ test('a run that recorded nothing shows no Save item, and its Save reads no hist
   assert.equal(recorder.summaryCalls(), 0)
   assert.deepEqual(recorder.logged, [])
 })
+
+// Value: protects=a Save now answered while a test run still prepares, whose stop seals its history with no entry: the Save ends as for a run that recorded nothing (the refusal, no receipt, no partial notice with Open replay, no item); fails_when=the Save reads the empty sealed history and keeps a partial receipt or raises the partial notice whose Open replay opens nothing; why_new=the recorded-nothing test refuses a run already sealed empty before any stop, and every question test saves a run paused at a stop (Step 9 pass 2 state-machines, wrong row preparing-empty x save-now); seam=none; no_claim=the real seal (the stop is a stand-in that seals no entry, as a Save while Vitest still launches does)
+test('Save now while a test run prepares, whose stop seals no entry, ends as for a run that recorded nothing', async () => {
+  // Arrange
+  const recorder = recordingHost({
+    answer: 'Save now',
+    stops: [
+      async (record): Promise<void> => {
+        record.stopped = true
+        record.nodeHistoryStatus = 'partial'
+        record.nodeHistoryEntryCount = 0
+      },
+    ],
+    summaries: [
+      async () =>
+        summary({
+          status: 'partial',
+          verdict: 'No result recorded',
+          testResult: 'none',
+          stopCount: 0,
+          explainedStopCount: 0,
+          hasResult: false,
+          learningCoverage: 'none',
+          learningMissing: [{ kind: 'summary' }],
+          captureMissing: [{ kind: 'execution' }],
+        }),
+    ],
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'preparing', nodeStops: [] })
+  recorder.use(record)
+
+  // Act
+  const outcome = await save.save(record).then(
+    () => 'saved',
+    (error: unknown) => (error instanceof Error ? error.message : 'refused'),
+  )
+
+  // Assert
+  assert.deepEqual(recorder.asked, [
+    'Saving ends the test run before its result (0 of 2 stops reached). Save now?',
+  ])
+  assert.equal(recorder.stopCalls(), 1)
+  assert.equal(
+    outcome,
+    'No recorded Codebook session is available. Explain a real code path first.',
+  )
+  assert.equal(recorder.summaryCalls(), 0)
+  assert.deepEqual(recorder.notified, [])
+  assert.equal(save.item(record), undefined)
+})

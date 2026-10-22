@@ -75,6 +75,7 @@ async function nodeRunHarness({
   typedWhileRunning,
   closeFailures = 0,
   stopFailures = 0,
+  outputClosesOnRelease = false,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -122,6 +123,8 @@ async function nodeRunHarness({
   typedWhileRunning?: { continueRequest: number; text: string }
   closeFailures?: number
   stopFailures?: number
+  /** The output terminal refuses a reveal or a write once the run released it, as the real terminal does ("Owned Node test output terminal was closed."). */
+  outputClosesOnRelease?: boolean
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -435,10 +438,21 @@ async function nodeRunHarness({
   }
   class OutputTerminal {
     readonly terminal = { name: 'Codebook · Test output' }
+    private released = false
     async ready(): Promise<void> {}
-    write(): void {}
-    reveal(): void {}
-    dispose(): void {}
+    write(): void {
+      this.refuseOnceReleased()
+    }
+    reveal(): void {
+      this.refuseOnceReleased()
+    }
+    dispose(): void {
+      this.released = true
+    }
+    private refuseOnceReleased(): void {
+      if (outputClosesOnRelease && this.released)
+        throw new Error('Owned Node test output terminal was closed.')
+    }
   }
   const editor = {
     Uri: { file: (fsPath: string) => ({ fsPath }) },
@@ -1280,6 +1294,45 @@ test('a stop while the report is being checked removes the report only after the
       ),
       false,
     )
+  } finally {
+    finishRead()
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a passing test's result when a stop lands while the final continuation checks Vitest's report: the result is returned although the stop disposed the output terminal; fails_when=the end of the check reveals the terminal the stop disposed, so the continuation fails and the run seals partial without its result; why_new=the stop-during-check test's terminal stand-in reveals after its release, and the real terminal refuses (Step 9 pass 2 red team, EN5, AC19); seam=the report check is held by the test; no_claim=the service's seal (service tests) and VS Code's terminal
+test('a stop while the report is being checked keeps the passing result although it released the output terminal', async () => {
+  // Arrange
+  let finishRead!: () => void
+  const reportRead = new Promise<void>((resolve) => {
+    finishRead = resolve
+  })
+  const harness = await nodeRunHarness({
+    reportRead,
+    outputClosesOnRelease: true,
+  })
+  try {
+    await harness.run.prepare()
+    await writeFile(harness.launch.report.file, '{}')
+    const completing = harness.run.complete()
+    await waitUntil(
+      () => harness.calls.includes('verify'),
+      'the report check',
+      1_000,
+    )
+
+    // Act
+    const stopping = harness.run.stop()
+    finishRead()
+    const outcome = await completing.then(
+      (result) => result.exitCode,
+      (error: unknown) => (error instanceof Error ? error.message : 'failed'),
+    )
+    await stopping
+
+    // Assert
+    assert.equal(outcome, 0)
   } finally {
     finishRead()
     await harness.run.stop()
