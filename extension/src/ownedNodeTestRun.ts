@@ -247,12 +247,12 @@ export class OwnedNodeTestRun {
     )
     const endpoint = await this.owned.inspectorEndpoint(signal)
     signal.throwIfAborted()
-    // The pause is captured at the declared column, so a registration acknowledged at another column fails here, before the test continues.
+    // The debugger may bind the declared line at another column; the stop is then captured there (F155). A registration acknowledged on another line fails here, before the test continues.
     this.breakpoint = new OwnedRepositoryBreakpoint(
       launch.stops[0]!.file,
       launch.stops[0]!.source.line,
       launch.stops[0]!.source.column,
-      'declared-column',
+      'declared-line',
     )
     const started = await vscode.debug.startDebugging(
       vscode.workspace.getWorkspaceFolder(vscode.Uri.file(launch.workspace)),
@@ -389,6 +389,44 @@ export class OwnedNodeTestRun {
     if (place) throw new Error(boundElsewhereRefusalText(declared, place))
   }
 
+  /**
+   * Classifies the paused stack against the declared stop, at the column the debugger bound the owned breakpoint at on the declared line; called by {@link captureStop} once for each pause.
+   * The debugger may bind a breakpoint requested at one column to another column of the same line, and the stop is then captured there (F155). The bound column is the verified place of the owned breakpoint, or, while its registration is still pending and names no place, the column of a pause that the owned breakpoint itself hit on the declared line. A pause on another line, and a learner's breakpoint on the declared line, keep the declared column.
+   * @param frames - The paused thread's frames, top first.
+   * @param selected - The declared stop: its file and position.
+   * @param pause - The stopped event being examined.
+   * @returns The classification of {@link selectCheckedNodeFrame}, matched at the bound column when the owned breakpoint is bound there.
+   * @example
+   * this.checkFrameAtBoundColumn(frames, selected, pause).status // 'matched' for a stop declared at 16:5 and bound at 16:29
+   */
+  private checkFrameAtBoundColumn(
+    frames: DebugProtocol.StackFrame[],
+    selected: { file: string; source: { line: number; column: number } },
+    pause: { reason: string; hitBreakpointIds?: number[] },
+  ): ReturnType<typeof selectCheckedNodeFrame> {
+    const { line, column } = selected.source
+    const verified = this.breakpoint?.verifiedPlace(this.bound!.session)
+    const check = (atColumn: number) =>
+      selectCheckedNodeFrame(
+        frames,
+        selected.file,
+        line,
+        atColumn,
+        pause.reason,
+      )
+    const first = check(verified?.line === line ? verified.column : column)
+    const isOwnedHit =
+      this.ownedBreakpointId !== undefined &&
+      pause.hitBreakpointIds?.includes(this.ownedBreakpointId) === true
+    if (
+      first.status === 'wrong-position' &&
+      isOwnedHit &&
+      first.observedFrame.line === line
+    )
+      return check(first.observedFrame.column)
+    return first
+  }
+
   /** Reports whether another declared checked source stop must be captured before the test may finish. @example while (run.hasNextStop()) await run.advance() */
   hasNextStop(): boolean {
     return Boolean(
@@ -435,7 +473,7 @@ export class OwnedNodeTestRun {
         next.file,
         next.source.line,
         next.source.column,
-        'declared-column',
+        'declared-line',
       )
       const registered = await this.registeredAsDeclared(next.source, signal)
       this.ownedBreakpointId = registered.breakpointId
@@ -529,12 +567,10 @@ export class OwnedNodeTestRun {
               'the paused stack',
               this.abort.signal,
             )) as DebugProtocol.StackTraceResponse['body']
-            const checkedFrame = selectCheckedNodeFrame(
+            const checkedFrame = this.checkFrameAtBoundColumn(
               trace.stackFrames,
-              selected.file,
-              selected.source.line,
-              selected.source.column,
-              latest.reason,
+              selected,
+              latest,
             )
             examination = { checkedFrame, trace }
             examined.set(latest, examination)
