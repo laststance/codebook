@@ -45,7 +45,7 @@ type SelectedEvent = Pick<
 
 /**
  * Projects what the Application pane shows of a test replay at the selected moment, from every entry of the history (not the Study pane's page) and its output read once; called by the Study workspace for each Study message while a test replay is selected.
- * @param history - The selected history, all its entries.
+ * @param history - The selected history, all its entries, and its status: a history still recording has no early end yet.
  * @param index - Its output read once ({@link indexNodeTestOutput}).
  * @param selected - The selected event, absent before one is selected.
  * @param generation - The workspace's count of selections, so a document ignores an update older than the one it shows.
@@ -55,7 +55,7 @@ type SelectedEvent = Pick<
  * projectNodeTestApplication(history, indexNodeTestOutput(history.entries), history.entries[0], 1, false).time // => 'Recorded test output · 0.12 s'
  */
 export function projectNodeTestApplication(
-  history: Pick<NodeTestHistoryIndex, 'header' | 'entries'>,
+  history: Pick<NodeTestHistoryIndex, 'header' | 'entries' | 'status'>,
   index: NodeTestOutputIndex,
   selected: SelectedEvent | undefined,
   generation: number,
@@ -83,7 +83,7 @@ export function projectNodeTestApplication(
           : NODE_TEST_REPLAY_TEXT.noEntries,
     }
   const tail = accumulateNodeTestOutput(index, selected.sequence)
-  const end = outputEnd(history.entries, selected)
+  const end = outputEnd(history, selected)
   return {
     generation,
     time: describeNodeTestReplay({
@@ -141,19 +141,23 @@ function leftOutLines(
 
 /**
  * Gives the line that ends the shown output: the verdict at the result, the ended-early line at a last event that is no result (DS2, DS7); called by {@link projectNodeTestApplication}.
- * @param entries - The history's events in sequence order.
+ * A history this window is still recording has not ended: its last event so far gets no ended-early line.
+ * @param history - The history's events in sequence order and its status.
  * @param selected - The selected event.
  * @returns The line, or `undefined` at any other event.
- * @example outputEnd(history.entries, result) // => 'Test passed · exit code 0'
+ * @example outputEnd(history, result) // => 'Test passed · exit code 0'
  */
 function outputEnd(
-  entries: NodeTestHistoryIndex['entries'],
+  history: Pick<NodeTestHistoryIndex, 'entries' | 'status'>,
   selected: SelectedEvent,
 ): string | undefined {
+  const { entries } = history
   const event = entries.find((entry) => entry.sequence === selected.sequence)
   if (event?.type === 'result') return describeNodeTestResult(event)
   const last = entries.at(-1)
-  return last?.sequence === selected.sequence && last.type !== 'result'
+  return history.status !== 'recording' &&
+    last?.sequence === selected.sequence &&
+    last.type !== 'result'
     ? NODE_TEST_REPLAY_TEXT.endedEarly
     : undefined
 }

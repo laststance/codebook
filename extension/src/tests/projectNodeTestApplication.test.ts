@@ -90,7 +90,7 @@ test('the Application view at a stop names its time and test and shows the outpu
 
   // Act
   const view = projectNodeTestApplication(
-    { header, entries },
+    { header, entries, status: 'complete' },
     index,
     entries[1],
     7,
@@ -115,14 +115,14 @@ test('the recorded output ends with the verdict at the result and says when the 
 
   // Act
   const atResult = projectNodeTestApplication(
-    { header, entries },
+    { header, entries, status: 'complete' },
     indexNodeTestOutput(entries),
     entries[3],
     1,
     false,
   )
   const atLastOutput = projectNodeTestApplication(
-    { header, entries: cutShort },
+    { header, entries: cutShort, status: 'interrupted' },
     indexNodeTestOutput(cutShort),
     cutShort[2],
     1,
@@ -138,6 +138,28 @@ test('the recorded output ends with the verdict at the result and says when the 
   assert.equal(atLastOutput.end, 'Recording ended before the test result.')
 })
 
+// Value: protects=a test replay this window is still recording, opened from Saved studies, does not say that its recording ended before the result while the test may still reach it; fails_when=the last recorded event of a recording history ends with `Recording ended before the test result.`; why_new=Step 9 red team of PR-B1: the Application pane read the last event of a recording history as an early end; seam=none; no_claim=whether a recording history opens at all, which the Saved studies rows decide
+test('a test replay that is still recording does not say its recording ended before the result', () => {
+  // Arrange
+  const recorded = entries.slice(0, 3)
+
+  // Act
+  const view = projectNodeTestApplication(
+    { header, entries: recorded, status: 'recording' },
+    indexNodeTestOutput(recorded),
+    recorded[2],
+    1,
+    false,
+  )
+
+  // Assert
+  assert.equal(view.end, undefined)
+  assert.deepEqual(
+    view.lines.map((line) => line.text),
+    ['RUN src/theme.test.ts', 'between stops'],
+  )
+})
+
 // Value: protects=the Application pane's states read as the String catalog writes them: loading while the replay opens, no output yet before the first output, no entries without a time, and a retired header named by its file alone; fails_when=a state shows another's line, an empty replay shows a time, or a retired header prints a title separator; why_new=DS7 and E2 states of the Application pane; seam=none; no_claim=the pane's closed state, which the Study section shows
 test('the Application view says loading, nothing printed yet and no entries, and names a retired test by its file', () => {
   // Arrange
@@ -145,21 +167,25 @@ test('the Application view says loading, nothing printed yet and no entries, and
 
   // Act
   const loading = projectNodeTestApplication(
-    { header, entries },
+    { header, entries, status: 'complete' },
     indexNodeTestOutput(entries),
     entries[1],
     2,
     true,
   )
   const beforeOutput = projectNodeTestApplication(
-    { header, entries: [stop(1, 50), ...entries.slice(2)] },
+    {
+      header,
+      entries: [stop(1, 50), ...entries.slice(2)],
+      status: 'complete',
+    },
     indexNodeTestOutput(entries.slice(2)),
     stop(1, 50),
     3,
     false,
   )
   const noEntries = projectNodeTestApplication(
-    { header: retiredHeader, entries: [] },
+    { header: retiredHeader, entries: [], status: 'partial' },
     indexNodeTestOutput([]),
     undefined,
     4,
@@ -202,7 +228,7 @@ test('the Application view of a long output says how many earlier characters it 
 
   // Act
   const view = projectNodeTestApplication(
-    { header, entries: noisy },
+    { header, entries: noisy, status: 'complete' },
     indexNodeTestOutput(noisy),
     noisy[2],
     5,
