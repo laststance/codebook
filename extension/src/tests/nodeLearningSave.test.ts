@@ -844,6 +844,32 @@ test('a Save receipt holds against the store revision that another window moved,
   )
 })
 
+// Value: protects=a Save receipt read from the store while the catalog the 250 ms refresh updates still lists an older revision: the item stays saved until the catalog shows a greater one; fails_when=the item flashes back to Save right after a Save because the catalog lags the store; why_new=the receipt was compared for equality with the catalog's revision (F225, D10); seam=the catalog's revision is a fake that this test moves; no_claim=how the refresh updates the catalog
+test('a Save receipt stays saved while the catalog still lists an older revision than the one Save read', async () => {
+  // Arrange
+  let catalogRevision: number | undefined = 1
+  const recorder = recordingHost({
+    summaries: [async () => summary({ materialRevision: 2 })],
+    storeRevision: () => catalogRevision,
+  })
+  const save = new NodeLearningSave(recorder.host)
+  const record = testRun({ nodePhase: 'completed' })
+  recorder.use(record)
+
+  // Act
+  await save.save(record)
+  const whileCatalogLags = save.item(record)?.text
+  catalogRevision = 3
+  const afterNewerRevision = save.item(record)?.text
+
+  // Assert
+  assert.equal(whileCatalogLags, '$(check) Learning saved · Open replay')
+  assert.equal(
+    afterNewerRevision,
+    '$(save) Recording finished · Save learning replay',
+  )
+})
+
 // Value: protects=partial x Save: a later material revision returns a partially saved item to Save, and Save then reads the new revision and ends saved; fails_when=the partial receipt keeps vouching after the chat saved the missing explanation, or the next Save stays partial; why_new=partial x Save was untested (F53, F70); seam=the store's revision and summaries are fakes; no_claim=the notification's look
 test('a later material revision returns a partially saved item to Save, and Save then ends saved', async () => {
   // Arrange

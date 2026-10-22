@@ -322,7 +322,8 @@ export class NodeLearningSave {
       record.nodeLearning?.materialRevision ??
       record.nodeLearningMaterial?.revision ??
       0
-    return state.materialRevision === revision ? state : undefined
+    // Only a greater revision is a later one: the catalog lags the store by up to a refresh, so an older listed revision does not undo a receipt read from the store.
+    return revision > state.materialRevision ? undefined : state
   }
 
   /**
