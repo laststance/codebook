@@ -121,6 +121,13 @@ reviews:
         Keep source revision, dirty state, host/version, artifact availability, and
         limitations explicit. Do not treat source hashes or tests as native proof.
 
+    - path: 'CHANGELOG.md'
+      instructions: |
+        Each user-visible behavior that an entry names needs a sentence in the packaged
+        README (extension/README.md). Report an entry whose behavior that README does
+        not describe, naming the entry and the missing behavior (AGENTS.md, CodeRabbit
+        and OCR).
+
     - path: '**/pnpm-lock.yaml'
       instructions: |
         Review unexpected dependency, integrity, peer-resolution, and local-patch

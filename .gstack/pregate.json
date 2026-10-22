@@ -27,6 +27,15 @@
     ],
     "AGENTS.md": [".codex/restore-product-context.test.mjs"],
     ".codex/hooks.json": [".codex/restore-product-context.test.mjs"],
+    ".claude/settings.json": [
+      "extension/scripts/tests/refuseClosingKeywords.test.mjs"
+    ],
+    "extension/scripts/refuse-closing-keywords.mjs": [
+      "extension/scripts/tests/refuseClosingKeywords.test.mjs"
+    ],
+    "extension/scripts/watch-background.mjs": [
+      "extension/scripts/tests/watchBackground.test.mjs"
+    ],
     ".github/reader-dom/package.json": [
       "extension/scripts/tests/workflowPins.test.mjs"
     ],
