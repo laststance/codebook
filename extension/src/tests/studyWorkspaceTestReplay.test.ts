@@ -1118,6 +1118,61 @@ test('a first open whose replay debugger cannot start lands on its moment, tells
   }
 })
 
+// Value: protects=Retry after a first open whose replay debugger failed to start on a moment without a recorded stop: a Retry whose start fails again keeps the replay-debugger row (with the new cause) and a Retry whose start succeeds removes it only after the debugger was started again; fails_when=Retry empties the failed debugger object, reports success without starting anything and drops the row; why_new=the retry found the failed debugger object, invalidated it and cleared the row (F226, D13); seam=the harness's historical debugger rejects the held presentations; no_claim=the real debug session start (native trials)
+test('Retry after a failed first start keeps the debugger row until the debugger starts again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    // The reader left the replay on its result, a moment without a recorded stop.
+    await store.saveReaderPosition(history.studyId, 3)
+    await harness.reader.action('retry')
+    const firstHold = harness.holdHistoricalDebugPresentation()
+    const opening = harness.reader.openLearningReplay(history.studyId)
+    await firstHold.started
+    firstHold.reject(new Error('Workspace trust was declined.'))
+    await opening
+    const rowAfterOpen = JSON.stringify(lastView(harness)?.errors)
+    const presentationsAtOpen = harness.historicalDebugPresentations.length
+    const secondHold = harness.holdHistoricalDebugPresentation()
+
+    // Act
+    const failingRetry = harness.reader.action('retry')
+    await waitUntil(
+      () => harness.historicalDebugPresentations.length > presentationsAtOpen,
+      'the debugger starting again on Retry',
+      2_000,
+    )
+    secondHold.reject(new Error('The debug session did not start.'))
+    await failingRetry
+    const rowAfterFailedRetry = JSON.stringify(lastView(harness)?.errors)
+    const presentationsBeforeRetry = harness.historicalDebugPresentations.length
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.equal(
+      rowAfterOpen,
+      JSON.stringify([
+        'The replay debugger could not start: Workspace trust was declined. Select this stop or use Inspect in native debugger to restart it.',
+      ]),
+    )
+    assert.equal(
+      rowAfterFailedRetry,
+      JSON.stringify([
+        'The replay debugger could not start: The debug session did not start. Select this stop or use Inspect in native debugger to restart it.',
+      ]),
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBeforeRetry + 1,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an Open replay while another test replay plays: Play ends, the new replay lands on its own first stop with its debugger, and the learner is told nothing is wrong; fails_when=the earlier replay's timer goes on writing over the new replay, or the new replay opens playing; why_new=EN19 had no test of an open during Play (F16); seam=none; no_claim=Play's pacing (the timeline tests)
 test('Open replay while another test replay plays stops Play and lands the new replay on its first stop', async () => {
   // Arrange
