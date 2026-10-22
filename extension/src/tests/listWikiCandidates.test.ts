@@ -16,6 +16,7 @@ import { promisify } from 'node:util'
 
 import { listWikiCandidates } from '../utils/listWikiCandidates'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 
 test('a stage the publisher prepared under its default name and one under a name of the agent’s choosing are both candidates', async () => {
@@ -130,7 +131,7 @@ test('a backup the publisher kept is never read as a candidate, even when its re
 
 test(
   'a candidate folder whose receipt is a named pipe is skipped at once instead of holding the listing',
-  { timeout: 2_000 },
+  { timeout: 30_000 },
   async (context) => {
     // Arrange
     const wiki = await publishedWikiFixture()
@@ -148,7 +149,10 @@ test(
     })
 
     // Act
-    const candidates = await listWikiCandidates(wiki.outputDirectory)
+    const candidates = await answeredAtOnce(
+      listWikiCandidates(wiki.outputDirectory),
+      'the candidate listing',
+    )
 
     // Assert
     assert.deepEqual(candidates, [])

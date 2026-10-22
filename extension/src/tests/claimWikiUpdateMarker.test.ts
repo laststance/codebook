@@ -44,6 +44,7 @@ import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 import type * as removalModule from '../utils/removeWithoutFollowing'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
@@ -3385,7 +3386,7 @@ test('links where a killed window’s claim, its prepared claim folder and its p
 test(
   'links to an endless device where a claim, the record of a prepared claim and a prepared marker would lie are never read: a start returns at once while they are young, and 61 s later they are removed by their age',
   {
-    timeout: 2_000,
+    timeout: 30_000,
     skip:
       process.platform === 'win32'
         ? 'Windows has no endless device at a path of the file system'
@@ -3409,16 +3410,21 @@ test(
     }
     try {
       // Act: a link among the claims counts as a claim nobody can judge for 60 s, so the first start is refused.
-      const startWhileTheLinksAreYoung = await outcomeOf(
+      const startWhileTheLinksAreYoung = await answeredAtOnce(
+        outcomeOf(
+          claimWikiUpdateMarker(wiki.outputDirectory, startingWindow, {
+            ...AS_THIS_WINDOW,
+            now: () => linkedAtMs,
+          }),
+        ),
+        'the first start',
+      )
+      const later = await answeredAtOnce(
         claimWikiUpdateMarker(wiki.outputDirectory, startingWindow, {
           ...AS_THIS_WINDOW,
-          now: () => linkedAtMs,
+          now: () => linkedAtMs + 61_000,
         }),
-      )
-      const later = await claimWikiUpdateMarker(
-        wiki.outputDirectory,
-        startingWindow,
-        { ...AS_THIS_WINDOW, now: () => linkedAtMs + 61_000 },
+        'the later start',
       )
       assert.ok('release' in later)
       await later.release()
