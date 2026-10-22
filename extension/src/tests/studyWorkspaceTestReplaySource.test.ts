@@ -555,6 +555,55 @@ test('a recorded-source slot that cannot open is told with its stop and cause, a
   }
 })
 
+// Value: protects=a slot whose document never shows the selected stop's bytes within the bound is told as an open failure with Retry, and the debugger shows no stop of the earlier moment; fails_when=the selection waits forever, presents the debugger at stale text, or commits silently without the history-source row; why_new=the bound path of EN8 step 2 (the open-failure test covers only a failing open); seam=the workspace harness's held delivery of a provider result to the open slot document; no_claim=the real editor's delivery latency
+test('a slot that does not show a stop’s bytes within the bound is told as an open failure and presents no stop', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    const presentationsBefore = harness.historicalDebugPresentations.length
+    const heldUpdate = harness.holdNextSourceUpdate()
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await heldUpdate.started
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        (lastView(harness)?.errors.length ?? 0) > 0,
+      'the selection reports that the slot did not show its bytes',
+      4_000,
+    )
+    heldUpdate.release()
+
+    // Assert
+    assert.equal(
+      lastView(harness)?.errors.includes(
+        'Codebook could not open the recorded source of stop 1: Timed out waiting for the recorded source of this moment. Details: Output › Codebook.',
+      ),
+      true,
+    )
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      false,
+    )
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=leaving a test replay for Live closes the recorded-source slot Codebook opened; fails_when=the slot's tab stays after its replay is retired; why_new=Design 4 (`retireNodeHistorySelection` closes the slot); seam=none; no_claim=a slot tab the learner pinned, which stays
 test('returning to Live closes the test replay’s recorded-source slot', async () => {
   // Arrange
@@ -571,6 +620,104 @@ test('returning to Live closes the test replay’s recorded-source slot', async 
 
     // Assert
     assert.equal(openedSlots.length, 1)
+    assert.deepEqual(slotTabs(harness), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a rename the learner overtakes before the renamed slot's document opens still leaves one slot tab, the newer moment's, with that moment's placeholder; fails_when=the earlier file's slot tab stays open beside the newer slot because the overtaken rename never reached its close; why_new=PR-B2 /ship Step 9 state-machines review (critical: an orphan slot tab, cell verified-stop × overtaken during a rename); seam=the workspace harness's held native open of the renamed slot's document; no_claim=a slot tab the learner pinned or edited, which stays
+test('a rename overtaken before its slot opens leaves one slot tab, the newer moment’s', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const renamedSlot = slotTabs(harness)[0]!.replace(
+      /Captured-theme\.ts$/,
+      'Captured-theme-next.ts',
+    )
+    const heldOpen = harness.holdNextSource({ uri: renamedSlot })
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 4,
+    })
+    await heldOpen.started
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+    heldOpen.release()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual(slotTabs(harness), [renamedSlot])
+    assert.equal(await harness.readCapturedSource(renamedSlot), PLACEHOLDER)
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 3)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a rename whose slot cannot open leaves the earlier file's slot tab only until the next moment shows its slot, which closes it, so a failed rename never keeps a second slot tab; fails_when=the earlier slot tab stays beside the renamed slot after the next moment, because the failed rename never closed it and the next moment kept the slot's name; why_new=PR-B2 /ship Step 9 state-machines review (critical: an orphan slot tab, cell failed open × rename); seam=the workspace harness's injected failure of a non-file document open; no_claim=the failure row itself (the open-failure test)
+test('a rename whose slot cannot open leaves no earlier slot tab once the next moment shows', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const earlierSlot = slotTabs(harness)[0]!
+    harness.failCurrentSourceOpen()
+    await selectMoment(harness, history.studyId, 4)
+    harness.restoreCurrentSourceOpen()
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.notEqual(tabs[0], earlierSlot)
+    assert.match(tabs[0]!, /\/Captured-theme-next\.ts$/)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), PLACEHOLDER)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=returning to Live while a renamed slot's document still opens closes every slot tab of the retired replay, the earlier file's included; fails_when=the retire closes only the renamed slot, which had no tab yet, and the earlier file's slot tab stays open with no replay behind it; why_new=PR-B2 /ship Step 9 state-machines review (critical: an orphan slot tab, retire during a pending rename); seam=the workspace harness's held native open of the renamed slot's document; no_claim=a slot tab the learner pinned or edited, which stays
+test('returning to Live while a renamed slot still opens closes every slot tab of the replay', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const renamedSlot = slotTabs(harness)[0]!.replace(
+      /Captured-theme\.ts$/,
+      'Captured-theme-next.ts',
+    )
+    const heldOpen = harness.holdNextSource({ uri: renamedSlot })
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 4,
+    })
+    await heldOpen.started
+
+    // Act
+    await harness.reader['retireNodeHistorySelection']()
+    heldOpen.release()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // Assert
     assert.deepEqual(slotTabs(harness), [])
   } finally {
     await harness.close()

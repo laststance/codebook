@@ -10,6 +10,7 @@ import {
   NODE_RECORDED_SOURCE_TEXT,
 } from '../utils/describeNodeRecordedSource'
 import { formatEventSeconds } from '../utils/formatEventSeconds'
+import { isNodeSourceSlotPath } from '../utils/isNodeSourceSlotPath'
 import { nodeSourceSlotName } from '../utils/nodeSourceSlotName'
 import { nodeSourceSlotPath } from '../utils/nodeSourceSlotPath'
 
@@ -134,6 +135,23 @@ test('a recorded-source slot is named after its replay and the file of the stop 
     nodeSourceSlotPath('instance_run', 'src/jobs/queue.ts'),
     '/node-history-slot/instance_run/Captured-queue.ts',
   )
+})
+
+// Value: protects=which captured-source documents count as recorded-source slots, so the workspace closes every slot tab but the shown one and serves a restored slot the placeholder; fails_when=a slot of another replay or file is not recognized (an orphan slot tab stays), or a stop preview or a live source view is taken for a slot (a learner's other captured tab closes); why_new=PR-B2 /ship Step 9 state-machines review (orphan slot tabs); seam=none; no_claim=the URI's scheme and authority, which the workspace checks
+test('only paths under the slot root count as recorded-source slots', () => {
+  // Arrange / Act / Assert
+  assert.equal(
+    isNodeSourceSlotPath(
+      '/node-history-slot/instance_run/Captured-scheduler.ts',
+    ),
+    true,
+  )
+  assert.equal(
+    isNodeSourceSlotPath('/node-history-slot/other_run/Captured-queue.ts'),
+    true,
+  )
+  assert.equal(isNodeSourceSlotPath('/node-history/instance_run/2/abc'), false)
+  assert.equal(isNodeSourceSlotPath('/views/node-history-slot.ts'), false)
 })
 
 // Value: protects=the name of a slot that opens on a placeholder: the file of the replay's first verified stop, so landing on that stop later does not rename the slot, else the test file; fails_when=an unverified stop names the slot, or a replay with a verified stop is named after its test file; why_new=Design 4's opening on an output or the result; seam=none; no_claim=renames at later stops (the slot tests)

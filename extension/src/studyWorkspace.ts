@@ -38,7 +38,6 @@ import {
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
   NODE_HISTORY_TRANSITION_BOUND_MS,
-  NODE_SOURCE_SLOT_PATH_ROOT,
   OPEN_REPLAY_RESULT_WAIT_MS,
   PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
   PAUSE_FOCUS_LOOKBACK_MS,
@@ -252,6 +251,7 @@ import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
 import { isCurrentRunRememberedWhileClosed } from './utils/isCurrentRunRememberedWhileClosed'
 import { isDiffTabOfDocument } from './utils/isDiffTabOfDocument'
 import { isLiveSourceViewUri } from './utils/isLiveSourceViewUri'
+import { isNodeSourceSlotPath } from './utils/isNodeSourceSlotPath'
 import {
   editorLayoutSchema,
   isProportionalEditorLayout,
@@ -11966,9 +11966,9 @@ export class StudyWorkspace {
     this.replayDebugger?.invalidate()
     const slot = this.nodeSourceSlot
     this.nodeSourceSlot = undefined
-    // The retired replay's recorded-source slot goes with it.
+    // The retired replay's recorded-source slot goes with it, with any slot tab a rename still opening or one that failed left.
     if (slot)
-      await this.closeNodeSourceSlotTabs(slot.uri).catch((error: unknown) =>
+      await this.closeNodeSourceSlotTabs().catch((error: unknown) =>
         this.report(
           'layout',
           new Error(
@@ -18620,7 +18620,7 @@ export class StudyWorkspace {
     const cached = this.documents.get(uri.toString())
     if (cached !== undefined) return cached
     // A test replay's recorded-source slot serves the moment it shows; a slot no replay holds now (a tab the editor restored) reads as the placeholder.
-    if (uri.path.split('/').filter(Boolean)[0] === NODE_SOURCE_SLOT_PATH_ROOT)
+    if (isNodeSourceSlotPath(uri.path))
       return this.nodeSourceSlot?.uri.toString() === uri.toString()
         ? this.nodeSourceSlot.text
         : NODE_RECORDED_SOURCE_TEXT.placeholder
@@ -23374,9 +23374,8 @@ export class StudyWorkspace {
         preserveFocus: true,
         preview: false,
       })
-      // A slot named after another file, or another replay's slot, gives way: Codebook's earlier tab closes.
-      if (earlier && earlier.uri.toString() !== uri.toString())
-        await this.closeNodeSourceSlotTabs(earlier.uri)
+      // Every other slot tab gives way: the earlier file's at a rename, and one a rename left when a newer selection overtook it or its slot could not open. A selection overtaken meanwhile keeps the newer moment's slot, not its own.
+      await this.closeNodeSourceSlotTabs(this.nodeSourceSlot?.uri)
       await this.awaitNodeSourceSlotText(document, text, request)
     } catch (error) {
       if (request !== this.selectedNodeHistoryRequest) return undefined
@@ -23585,7 +23584,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Chooses the editor column the recorded-source slot shows in: the group that already shows it, else the group that shows the slot it replaces (the learner may have moved either), else the source group, else the Study arrangement's source column; called by {@link showNodeSourceSlot}.
+   * Chooses the editor column the recorded-source slot shows in: the group that already shows it, else the group that shows the slot it replaces, else a group that shows another slot tab Codebook is about to close (a rename that failed or was overtaken left it), so closing that tab never empties a group the slot alone filled; else the source group, else the Study arrangement's source column; called by {@link showNodeSourceSlot}.
    * @param uri - The slot's URI.
    * @param earlierUri - The URI of the slot it replaces at a rename, if any.
    * @returns The view column.
@@ -23595,29 +23594,36 @@ export class StudyWorkspace {
     uri: vscode.Uri,
     earlierUri?: vscode.Uri,
   ): vscode.ViewColumn {
-    const groupShowing = (shown: vscode.Uri | undefined) =>
-      shown &&
+    const groupShowing = (shows: (shown: vscode.Uri) => boolean) =>
       vscode.window.tabGroups.all.find((group) =>
         group.tabs.some(
           (tab) =>
-            tab.input instanceof vscode.TabInputText &&
-            tab.input.uri.toString() === shown.toString(),
+            tab.input instanceof vscode.TabInputText && shows(tab.input.uri),
         ),
       )
     return (
-      (groupShowing(uri) || groupShowing(earlierUri))?.viewColumn ??
+      (
+        groupShowing((shown) => shown.toString() === uri.toString()) ??
+        groupShowing((shown) => shown.toString() === earlierUri?.toString()) ??
+        groupShowing(
+          (shown) =>
+            shown.scheme === STUDY_SOURCE_SCHEME &&
+            shown.authority === this.library!.workspaceKey &&
+            isNodeSourceSlotPath(shown.path),
+        )
+      )?.viewColumn ??
       this.sourceGroup?.viewColumn ??
       STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
     )
   }
 
   /**
-   * Closes the unpinned, unchanged tabs of a recorded-source slot that Codebook opened, when the slot is renamed for another file or its test replay is retired; called by {@link showNodeSourceSlot} and {@link retireNodeHistorySelection}.
-   * @param uri - The slot's earlier URI.
+   * Closes every unpinned, unchanged recorded-source slot tab of this workspace but the one a moment shows: the earlier file's at a rename, one that a rename left when a newer selection overtook it or its slot could not open, and, when its test replay is retired, all of them; called by {@link showNodeSourceSlot} and {@link retireNodeHistorySelection}.
+   * @param kept - The slot the current moment shows, which stays; `undefined` closes every slot tab.
    * @throws When the editor keeps a tab it was asked to close.
-   * @example await this.closeNodeSourceSlotTabs(previousSlotUri)
+   * @example await this.closeNodeSourceSlotTabs(this.nodeSourceSlot?.uri)
    */
-  private async closeNodeSourceSlotTabs(uri: vscode.Uri): Promise<void> {
+  private async closeNodeSourceSlotTabs(kept?: vscode.Uri): Promise<void> {
     const tabs = vscode.window.tabGroups.all
       .flatMap((group) => group.tabs)
       .filter(
@@ -23626,10 +23632,11 @@ export class StudyWorkspace {
           !tab.isPinned &&
           this.ownsCapturedSourceTab(tab) &&
           tab.input instanceof vscode.TabInputText &&
-          tab.input.uri.toString() === uri.toString(),
+          isNodeSourceSlotPath(tab.input.uri.path) &&
+          tab.input.uri.toString() !== kept?.toString(),
       )
     if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true)))
-      throw new Error('The editor kept the earlier recorded source tab.')
+      throw new Error('The editor kept an earlier recorded source tab.')
   }
 
   /** Persists navigation independently; failures do not erase prior learner decisions. @example await this.saveSelection() */
