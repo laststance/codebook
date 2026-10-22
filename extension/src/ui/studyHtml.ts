@@ -2119,17 +2119,41 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     idle: string,
   ): void => {
-    text('node-history-status', section?.status ?? idle)
-    text(
-      'node-history-position',
-      section ? (section.position ?? options.testReplay.noSelection) : '',
-    )
-    text('node-history-explanation', section?.explanation ?? '')
-    text('node-history-not-recorded', section?.notRecorded ?? '')
-    text('node-history-unverified', section?.unverified ?? '')
-    text('node-history-pointer', section?.pointer ?? '')
+    for (const [id, value] of Object.entries(
+      testReplayLineTexts(section, idle),
+    ))
+      text(id, value)
     element('node-history-closed').hidden = !section?.applicationClosed
   }
+  /**
+   * Gives the text of each of the section's worded lines by its element id; called by {@link renderTestReplayLines}.
+   * @param section - The section's worded view, absent while suppressed or without a test replay.
+   * @param idle - The status line without a section.
+   * @returns The lines' texts: the section's words, or the idle status and empty lines without a section.
+   * @example testReplayLineTexts(undefined, '')['node-history-position'] // => ''
+   */
+  const testReplayLineTexts = (
+    section: StudyViewMessage['nodeHistorySection'],
+    idle: string,
+  ): Record<string, string> =>
+    section
+      ? {
+          'node-history-status': section.status,
+          'node-history-position':
+            section.position ?? options.testReplay.noSelection,
+          'node-history-explanation': section.explanation ?? '',
+          'node-history-not-recorded': section.notRecorded ?? '',
+          'node-history-unverified': section.unverified ?? '',
+          'node-history-pointer': section.pointer ?? '',
+        }
+      : {
+          'node-history-status': idle,
+          'node-history-position': '',
+          'node-history-explanation': '',
+          'node-history-not-recorded': '',
+          'node-history-unverified': '',
+          'node-history-pointer': '',
+        }
   /**
    * Enables or disables a control of the section by its id; called by the transport's renderers.
    * @param id - The control's id.
@@ -2161,19 +2185,7 @@ function studyClient(
     const eventCount = message.nodeHistoryEventCount ?? 0,
       selectedIndex = message.nodeHistoryPosition?.eventIndex ?? -1
     const unavailable = !message.nodeHistory || suppressed || replaying
-    setDisabled(
-      'node-history-stop-previous',
-      unavailable || !section?.previousStop,
-    )
-    setDisabled('node-history-stop-next', unavailable || !section?.nextStop)
-    setDisabled(
-      'node-history-moment-previous',
-      unavailable || eventCount === 0 || selectedIndex === 0,
-    )
-    setDisabled(
-      'node-history-moment-next',
-      unavailable || eventCount === 0 || selectedIndex === eventCount - 1,
-    )
+    renderTestReplayMoves(section, unavailable, eventCount, selectedIndex)
     renderTestReplayToggle(
       message,
       suppressed,
@@ -2182,6 +2194,33 @@ function studyClient(
     renderTestReplayPlayhead(
       message.nodeHistoryPlayback,
       !message.nodeHistory || replaying,
+    )
+  }
+  /**
+   * Enables Previous stop, Next stop, Previous event and Next event where a move exists; called by {@link renderTestReplayTransport}.
+   * @param section - The section's worded view, which says whether an earlier or later stop exists.
+   * @param unavailable - Whether no move is possible: no test replay, a browser recording shown, or the bottom panel held by a browser replay.
+   * @param eventCount - How many events the replay holds.
+   * @param selectedIndex - The selected event's position among them, or -1.
+   * @example renderTestReplayMoves(message.nodeHistorySection, false, 4, 0)
+   */
+  const renderTestReplayMoves = (
+    section: StudyViewMessage['nodeHistorySection'],
+    unavailable: boolean,
+    eventCount: number,
+    selectedIndex: number,
+  ): void => {
+    setDisabled(
+      'node-history-stop-previous',
+      unavailable || !section?.previousStop,
+    )
+    setDisabled('node-history-stop-next', unavailable || !section?.nextStop)
+    // Without an event there is no event to move to in either direction.
+    const noEvent = unavailable || eventCount === 0
+    setDisabled('node-history-moment-previous', noEvent || selectedIndex === 0)
+    setDisabled(
+      'node-history-moment-next',
+      noEvent || selectedIndex === eventCount - 1,
     )
   }
   /**
@@ -2196,20 +2235,37 @@ function studyClient(
     suppressed: boolean,
     atLastEvent: boolean,
   ): void => {
-    const playbackState = message.nodeHistoryPlayback,
-      toggle = element('node-history-playback-toggle')
-    const playing = playbackState?.mode === 'playing'
+    const toggle = element('node-history-playback-toggle')
+    const playing = message.nodeHistoryPlayback?.mode === 'playing'
     toggle.dataset.nodeHistoryPlayback = playing ? 'pause' : 'play'
     toggle.textContent = playing
       ? options.testReplay.pause
       : options.testReplay.play
     setDisabled(
       'node-history-playback-toggle',
+      testReplayToggleDisabled(message, suppressed, playing || !atLastEvent),
+    )
+  }
+  /**
+   * Says whether Play or Pause is unavailable; called by {@link renderTestReplayToggle}.
+   * @param message - The current Study message.
+   * @param suppressed - Whether a browser replay holds the bottom panel.
+   * @param canMove - Whether the control has somewhere to go: Pause while playing, or Play before the last event.
+   * @returns `true` without a test replay, while suppressed, without a selected event, while loading, or with nowhere to go.
+   * @example testReplayToggleDisabled(message, false, true) // => false
+   */
+  const testReplayToggleDisabled = (
+    message: StudyViewMessage,
+    suppressed: boolean,
+    canMove: boolean,
+  ): boolean => {
+    const playbackState = message.nodeHistoryPlayback
+    return (
       !message.nodeHistory ||
-        suppressed ||
-        !playbackState?.sequence ||
-        playbackState.loading ||
-        (!playing && atLastEvent),
+      suppressed ||
+      !playbackState?.sequence ||
+      Boolean(playbackState.loading) ||
+      !canMove
     )
   }
   /**
@@ -2222,20 +2278,44 @@ function studyClient(
     playbackState: StudyViewMessage['nodeHistoryPlayback'],
     unavailable: boolean,
   ): void => {
-    const start = playbackState?.startMs,
-      end = playbackState?.endMs
-    const ranged = start !== undefined && end !== undefined
+    const range = testReplayPlayheadRange(playbackState)
+    // A replay without a time range has a range of nothing (0 to 0), which disables the slider like a single moment does.
     nodePlayhead.disabled =
-      unavailable || !ranged || start === end || Boolean(playbackState?.loading)
+      unavailable || range.startMs === range.endMs || range.loading
     // A disabled playhead cannot be scrubbed, so a scrub interrupted by loading ends here.
     if (nodePlayhead.disabled) nodeHistoryScrubbing = false
-    nodePlayhead.min = String(start ?? 0)
-    nodePlayhead.max = String(end ?? 0)
+    nodePlayhead.min = String(range.startMs)
+    nodePlayhead.max = String(range.endMs)
     if (nodeHistoryScrubbing) return
-    nodePlayhead.value = String(
-      ranged ? (playbackState?.positionMs ?? start) : 0,
-    )
+    nodePlayhead.value = String(range.positionMs)
     describeTestReplayPlayhead(playbackState?.positionMs)
+  }
+  /**
+   * Reads the slider's range and position from a test replay's playback state; called by {@link renderTestReplayPlayhead}.
+   * @param playbackState - The test replay's playback state.
+   * @returns
+   * - With a start and an end: them, the selected time (the start without one) and whether the replay loads
+   * - Otherwise: a range of nothing at 0, not loading
+   * @example testReplayPlayheadRange({ startMs: 5, endMs: 900, positionMs: 420, … }) // => { startMs: 5, endMs: 900, positionMs: 420, loading: false }
+   */
+  const testReplayPlayheadRange = (
+    playbackState: StudyViewMessage['nodeHistoryPlayback'],
+  ): {
+    startMs: number
+    endMs: number
+    positionMs: number
+    loading: boolean
+  } => {
+    const startMs = playbackState?.startMs,
+      endMs = playbackState?.endMs
+    if (startMs === undefined || endMs === undefined)
+      return { startMs: 0, endMs: 0, positionMs: 0, loading: false }
+    return {
+      startMs,
+      endMs,
+      positionMs: playbackState?.positionMs ?? startMs,
+      loading: Boolean(playbackState?.loading),
+    }
   }
   /**
    * Says the selected test time to assistive technology and beside the slider, never the raw millisecond value; called by {@link renderTestReplayPlayhead}.
@@ -2387,47 +2467,24 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     replaying: boolean,
   ): void => {
-    const history = message.nodeHistory,
-      position = message.nodeHistoryPosition
+    const entries = message.nodeHistory?.entries ?? []
     text('node-history-events-summary', section?.events ?? 'Events')
     renderTestReplayEventPage(message)
     // Rendering the list again replaces its buttons; remember which control had keyboard focus.
     const list = element('node-history-events'),
-      keyboardStandsAt = keyboardControl(),
-      focusedControl =
-        keyboardStandsAt instanceof HTMLButtonElement &&
-        list.contains(keyboardStandsAt)
-          ? keyboardStandsAt
-          : undefined,
-      focusedEvent = focusedControl && {
-        sequence: focusedControl.dataset.nodeHistorySequence,
-        inspect: focusedControl.dataset.inspectNodeHistoryStop === 'true',
-      }
+      focused = focusedTestReplayEventControl(list)
     replace(
       'node-history-events',
-      // The selected stop's Inspect follows the native session and the captured source, so a change in either draws the list again.
-      [
-        history?.entries ?? [],
-        replaying,
-        position?.sequence,
-        Boolean(position?.debuggerAvailable),
-        position?.sourceAvailable,
-        message.nodeHistoryUnverifiedStops ?? [],
-        section?.verdict,
-      ],
+      testReplayEventListKey(message, section, replaying),
       () =>
-        (history?.entries ?? []).map((entry) =>
+        entries.map((entry) =>
           testReplayEventRow(entry, message, section, replaying),
         ),
     )
     // Keyboard focus returns to the same event's control after the list was drawn again.
-    if (
-      focusedControl &&
-      focusedEvent &&
-      !list.contains(document.activeElement)
-    )
+    if (focused && !list.contains(document.activeElement))
       moveFocusOf(
-        focusedControl,
+        focused.control,
         () =>
           Array.from(
             list.querySelectorAll<HTMLButtonElement>(
@@ -2435,13 +2492,65 @@ function studyClient(
             ),
           ).find(
             (control) =>
-              control.dataset.nodeHistorySequence === focusedEvent.sequence &&
+              control.dataset.nodeHistorySequence === focused.sequence &&
               (control.dataset.inspectNodeHistoryStop === 'true') ===
-                focusedEvent.inspect,
+                focused.inspect,
           ),
         // As before this rule: the event's control is brought into view with the focus.
         {},
       )
+  }
+  /**
+   * Finds the event list's control that has keyboard focus, before the list is drawn again; called by {@link renderTestReplayEvents}.
+   * @param list - The event list.
+   * @returns The control with its event's sequence and whether it is the stop's Inspect, or `undefined` when the keyboard stands elsewhere.
+   * @example focusedTestReplayEventControl(element('node-history-events')) // => { control, sequence: '4', inspect: true }
+   */
+  const focusedTestReplayEventControl = (
+    list: HTMLElement,
+  ):
+    | {
+        control: HTMLButtonElement
+        sequence: string | undefined
+        inspect: boolean
+      }
+    | undefined => {
+    const keyboardStandsAt = keyboardControl()
+    if (
+      !(keyboardStandsAt instanceof HTMLButtonElement) ||
+      !list.contains(keyboardStandsAt)
+    )
+      return undefined
+    return {
+      control: keyboardStandsAt,
+      sequence: keyboardStandsAt.dataset.nodeHistorySequence,
+      inspect: keyboardStandsAt.dataset.inspectNodeHistoryStop === 'true',
+    }
+  }
+  /**
+   * Gives what the event list is drawn from, so it is drawn again only when one of them changes; called by {@link renderTestReplayEvents}.
+   * The selected stop's Inspect follows the native session and the captured source, so a change in either draws the list again.
+   * @param message - The current Study message.
+   * @param section - The section's worded view, which holds the verdict.
+   * @param replaying - Whether a browser recording is shown.
+   * @returns The list's render key.
+   * @example testReplayEventListKey(message, message.nodeHistorySection, false)
+   */
+  const testReplayEventListKey = (
+    message: StudyViewMessage,
+    section: StudyViewMessage['nodeHistorySection'],
+    replaying: boolean,
+  ): unknown[] => {
+    const position = message.nodeHistoryPosition
+    return [
+      message.nodeHistory?.entries ?? [],
+      replaying,
+      position?.sequence,
+      Boolean(position?.debuggerAvailable),
+      position?.sourceAvailable,
+      message.nodeHistoryUnverifiedStops ?? [],
+      section?.verdict,
+    ]
   }
   /**
    * Sets the event list's page line and its Previous page and Next page; called by {@link renderTestReplayEvents}.
@@ -2478,29 +2587,15 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     replaying: boolean,
   ): HTMLElement => {
-    const words = options.testReplay,
-      position = message.nodeHistoryPosition
     const row = document.createElement('article'),
       heading = document.createElement('h3'),
       body = document.createElement('pre')
     row.className = 'node-history-event'
-    heading.textContent =
-      entry.type === 'output'
-        ? `${words.eventOutput} · ${entry.channel} · ${seconds(entry.elapsedMs)}`
-        : entry.type === 'stop'
-          ? `${words.eventStop} ${entry.index + 1} · ${entry.source.path}:${entry.source.line}:${entry.source.column} · ${seconds(entry.elapsedMs)}`
-          : `${words.eventResult} · ${section?.verdict ?? ''} · ${seconds(entry.elapsedMs)}`
-    body.textContent =
-      entry.type === 'output'
-        ? entry.text
-        : entry.type === 'stop'
-          ? [
-              entry.frame.name,
-              ...entry.facts.map((fact) => `${fact.path}: ${fact.display}`),
-            ].join('\n')
-          : entry.outputTail
+    const words = testReplayEventWords(entry, section)
+    heading.textContent = words.heading
+    body.textContent = words.body
     row.append(heading, body)
-    const isSelected = entry.sequence === position?.sequence
+    const isSelected = entry.sequence === message.nodeHistoryPosition?.sequence
     const select = document.createElement('button')
     select.type = 'button'
     select.dataset.nodeHistorySequence = String(entry.sequence)
@@ -2516,6 +2611,81 @@ function studyClient(
       )
     return row
   }
+  /**
+   * Words one event of the test replay's event list: `Output · <channel> · <t> s` with its text, `Stop <n> · <path>:<line>:<column> · <t> s` with its frame and captured facts, or `Result · <verdict> · <t> s` with the output tail; called by {@link testReplayEventRow}.
+   * @param entry - The event.
+   * @param section - The section's worded view, which holds the verdict.
+   * @returns The row's heading and body text.
+   * @example testReplayEventWords(output, section) // => { heading: 'Output · stdout · 0.12 s', body: 'RUN src/a.test.ts\n' }
+   */
+  const testReplayEventWords = (
+    entry: NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
+    section: StudyViewMessage['nodeHistorySection'],
+  ): { heading: string; body: string } => {
+    const words = options.testReplay,
+      time = seconds(entry.elapsedMs)
+    if (entry.type === 'output')
+      return {
+        heading: `${words.eventOutput} · ${entry.channel} · ${time}`,
+        body: entry.text,
+      }
+    if (entry.type === 'stop')
+      return {
+        heading: `${words.eventStop} ${entry.index + 1} · ${entry.source.path}:${entry.source.line}:${entry.source.column} · ${time}`,
+        body: [
+          entry.frame.name,
+          ...entry.facts.map((fact) => `${fact.path}: ${fact.display}`),
+        ].join('\n'),
+      }
+    return {
+      heading: `${words.eventResult} · ${section?.verdict ?? ''} · ${time}`,
+      body: entry.outputTail,
+    }
+  }
+  /**
+   * Says whether a stop's first recorded frame names the stop's own source, hash, line and column, so the native debugger can show it at its captured source; called by {@link testReplayInspectControl}.
+   * @param entry - The stop.
+   * @returns `true` when the frame, the stop's frame and its source agree.
+   * @example stopFrameNamesItsSource(stop) // => true
+   */
+  const stopFrameNamesItsSource = (
+    entry: Extract<
+      NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
+      { type: 'stop' }
+    >,
+  ): boolean => {
+    const frame = entry.debuggerSnapshot.frames[0]
+    if (!frame?.source) return false
+    return (
+      frame.source.name === entry.source.path &&
+      frame.source.hash === entry.source.hash &&
+      frame.source.line === entry.source.line &&
+      entry.frame.line === entry.source.line &&
+      entry.frame.column === entry.source.column &&
+      frame.line === entry.frame.line &&
+      frame.column === entry.frame.column
+    )
+  }
+  /**
+   * Says whether a stop can be inspected in the native debugger: its first recorded frame names its own source ({@link stopFrameNamesItsSource}), the extension verified its captured text, and a selected stop's source is available; called by {@link testReplayInspectControl}.
+   * @param entry - The stop.
+   * @param message - The current Study message.
+   * @param isSelected - Whether the stop is the selected event.
+   * @returns `true` when Inspect in native debugger is offered.
+   * @example testReplayStopInspectable(stop, message, false) // => true
+   */
+  const testReplayStopInspectable = (
+    entry: Extract<
+      NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
+      { type: 'stop' }
+    >,
+    message: StudyViewMessage,
+    isSelected: boolean,
+  ): boolean =>
+    stopFrameNamesItsSource(entry) &&
+    // The extension hashed every shown stop's captured text; a mismatch there cannot be inspected either.
+    !(message.nodeHistoryUnverifiedStops ?? []).includes(entry.sequence) &&
+    !(isSelected && message.nodeHistoryPosition?.sourceAvailable === false)
   /**
    * Builds a stop row's Inspect in native debugger, or the line that its captured source cannot be inspected; called by {@link testReplayEventRow}.
    * A stop is inspectable when its first recorded frame names the stop's own source, hash, line and column and the extension verified its captured text.
@@ -2535,28 +2705,15 @@ function studyClient(
     isSelected: boolean,
     replaying: boolean,
   ): HTMLElement => {
-    const position = message.nodeHistoryPosition,
-      frame = entry.debuggerSnapshot.frames[0],
-      source = frame?.source
-    const inspectable =
-      source?.name === entry.source.path &&
-      source.hash === entry.source.hash &&
-      source.line === entry.source.line &&
-      entry.frame.line === entry.source.line &&
-      entry.frame.column === entry.source.column &&
-      frame?.line === entry.frame.line &&
-      frame.column === entry.frame.column &&
-      // The extension hashed every shown stop's captured text; a mismatch there cannot be inspected either.
-      !(message.nodeHistoryUnverifiedStops ?? []).includes(entry.sequence) &&
-      !(isSelected && position?.sourceAvailable === false)
-    if (!inspectable) {
+    if (!testReplayStopInspectable(entry, message, isSelected)) {
       const unavailable = document.createElement('p')
       unavailable.className = 'muted'
       unavailable.textContent =
         'Matching captured source is unavailable for native debugging.'
       return unavailable
     }
-    const shown = isSelected && Boolean(position?.debuggerAvailable)
+    const shown =
+      isSelected && Boolean(message.nodeHistoryPosition?.debuggerAvailable)
     const inspect = document.createElement('button')
     inspect.type = 'button'
     inspect.dataset.nodeHistorySequence = String(entry.sequence)

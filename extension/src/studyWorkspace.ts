@@ -671,10 +671,8 @@ export class StudyWorkspace {
   /** The selected Node stop reached native Run and Debug without its values loading; the reader shows how to load them. */
   private selectedNodeHistoryValuesUninspected = false
   private selectedNodeHistoryRequest = 0
-  /** The step of the selected event's learning material the learner chose last (DS21); a step of another event leaves the selected event's first step shown. */
+  /** The step shown with the selected event, committed with that selection (DS21, {@link nextNodeHistoryStepId}); `undefined` shows the event's first step. */
   private selectedNodeHistoryStepId?: string
-  /** The step a pending event selection will show once it commits: a summary step's action names its step, Next and Previous none (the event's first). A refused or superseded selection leaves the learner's chosen step as it was. */
-  private nodeHistoryStepChoice?: { stepId: string | undefined }
   /** The selected test replay's output read once ({@link indexNodeTestOutput}), with the history it was read from. */
   private selectedNodeHistoryOutputIndex?: {
     history: NodeTestHistoryIndex
@@ -11202,13 +11200,10 @@ export class StudyWorkspace {
             throw new Error(
               'The selected Node history changed during playback.',
             )
-          await this.selectNodeHistoryEvent(
-            selectedHistory,
-            sequence,
-            false,
-            false,
-            false,
-          )
+          await this.selectNodeHistoryEvent(selectedHistory, sequence, {
+            publish: false,
+            alignPlayback: false,
+          })
         },
         changed: () => this.publish(),
         failed: (error) => this.report('control', error),
@@ -11227,13 +11222,10 @@ export class StudyWorkspace {
       )
       if (positionError) this.report('history-position', positionError)
       if (initialSequence !== undefined)
-        await this.selectNodeHistoryEvent(
-          history,
-          initialSequence,
-          false,
-          false,
-          false,
-        )
+        await this.selectNodeHistoryEvent(history, initialSequence, {
+          publish: false,
+          alignPlayback: false,
+        })
       if (this.historyOpenSuperseded(request, revision))
         return { status: 'superseded' }
       this.loading = false
@@ -13890,7 +13882,6 @@ export class StudyWorkspace {
     const image = message.model.image
     const key = JSON.stringify([
       this.leaseId,
-      message.nodeHistory?.header.studyId,
       message.model.selection,
       message.study?.terminal,
       message.loading,
@@ -13900,7 +13891,6 @@ export class StudyWorkspace {
     if (key === this.lastApplicationKey) return
     this.lastApplicationKey = key
     if (
-      !message.nodeHistory &&
       message.model.selection.follow &&
       !message.study?.terminal &&
       this.viewport
@@ -21733,8 +21723,9 @@ export class StudyWorkspace {
           `There is no ${message.direction} ${message.unit ?? 'event'} in this Node history.`,
         )
       // Next and Previous show the event's first step (DS21), once the move commits.
-      this.nodeHistoryStepChoice = { stepId: undefined }
-      await this.selectNodeHistoryEvent(history, target)
+      await this.selectNodeHistoryEvent(history, target, {
+        stepChoice: { stepId: undefined },
+      })
     }
     if (message.type === 'node-history-event') {
       if (this.recordingActive)
@@ -21747,8 +21738,9 @@ export class StudyWorkspace {
           'Select the matching saved Node history before navigating its timeline.',
         )
       // A step's action selects its event and that step; an event's own control, the event's first step (DS21), once the selection commits.
-      this.nodeHistoryStepChoice = { stepId: message.stepId }
-      await this.selectNodeHistoryEvent(history, message.sequence)
+      await this.selectNodeHistoryEvent(history, message.sequence, {
+        stepChoice: { stepId: message.stepId },
+      })
     }
     if (message.type === 'node-history-stop') {
       if (this.recordingActive)
@@ -21767,7 +21759,9 @@ export class StudyWorkspace {
         throw new Error(
           'The requested Node history event is not a debugger stop.',
         )
-      await this.selectNodeHistoryEvent(history, message.sequence, true)
+      await this.selectNodeHistoryEvent(history, message.sequence, {
+        requireDebugger: true,
+      })
     }
     if (message.type === 'node-history-playback') {
       if (this.recordingActive)
@@ -23186,18 +23180,30 @@ export class StudyWorkspace {
     if (availabilityChanged || hintShown || failureCleared) this.publish()
   }
 
-  /** Selects one verified Node journal moment and clears stale debugger state across unrecorded intervals. @example await this.selectNodeHistoryEvent(history, 24) */
+  /**
+   * Selects one verified moment of a test replay and clears stale debugger state across unrecorded intervals; called by the Study pane's moves, step actions and Inspect, by Play and seeks, and by the replay's open.
+   * The selection commits the step it shows with its moment ({@link nextNodeHistoryStepId}): a refused, failed or superseded selection leaves the learner's chosen step as it was.
+   * @param history - The selected test replay.
+   * @param sequence - The event to select.
+   * @param options - `requireDebugger` refuses a stop without verified captured source (Inspect); `publish: false` leaves the Study message to the caller and keeps Play running (Play, a seek, the open); `alignPlayback: false` leaves the playhead where Play put it; `stepChoice` is the step a summary step's action names, or `{ stepId: undefined }` for the event's first step (Next and Previous); without it, the chosen step stays only on its own moment.
+   * @example await this.selectNodeHistoryEvent(history, 24, { stepChoice: { stepId: 'read' } })
+   */
   private async selectNodeHistoryEvent(
     history: NodeTestHistoryIndex,
     sequence: number,
-    requireDebugger = false,
-    publish = true,
-    alignPlayback = true,
+    {
+      requireDebugger = false,
+      publish = true,
+      alignPlayback = true,
+      stepChoice,
+    }: {
+      requireDebugger?: boolean
+      publish?: boolean
+      alignPlayback?: boolean
+      stepChoice?: { stepId: string | undefined }
+    } = {},
   ): Promise<void> {
     const request = ++this.selectedNodeHistoryRequest
-    // The step this selection shows is taken now, so a later selection's choice is never applied to this one.
-    const stepChoice = this.nodeHistoryStepChoice
-    this.nodeHistoryStepChoice = undefined
     if (publish) this.nodeHistoryPlaybackController?.pause()
     const entry = history.entries.find((value) => value.sequence === sequence)
     if (!entry)

@@ -30,3 +30,15 @@ test('recorded test output loses bidirectional and other invisible controls', ()
   // Assert
   assert.equal(shown, 'bell evil done x\nbackfeed ok\n')
 })
+
+// Value: protects=recorded output loses DEL and the C1 controls too, and an 8-bit color sequence (CSI written as U+009B) goes whole, so the Application pane keeps the README's promise that control characters are removed; fails_when=DEL, NEL or another C1 control reaches the pane, or an 8-bit sequence leaves its parameters, such as `31m`, as text; why_new=Step 9 pass 2's maintainability review: the class lost DEL and C1, which sanitizeCause removes, and only the 7-bit ESC form of CSI was recognized; seam=none; no_claim=the C1 escapes other than CSI, whose following text stays as printed
+test('recorded test output loses DEL, C1 controls and 8-bit color sequences', () => {
+  // Arrange
+  const printed = 'a\u007Fb\u0085c\u009B31md\u009B0m ok\n'
+
+  // Act
+  const shown = stripTerminalControls(printed)
+
+  // Assert
+  assert.equal(shown, 'abcd ok\n')
+})

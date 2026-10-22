@@ -48,7 +48,7 @@ export type NodeTestSectionInput = {
   /** Whether the selected event is a stop whose recorded source verifies. */
   selectedStopVerified: boolean
   learning?: NodeLearningSummaryProjection
-  /** The step the learner chose last, kept apart from the selected event (DS21). */
+  /** The step committed with the selected event (DS21); one that names no step of the event falls back to the event's first step. */
   chosenStepId?: string
   applicationClosed: boolean
 }
@@ -142,7 +142,6 @@ function sectionStatus(
     kind: 'study-status',
     summary: {
       status: history.status,
-      verification: 'verified',
       verdict,
       stopCount: stops.length,
       explainedStopCount: stops.filter((stop) => referenced.has(stop.sequence))
@@ -175,7 +174,7 @@ function positionLine(selected: HistoryEvent, stopCount: number): string {
  * Finds the steps of the selected event: the one shown, the learner's choice when it references the event, else the event's first, and the others, which read `Same recorded moment` (DS21); called by {@link projectNodeTestSection}.
  * @param selected - The selected event, if any.
  * @param learning - The projected material, if any.
- * @param chosenStepId - The step the learner chose last.
+ * @param chosenStepId - The step committed with the selected event.
  * @returns The shown step's id and content, and the other steps' ids.
  * @example momentSteps(stop, learning, 'keep').selectedStepId // => 'keep'
  */

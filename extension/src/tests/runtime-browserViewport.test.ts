@@ -1789,6 +1789,44 @@ test('a history update keeps the shown document and a replacement panel restores
   live.viewport.close()
 })
 
+// Value: protects=a replacement panel restores the history shown last, not a test replay's later moment that an earlier history left as its restore copy; fails_when=showHistory keeps the earlier replay's restore copy, so a replacement panel brings back that replay's moment over the history or recording selected since, or the earlier copy is built at all; why_new=Step 9 pass 2's testing review: since pass 1b the restore copy is a second field, cleared by showHistory and showLive, and no test shows another history after an update; seam=the viewport harness's panels; no_claim=VS Code's own restore of a hidden webview
+test('a history shown after a test replay’s later moment is what a replacement panel restores', async () => {
+  // Arrange
+  const original = viewportPanel(),
+    replacement = viewportPanel(),
+    signal = new AbortController().signal
+  const live = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'live',
+    original,
+  )
+  live.viewport.showHistory('<p>Test replay · Stop 1 of 2 · 0.20 s</p>')
+  const written: string[] = []
+  live.viewport.updateHistory(() => {
+    written.push('test replay')
+    return '<p>Test replay · Stop 2 of 2 · 0.30 s</p>'
+  })
+
+  // Act
+  live.viewport.showHistory('<p>Browser recording · 1.50 s</p>')
+  const release = await live.viewport.holdPlacement(signal)
+  live.rebind(replacement)
+  original.panel.dispose()
+  release()
+  await live.viewport.restorePlacement(signal)
+
+  // Assert
+  assert.equal(
+    replacement.panel.webview.html,
+    '<p>Browser recording · 1.50 s</p>',
+  )
+  assert.deepEqual(written, [])
+  assert.deepEqual(live.failures, [])
+  live.viewport.close()
+})
+
 test('closing the current panel releases a reserved placement and rejects waiting capture without later cleanup', async () => {
   // Arrange
   const harness = await viewportHarness('normal', true),

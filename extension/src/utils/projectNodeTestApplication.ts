@@ -38,10 +38,7 @@ export type NodeTestApplicationView = {
 }
 
 /** The event the learner selected in a test replay. */
-type SelectedEvent = Pick<
-  NodeTestHistoryIndex['entries'][number],
-  'sequence' | 'type' | 'elapsedMs'
->
+type SelectedEvent = NodeTestHistoryIndex['entries'][number]
 
 /**
  * Projects what the Application pane shows of a test replay at the selected moment, from every entry of the history (not the Study pane's page) and its output read once; called by the Study workspace for each Study message while a test replay is selected.
@@ -151,10 +148,8 @@ function outputEnd(
   history: Pick<NodeTestHistoryIndex, 'entries' | 'status'>,
   selected: SelectedEvent,
 ): string | undefined {
-  const { entries } = history
-  const event = entries.find((entry) => entry.sequence === selected.sequence)
-  if (event?.type === 'result') return describeNodeTestResult(event)
-  const last = entries.at(-1)
+  if (selected.type === 'result') return describeNodeTestResult(selected)
+  const last = history.entries.at(-1)
   return history.status !== 'recording' &&
     last?.sequence === selected.sequence &&
     last.type !== 'result'

@@ -1,4 +1,7 @@
-import { TEST_OUTPUT_END_TOLERANCE_PX } from '../constants'
+import {
+  TEST_OUTPUT_END_TOLERANCE_PX,
+  TEST_OUTPUT_STATE_WRITE_INTERVAL_MS,
+} from '../constants'
 import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus'
 import { STUDY_STYLES } from '../ui/constants'
 
@@ -26,6 +29,7 @@ export function testOutputHtml(
     stderrMark: NODE_TEST_REPLAY_TEXT.stderrMark,
     history,
     endTolerancePx: TEST_OUTPUT_END_TOLERANCE_PX,
+    stateWriteIntervalMs: TEST_OUTPUT_STATE_WRITE_INTERVAL_MS,
   }).replaceAll('<', '\\u003c')
   const muted = (id: string, value: string | undefined): string =>
     `<p id="${id}" class="muted"${value === undefined ? ' hidden' : ''}>${escapeHtml(value ?? '')}</p>`

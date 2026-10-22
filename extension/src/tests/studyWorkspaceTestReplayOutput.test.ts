@@ -7,7 +7,10 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { studyHtml } from '../ui/studyHtml'
 
-import { workspaceHarness } from './studyWorkspaceHarness'
+import {
+  recordedReaderHarness,
+  workspaceHarness,
+} from './studyWorkspaceHarness'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
 const SOURCE_TEXT = 'const nextTheme = "dark";\n'
@@ -358,6 +361,41 @@ test('closing the Application pane makes the test replay section say so and movi
   }
 })
 
+// Value: protects=Focus application builds a closed Application pane again only for a selected test replay: in a browser replay a pane the learner closed stays closed, as the replay owns its pane's lifecycle; fails_when=Focus application opens a new Application pane outside a test replay; why_new=Step 9 pass 2's testing review: pass 1b let focus-app rebuild a closed pane, and only a test replay's case was tested; seam=none; no_claim=what a browser replay shows after its pane closed (stand-ins: the workspace harness's closeTabByHand and its native panel list)
+test('Focus application in a browser replay leaves an Application pane the learner closed closed', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const closedPane = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    harness.closeTabByHand(closedPane!.nativeTab)
+    await waitUntil(
+      () =>
+        !harness
+          .nativePanels()
+          .some((panel) => panel.kind === 'codebook.scopedBrowser'),
+      'the Application pane is closed',
+      2_000,
+    )
+
+    // Act
+    await harness.reader.action('focus-app')
+
+    // Assert
+    assert.equal(
+      harness
+        .nativePanels()
+        .some((panel) => panel.kind === 'codebook.scopedBrowser'),
+      false,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=Show recorded output, the Study line under "The Application pane is closed.", brings a closed Application pane back with the selected moment's recorded output, so the learner who closed the pane by hand can read the output again without leaving the replay; fails_when=the button sends an action that needs all three Study panes (Restore Study arrangement fails with "The three retained Study panes are unavailable."), the action leaves the pane closed, or the new pane shows another moment's output or no output document; why_new=Step 7's coverage audit and Step 9's QA found the line's button bound to Restore, which cannot rebuild a closed pane (DS7); seam=none; no_claim=the native placement of the new pane, which the harness does not lay out (stand-ins: the workspace harness's closeTabByHand, its native panel list and the panel's recorded document)
 test('Show recorded output brings a closed Application pane back at the selected moment', async () => {
   // Arrange
@@ -660,6 +698,181 @@ test('a refused step action keeps the selected moment and the step the learner c
   }
 })
 
+// Value: protects=a step action whose native debugger presentation fails changes nothing the learner chose: the chosen step stays with its explanation, and the failure is said; fails_when=the chosen step is committed before the presentation settles, so a failed press shows the action's step (here `read` in place of the chosen `keep`); why_new=Step 9 pass 2's testing review: only a refusal before any await was tested, while the step is committed after the debugger and the reader position; seam=the workspace harness's held historical debug presentation, rejected as Run and Debug can fail; no_claim=the native debugger's own failure text
+test('a step action whose debugger presentation fails keeps the step the learner chose', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    await explainFirstStop(harness, history)
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+      stepId: 'keep',
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
+      'the chosen step is shown',
+      2_000,
+    )
+    const held = harness.holdHistoricalDebugPresentation(true)
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+      stepId: 'read',
+    })
+    await held.started
+
+    // Act
+    held.reject(new Error('Run and Debug could not load the recorded values.'))
+    await waitUntil(
+      () => (lastView(harness)?.errors.length ?? 0) > 0,
+      'the failed presentation is reported',
+      2_000,
+    )
+
+    // Assert
+    assert.match(
+      lastView(harness)!.errors[0]!,
+      /Run and Debug could not load the recorded values\./,
+    )
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.equal(lastView(harness)?.nodeHistorySection?.selectedStepId, 'keep')
+    assert.equal(
+      lastView(harness)?.nodeHistorySection?.explanation,
+      'applyTheme keeps the theme it read.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a step action overtaken before its stop is shown (its native presentation still loading) applies none of its step: a seek onto the same moment that overtakes it keeps the step the learner chose, and the overtaken press says nothing; fails_when=the overtaken action's step is committed or outlives it (the seek shows `read` in place of the chosen `keep`), or the superseded presentation is reported as an error; why_new=Step 9 pass 2's state-machines review (step-action × superseded): pass 1b passes the choice with its own selection, and no test overtook one; seam=the workspace harness's held historical debug presentation, rejected as superseded; no_claim=the other kinds of overtaken selection (Select event, Next and Previous, Play, Inspect), which share this path and are carried as tasks
+test('a step action overtaken before its stop is shown leaves the step the learner chose', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    await explainFirstStop(harness, history)
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+      stepId: 'keep',
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
+      'the chosen step is shown',
+      2_000,
+    )
+    const held = harness.holdHistoricalDebugPresentation(true)
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+      stepId: 'read',
+    })
+    await held.started
+    const requestsBeforeSeek = harness.reader['selectedNodeHistoryRequest']
+
+    // Act: a seek onto the same moment overtakes the pending step action; once the seek's selection runs, the overtaken presentation ends as superseded.
+    const seeking = harness.reader['nodeHistoryPlaybackController']!.seek(200)
+    await waitUntil(
+      () => harness.reader['selectedNodeHistoryRequest'] > requestsBeforeSeek,
+      'the seek’s selection overtakes the step action',
+      2_000,
+    )
+    held.reject(new Error('Historical debugger presentation was superseded.'))
+    await seeking
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeHistorySection?.selectedStepId, 'keep')
+    assert.equal(
+      lastView(harness)?.nodeHistorySection?.explanation,
+      'applyTheme keeps the theme it read.',
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a background render while a test replay is selected (Retry storage / refresh writes the Application document again) keeps the selected moment's output in the pane: the document is written with that moment and no loading view is posted; fails_when=the render's loading flag reads as the replay opening, so the pane shows "Loading recorded test output…" and loses its lines, the learner's scroll position and selection; why_new=Step 9 pass 2's state-machines review (source render × pending and settled): the opening flag's reason was untested; seam=none; no_claim=a render that fails or is superseded, which ends the same way and is carried as a task
+test('a background render while a test replay is selected keeps its Application output', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    const outputsBefore = harness.applicationOutputs().length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.match(
+      application?.webview.html ?? '',
+      /<p id="test-output-time" class="status">Recorded test output · 0\.20 s<\/p>/,
+    )
+    assert.doesNotMatch(
+      application?.webview.html ?? '',
+      /Loading recorded test output…<\/p>/,
+    )
+    assert.ok(
+      harness
+        .applicationOutputs()
+        .slice(outputsBefore)
+        .every(
+          (update) =>
+            update.view.placeholder !== 'Loading recorded test output…',
+        ),
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a move to a stop or an event that does not exist (a press that raced ahead of the disabled button, or a keyboard repeat) is refused by name and changes nothing: Previous stop at the first stop and Next event at the result each leave one error line that names the move, and the selected moment, the step the learner chose and the Application pane stay as they were; fails_when=a refused move resets the chosen step (the explanation changes with no new moment), moves the selection, posts a view into the Application pane, says nothing, or names the wrong unit; why_new=PR-B1 adds the stop unit (DS12) and keeps the chosen step apart from the selected event (DS21), so the handler must refuse before it clears the choice; no test pressed a move past either end; seam=none; no_claim=the buttons' disabled state, which the Reader DOM check reads and which keeps a learner from pressing a move that does not exist
 test('a move to a stop or event that does not exist is refused by name and keeps the moment, the chosen step and the Application pane', async () => {
   // Arrange
@@ -835,6 +1048,12 @@ test('opening another test replay shows its loading line first and starts on its
     assert.match(
       application?.webview.html ?? '',
       /<p id="test-output-placeholder" class="muted">Loading recorded test output…<\/p>/,
+    )
+    // The document is written again for the second replay, so the learner's follow choice and kept moment are filed under it, not the first (DS20).
+    assert.ok(
+      (application?.webview.html ?? '').includes(
+        `"history":"${second.studyId}"`,
+      ),
     )
     assert.equal(
       whileOpening.at(-1)?.view.time,

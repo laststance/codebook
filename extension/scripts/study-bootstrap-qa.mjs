@@ -1974,6 +1974,46 @@ async function check(page, options, collected) {
             },
           }),
       })
+      // Value: protects=a closed Application pane is named in the test replay section with a way back: the row with Show recorded output appears, its click asks the host for the pane (`focus-app`), and the row goes once the pane is back; fails_when=the row stays hidden while the pane is closed, the button sends another action (`arrange`, which could not bring the pane back), or the row stays after the pane is back; why_new=Step 9 pass 1b's QA critical (Show recorded output could not bring the pane back) and pass 2's testing review: no DOM case showed the row or clicked it; seam=none; no_claim=that the host builds the pane again, which studyWorkspaceTestReplayOutput.test.ts proves
+      // Arrange: the stop of the replay while the learner has closed the Application pane.
+      const paneClosedLine = 'The Application pane is closed.'
+      await publish(
+        testReplayAt(atStop.nodeHistoryPosition, {
+          ...atStop.nodeHistorySection,
+          applicationClosed: true,
+          pointer: paneClosedLine,
+        }),
+      )
+      const whenClosed = await page.evaluate(() => ({
+        rowShown: !document.getElementById('node-history-closed').hidden,
+        pointer: document.getElementById('node-history-pointer').textContent,
+      }))
+      await page.evaluate(() => {
+        window.sent = []
+      })
+      // Act
+      await page.locator('#node-history-closed button').click()
+      const sentOnClick = await page.evaluate(() =>
+        window.sent
+          .filter((message) => message.type === 'action')
+          .map((message) => message.action),
+      )
+      await publish(atStop)
+      const rowShownWhenBack = await page.evaluate(
+        () => !document.getElementById('node-history-closed').hidden,
+      )
+      // Assert
+      cases.push({
+        name: 'a closed Application pane is named in the test replay section, Show recorded output asks for it again, and the row goes once the pane is back (DS7)',
+        actual: { whenClosed, sentOnClick, rowShownWhenBack },
+        passed:
+          JSON.stringify({ whenClosed, sentOnClick, rowShownWhenBack }) ===
+          JSON.stringify({
+            whenClosed: { rowShown: true, pointer: paneClosedLine },
+            sentOnClick: ['focus-app'],
+            rowShownWhenBack: false,
+          }),
+      })
       // Arrange: the keyboard alone, from the opened replay (DS17): Step details, a step of the stop, Next stop, Previous stop, a seek and Pause.
       await publish(atFirstOutput)
       await page.evaluate(() => {
@@ -2512,6 +2552,60 @@ async function check(page, options, collected) {
             endShown: true,
           }),
       })
+      // Value: protects=an Application document the editor loads again after the learner stopped following shows the latest moment it had received and keeps not following: it stays where it starts, offers Jump to latest and keeps the choice in its state; fails_when=the reloaded document drops the learner's choice and scrolls to the end, hides Jump to latest, or shows its first moment; why_new=Step 9 pass 2's state-machines review: the reload case reloaded only a following document; seam=none; no_claim=VS Code's own reload, which the fresh page with the kept state stands in for
+      // Act: the first write loaded again with the state the document kept at the result, the learner not following.
+      const reloadedNotFollowingPage = await page.context().newPage()
+      await reloadedNotFollowingPage.setViewportSize({
+        width: 760,
+        height: 360,
+      })
+      await reloadedNotFollowingPage.goto(options.url)
+      await reloadedNotFollowingPage.evaluate(
+        (state) => {
+          window.savedState = state
+          window.acquireVsCodeApi = () => ({
+            getState: () => window.savedState,
+            setState(next) {
+              window.savedState = next
+            },
+            postMessage() {},
+          })
+        },
+        { ...stateAtResult, testOutputFollow: false },
+      )
+      await reloadedNotFollowingPage.setContent(options.html.application)
+      await reloadedNotFollowingPage.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      )
+      const reloadedNotFollowing = await reloadedNotFollowingPage.evaluate(
+        () => {
+          const output = document.getElementById('test-output')
+          return {
+            time: document.getElementById('test-output-time').textContent,
+            atEnd:
+              output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
+            jumpShown: !document.getElementById('test-output-jump').hidden,
+            savedFollow: window.savedState?.testOutputFollow,
+          }
+        },
+      )
+      await reloadedNotFollowingPage.close()
+      // Assert
+      cases.push({
+        name: 'an Application document loaded again after the learner stopped following shows the latest moment and keeps Jump to latest (DS20, EN3)',
+        actual: reloadedNotFollowing,
+        passed:
+          JSON.stringify(reloadedNotFollowing) ===
+          JSON.stringify({
+            time: 'Recorded test output · 0.90 s',
+            atEnd: false,
+            jumpShown: true,
+            savedFollow: false,
+          }),
+      })
       const anotherReplay = await followAfterWrite({
         testOutputFollow: false,
         testOutputHistory: 'another-test-replay',
@@ -2531,6 +2625,101 @@ async function check(page, options, collected) {
               anotherReplay: { atEnd: true, jumpShown: false },
               sameReplayKept: { atEnd: false, jumpShown: true },
             }),
+      })
+      // Value: protects=an Application document written again for the same replay with a newer moment keeps that moment over an older view its state kept (a document written again after the learner came back to the replay); fails_when=the kept view is applied whatever its generation, and the pane goes back to an older moment while the Study pane, the source and the debugger show the current one; why_new=Step 9 pass 2's testing review: only a newer kept view was tested; seam=none; no_claim=the host's generation counter, which only grows within a window
+      // Arrange: the state keeps the result's view at generation 0; the document is written with the first output at generation 1.
+      const olderKeptPage = await page.context().newPage()
+      await olderKeptPage.setViewportSize({ width: 760, height: 360 })
+      await olderKeptPage.goto(options.url)
+      await olderKeptPage.evaluate(
+        (state) => {
+          window.savedState = state
+          window.acquireVsCodeApi = () => ({
+            getState: () => window.savedState,
+            setState(next) {
+              window.savedState = next
+            },
+            postMessage() {},
+          })
+        },
+        {
+          testOutputHistory: sameReplay,
+          testOutputFollow: true,
+          testOutputView: { ...options.testReplayViews.result, generation: 0 },
+        },
+      )
+      // Act
+      await olderKeptPage.setContent(options.html.application)
+      const olderKept = await olderKeptPage.evaluate(() => ({
+        time: document.getElementById('test-output-time').textContent,
+        endShown: !document.getElementById('test-output-end').hidden,
+      }))
+      await olderKeptPage.close()
+      // Assert
+      cases.push({
+        name: 'an Application document written again for the same replay keeps its own newer moment over an older view its state kept (EN3)',
+        actual: olderKept,
+        passed:
+          JSON.stringify(olderKept) ===
+          JSON.stringify({
+            time: 'Recorded test output · 0.10 s',
+            endShown: false,
+          }),
+      })
+      // Value: protects=while moments stream into a test replay's Application document (Play posts up to twenty a second), the document writes its state, which copies the whole shown output, once for the stream, and writes the last moment when it is left; fails_when=each posted moment writes the state again (twenty serialized copies of the output for twenty moments), or a document left after the stream keeps an older moment; why_new=Step 9 pass 2's core checklist and performance review (C3): the state write copied the whole view at every moment; seam=none; no_claim=VS Code's own state transport, which the stand-in imitates by serializing each write, and the timer's interval, which no assertion here waits for
+      // Arrange: a document whose state writes are counted and serialized, as VS Code's webview serializes them.
+      const streamPage = await page.context().newPage()
+      await streamPage.setViewportSize({ width: 760, height: 360 })
+      await streamPage.goto(options.url)
+      await streamPage.evaluate(() => {
+        window.savedState = undefined
+        window.stateWrites = 0
+        window.acquireVsCodeApi = () => ({
+          getState: () =>
+            window.savedState === undefined
+              ? undefined
+              : JSON.parse(window.savedState),
+          setState(next) {
+            window.stateWrites += 1
+            window.savedState = JSON.stringify(next)
+          },
+          postMessage() {},
+        })
+      })
+      await streamPage.setContent(options.html.application)
+      // Act: twenty moments posted in a row, as the host posts them during Play (each message is handled as it is dispatched); then the document is left.
+      const streamed = await streamPage.evaluate((result) => {
+        for (let generation = 2; generation <= 21; generation += 1)
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: {
+                type: 'node-history-output',
+                generation,
+                view: { ...result, generation },
+              },
+            }),
+          )
+        const whileStreaming = window.stateWrites
+        window.dispatchEvent(new Event('pagehide'))
+        return {
+          whileStreaming,
+          afterLeaving: window.stateWrites,
+          keptGeneration: JSON.parse(window.savedState).testOutputView
+            .generation,
+        }
+      }, options.testReplayViews.result)
+      await streamPage.close()
+      // Assert
+      cases.push({
+        name: 'a test replay’s Application document writes its state once for a stream of moments and writes the last moment when it is left (DS20, EN3)',
+        actual: streamed,
+        passed:
+          JSON.stringify(streamed) ===
+          JSON.stringify({
+            whileStreaming: 1,
+            afterLeaving: 2,
+            keptGeneration: 21,
+          }),
       })
       await applicationPage.close()
       // Assert
@@ -2759,6 +2948,46 @@ async function check(page, options, collected) {
             .length,
           scriptRan: window.invented === true,
         }
+      })
+      // Value: protects=a move back to a shorter moment while the learner has stopped following leaves following off: the browser's clamp of the scroll position to the shorter output is the document's change, not the learner's scroll back to the end; fails_when=the clamp turns following on, hides Jump to latest and saves that choice, so the next moment scrolls the learner to the end although they never scrolled back or pressed Jump to latest (DS20); why_new=Step 9 pass 2's state-machines review (wrong row: not following × a newer view whose output is shorter); seam=none; no_claim=a scroll the learner makes back to the end, which turns following on
+      // Arrange: the result's whole output, which the learner scrolls to its end and then just above it.
+      const settleUpdatePage = () =>
+        updatePage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+      const readFollow = () =>
+        updatePage.evaluate(() => ({
+          jumpShown: !document.getElementById('test-output-jump').hidden,
+          follow: window.savedState?.testOutputFollow,
+        }))
+      await postOutputView(8, atTheResult)
+      await updatePage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        output.scrollTop = output.scrollHeight
+      })
+      await settleUpdatePage()
+      await updatePage.evaluate(() => {
+        const output = document.getElementById('test-output')
+        output.scrollTop = output.scrollHeight - output.clientHeight - 40
+      })
+      await settleUpdatePage()
+      const stoppedFollowing = await readFollow()
+      // Act: an earlier moment whose output is shorter than the scroll position.
+      await postOutputView(9, earlierWindow(20))
+      const afterShorter = await readFollow()
+      // Assert
+      cases.push({
+        name: 'a move back to a shorter moment leaves the Application document not following when the learner stopped following (DS20)',
+        actual: { stoppedFollowing, afterShorter },
+        passed:
+          JSON.stringify({ stoppedFollowing, afterShorter }) ===
+          JSON.stringify({
+            stoppedFollowing: { jumpShown: true, follow: false },
+            afterShorter: { jumpShown: true, follow: false },
+          }),
       })
       await updatePage.close()
       // Assert

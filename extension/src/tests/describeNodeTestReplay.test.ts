@@ -113,7 +113,6 @@ test('the Study section locates the selected stop, output and result and names e
       kind: 'study-status',
       summary: {
         status: 'complete',
-        verification: 'verified',
         verdict,
         stopCount: 2,
         explainedStopCount: 1,
@@ -190,7 +189,6 @@ test('an Output entry names the surface, the study, the profile, the versions, t
 test('the Study section status names a recording, partial or interrupted test replay', () => {
   // Arrange
   const summary = {
-    verification: 'verified' as const,
     verdict: 'Test failed · exit code 1' as const,
     stopCount: 1,
     explainedStopCount: 0,

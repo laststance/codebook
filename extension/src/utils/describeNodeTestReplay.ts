@@ -54,7 +54,10 @@ export type NodeTestReplayMessage =
         | 'explainedStopCount'
       >
     }
-  | { kind: 'study-status'; summary: NodeTestReplayMessageSummary }
+  | {
+      kind: 'study-status'
+      summary: Omit<NodeTestReplayMessageSummary, 'verification'>
+    }
   | { kind: 'application-time'; elapsedMs: number }
   | { kind: 'application-test'; test: NodeTestReplayTestName }
   | {
@@ -117,11 +120,11 @@ export function describeNodeTestReplay(message: NodeTestReplayMessage): string {
         ? 'Test replay · unavailable'
         : message.summary.status === 'recording'
           ? 'Test replay · recording'
-          : `Test replay · ${studyStatus(message.summary)}`
+          : `Test replay · ${studyStatus({ ...message.summary, status: message.summary.status })}`
     case 'study-status':
       return message.summary.status === 'recording'
         ? 'Test replay · recording'
-        : studyStatus(message.summary)
+        : studyStatus({ ...message.summary, status: message.summary.status })
     case 'position':
       return positionWords(message.event, message.elapsedMs)
     case 'step-action':
@@ -182,14 +185,16 @@ function positionWords(
 
 /**
  * Words a sealed or interrupted history's verdict, capture and explained stops, the Saved studies row after `Test replay · ` and the Study pane's status line; called by {@link describeNodeTestReplay}.
- * @param summary - The history's summary.
+ * @param summary - The summary of a history that is no longer recording.
  * @returns The status words.
- * @example studyStatus({ status: 'partial', verification: 'verified', verdict: 'Test failed · exit code 1', stopCount: 1, explainedStopCount: 0 }) // => 'Test failed · exit code 1 · capture partial · 0 of 1 stops explained'
+ * @example studyStatus({ status: 'partial', verdict: 'Test failed · exit code 1', stopCount: 1, explainedStopCount: 0 }) // => 'Test failed · exit code 1 · capture partial · 0 of 1 stops explained'
  */
-function studyStatus(summary: NodeTestReplayMessageSummary): string {
-  const capture =
-    summary.status === 'recording' ? 'partial' : CAPTURE_WORDS[summary.status]
-  return `${summary.verdict} · capture ${capture} · ${summary.explainedStopCount} of ${summary.stopCount} stops explained`
+function studyStatus(
+  summary: Omit<NodeTestReplayMessageSummary, 'verification' | 'status'> & {
+    status: keyof typeof CAPTURE_WORDS
+  },
+): string {
+  return `${summary.verdict} · capture ${CAPTURE_WORDS[summary.status]} · ${summary.explainedStopCount} of ${summary.stopCount} stops explained`
 }
 
 /**

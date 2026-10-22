@@ -8,6 +8,8 @@ export type NodeTestOutputOptions = {
   history: string
   /** How close to its end the output region counts as at its end. */
   endTolerancePx: number
+  /** At most how often the document writes its state; the writes in between are joined into one. */
+  stateWriteIntervalMs: number
 }
 
 /** The message the Study workspace posts to the Application pane for each later event of the same test replay. */
@@ -19,11 +21,11 @@ export type NodeTestOutputUpdate = {
 
 /**
  * Applies each later event of a test replay to the Application pane's one document in place (EN3), so moving through the replay never reloads the page: unchanged lines keep their nodes, so the learner's text selection, the scroll position and the keyboard focus survive, and an update older than the one shown is ignored. It follows the latest output until the learner scrolls up, and `Jump to latest` follows again (DS20); called by the document {@link testOutputHtml} writes, serialized with `toString()`, so it imports nothing.
- * The follow choice and the latest moment's view are kept in the webview's state with the replay they belong to: a document of the same replay that the editor loads again (moved to another window, webviews reloaded) or that a restore copy writes keeps the learner's choice and shows the latest moment, and another replay's document starts following.
+ * The follow choice and the latest moment's view are kept in the webview's state with the replay they belong to: a document of the same replay that the editor loads again in the same panel (moved to another window, webviews reloaded) keeps the learner's choice and shows the latest moment. A replacement panel starts with an empty state, so the restore copy written into it starts following, as another replay's document does. The state is written at most once per interval while moments stream in, and when the document is left.
  * @param api - The webview's API.
  * @param generation - The generation of the view the document was written with.
- * @param options - The stderr mark, the shown replay and the end tolerance.
- * @example installNodeTestOutput(acquireVsCodeApi(), 3, { stderrMark: '[stderr] ', history: 'study_1', endTolerancePx: 2 })
+ * @param options - The stderr mark, the shown replay, the end tolerance and the interval of state writes.
+ * @example installNodeTestOutput(acquireVsCodeApi(), 3, { stderrMark: '[stderr] ', history: 'study_1', endTolerancePx: 2, stateWriteIntervalMs: 500 })
  */
 export function installNodeTestOutput(
   api: {
@@ -40,34 +42,71 @@ export function installNodeTestOutput(
   }
   const output = element('test-output'),
     jump = element('test-output-jump')
-  const saved = api.getState()
-  // What this document kept of its own replay before the editor loaded it again (moved to another window, webviews reloaded); another replay's state does not carry over (DS20).
-  const kept =
-    typeof saved === 'object' &&
-    saved !== null &&
-    'testOutputHistory' in saved &&
-    saved.testOutputHistory === options.history
-      ? saved
+  /** The webview's state as an object, or none. */
+  const savedState = (): Record<string, unknown> | undefined => {
+    const state: unknown = api.getState()
+    return typeof state === 'object' && state !== null
+      ? { ...state }
       : undefined
+  }
+  /** What this document kept of its own replay before the editor loaded it again (moved to another window, webviews reloaded): the follow choice and the latest moment's view; another replay's state does not carry over (DS20). */
+  const keptState = (): {
+    follow: boolean
+    view: NodeTestApplicationView | undefined
+  } => {
+    const state = savedState()
+    if (state?.testOutputHistory !== options.history)
+      return { follow: true, view: undefined }
+    const view = state.testOutputView
+    return {
+      follow:
+        typeof state.testOutputFollow === 'boolean'
+          ? state.testOutputFollow
+          : true,
+      // The kept view is this document's own earlier update, which it wrote into its state itself.
+      view:
+        typeof view === 'object' &&
+        view !== null &&
+        'generation' in view &&
+        typeof view.generation === 'number'
+          ? (view as NodeTestApplicationView)
+          : undefined,
+    }
+  }
+  const kept = keptState()
   let shown = generation,
-    follow =
-      kept &&
-      'testOutputFollow' in kept &&
-      typeof kept.testOutputFollow === 'boolean'
-        ? kept.testOutputFollow
-        : true,
+    follow = kept.follow,
     scrolledByDocument = false,
-    latestView: NodeTestApplicationView | null = null
-  /** Keeps the follow choice and the latest moment's view with the replay they belong to, so the document the editor loads again shows them. */
-  const remember = (): void => {
-    const state = api.getState()
+    latestView: NodeTestApplicationView | null = null,
+    writeTimer: ReturnType<typeof setTimeout> | undefined,
+    writeDue = false
+  /** Writes the follow choice and the latest moment's view with the replay they belong to, so the document the editor loads again shows them. */
+  const writeState = (): void => {
+    writeDue = false
     api.setState({
-      ...(typeof state === 'object' && state !== null ? state : {}),
+      ...savedState(),
       testOutputFollow: follow,
       testOutputHistory: options.history,
       testOutputView: latestView,
     })
   }
+  /** Writes the state now, or once the interval since the last write ends: each write copies the whole shown output, and Play posts up to twenty moments a second. */
+  const remember = (): void => {
+    if (writeTimer !== undefined) {
+      writeDue = true
+      return
+    }
+    writeState()
+    writeTimer = setTimeout(() => {
+      writeTimer = undefined
+      // The moments that came during the interval are written as one.
+      if (writeDue) remember()
+    }, options.stateWriteIntervalMs)
+  }
+  // A document that is left (moved to another window, webviews reloaded) writes the moment it shows before it goes.
+  window.addEventListener('pagehide', () => {
+    if (writeDue) writeState()
+  })
   /** Shows a muted line with its text, or leaves it out without text. */
   const line = (id: string, value: string | undefined): void => {
     const target = element(id)
@@ -151,7 +190,10 @@ export function installNodeTestOutput(
     line('test-output-cut', view.cut)
     line('test-output-placeholder', view.placeholder)
     line('test-output-end', view.end)
+    const scrollTopBefore = output.scrollTop
     placeLines(view.lines)
+    // A shorter output clamps the scroll position: that scroll is the document's, never the learner's return to the end (DS20).
+    if (output.scrollTop !== scrollTopBefore) scrolledByDocument = true
     if (follow) toEnd()
     jump.hidden = follow
   }
@@ -165,11 +207,12 @@ export function installNodeTestOutput(
     if (following === follow) return
     follow = following
     jump.hidden = follow
-    remember()
+    // The learner's own choice is written at once; only the stream of moments is joined.
+    writeState()
   })
   jump.addEventListener('click', () => {
     follow = true
-    remember()
+    writeState()
     toEnd()
     jump.hidden = true
     // The button leaves the page, so the keyboard stays in the output it led to.
@@ -194,19 +237,10 @@ export function installNodeTestOutput(
     },
   )
   // A document loaded again from its first write shows the latest moment it had received, not the moment it was written with.
-  const keptView =
-    kept && 'testOutputView' in kept ? kept.testOutputView : undefined
-  if (
-    typeof keptView === 'object' &&
-    keptView !== null &&
-    'generation' in keptView &&
-    typeof keptView.generation === 'number' &&
-    keptView.generation > generation
-  ) {
-    // The kept view is this document's own earlier update, which it wrote into its state itself.
-    latestView = keptView as NodeTestApplicationView
-    shown = latestView.generation
-    apply(latestView)
+  if (kept.view && kept.view.generation > generation) {
+    latestView = kept.view
+    shown = kept.view.generation
+    apply(kept.view)
     return
   }
   if (follow) toEnd()
