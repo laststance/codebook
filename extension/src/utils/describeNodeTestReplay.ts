@@ -164,9 +164,9 @@ function applicationWords(
     case 'application-region':
       return `Recorded test output up to ${formatEventSeconds(message.elapsedMs)} s`
     case 'application-cut':
-      return `… ${message.characters} earlier characters not shown${message.startsMidLine ? '; the first line below is cut' : ''}`
+      return `… ${message.characters} earlier ${message.characters === 1 ? 'character' : 'characters'} not shown${message.startsMidLine ? '; the first line below is cut' : ''}`
     case 'application-inspector':
-      return `${message.lines} Node inspector lines hidden`
+      return `${message.lines} Node inspector ${message.lines === 1 ? 'line' : 'lines'} hidden`
   }
 }
 

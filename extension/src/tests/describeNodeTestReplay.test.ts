@@ -102,6 +102,26 @@ test('the Application pane names the recorded time, the cited test and the parts
   ])
 })
 
+// Value: protects=the Application pane's muted lines read in the singular for one character and one inspector line; fails_when=a count of one reads `1 earlier characters` or `1 Node inspector lines`; why_new=F105 (the plural forms printed for one); seam=none; no_claim=the wording of other counts, which the test above pins
+test('the Application pane’s muted lines use the singular for a count of one', () => {
+  // Arrange
+  const cut = { kind: 'application-cut', characters: 1 } as const
+
+  // Act
+  const words = [
+    describeNodeTestReplay({ ...cut, startsMidLine: false }),
+    describeNodeTestReplay({ ...cut, startsMidLine: true }),
+    describeNodeTestReplay({ kind: 'application-inspector', lines: 1 }),
+  ]
+
+  // Assert
+  assert.deepEqual(words, [
+    '… 1 earlier character not shown',
+    '… 1 earlier character not shown; the first line below is cut',
+    '1 Node inspector line hidden',
+  ])
+})
+
 // Value: protects=the Study section's status, position lines, step actions and event-list summary for a test replay; fails_when=a stop's number is not 1-based, the result's line does not lead with its verdict, or a line reads otherwise than the String catalog; why_new=PR-B1 replaces the Study pane's metadata-first position text and raw event counts (DS3, DS14, DS16, DS21); seam=none; no_claim=which event or step the section selects
 test('the Study section locates the selected stop, output and result and names each step’s event', () => {
   // Arrange
