@@ -87,3 +87,33 @@ test('Show recorded output runs the Study arrangement again, with its receipt cl
     await harness.close()
   }
 })
+
+// Value: protects=the test names of Saved studies' catalog reach the Study message without bidirectional or terminal controls, so a U+202E in a recorded test title cannot reorder what the reader prints about a saved test replay; fails_when=the catalog entry keeps the title's U+202E; why_new=F131 (P2A hand-off): the strip applied to the selected replay only, and the catalog rows were left out; seam=none; no_claim=the Application and Study views of the selected replay (sanitizeNodeTestHistory's tests)
+test('a U+202E in a recorded test title does not reach the Saved studies catalog the Study message carries', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+      ['theme', 'applies \u202Edark\u202C mode'],
+    )
+
+    // Act
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    const entry = lastView(harness)?.nodeHistoryCatalog?.[0]
+
+    // Assert
+    assert.equal(entry?.testFile, 'src/theme.test.ts')
+    assert.deepEqual(entry?.testTitles, ['theme', 'applies dark mode'])
+  } finally {
+    await harness.close()
+  }
+})

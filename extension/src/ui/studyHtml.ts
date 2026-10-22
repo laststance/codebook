@@ -542,21 +542,30 @@ function studyClient(
       revealInTransport(playbackDiagnostics)
   })
   const strip = document.querySelector<HTMLElement>('.live-strip')
+  const replayTransportBar = document.getElementById('node-history-transport')
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
+  // The live strip sticks at the top and the test replay's transport sticks right below it, so the sticky bars never cover each other; a bar taller than the fraction of the pane flows with the page instead, and the focus scroll room counts the bars that stay.
   const adaptStrip = (): void => {
-    if (!strip) return
-    const height = strip.getBoundingClientRect().height
-    strip.classList.toggle(
-      'flowing',
-      height > window.innerHeight * options.maxStickyFraction,
-    )
-    // Native focus scrolling must leave room for the visible sticky strip and its outline.
+    let stickyHeight = 0
+    for (const bar of [strip, replayTransportBar]) {
+      if (!bar) continue
+      const height = bar.getBoundingClientRect().height
+      bar.classList.toggle(
+        'flowing',
+        height > window.innerHeight * options.maxStickyFraction,
+      )
+      // The transport sticks below the strip: its offset is the height of the bar above it.
+      if (bar === replayTransportBar) bar.style.top = `${stickyHeight}px`
+      if (getComputedStyle(bar).position === 'sticky') stickyHeight += height
+    }
+    // Native focus scrolling must leave room for the visible sticky bars and their outline.
     document.documentElement.style.setProperty(
       '--codebook-sticky-height',
-      `${getComputedStyle(strip).position === 'sticky' ? height : 0}px`,
+      `${stickyHeight}px`,
     )
   }
-  if (strip) new ResizeObserver(adaptStrip).observe(strip)
+  for (const bar of [strip, replayTransportBar])
+    if (bar) new ResizeObserver(adaptStrip).observe(bar)
   window.addEventListener('resize', adaptStrip)
   document.addEventListener('click', (event) => {
     const target =
@@ -2031,7 +2040,57 @@ function studyClient(
     generalName: string,
   ): string => message.liveTitle ?? profileTitle ?? generalName
   /**
-   * Draws a saved learning sequence, a browser replay's and a test replay's alike (Design 5): the participants' lifelines, one numbered arrow per step, then the numbered steps with their evidence, explanation and action. Participant names and explanations are text nodes; agent-authored markup never becomes executable content.
+   * Breaks a name or label into lines of at most `maxChars` characters at word boundaries, so a sequence diagram never cuts a word or ends a label with an ellipsis (F206); called by {@link sequenceView}.
+   * A word longer than the limit keeps a line of its own: the caller widens its column for the longest word.
+   * @param value - The text to break.
+   * @param maxChars - The most characters a line holds.
+   * @returns The lines, one empty line for empty text.
+   * @example wrapWords('fetch filtered invoices', 10) // => ['fetch', 'filtered', 'invoices']
+   */
+  const wrapWords = (value: string, maxChars: number): string[] => {
+    const lines: string[] = []
+    for (const word of value.split(/\s+/).filter(Boolean)) {
+      const last = lines.length - 1
+      if (last >= 0 && (lines[last]?.length ?? 0) + 1 + word.length <= maxChars)
+        lines[last] += ` ${word}`
+      else lines.push(word)
+    }
+    return lines.length ? lines : ['']
+  }
+  /**
+   * Writes the lines of a sequence name or label into an SVG text element; called by {@link sequenceView}.
+   * @param text - The SVG text element.
+   * @param x - The lines' horizontal anchor.
+   * @param lines - The wrapped lines.
+   * @param asTspans - Whether a single line is also written as a tspan (a participant's name is).
+   * @example writeSequenceLines(name, 80, ['Source', 'handler'], true)
+   */
+  const writeSequenceLines = (
+    text: SVGTextElement,
+    x: number,
+    lines: string[],
+    asTspans: boolean,
+  ): void => {
+    if (!asTspans && lines.length <= 1) {
+      text.textContent = lines[0] ?? ''
+      return
+    }
+    lines.forEach((value, index) => {
+      const span = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'tspan',
+      )
+      span.setAttribute('x', String(x))
+      span.setAttribute(
+        'dy',
+        String(index ? options.sequence.nameLineHeightPx : 0),
+      )
+      span.textContent = value
+      text.append(span)
+    })
+  }
+  /**
+   * Draws a saved learning sequence, a browser replay's and a test replay's alike (Design 5): the participants' lifelines, one numbered arrow per step, then the numbered steps with their evidence, explanation and action. Participant names, labels and explanations are text nodes; agent-authored markup never becomes executable content. Names and labels wrap at word boundaries inside their boxes and the diagram grows taller; a longer word widens its column, and a diagram wider than the pane scrolls inside its own region (F206).
    * The browser replay passes its seek link as the action, a test replay its event selection; called for the Learning summary and the test replay section.
    * @param content - The material's participants and steps.
    * @param label - The diagram's accessible name.
@@ -2058,55 +2117,87 @@ function studyClient(
   ): [visual: HTMLDivElement, steps: HTMLOListElement] => {
     const namespace = 'http://www.w3.org/2000/svg',
       diagram = document.createElementNS(namespace, 'svg')
-    const layout = options.sequence,
-      width = Math.max(
-        layout.minWidthPx,
-        content.participants.length * layout.columnWidthPx,
+    const layout = options.sequence
+    const stepLabels = content.steps.map(
+      (step, index) => `${index + 1}. ${step.label}`,
+    )
+    // A column is wide enough for the longest word of any name or label, so no word is ever broken inside its box (F206).
+    const longestWordChars = Math.max(
+      0,
+      ...[...content.participants.map((value) => value.label), ...stepLabels]
+        .flatMap((value) => value.split(/\s+/))
+        .map((word) => word.length),
+    )
+    const columnWidth = Math.max(
+      layout.columnWidthPx,
+      Math.ceil(longestWordChars * layout.charWidthPx + layout.columnPaddingPx),
+    )
+    const charsWithin = (spanPx: number): number =>
+      Math.max(
+        1,
+        Math.floor((spanPx - layout.columnPaddingPx) / layout.charWidthPx),
+      )
+    const width = Math.max(
+      layout.minWidthPx,
+      content.participants.length * columnWidth,
+    )
+    const column = (id: string) =>
+      columnWidth / 2 +
+      content.participants.findIndex((value) => value.id === id) * columnWidth
+    const nameLines = content.participants.map((participant) =>
+      wrapWords(participant.label, charsWithin(columnWidth)),
+    )
+    // The diagram grows taller for every extra line of a name or a label.
+    const namesExtraPx =
+      (Math.max(1, ...nameLines.map((lines) => lines.length)) - 1) *
+      layout.nameLineHeightPx
+    const stepLines = content.steps.map((step, index) =>
+      wrapWords(
+        stepLabels[index] ?? '',
+        charsWithin(
+          Math.max(columnWidth, Math.abs(column(step.to) - column(step.from))),
+        ),
       ),
-      height = layout.topPaddingPx + content.steps.length * layout.rowHeightPx
+    )
+    const rowOffsetsPx: number[] = []
+    let rowsHeightPx = 0
+    for (const lines of stepLines) {
+      rowOffsetsPx.push(rowsHeightPx)
+      rowsHeightPx +=
+        layout.rowHeightPx + (lines.length - 1) * layout.nameLineHeightPx
+    }
+    const height = layout.topPaddingPx + namesExtraPx + rowsHeightPx
     diagram.setAttribute('viewBox', `0 0 ${width} ${height}`)
     diagram.setAttribute('width', String(width))
     diagram.setAttribute('height', String(height))
     diagram.setAttribute('role', 'img')
     diagram.setAttribute('aria-label', label)
-    const column = (id: string) =>
-      layout.columnWidthPx / 2 +
-      content.participants.findIndex((value) => value.id === id) *
-        layout.columnWidthPx
-    for (const participant of content.participants) {
+    content.participants.forEach((participant, index) => {
       const x = column(participant.id),
         name = document.createElementNS(namespace, 'text'),
         line = document.createElementNS(namespace, 'line')
       name.setAttribute('x', String(x))
       name.setAttribute('y', String(layout.nameYpx))
       name.setAttribute('text-anchor', 'middle')
-      for (
-        let offset = 0;
-        offset < participant.label.length;
-        offset += layout.nameChunkChars
-      ) {
-        const span = document.createElementNS(namespace, 'tspan')
-        span.setAttribute('x', String(x))
-        span.setAttribute('dy', String(offset ? layout.nameLineHeightPx : 0))
-        span.textContent = participant.label.slice(
-          offset,
-          offset + layout.nameChunkChars,
-        )
-        name.append(span)
-      }
+      writeSequenceLines(name, x, nameLines[index] ?? [], true)
       line.setAttribute('x1', String(x))
       line.setAttribute('x2', String(x))
-      line.setAttribute('y1', String(layout.lifelineYpx))
+      line.setAttribute('y1', String(layout.lifelineYpx + namesExtraPx))
       line.setAttribute('y2', String(height))
       line.setAttribute('class', 'sequence-lifeline')
       diagram.append(name, line)
-    }
+    })
     const list = document.createElement('ol')
     list.className = 'sequence-steps'
     content.steps.forEach((step, index) => {
-      const x1 = column(step.from),
+      const lines = stepLines[index] ?? [],
+        x1 = column(step.from),
         x2 = column(step.to),
-        y = layout.firstArrowYpx + index * layout.rowHeightPx,
+        y =
+          layout.firstArrowYpx +
+          namesExtraPx +
+          (rowOffsetsPx[index] ?? 0) +
+          (lines.length - 1) * layout.nameLineHeightPx,
         arrow = document.createElementNS(namespace, 'path'),
         number = document.createElementNS(namespace, 'text')
       const direction = x2 >= x1 ? 1 : -1
@@ -2117,13 +2208,17 @@ function studyClient(
           : `M ${x1} ${y} H ${x2} m ${-layout.arrowWidthPx * direction} ${-layout.arrowHeightPx} l ${layout.arrowWidthPx * direction} ${layout.arrowHeightPx} l ${-layout.arrowWidthPx * direction} ${layout.arrowHeightPx}`,
       )
       arrow.setAttribute('class', `sequence-arrow ${step.evidence}`)
+      // The label is centered over its arrow (a loop's over its lifeline), so a last participant's label stays inside the diagram; its lines stack upward from the arrow.
+      const labelX = (x1 + x2) / 2
+      number.setAttribute('x', String(labelX))
       number.setAttribute(
-        'x',
-        String((x1 + x2) / 2 + (x1 === x2 ? layout.loopHeightPx : 0)),
+        'y',
+        String(
+          y - layout.numberGapPx - (lines.length - 1) * layout.nameLineHeightPx,
+        ),
       )
-      number.setAttribute('y', String(y - layout.numberGapPx))
       number.setAttribute('text-anchor', 'middle')
-      number.textContent = `${index + 1}. ${step.label.slice(0, layout.nameChunkChars)}${step.label.length > layout.nameChunkChars ? '…' : ''}`
+      writeSequenceLines(number, labelX, lines, false)
       diagram.append(arrow, number)
       const row = document.createElement('li'),
         heading = document.createElement('strong'),
@@ -2911,7 +3006,11 @@ function studyClient(
    * @example offerClampedTitles()
    */
   const offerClampedTitles = (): void => {
-    for (const heading of [element('title'), element('learning-title')]) {
+    for (const heading of [
+      element('title'),
+      element('learning-title'),
+      element('node-learning-title'),
+    ]) {
       if (document.activeElement === heading) continue
       if (heading.scrollHeight > heading.clientHeight) heading.tabIndex = 0
       else heading.removeAttribute('tabindex')

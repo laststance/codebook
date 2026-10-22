@@ -300,6 +300,7 @@ import { selectStudy } from './utils/selectStudy'
 import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice } from './utils/showPlainNotice'
 import { stackRowsAtOneHeight } from './utils/stackRowsAtOneHeight'
+import { stripNodeHistorySummaryTexts } from './utils/stripNodeHistorySummaryTexts'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from './utils/tabWithoutEditorObstacle'
@@ -11164,9 +11165,9 @@ export class StudyWorkspace {
       cause,
       ...(stack ? { stack } : {}),
     })
-    const summary = this.nodeHistoryCatalog.find(
-      (history) => history.studyId === studyId,
-    )
+    const summary = this.nodeHistoryCatalog
+      .filter((history) => history.studyId === studyId)
+      .map(stripNodeHistorySummaryTexts)[0]
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
       title: summary
@@ -12378,7 +12379,10 @@ export class StudyWorkspace {
           bundle.projection.debugger === this.replayUninspectedSnapshot,
         applicationCovered: this.replayApplicationCovered,
       },
-      nodeHistoryCatalog: this.nodeHistoryCatalog,
+      // The recorded test names come without terminal and bidirectional controls (F131).
+      nodeHistoryCatalog: this.nodeHistoryCatalog.map(
+        stripNodeHistorySummaryTexts,
+      ),
       nodeHistory: this.selectedNodeHistory && {
         ...this.selectedNodeHistory,
         entries: this.selectedNodeHistory.entries.slice(

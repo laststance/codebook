@@ -17,14 +17,19 @@ export function lastView(
 /**
  * Saves a sealed test replay of two stops with output before and between them and a passing result: output 1, stop 2, output 3, stop 4, result 5.
  * @param store - The workspace's history store.
+ * @param testTitles - The title path the history cites, absent for a history that cites its file alone.
  * @returns The history's header.
  * @example const history = await saveTwoStopNodeHistory(harness.service.nodeHistoryStore!)
  */
-export async function saveTwoStopNodeHistory(store: NodeTestHistoryStore) {
+export async function saveTwoStopNodeHistory(
+  store: NodeTestHistoryStore,
+  testTitles?: string[],
+) {
   const oneStop = nodeTestHistoryHeader(store.workspaceKey)
   // The second stop is declared at the same line, as a loop's second pass stops there again.
   const configuration = {
     ...oneStop.configuration,
+    ...(testTitles ? { testTitles } : {}),
     additionalStops: [
       {
         ...oneStop.configuration.source,
