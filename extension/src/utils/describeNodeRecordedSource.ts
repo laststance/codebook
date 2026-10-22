@@ -4,12 +4,12 @@ import { formatEventSeconds } from './formatEventSeconds'
 
 /**
  * The fixed words of a test replay's recorded-source slot and its debugger thread, the String catalog of plan version 7 (DS5, DS14); words that hold a value are worded by {@link describeNodeRecordedSource}.
- * The placeholder is the slot's whole text before the first stop, at an output, at the result and at a stop whose source does not verify (4A).
+ * The placeholder is the slot's whole text before the first stop, at an output, at the result and at a stop whose source does not verify (4A). The slot is named after a JavaScript or TypeScript file, so its placeholder and loading text are line comments: as plain sentences the editor's language service reported them as problems of the learner's workspace (the source-slot spike in VS Code, 2026-10-22).
  */
 export const NODE_RECORDED_SOURCE_TEXT = {
   placeholder:
-    'Recorded source · Not recorded at this moment\nThe test journal holds no source state for this moment.\n',
-  loading: 'Loading recorded source…\n',
+    '// Recorded source · Not recorded at this moment\n// The test journal holds no source state for this moment.\n',
+  loading: '// Loading recorded source…\n',
   notRecordedThread: 'Not recorded at this moment',
 } as const
 

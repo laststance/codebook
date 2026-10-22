@@ -18,7 +18,7 @@ type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 const THEME_TEXT = 'const nextTheme = "dark";\n'
 const THEME_NEXT_TEXT = 'export const applied = applyTheme(nextTheme);\n'
 const PLACEHOLDER =
-  'Recorded source · Not recorded at this moment\nThe test journal holds no source state for this moment.\n'
+  '// Recorded source · Not recorded at this moment\n// The test journal holds no source state for this moment.\n'
 
 /** The last view the reader posted to its panes. */
 function lastView(harness: Harness) {

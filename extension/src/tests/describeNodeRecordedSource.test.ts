@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import ts from 'typescript'
+
 import type { NodeTestHistoryEntry } from '../nodeTestHistorySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import {
@@ -105,9 +107,12 @@ test('the recorded-source slot and its debugger thread are worded as the String 
   )
   assert.equal(
     NODE_RECORDED_SOURCE_TEXT.placeholder,
-    'Recorded source · Not recorded at this moment\nThe test journal holds no source state for this moment.\n',
+    '// Recorded source · Not recorded at this moment\n// The test journal holds no source state for this moment.\n',
   )
-  assert.equal(NODE_RECORDED_SOURCE_TEXT.loading, 'Loading recorded source…\n')
+  assert.equal(
+    NODE_RECORDED_SOURCE_TEXT.loading,
+    '// Loading recorded source…\n',
+  )
 })
 
 // Value: protects=an event's time on every test replay surface: seconds since the run started with two decimals; fails_when=the time is rounded otherwise or carries its unit; why_new=the formatter moved out of describeNodeTestReplay so the slot's label shares it; seam=none; no_claim=none beyond protects
@@ -157,4 +162,45 @@ test('a slot that opens on a placeholder is named after the first verified stop�
   // Assert
   assert.equal(withVerifiedStop, 'src/scheduler.ts')
   assert.equal(withEditedStop, 'src/theme.test.ts')
+})
+
+// Value: protects=the slot's placeholder and loading text read as comments in every JavaScript or TypeScript file kind a slot is named after, so the editor's language service reports no problem for them in the learner's workspace; fails_when=a line of either text is plain words, which a TypeScript or JavaScript parser reports as syntax errors (the source-slot spike in VS Code showed 19 problems for the placeholder of a `.ts` slot); why_new=PR-B2's source-slot spike, VS Code 1.142.0 in the macOS Space; seam=the TypeScript compiler's parser stands in for the editor's language service; no_claim=other languages, which no test stop records
+test('the slot’s placeholder and loading text parse without a syntax error as TypeScript and JavaScript', () => {
+  // Arrange
+  const fileNames = [
+    'slot.ts',
+    'slot.tsx',
+    'slot.mts',
+    'slot.cts',
+    'slot.js',
+    'slot.mjs',
+    'slot.cjs',
+    'slot.jsx',
+  ]
+
+  // Act
+  const errors = fileNames.flatMap((fileName) =>
+    [
+      NODE_RECORDED_SOURCE_TEXT.placeholder,
+      NODE_RECORDED_SOURCE_TEXT.loading,
+    ].flatMap((text) => {
+      const parsed = ts.createSourceFile(
+        fileName,
+        text,
+        ts.ScriptTarget.Latest,
+        false,
+      )
+      // parseDiagnostics holds what the parser reported for this text.
+      const diagnostics = (
+        parsed as unknown as { parseDiagnostics: readonly ts.Diagnostic[] }
+      ).parseDiagnostics
+      return diagnostics.map(
+        (diagnostic) =>
+          `${fileName}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`,
+      )
+    }),
+  )
+
+  // Assert
+  assert.deepEqual(errors, [])
 })
