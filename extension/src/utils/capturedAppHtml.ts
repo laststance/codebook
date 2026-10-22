@@ -12,7 +12,11 @@ export function capturedAppHtml(message: StudyViewMessage): string {
   const nonce = randomUUID()
   // A test replay has no application to show; its pane is the recorded output, one document updated in place for each event (EN3).
   if (message.nodeHistoryApplication)
-    return testOutputHtml(message.nodeHistoryApplication, nonce)
+    return testOutputHtml(
+      message.nodeHistoryApplication,
+      nonce,
+      message.nodeHistory?.header.studyId ?? '',
+    )
   const image = message.model.image,
     observation = message.model.observation
   const failedRecording = message.recording?.readiness === 'failed'

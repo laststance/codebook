@@ -111,6 +111,8 @@ export class BrowserViewport {
   private closing = false
   private historical = false
   private historicalHtml?: string
+  /** The shown history's latest moment, written into a document only when a replacement panel restores it ({@link updateHistory}). */
+  private latestHistoricalHtml?: () => string
   private rendererAttached = true
   private readonly listeners: vscode.Disposable[] = []
   private observerFailed = false
@@ -713,6 +715,7 @@ export class BrowserViewport {
     if (this.closed) throw new Error('Viewport lease is released')
     this.historical = true
     this.historicalHtml = html
+    this.latestHistoricalHtml = undefined
     this.presentationRevision++
     this.suspendRenderer()
     this.panel.webview.html = html
@@ -721,12 +724,13 @@ export class BrowserViewport {
 
   /**
    * Keeps the restore copy of the shown history current without writing the document again: a test replay's later moments reach its document as messages (EN3), and a replacement panel restores this copy ({@link restorePanelContents}). Called by the Study workspace after each posted moment; nothing happens while the viewport is live or released.
-   * @param html - The history's document at its latest moment.
-   * @example viewport.updateHistory(capturedAppHtml(message))
+   * The copy is written only when a replacement panel needs it, so stepping through a replay builds no document per moment.
+   * @param html - Writes the history's document at its latest moment.
+   * @example viewport.updateHistory(() => capturedAppHtml(message))
    */
-  updateHistory(html: string): void {
+  updateHistory(html: () => string): void {
     if (this.closed || !this.historical) return
-    this.historicalHtml = html
+    this.latestHistoricalHtml = html
   }
 
   /** Reconnects the same target presentation when the learner explicitly follows its current pause. @example await viewport.showLive(signal) */
@@ -740,6 +744,7 @@ export class BrowserViewport {
     }
     this.historical = false
     this.historicalHtml = undefined
+    this.latestHistoricalHtml = undefined
     this.panel.webview.html = viewportHtml(this.mode)
     this.rendererAttached = true
     await this.reveal(signal)
@@ -878,6 +883,11 @@ export class BrowserViewport {
   private restorePanelContents(): void {
     if (this.rendererAttached) return
     if (this.historical) {
+      // A test replay's latest moment is written into its document now, once.
+      if (this.latestHistoricalHtml) {
+        this.historicalHtml = this.latestHistoricalHtml()
+        this.latestHistoricalHtml = undefined
+      }
       if (this.historicalHtml === undefined)
         throw new Error('Historical viewport content is unavailable.')
       this.panel.webview.html = this.historicalHtml

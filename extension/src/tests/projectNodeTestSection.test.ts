@@ -348,3 +348,33 @@ test('Previous stop and Next stop are offered only where a stop lies before or a
     withoutStops: { previousStop: false, nextStop: false },
   })
 })
+
+// Value: protects=a summary step whose id is `__proto__` (the step id schema accepts it) keeps its action label through the message to the Study pane, as an own property of the labels; fails_when=the label is assigned through the prototype's setter and dropped, so the Study pane reads Object.prototype and shows "[object Object]" on the step's control; why_new=Step 9's security review found the labels built in a plain object keyed by agent-authored step ids, and the learning summary already guards prototype-shaped ids (learningSummary.test.ts); seam=none; no_claim=the Study pane's own read, which reads only own labels
+test('a summary step named __proto__ keeps its action label through the message to the Study pane', () => {
+  // Arrange
+  const prototypeNamed: NodeTestLearningMaterial = {
+    ...material,
+    content: {
+      ...material.content,
+      steps: [{ ...material.content.steps[1]!, id: '__proto__' }],
+    },
+  }
+  const learning = projectNodeLearningSummary(prototypeNamed, history)
+
+  // Act
+  const view = projectNodeTestSection({
+    history,
+    selected: entries[1]!,
+    selectedStopVerified: true,
+    ...(learning ? { learning } : {}),
+    applicationClosed: false,
+  })
+  const posted: Record<string, string> = JSON.parse(
+    JSON.stringify(view.stepActions),
+  )
+
+  // Assert
+  assert.equal(Object.hasOwn(posted, '__proto__'), true)
+  assert.equal(posted['__proto__'], 'Inspect stop 1 · 0.42 s')
+  assert.equal(view.selectedStepId, '__proto__')
+})

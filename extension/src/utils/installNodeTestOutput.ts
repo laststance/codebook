@@ -1,8 +1,13 @@
 import type { NodeTestApplicationView } from './projectNodeTestApplication'
 
-/** The fixed words the document's script needs; passed in, as the script imports nothing. */
-export type NodeTestOutputText = {
+/** What the document's script needs from the host; passed in, as the script imports nothing. */
+export type NodeTestOutputOptions = {
+  /** Starts a line the test wrote to standard error. */
   stderrMark: string
+  /** The test replay the document shows; the learner's follow choice belongs to it (DS20). */
+  history: string
+  /** How close to its end the output region counts as at its end. */
+  endTolerancePx: number
 }
 
 /** The message the Study workspace posts to the Application pane for each later event of the same test replay. */
@@ -13,12 +18,12 @@ export type NodeTestOutputUpdate = {
 }
 
 /**
- * Applies each later event of a test replay to the Application pane's one document in place (EN3), so moving through the replay never reloads the page: unchanged lines keep their nodes, so the learner's text selection, the scroll position and the keyboard focus survive, and an update older than the one shown is ignored. It follows the latest output until the learner scrolls up, and `Jump to latest` follows again (DS20); called by the document {@link capturedAppHtml} writes, serialized with `toString()`, so it imports nothing.
- * The follow state is kept in the webview's state, so a document written again from the restore copy keeps it.
+ * Applies each later event of a test replay to the Application pane's one document in place (EN3), so moving through the replay never reloads the page: unchanged lines keep their nodes, so the learner's text selection, the scroll position and the keyboard focus survive, and an update older than the one shown is ignored. It follows the latest output until the learner scrolls up, and `Jump to latest` follows again (DS20); called by the document {@link testOutputHtml} writes, serialized with `toString()`, so it imports nothing.
+ * The follow choice and the latest moment's view are kept in the webview's state with the replay they belong to: a document of the same replay that the editor loads again (moved to another window, webviews reloaded) or that a restore copy writes keeps the learner's choice and shows the latest moment, and another replay's document starts following.
  * @param api - The webview's API.
  * @param generation - The generation of the view the document was written with.
- * @param text - The fixed words it needs.
- * @example installNodeTestOutput(acquireVsCodeApi(), 3, { stderrMark: '[stderr] ' })
+ * @param options - The stderr mark, the shown replay and the end tolerance.
+ * @example installNodeTestOutput(acquireVsCodeApi(), 3, { stderrMark: '[stderr] ', history: 'study_1', endTolerancePx: 2 })
  */
 export function installNodeTestOutput(
   api: {
@@ -26,7 +31,7 @@ export function installNodeTestOutput(
     setState(state: unknown): void
   },
   generation: number,
-  text: NodeTestOutputText,
+  options: NodeTestOutputOptions,
 ): void {
   const element = (id: string): HTMLElement => {
     const found = document.getElementById(id)
@@ -36,20 +41,31 @@ export function installNodeTestOutput(
   const output = element('test-output'),
     jump = element('test-output-jump')
   const saved = api.getState()
+  // What this document kept of its own replay before the editor loaded it again (moved to another window, webviews reloaded); another replay's state does not carry over (DS20).
+  const kept =
+    typeof saved === 'object' &&
+    saved !== null &&
+    'testOutputHistory' in saved &&
+    saved.testOutputHistory === options.history
+      ? saved
+      : undefined
   let shown = generation,
     follow =
-      typeof saved === 'object' &&
-      saved !== null &&
-      'testOutputFollow' in saved &&
-      typeof saved.testOutputFollow === 'boolean'
-        ? saved.testOutputFollow
+      kept &&
+      'testOutputFollow' in kept &&
+      typeof kept.testOutputFollow === 'boolean'
+        ? kept.testOutputFollow
         : true,
-    scrolledByDocument = false
+    scrolledByDocument = false,
+    latestView: NodeTestApplicationView | null = null
+  /** Keeps the follow choice and the latest moment's view with the replay they belong to, so the document the editor loads again shows them. */
   const remember = (): void => {
     const state = api.getState()
     api.setState({
       ...(typeof state === 'object' && state !== null ? state : {}),
       testOutputFollow: follow,
+      testOutputHistory: options.history,
+      testOutputView: latestView,
     })
   }
   /** Shows a muted line with its text, or leaves it out without text. */
@@ -70,7 +86,7 @@ export function installNodeTestOutput(
     if (view.channel === 'stderr' && !view.cut) {
       const mark = document.createElement('span')
       mark.className = 'stderr-mark'
-      mark.textContent = text.stderrMark
+      mark.textContent = options.stderrMark
       node.append(mark)
     }
     const body = document.createElement('span')
@@ -80,7 +96,8 @@ export function installNodeTestOutput(
     return node
   }
   const atEnd = (): boolean =>
-    output.scrollHeight - output.scrollTop - output.clientHeight <= 2
+    output.scrollHeight - output.scrollTop - output.clientHeight <=
+    options.endTolerancePx
   const toEnd = (): void => {
     scrolledByDocument = true
     // Instant, never smooth: the learner's reduced-motion choice needs no separate path.
@@ -172,8 +189,26 @@ export function installNodeTestOutput(
       if (data.generation < shown) return
       shown = data.generation
       apply(data.view)
+      latestView = data.view
+      remember()
     },
   )
+  // A document loaded again from its first write shows the latest moment it had received, not the moment it was written with.
+  const keptView =
+    kept && 'testOutputView' in kept ? kept.testOutputView : undefined
+  if (
+    typeof keptView === 'object' &&
+    keptView !== null &&
+    'generation' in keptView &&
+    typeof keptView.generation === 'number' &&
+    keptView.generation > generation
+  ) {
+    // The kept view is this document's own earlier update, which it wrote into its state itself.
+    latestView = keptView as NodeTestApplicationView
+    shown = latestView.generation
+    apply(latestView)
+    return
+  }
   if (follow) toEnd()
   jump.hidden = follow
 }

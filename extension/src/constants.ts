@@ -981,6 +981,8 @@ export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
 export const NODE_HISTORY_SUMMARY_READ_CONCURRENCY = 4
 /** How much of a test replay's recorded output, counted in code points of the shown text (the `[stderr] ` marks and line feeds included), the Application pane keeps up to the selected event: its end, where the selected moment is. */
 export const NODE_TEST_OUTPUT_TAIL_CHARS = 65_536
+/** How close to its end, in CSS pixels, a test replay's output region counts as at its end, so the Application pane follows the latest output (DS20); subpixel scroll positions never land exactly on it. */
+export const TEST_OUTPUT_END_TOLERANCE_PX = 2
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256
 /** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */

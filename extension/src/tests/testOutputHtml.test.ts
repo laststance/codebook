@@ -9,7 +9,6 @@ const HOSTILE_TITLE = '<img src=x onerror=alert(1)>'
 /** A test replay's Application view whose test title and output lines hold markup, as a repository's test may print. */
 const hostileView: NodeTestApplicationView = {
   generation: 3,
-  state: 'event',
   time: 'Recorded test output · 0.42 s',
   test: `src/jobs.test.ts › ${HOSTILE_TITLE}`,
   name: `Recorded test output · src/jobs.test.ts › ${HOSTILE_TITLE} · 0.42 s`,
@@ -24,7 +23,7 @@ const hostileView: NodeTestApplicationView = {
 // Value: protects=test output and test titles that hold markup render as text in the Application pane, in its body, its title and its attributes, so a repository's test cannot run script or add elements there; fails_when=a `<script>`, an event-handler attribute or a closing quote reaches the document unescaped; why_new=PR-B1 prints recorded output and test titles into the Application document (S3-1); seam=none; no_claim=the webview's Content Security Policy, which a browser enforces
 test('test output and test titles that hold markup render as text in the Application pane', () => {
   // Arrange / Act
-  const html = testOutputHtml(hostileView, 'fixed-nonce')
+  const html = testOutputHtml(hostileView, 'fixed-nonce', 'study_1')
 
   // Assert
   assert.equal(
@@ -57,7 +56,7 @@ test('the Application document of a test replay names its moment, marks standard
   }
 
   // Act
-  const html = testOutputHtml(view, 'fixed-nonce')
+  const html = testOutputHtml(view, 'fixed-nonce', 'study_1')
 
   // Assert
   assert.match(
@@ -90,4 +89,30 @@ test('the Application document of a test replay names its moment, marks standard
     html,
     /Historical test output\. Reading it does not rerun the target\./,
   )
+})
+
+// Value: protects=a standard-error line cut to its end shows that end without the `[stderr] ` mark, which belongs to the line's start, and says it is cut; fails_when=the cut tail is marked as if it started the line, or the document leaves out the cut flag the in-place update compares; why_new=Step 9's testing review found no test rendering a cut line; seam=none; no_claim=the in-place update of a cut line, which the Reader DOM check drives
+test('a cut standard-error line shows its end without the mark of its start', () => {
+  // Arrange
+  const view: NodeTestApplicationView = {
+    ...hostileView,
+    lines: [
+      {
+        channel: 'stderr',
+        text: 'end of a long warning',
+        number: 4,
+        cut: true,
+      },
+    ],
+  }
+
+  // Act
+  const html = testOutputHtml(view, 'fixed-nonce', 'study_1')
+
+  // Assert
+  assert.match(
+    html,
+    /<span class="output-line" data-line="4" data-channel="stderr" data-cut="true"><span class="output-text">end of a long warning<\/span>/,
+  )
+  assert.equal(html.includes('class="stderr-mark"'), false)
 })

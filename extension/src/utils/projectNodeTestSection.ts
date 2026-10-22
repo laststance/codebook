@@ -223,6 +223,7 @@ function momentExplanation(
 
 /**
  * Words each step's action by the event its reference names, for the steps whose event the history holds; called by {@link projectNodeTestSection}.
+ * The labels are own data properties, so a step id such as `__proto__` keeps its label through the message to the Study pane, where an assignment would hit the prototype's setter and drop it.
  * @param history - The test replay.
  * @param learning - Its projected material, if any.
  * @returns The action labels by step id.
@@ -232,13 +233,15 @@ function stepActionLabels(
   history: Pick<NodeTestHistoryIndex, 'entries'>,
   learning: NodeLearningSummaryProjection | undefined,
 ): Record<string, string> {
-  const labels: Record<string, string> = {}
-  for (const position of learning?.positions ?? []) {
-    const event = history.entries.find(
-      (entry) => entry.sequence === position.sequence,
-    )
-    if (event)
-      labels[position.stepId] = describeNodeTestReplay({
+  const events = new Map(
+    history.entries.map((entry) => [entry.sequence, entry] as const),
+  )
+  return Object.fromEntries(
+    (learning?.positions ?? []).flatMap((position) => {
+      const event = events.get(position.sequence)
+      // A step whose event this history lacks gets no action.
+      if (!event) return []
+      const label = describeNodeTestReplay({
         kind: 'step-action',
         event:
           event.type === 'stop'
@@ -246,6 +249,7 @@ function stepActionLabels(
             : { type: event.type },
         elapsedMs: event.elapsedMs,
       })
-  }
-  return labels
+      return [[position.stepId, label] as const]
+    }),
+  )
 }

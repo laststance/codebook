@@ -18,8 +18,6 @@ import type { NodeTestOutputIndex } from './indexNodeTestOutput'
  */
 export type NodeTestApplicationView = {
   generation: number
-  /** `loading` while the replay opens, `empty` for a history without entries, `event` at a selected event. */
-  state: 'loading' | 'empty' | 'event'
   /** Header line 1 (`Recorded test output · <t> s`), absent without a selected event. */
   time?: string
   /** Header line 2: the cited test, shown in at most two lines with this whole text in its tooltip. */
@@ -75,7 +73,6 @@ export function projectNodeTestApplication(
   if (loading || !history.entries.length || !selected)
     return {
       generation,
-      state: loading ? 'loading' : history.entries.length ? 'event' : 'empty',
       test: testLine,
       name: describeNodeTestReplay({ kind: 'application-name', test }),
       lines: [],
@@ -89,7 +86,6 @@ export function projectNodeTestApplication(
   const end = outputEnd(history.entries, selected)
   return {
     generation,
-    state: 'event',
     time: describeNodeTestReplay({
       kind: 'application-time',
       elapsedMs: selected.elapsedMs,

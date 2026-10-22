@@ -1,7 +1,7 @@
 import type { NodeTestHistorySummary } from '../nodeTestHistoryStore'
 
 /**
- * The fixed words of a test replay's surfaces, the String catalog of plan version 7 (DS18); the Study pane receives them through {@link STUDY_UI_OPTIONS}, as its client code imports nothing, and the Application pane through {@link capturedAppHtml}.
+ * The fixed words of a test replay's surfaces, the String catalog of plan version 7 (DS18); the Study pane receives them through {@link STUDY_UI_OPTIONS}, as its client code imports nothing, and the Application pane through {@link projectNodeTestApplication} and {@link testOutputHtml}.
  * Words that hold a value are worded by {@link describeNodeTestReplay}.
  */
 export const NODE_TEST_REPLAY_TEXT = {
@@ -100,7 +100,7 @@ const CAPTURE_WORDS = {
 } as const
 
 /**
- * Words what a test replay shows the learner outside its Save, so Saved studies, the Study pane and the Application pane read as the String catalog writes them; called by the Study workspace for each Saved studies row and the Study pane's test replay section, and by {@link capturedAppHtml} for the Application pane.
+ * Words what a test replay shows the learner outside its Save, so Saved studies, the Study pane and the Application pane read as the String catalog writes them; called by the Study workspace for each Saved studies row, by {@link projectNodeTestSection} for the Study pane's test replay section, and by {@link projectNodeTestApplication} for the Application pane.
  * `<t>` is the event's time since the run started, paused time included, in seconds with two decimals.
  * @param message - The surface, and the value it shows.
  * @returns The words.
@@ -119,11 +119,9 @@ export function describeNodeTestReplay(message: NodeTestReplayMessage): string {
           ? 'Test replay · recording'
           : `Test replay · ${studyStatus(message.summary)}`
     case 'study-status':
-      return message.summary.verification === 'unavailable'
-        ? 'Test replay unavailable'
-        : message.summary.status === 'recording'
-          ? 'Test replay · recording'
-          : studyStatus(message.summary)
+      return message.summary.status === 'recording'
+        ? 'Test replay · recording'
+        : studyStatus(message.summary)
     case 'position':
       return positionWords(message.event, message.elapsedMs)
     case 'step-action':

@@ -100,7 +100,6 @@ test('the Application view at a stop names its time and test and shows the outpu
   // Assert
   assert.deepEqual(view, {
     generation: 7,
-    state: 'event',
     time: 'Recorded test output · 0.42 s',
     test: 'src/theme.test.ts › theme › switches to dark',
     name: 'Recorded test output · src/theme.test.ts › theme › switches to dark · 0.42 s',
@@ -168,7 +167,6 @@ test('the Application view says loading, nothing printed yet and no entries, and
   )
 
   // Assert
-  assert.equal(loading.state, 'loading')
   assert.equal(loading.placeholder, 'Loading recorded test output…')
   assert.equal(loading.time, undefined)
   assert.equal(
@@ -178,7 +176,6 @@ test('the Application view says loading, nothing printed yet and no entries, and
   assert.equal(beforeOutput.time, 'Recorded test output · 0.05 s')
   assert.deepEqual(noEntries, {
     generation: 4,
-    state: 'empty',
     test: 'src/theme.test.ts',
     name: 'Recorded test output · src/theme.test.ts',
     lines: [],
@@ -215,7 +212,6 @@ test('the Application view of a long output says how many earlier characters it 
   // Assert
   assert.deepEqual(view, {
     generation: 5,
-    state: 'event',
     time: 'Recorded test output · 0.42 s',
     test: 'src/theme.test.ts › theme › switches to dark',
     name: 'Recorded test output · src/theme.test.ts › theme › switches to dark · 0.42 s',

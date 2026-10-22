@@ -254,6 +254,7 @@ import { layoutKeepsEveryGroup } from './utils/layoutKeepsEveryGroup'
 import { libraryHasRoom } from './utils/libraryHasRoom'
 import { listsEveryTabGroup } from './utils/listsEveryTabGroup'
 import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
+import { nextNodeHistoryStepId } from './utils/nextNodeHistoryStepId'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeHistoryStepTarget } from './utils/nodeHistoryStepTarget'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
@@ -672,6 +673,8 @@ export class StudyWorkspace {
   private selectedNodeHistoryRequest = 0
   /** The step of the selected event's learning material the learner chose last (DS21); a step of another event leaves the selected event's first step shown. */
   private selectedNodeHistoryStepId?: string
+  /** The step a pending event selection will show once it commits: a summary step's action names its step, Next and Previous none (the event's first). A refused or superseded selection leaves the learner's chosen step as it was. */
+  private nodeHistoryStepChoice?: { stepId: string | undefined }
   /** The selected test replay's output read once ({@link indexNodeTestOutput}), with the history it was read from. */
   private selectedNodeHistoryOutputIndex?: {
     history: NodeTestHistoryIndex
@@ -8532,7 +8535,7 @@ export class StudyWorkspace {
     }
     if (action === 'return-current') await this.returnCurrentSelection()
     if (action === 'source') await this.renderSelection(false)
-    if (action === 'focus-app') this.app?.reveal(undefined, false)
+    if (action === 'focus-app') await this.focusApplication()
     if (action === 'focus-context') {
       if (this.summaryComposition) await this.showLearningSummary()
       else this.contextPanel?.reveal(undefined, false)
@@ -11915,6 +11918,8 @@ export class StudyWorkspace {
     this.selectedNodeHistory = undefined
     this.selectedNodeHistoryLearningDecision = undefined
     this.selectedNodeHistoryLearningMaterial = undefined
+    // The retired replay's output index goes with it, so its entries leave the extension host's memory.
+    this.selectedNodeHistoryOutputIndex = undefined
     this.selectedNodeHistorySequence = undefined
     this.selectedNodeHistoryStepId = undefined
     this.selectedNodeHistoryDebugAvailable = false
@@ -13925,6 +13930,17 @@ export class StudyWorkspace {
   }
 
   /**
+   * Brings the Application pane to the front, building it again first when the learner closed it while a test replay is selected, so Show recorded output and Focus application show the selected moment's recorded output (DS7); called for the Study pane's `focus-app` action.
+   * The reader's own entry ({@link open}) rebuilds the closed pane and draws the selected moment into it. Outside a test replay a closed pane stays closed: a browser replay and a live run own their pane's lifecycle.
+   * @example await this.focusApplication()
+   */
+  private async focusApplication(): Promise<void> {
+    if (!this.app && this.selectedNodeHistory && !this.recordingActive)
+      await this.open()
+    this.app?.reveal(undefined, false)
+  }
+
+  /**
    * Shows a selected test replay in the Application pane as one document per history and posts each later moment into it (EN3), so moving through the replay never reloads the page and the learner's scroll position, text selection and focus survive; called by {@link presentApplication} for every render and refresh, and by {@link publish} for every published change, while a test replay is selected.
    * The document is written again only for another history or another pane; an unchanged view's generation posts nothing. A hidden pane's restore copy follows the latest view ({@link BrowserViewport.updateHistory}).
    * @param message - The Study message whose test replay is shown.
@@ -13957,7 +13973,8 @@ export class StudyWorkspace {
       view,
     }
     void this.app.webview.postMessage(update)
-    this.viewport?.updateHistory(capturedAppHtml(message))
+    // The restore copy is written only if a replacement panel needs it, not at every moment.
+    this.viewport?.updateHistory(() => capturedAppHtml(message))
   }
 
   /**
@@ -21715,8 +21732,8 @@ export class StudyWorkspace {
         throw new Error(
           `There is no ${message.direction} ${message.unit ?? 'event'} in this Node history.`,
         )
-      // Next and Previous show the event's first step (DS21).
-      this.selectedNodeHistoryStepId = undefined
+      // Next and Previous show the event's first step (DS21), once the move commits.
+      this.nodeHistoryStepChoice = { stepId: undefined }
       await this.selectNodeHistoryEvent(history, target)
     }
     if (message.type === 'node-history-event') {
@@ -21729,8 +21746,8 @@ export class StudyWorkspace {
         throw new Error(
           'Select the matching saved Node history before navigating its timeline.',
         )
-      // A step's action selects its event and that step; an event's own control, the event's first step (DS21).
-      this.selectedNodeHistoryStepId = message.stepId
+      // A step's action selects its event and that step; an event's own control, the event's first step (DS21), once the selection commits.
+      this.nodeHistoryStepChoice = { stepId: message.stepId }
       await this.selectNodeHistoryEvent(history, message.sequence)
     }
     if (message.type === 'node-history-stop') {
@@ -23178,6 +23195,9 @@ export class StudyWorkspace {
     alignPlayback = true,
   ): Promise<void> {
     const request = ++this.selectedNodeHistoryRequest
+    // The step this selection shows is taken now, so a later selection's choice is never applied to this one.
+    const stepChoice = this.nodeHistoryStepChoice
+    this.nodeHistoryStepChoice = undefined
     if (publish) this.nodeHistoryPlaybackController?.pause()
     const entry = history.entries.find((value) => value.sequence === sequence)
     if (!entry)
@@ -23248,6 +23268,15 @@ export class StudyWorkspace {
       this.report('history-position', error)
     }
     if (request !== this.selectedNodeHistoryRequest) return
+    // A chosen step stays only with its own moment: a selection that lands on another event without a choice of its own (a seek, Play, Inspect) shows that event's first step (DS21).
+    this.selectedNodeHistoryStepId = nextNodeHistoryStepId(
+      stepChoice,
+      {
+        sequence: this.selectedNodeHistorySequence,
+        stepId: this.selectedNodeHistoryStepId,
+      },
+      entry.sequence,
+    )
     this.selectedNodeHistorySequence = entry.sequence
     this.selectedNodeHistoryPage = Math.floor(
       history.entries.findIndex((value) => value.sequence === entry.sequence) /

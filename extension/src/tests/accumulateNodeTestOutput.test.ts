@@ -190,3 +190,44 @@ test('a chunk of only terminal controls on the other stream leaves an unfinished
     { channel: 'stdout', text: 'job 2 scheduled', number: 1 },
   ])
 })
+
+// Value: protects=each standard-error line's `[stderr] ` mark counts toward the kept tail and toward the characters left out, so the pane never shows more than its limit of shown text and says exactly how much it left out; fails_when=the mark is left out of a line's cost, so a tail of standard-error lines keeps more than the limit and the left-out count is too small; why_new=Step 9's testing review found every limit test written with standard-output lines only; seam=none; no_claim=the cut of a standard-error line whose mark does not fit (F114)
+test('standard-error marks count toward the kept tail and the characters left out', () => {
+  // Arrange
+  const index = indexNodeTestOutput([
+    printed(1, 'stderr', 'warn one\n'),
+    printed(2, 'stderr', 'warn two\n'),
+  ])
+
+  // Act
+  const shown = accumulateNodeTestOutput(index, 2, 18)
+
+  // Assert
+  assert.deepEqual(shown, {
+    lines: [{ channel: 'stderr', text: 'warn two', number: 1 }],
+    omittedCharacters: 18,
+    startsMidLine: false,
+    inspectorLines: 0,
+    hasOutput: true,
+  })
+})
+
+// Value: protects=an unfinished last line longer than the tail, such as a progress line a reporter redraws with carriage returns and never ends, keeps its end, is marked cut and counts no line feed; fails_when=the cut of an unfinished line loses a character or counts a line feed it does not have, so its kept end or the left-out count is off by one; why_new=Step 9's testing review found only lines ending with a line feed cut in the tests; seam=none; no_claim=how the pane renders the cut line
+test('an unfinished last line longer than the tail keeps its end and counts no line feed', () => {
+  // Arrange
+  const index = indexNodeTestOutput([
+    printed(1, 'stdout', 'done\nprogress 1 2 3'),
+  ])
+
+  // Act
+  const shown = accumulateNodeTestOutput(index, 1, 5)
+
+  // Assert
+  assert.deepEqual(shown, {
+    lines: [{ channel: 'stdout', text: '1 2 3', number: 1, cut: true }],
+    omittedCharacters: 14,
+    startsMidLine: true,
+    inspectorLines: 0,
+    hasOutput: true,
+  })
+})

@@ -185,3 +185,41 @@ test('an Output entry names the surface, the study, the profile, the versions, t
     'HISTORY_SEAL_FAILED · study a_b · profile node-test\nCodebook 0.2.33 (API 1.8) · Visual Studio Code 1.143.0\nCause: ENOSPC: no space left on device, write\nat NodeTestHistoryWriter.finish (~/dist/nodeTestHistoryStore.js:812:13)',
   )
 })
+
+// Value: protects=the Study section's status line names a test replay that is still recording, and the capture of a partial or interrupted one, as Saved studies does; fails_when=a recording replay reads a verdict and a capture it does not have yet, or a partial or interrupted capture reads another word; why_new=Step 9's testing review found only a complete replay's status line pinned; seam=none; no_claim=which history the section shows
+test('the Study section status names a recording, partial or interrupted test replay', () => {
+  // Arrange
+  const summary = {
+    verification: 'verified' as const,
+    verdict: 'Test failed · exit code 1' as const,
+    stopCount: 1,
+    explainedStopCount: 0,
+  }
+
+  // Act
+  const words = [
+    describeNodeTestReplay({
+      kind: 'study-status',
+      summary: {
+        ...summary,
+        status: 'recording',
+        verdict: 'No result recorded',
+      },
+    }),
+    describeNodeTestReplay({
+      kind: 'study-status',
+      summary: { ...summary, status: 'partial' },
+    }),
+    describeNodeTestReplay({
+      kind: 'study-status',
+      summary: { ...summary, status: 'interrupted' },
+    }),
+  ]
+
+  // Assert
+  assert.deepEqual(words, [
+    'Test replay · recording',
+    'Test failed · exit code 1 · capture partial · 0 of 1 stops explained',
+    'Test failed · exit code 1 · capture interrupted · 0 of 1 stops explained',
+  ])
+})

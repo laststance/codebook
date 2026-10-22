@@ -5,6 +5,7 @@ import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { studyHtml } from '../ui/studyHtml'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
@@ -357,6 +358,124 @@ test('closing the Application pane makes the test replay section say so and movi
   }
 })
 
+// Value: protects=Show recorded output, the Study line under "The Application pane is closed.", brings a closed Application pane back with the selected moment's recorded output, so the learner who closed the pane by hand can read the output again without leaving the replay; fails_when=the button sends an action that needs all three Study panes (Restore Study arrangement fails with "The three retained Study panes are unavailable."), the action leaves the pane closed, or the new pane shows another moment's output or no output document; why_new=Step 7's coverage audit and Step 9's QA found the line's button bound to Restore, which cannot rebuild a closed pane (DS7); seam=none; no_claim=the native placement of the new pane, which the harness does not lay out (stand-ins: the workspace harness's closeTabByHand, its native panel list and the panel's recorded document)
+test('Show recorded output brings a closed Application pane back at the selected moment', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    const closedPane = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    harness.closeTabByHand(closedPane!.nativeTab)
+    await waitUntil(
+      () => lastView(harness)?.nodeHistorySection?.applicationClosed === true,
+      'the section says the Application pane is closed',
+      2_000,
+    )
+    // The learner moves on while the pane is closed: the reopened pane shows this later moment.
+    harness.receiveContext({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'stop',
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      'Next stop reaches the second stop',
+      2_000,
+    )
+
+    // Act
+    // The Study line's button sends its data-action through the pane's action message, as a click does.
+    harness.receiveContext({
+      type: 'action',
+      revision: lastView(harness)!.revision,
+      action: 'focus-app',
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistorySection?.applicationClosed === false,
+      'the section says the Application pane is back',
+      3_000,
+    )
+    const reopened = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+
+    // Assert
+    assert.match(
+      studyHtml('context'),
+      /<div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">Show recorded output<\/button><\/div>/,
+    )
+    assert.notEqual(reopened, undefined)
+    assert.notEqual(reopened, closedPane)
+    assert.match(reopened!.webview.html, /<pre id="test-output"/)
+    assert.match(
+      reopened!.webview.html,
+      /<p id="test-output-time" class="status">Recorded test output · 0\.30 s<\/p>/,
+    )
+    assert.match(reopened!.webview.html, /theme switched/)
+    assert.equal(
+      lastView(harness)?.nodeHistorySection?.pointer,
+      'Output up to this moment is in the Application pane.',
+    )
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 4)
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=leaving a test replay for Live releases the replay's output index with the rest of its selection, so a journal of up to 8 MiB (10,000 entries with their debugger snapshots) leaves the extension host's memory; fails_when=the index, which holds the whole history and a copy of its output lines, stays referenced after the selection is retired, until another test replay is opened; why_new=Step 9's performance review found the PR-B1 index cache outliving retireNodeHistorySelection; seam=none; no_claim=when the garbage collector frees it (stand-ins: the workspace's private cache field, read through a type that names it)
+test('returning to Live releases the test replay’s output index with its selection', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    const cache = harness.reader as unknown as {
+      selectedNodeHistoryOutputIndex?: unknown
+    }
+    const indexWhileShown = cache.selectedNodeHistoryOutputIndex
+
+    // Act
+    await harness.reader.action('return-current')
+    await waitUntil(
+      () => lastView(harness)?.nodeHistory === undefined,
+      'the reader leaves the test replay',
+      2_000,
+    )
+
+    // Assert
+    assert.notEqual(indexWhileShown, undefined)
+    assert.equal(cache.selectedNodeHistoryOutputIndex, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
 /**
  * Saves learning material that explains a two-stop test replay's first stop (sequence 2) with two steps, so the stop shows `read` first and `keep` once the learner chooses it; the replay's step ids repeat from one replay to the next, as a chat's explanations of two runs of one test do.
  * @param harness - The workspace harness whose service saves the material.
@@ -402,6 +521,144 @@ async function explainFirstStop(
     },
   })
 }
+
+// Value: protects=a step the learner chose stays only with its own moment: a seek or an Inspect that leaves the moment and comes back shows that moment's first step, as Previous stop and Next stop do (DS21); fails_when=the chosen step outlives the move and returns when the selection comes back to its event (the explanation of `keep` in place of `read`); why_new=Step 9's state-machines review found seek, Play and Inspect leaving the choice in place; seam=none; no_claim=Play's own pacing
+test('a seek or an Inspect away from a chosen step and back shows the moment’s first step', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    await explainFirstStop(harness, history)
+    /** Chooses `keep` on the first stop, as a click on its step action does. */
+    const chooseKeep = async (): Promise<void> => {
+      harness.receiveContext({
+        type: 'node-history-event',
+        revision: lastView(harness)!.revision,
+        studyId: history.studyId,
+        sequence: 2,
+        stepId: 'keep',
+      })
+      await waitUntil(
+        () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
+        'the chosen step is shown',
+        2_000,
+      )
+    }
+    /** Waits until the selection reaches an event. */
+    const reach = (sequence: number, what: string) =>
+      waitUntil(
+        () =>
+          lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
+          !lastView(harness)?.loading,
+        what,
+        2_000,
+      )
+    await chooseKeep()
+
+    // Act
+    for (const positionMs of [300, 200]) {
+      harness.receiveContext({
+        type: 'node-history-playback',
+        revision: lastView(harness)!.revision,
+        studyId: history.studyId,
+        action: 'seek',
+        positionMs,
+      })
+      await reach(positionMs === 300 ? 4 : 2, `the seek to ${positionMs} ms`)
+    }
+    const afterSeeks = lastView(harness)?.nodeHistorySection?.selectedStepId
+    await chooseKeep()
+    for (const sequence of [4, 2]) {
+      harness.receiveContext({
+        type: 'node-history-stop',
+        revision: lastView(harness)!.revision,
+        studyId: history.studyId,
+        sequence,
+      })
+      await reach(sequence, `Inspect stop ${sequence}`)
+    }
+    const afterInspects = lastView(harness)?.nodeHistorySection?.selectedStepId
+
+    // Assert
+    assert.equal(afterSeeks, 'read')
+    assert.equal(afterInspects, 'read')
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a selection the reader refuses (a step's action naming an event the history does not hold) changes nothing the learner chose: the selected moment and the step chosen on it stay, and the refusal is said by name; fails_when=the chosen step is replaced before the selection commits, so the refused press shows another step of the same moment (here the stop's first step, `read`, in place of the chosen `keep`); why_new=Step 9's core and testing reviews found the step assigned before the selection was awaited; seam=none; no_claim=a selection superseded by a newer one, whose own choice then stands
+test('a refused step action keeps the selected moment and the step the learner chose', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    await explainFirstStop(harness, history)
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+      stepId: 'keep',
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
+      'the chosen step is shown',
+      2_000,
+    )
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 99,
+      stepId: 'read',
+    })
+    await waitUntil(
+      () => (lastView(harness)?.errors.length ?? 0) > 0,
+      'the selection is refused',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(
+      lastView(harness)?.errors[0],
+      'Error: The requested Node history event is unavailable.',
+    )
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.equal(lastView(harness)?.nodeHistorySection?.selectedStepId, 'keep')
+    assert.equal(
+      lastView(harness)?.nodeHistorySection?.explanation,
+      'applyTheme keeps the theme it read.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
 
 // Value: protects=a move to a stop or an event that does not exist (a press that raced ahead of the disabled button, or a keyboard repeat) is refused by name and changes nothing: Previous stop at the first stop and Next event at the result each leave one error line that names the move, and the selected moment, the step the learner chose and the Application pane stay as they were; fails_when=a refused move resets the chosen step (the explanation changes with no new moment), moves the selection, posts a view into the Application pane, says nothing, or names the wrong unit; why_new=PR-B1 adds the stop unit (DS12) and keeps the chosen step apart from the selected event (DS21), so the handler must refuse before it clears the choice; no test pressed a move past either end; seam=none; no_claim=the buttons' disabled state, which the Reader DOM check reads and which keeps a learner from pressing a move that does not exist
 test('a move to a stop or event that does not exist is refused by name and keeps the moment, the chosen step and the Application pane', async () => {
@@ -570,7 +827,6 @@ test('opening another test replay shows its loading line first and starts on its
       .find((panel) => panel.kind === 'codebook.scopedBrowser')
 
     // Assert
-    assert.equal(whileOpening[0]?.view.state, 'loading')
     assert.equal(
       whileOpening[0]?.view.placeholder,
       'Loading recorded test output…',
@@ -580,7 +836,6 @@ test('opening another test replay shows its loading line first and starts on its
       application?.webview.html ?? '',
       /<p id="test-output-placeholder" class="muted">Loading recorded test output…<\/p>/,
     )
-    assert.equal(whileOpening.at(-1)?.view.state, 'event')
     assert.equal(
       whileOpening.at(-1)?.view.time,
       'Recorded test output · 0.20 s',

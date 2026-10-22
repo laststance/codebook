@@ -2346,6 +2346,10 @@ async function check(page, options, collected) {
           follow: window.savedState?.testOutputFollow,
         }
       })
+      // The webview state as the document left it at the result, for the reload case below.
+      const stateAtResult = await applicationPage.evaluate(
+        () => window.savedState,
+      )
       // Assert
       cases.push({
         name: 'the Application document of a test replay shows only the output up to its moment, and an in-place update to the result keeps the learner’s scroll position, selection and focus, ignores an older view and returns to the end with Jump to latest (Design 8)',
@@ -2399,7 +2403,6 @@ async function check(page, options, collected) {
           number: index + 1000,
         }))
         const view = {
-          state: 'event',
           time: 'Recorded test output · 0.90 s',
           test: 'src/jobs.test.ts',
           name: 'Recorded test output · src/jobs.test.ts · 0.90 s',
@@ -2437,6 +2440,97 @@ async function check(page, options, collected) {
           longUpdate.underASecond &&
           longUpdate.lines === 32768 &&
           longUpdate.last === 'last\n',
+      })
+      // Value: protects=the follow choice belongs to its own test replay (DS20): a document of another replay written into the same Application pane starts at the end of its output, although the learner stopped following in the first one, while a document of the same replay, as its restore copy writes it, keeps the learner's choice; fails_when=the webview state keeps one follow choice for every replay, so the next replay opens at the top of its output with Jump to latest shown; why_new=Step 9's testing and maintainability reviews found the choice kept under one key that outlives a replay; seam=none; no_claim=VS Code's keeping of webview state across documents, which the page's saved-state stand-in plays
+      // Act: the pane's document written again, once for another replay and once for this one, each with a saved choice not to follow; each write gets a page of its own, as a webview loads a new document in a fresh page.
+      const sameReplay = await applicationPage.evaluate(
+        () => window.savedState?.testOutputHistory,
+      )
+      const followAfterWrite = async (savedState) => {
+        const writtenPage = await page.context().newPage()
+        await writtenPage.setViewportSize({ width: 760, height: 360 })
+        await writtenPage.goto(options.url)
+        await writtenPage.evaluate((state) => {
+          window.savedState = state
+          window.acquireVsCodeApi = () => ({
+            getState: () => window.savedState,
+            setState(next) {
+              window.savedState = next
+            },
+            postMessage() {},
+          })
+        }, savedState)
+        await writtenPage.setContent(options.html.application)
+        await writtenPage.evaluate(
+          () =>
+            new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+        )
+        const reading = await writtenPage.evaluate(() => {
+          const output = document.getElementById('test-output')
+          return {
+            atEnd:
+              output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
+            jumpShown: !document.getElementById('test-output-jump').hidden,
+          }
+        })
+        await writtenPage.close()
+        return reading
+      }
+      // Value: protects=an Application document that the editor loads again from its first write (the pane moved to another window, webviews reloaded) shows the latest moment it had received, with that moment's time and verdict, instead of the moment it was first written with; fails_when=the reloaded document shows its first moment or its loading line while the Study pane, the source and the debugger show the latest one; why_new=Step 9's state-machines review found the pane's html written once per replay and each later moment only posted; seam=none; no_claim=VS Code's own reload, which the fresh page with the kept state stands in for
+      // Act: the first write loaded again in a fresh page with the state the document kept at the result.
+      const reloadedPage = await page.context().newPage()
+      await reloadedPage.setViewportSize({ width: 760, height: 360 })
+      await reloadedPage.goto(options.url)
+      await reloadedPage.evaluate((state) => {
+        window.savedState = state
+        window.acquireVsCodeApi = () => ({
+          getState: () => window.savedState,
+          setState(next) {
+            window.savedState = next
+          },
+          postMessage() {},
+        })
+      }, stateAtResult)
+      await reloadedPage.setContent(options.html.application)
+      const reloaded = await reloadedPage.evaluate(() => ({
+        time: document.getElementById('test-output-time').textContent,
+        end: document.getElementById('test-output-end').textContent,
+        endShown: !document.getElementById('test-output-end').hidden,
+      }))
+      await reloadedPage.close()
+      // Assert
+      cases.push({
+        name: 'an Application document loaded again from its first write shows the latest moment it had received (EN3)',
+        actual: reloaded,
+        passed:
+          JSON.stringify(reloaded) ===
+          JSON.stringify({
+            time: 'Recorded test output · 0.90 s',
+            end: 'Test passed · exit code 0',
+            endShown: true,
+          }),
+      })
+      const anotherReplay = await followAfterWrite({
+        testOutputFollow: false,
+        testOutputHistory: 'another-test-replay',
+      })
+      const sameReplayKept = await followAfterWrite({
+        testOutputFollow: false,
+        testOutputHistory: sameReplay,
+      })
+      // Assert
+      cases.push({
+        name: 'a test replay’s Application document follows its own output although the learner stopped following in another replay, and the same replay’s document keeps the learner’s choice (DS20)',
+        actual: { sameReplay, anotherReplay, sameReplayKept },
+        passed:
+          typeof sameReplay === 'string' &&
+          JSON.stringify({ anotherReplay, sameReplayKept }) ===
+            JSON.stringify({
+              anotherReplay: { atEnd: true, jumpShown: false },
+              sameReplayKept: { atEnd: false, jumpShown: true },
+            }),
       })
       await applicationPage.close()
       // Assert
@@ -7688,7 +7782,6 @@ const replayFirstLines = [
 const testReplayViews = {
   first: {
     generation: 1,
-    state: 'event',
     time: 'Recorded test output · 0.10 s',
     test: replayTestName,
     name: `Recorded test output · ${replayTestName} · 0.10 s`,
@@ -7697,7 +7790,6 @@ const testReplayViews = {
   },
   result: {
     generation: 2,
-    state: 'event',
     time: 'Recorded test output · 0.90 s',
     test: replayTestName,
     name: `Recorded test output · ${replayTestName} · 0.90 s`,
