@@ -76,6 +76,7 @@ async function nodeRunHarness({
   closeFailures = 0,
   stopFailures = 0,
   outputRefusesOnceClosed = false,
+  unansweredRequest,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -125,6 +126,11 @@ async function nodeRunHarness({
   stopFailures?: number
   /** The output terminal refuses a reveal or a write once the run released it or the learner closed it, as the real terminal does ("Owned Node test output terminal was closed."). */
   outputRefusesOnceClosed?: boolean
+  /** The adapter never answers the `nth` request of this command (1 is the first), as an adapter that hangs; a `continue` held this way also never resumes the test. */
+  unansweredRequest?: {
+    command: 'continue' | 'stackTrace' | 'scopes'
+    nth: number
+  }
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -203,6 +209,13 @@ async function nodeRunHarness({
   const bindingReadStarted = new Promise<void>((resolve) => {
     bindingReadAsked = resolve
   })
+  // How many requests of the unanswered command the run has sent.
+  let unansweredCommandRequests = 0
+  let unansweredRequestAsked = (): void => {}
+  /** Settles when the run sends the request the adapter never answers. */
+  const unansweredRequestStarted = new Promise<void>((resolve) => {
+    unansweredRequestAsked = resolve
+  })
   const stopped = (reason: string, hitBreakpointIds?: number[]) =>
     tracker?.onDidSendMessage?.({
       type: 'event',
@@ -259,6 +272,15 @@ async function nodeRunHarness({
     async customRequest(command: string): Promise<unknown> {
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
+      // A hung adapter leaves this one request unanswered for as long as the caller waits.
+      if (
+        command === unansweredRequest?.command &&
+        ++unansweredCommandRequests === unansweredRequest.nth
+      ) {
+        if (command === 'continue') calls.push('continue')
+        unansweredRequestAsked()
+        return new Promise<never>(() => {})
+      }
       if (command === 'continue') {
         calls.push('continue')
         // The test runs again: a learner who types now does so between the resume and the next stop.
@@ -709,6 +731,7 @@ async function nodeRunHarness({
     reportDirectory,
     sourceFile,
     bindingReadStarted,
+    unansweredRequestStarted,
     cleanup: async (): Promise<void> => {
       await rm(directory, { recursive: true, force: true })
       await rm(reportDirectory, { recursive: true, force: true })
@@ -1963,6 +1986,214 @@ test('a run cancelled while the adapter does not answer the breakpoint read ends
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
   } finally {
     await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=Stop, Save and the next start while the debug adapter never answers the final continue: the stop ends the run instead of waiting for the adapter; fails_when=the final continuation awaits its continue without the run's cancellation, so the release waits on that continuation for good; why_new=/ship Step 11 Codex adversarial review (P1); seam=the harness adapter holds the second continue; no_claim=a real js-debug hang, and the 20 s bound of an answer that never comes while nobody stops the run
+test('a stop while the debug adapter never answers the final continue ends the run instead of waiting for the adapter', async () => {
+  // Arrange: the first continue leaves the entry pause; the adapter never answers the second, the final continuation's.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'continue', nth: 2 },
+  })
+  try {
+    await harness.run.prepare()
+    const completing = harness.run.complete().then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.equal(await completing, 'Error: Cancelled the final continuation')
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the final continuation re-reads the paused frame of a refreshed pause from an adapter that never answers: the stop ends the run; fails_when=the pause check awaits its stack read without the run's cancellation, so the final continuation and the release wait for good; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1); seam=the harness adapter holds the stack read after a native stack refresh; no_claim=a real js-debug hang
+test('a stop while the debug adapter never answers the paused-frame read of a refreshed pause ends the run', async () => {
+  // Arrange: the first stack read finds the declared stop; after a native stack refresh the final continuation reads the paused frame again, and the adapter never answers.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'stackTrace', nth: 2 },
+  })
+  try {
+    await harness.run.prepare()
+    harness.refreshPause()
+    const completing = harness.run.complete().then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.equal(await completing, 'Error: Cancelled the paused frame')
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the adapter never answers the continue toward the next declared stop: that continuation ends, so the service's stop, which waits for the run's continuation, ends too; fails_when=the continuation awaits its continue without the run's cancellation; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1 and the Claude adversarial review's finding 5); seam=the harness adapter holds the second continue of a two-stop run; no_claim=the service's own wait for the continuation (nodeTestRunLifecycle tests)
+test('a stop while the debug adapter never answers the continue to the next declared stop ends that continuation', async () => {
+  // Arrange: the first continue leaves the entry pause; the adapter never answers the second, the continuation from stop 1 toward stop 2.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    unansweredRequest: { command: 'continue', nth: 2 },
+  })
+  try {
+    await harness.run.prepare()
+    const advancing = harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    await harness.run.stop()
+    const outcome = await Promise.race([
+      advancing,
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(
+      outcome,
+      'Error: Cancelled the continuation to the next declared stop',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the adapter never answers the continue from the entry pause: the preparation ends, so the stop, which waits for it, ends; fails_when=the preparation awaits that continue without the run's cancellation; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1); seam=the harness adapter holds the first continue; no_claim=a real js-debug hang
+test('a stop while the debug adapter never answers the continue from the entry pause ends the preparation', async () => {
+  // Arrange: the adapter never answers the first continue, the one that leaves the entry pause.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'continue', nth: 1 },
+  })
+  try {
+    const preparing = harness.run.prepare().then(
+      () => 'prepared',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.match(await preparing, /Cancelled the entry continuation/)
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the adapter never answers the stack read that checks whether a pause is the declared stop: the preparation ends, so the stop ends; fails_when=the stop check awaits its stack read without the run's cancellation; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1); seam=the harness adapter holds the first stack read; no_claim=a real js-debug hang
+test('a stop while the debug adapter never answers the stack read of a pause ends the preparation', async () => {
+  // Arrange: the test reaches the declared stop, and the adapter never answers the stack read that checks it.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'stackTrace', nth: 1 },
+  })
+  try {
+    const preparing = harness.run.prepare().then(
+      () => 'prepared',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.match(await preparing, /Cancelled the paused stack/)
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a stop while the adapter never answers the scopes read of the declared stop's frame: the preparation ends, so the stop ends; fails_when=the capture awaits its scopes read without the run's cancellation; why_new=the sibling of the final continue's hang (/ship Step 11, Codex P1 and the Claude adversarial review's finding 5); seam=the harness adapter holds the first scopes read; no_claim=a real js-debug hang
+test('a stop while the debug adapter never answers the scopes read of the declared stop ends the preparation', async () => {
+  // Arrange: the declared stop is checked, and the adapter never answers the scopes read of its frame.
+  const harness = await nodeRunHarness({
+    unansweredRequest: { command: 'scopes', nth: 1 },
+  })
+  try {
+    const preparing = harness.run.prepare().then(
+      () => 'prepared',
+      (error: unknown) => String(error),
+    )
+    await harness.unansweredRequestStarted
+
+    // Act
+    const outcome = await Promise.race([
+      harness.run.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'stopped')
+    assert.match(await preparing, /Cancelled the stop's scopes/)
+  } finally {
+    // Bounded: a stop that waits for the adapter fails the test above instead of hanging the file here.
+    await Promise.race([
+      harness.run.stop(),
+      new Promise((resolve) => setTimeout(resolve, 1_000)),
+    ])
     await harness.cleanup()
   }
 })

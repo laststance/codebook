@@ -24,6 +24,7 @@ import type { ReplayDebugSnapshot } from './replayDebugSchemas'
 import type { NodeTestRuntime } from './runtime'
 import { codebookStopLedger } from './runtimeSupport/codebookStopLedger'
 import { RESUME_COMMANDS } from './runtimeSupport/constants'
+import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
@@ -316,9 +317,14 @@ export class OwnedNodeTestRun {
       signal,
     )
     const fromIndex = this.stops.length
-    await this.bound.session.customRequest('continue', {
-      threadId: entry.threadId,
-    })
+    // An adapter that never answers would hold the preparation, which a stop waits for; every request below takes the run's cancellation for the same reason.
+    await awaitResponse(
+      this.bound.session.customRequest('continue', {
+        threadId: entry.threadId,
+      }),
+      'the entry continuation',
+      this.abort.signal,
+    )
     this.record('node-test.entry-continued', {
       elapsedMs: this.owned.elapsedMs(),
     })
@@ -447,9 +453,13 @@ export class OwnedNodeTestRun {
         vscode.workspace.textDocuments,
       )
       const fromIndex = this.stops.length
-      await bound.session.customRequest('continue', {
-        threadId: previous.threadId,
-      })
+      await awaitResponse(
+        bound.session.customRequest('continue', {
+          threadId: previous.threadId,
+        }),
+        'the continuation to the next declared stop',
+        this.abort.signal,
+      )
       return await this.captureStop(previous.index + 1, fromIndex)
     } catch (error) {
       await this.release()
@@ -510,11 +520,15 @@ export class OwnedNodeTestRun {
           let examination = examined.get(latest)
           // Each pause is inspected once, while it is current; an earlier pause's thread may already be running.
           if (!examination) {
-            const trace = (await bound.session.customRequest('stackTrace', {
-              threadId: latest.threadId,
-              startFrame: 0,
-              levels: NODE_REPLAY_DEBUG_MAX_FRAMES,
-            })) as DebugProtocol.StackTraceResponse['body']
+            const trace = (await awaitResponse(
+              bound.session.customRequest('stackTrace', {
+                threadId: latest.threadId,
+                startFrame: 0,
+                levels: NODE_REPLAY_DEBUG_MAX_FRAMES,
+              }),
+              'the paused stack',
+              this.abort.signal,
+            )) as DebugProtocol.StackTraceResponse['body']
             const checkedFrame = selectCheckedNodeFrame(
               trace.stackFrames,
               selected.file,
@@ -595,9 +609,13 @@ export class OwnedNodeTestRun {
       AbortSignal.timeout(NODE_TEST_ATTACH_TIMEOUT_MS),
     ])
     this.assertActive(bound.session.id)
-    const scopes = (await bound.session.customRequest('scopes', {
-      frameId: target.frame.id,
-    })) as DebugProtocol.ScopesResponse['body']
+    const scopes = (await awaitResponse(
+      bound.session.customRequest('scopes', {
+        frameId: target.frame.id,
+      }),
+      "the stop's scopes",
+      signal,
+    )) as DebugProtocol.ScopesResponse['body']
     const local =
       scopes.scopes.find((scope) =>
         scope.name.toLowerCase().includes('local'),
@@ -702,7 +720,7 @@ export class OwnedNodeTestRun {
    * Continues only the accepted paused session and waits for the real test command outcome; the last continuation {@link StudyService.continue} makes.
    * The process's exit facts are kept when Vitest's report cannot confirm the cited test (EN5): a non-zero exit or a signal already says the test did not pass, so it is returned with the report's problem beside it; an exit 0 rejects, so nothing claims a pass the report did not confirm.
    * @returns The exit code or signal, the bounded output, the elapsed time, and `reportFailure` for a failing exit whose report could not confirm the cited test.
-   * @throws When there is no final accepted pause, the pause was resumed, the run was cancelled, or an exit 0 has no report that shows the cited test passed.
+   * @throws When there is no final accepted pause, the pause was resumed, the run was cancelled (also while the adapter has not answered the continue, which is otherwise bounded by {@link ACTIVE_TIMEOUT_MS}), or an exit 0 has no report that shows the cited test passed.
    * @example const result = await run.complete() // => { exitCode: 0, signal: null, output: '…', elapsedMs: 3120 }
    */
   complete(): ReturnType<NodeTestRuntime['complete']> {
@@ -741,7 +759,12 @@ export class OwnedNodeTestRun {
     await this.breakpoint?.retire(bound.session, signal)
     // A stale continuation would otherwise resume whichever later pause the learner reached during retirement.
     await this.assertAcceptedPause(stop, 'the final continuation')
-    await bound.session.customRequest('continue', { threadId: stop.threadId })
+    // A release waits for this continuation before it removes the report, so an unanswered continue must not outlive the run's cancellation.
+    await awaitResponse(
+      bound.session.customRequest('continue', { threadId: stop.threadId }),
+      'the final continuation',
+      this.abort.signal,
+    )
     // The attach timeout bounds only the retirement above; the remaining tests may run until cancellation or the run deadline.
     const result = await owned.result(this.abort.signal)
     const elapsedMs = owned.elapsedMs()
@@ -868,11 +891,15 @@ export class OwnedNodeTestRun {
       )
     )
       throw refusal
-    const trace = (await this.bound!.session.customRequest('stackTrace', {
-      threadId: stop.threadId,
-      startFrame: 0,
-      levels: 1,
-    })) as DebugProtocol.StackTraceResponse['body']
+    const trace = (await awaitResponse(
+      this.bound!.session.customRequest('stackTrace', {
+        threadId: stop.threadId,
+        startFrame: 0,
+        levels: 1,
+      }),
+      'the paused frame',
+      this.abort.signal,
+    )) as DebugProtocol.StackTraceResponse['body']
     const pausedFrame = trace.stackFrames[0]
     this.assertActive(stop.sessionId)
     // Anything else that resumed the thread, such as another inspector client, leaves a different frame or a newer event.
