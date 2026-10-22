@@ -159,3 +159,85 @@ test('a list reads at most four new histories at a time', async (context) => {
     await cleanup()
   }
 })
+
+/** A learning material that explains the one output entry every history of {@link storeWithSealedHistories} holds. */
+const OUTPUT_MATERIAL = {
+  question: 'What did the scheduler print?',
+  title: 'Scheduler output',
+  summary: 'The test printed its file before the learner stopped it.',
+  participants: [
+    { id: 'test', label: 'Test' },
+    { id: 'scheduler', label: 'Scheduler' },
+  ],
+  steps: [
+    {
+      id: 'output',
+      from: 'test',
+      to: 'scheduler',
+      label: 'Output',
+      explanation: 'Vitest named the test file.',
+      evidence: 'observed' as const,
+      reference: {
+        type: 'output' as const,
+        sequence: 1,
+        channel: 'stdout' as const,
+      },
+    },
+  ],
+}
+
+// Value: protects=the memo of a history whose folder is gone: the next list forgets it and the store no longer vouches for it as listed, while the other history stays listed; fails_when=a removed history stays listed after a list, or the prune forgets one that is still there; why_new=the prune searched an array for each memo, quadratic in the histories (F77 part 5); seam=none; no_claim=the prune's running time (a set lookup replaces the array search)
+test('a history whose folder was removed is forgotten by the next list and the other stays listed', async () => {
+  // Arrange
+  const { directory, store, studyIds, cleanup } =
+    await storeWithSealedHistories(2)
+  try {
+    await store.list()
+    await rm(join(directory, NODE_TEST_HISTORY_DIRECTORY, studyIds[0]!), {
+      recursive: true,
+    })
+
+    // Act
+    const listed = await store.list()
+
+    // Assert
+    assert.deepEqual(
+      listed.map((summary) => summary.studyId),
+      [studyIds[1]],
+    )
+    assert.deepEqual(
+      [
+        store.isListedHistory(studyIds[0]!),
+        store.isListedHistory(studyIds[1]!),
+      ],
+      [false, true],
+    )
+  } finally {
+    await cleanup()
+  }
+})
+
+// Value: protects=the memory bound of the summary memo: of twelve listed histories only the last eight keep the map of their citable events, so a changed material reads the journal again for exactly the other four; fails_when=every listed history keeps its map (no journal is read again), or none does (all twelve are read again); why_new=the memo kept citable maps for every listed history (F77 part 4); seam=the store's read is counted after the materials were saved; no_claim=which four histories lose their map (the oldest by creation time, then study id)
+test('only the last eight of twelve listed histories keep their citable events, so a changed material reads the other four again', async (context) => {
+  // Arrange
+  const { store, studyIds, cleanup } = await storeWithSealedHistories(12)
+  try {
+    await store.list()
+    for (const studyId of studyIds)
+      await store.saveLearningMaterial(studyId, 0, OUTPUT_MATERIAL)
+    const reads = context.mock.method(store, 'read')
+
+    // Act
+    const listed = await store.list()
+
+    // Assert
+    assert.equal(listed.length, 12)
+    assert.ok(
+      listed.every((summary) => summary.learningCoverage === 'complete'),
+    )
+    assert.equal(reads.mock.callCount(), 4)
+  } finally {
+    context.mock.restoreAll()
+    await cleanup()
+  }
+})

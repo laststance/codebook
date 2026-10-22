@@ -1378,3 +1378,6 @@ export const TRANSIENT_SEAL_ERROR_CODES: readonly string[] = [
   'EAGAIN',
   'EPERM',
 ]
+
+/** How many listed test histories keep the map of their citable events for the fast path of a changed learning material; the others read their journal again when it changes ({@link NodeTestHistoryStore.summarize}). */
+export const NODE_HISTORY_CITABLE_MEMO_LIMIT = 8

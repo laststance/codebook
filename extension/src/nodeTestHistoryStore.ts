@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path'
 
 import {
+  NODE_HISTORY_CITABLE_MEMO_LIMIT,
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_LIMIT_BYTES,
@@ -278,6 +279,8 @@ export class NodeTestHistoryStore {
   >()
   /** The last summary of each listed history with the file signals it was made from ({@link summarize}). */
   private readonly summaries = new Map<string, SummaryMemo>()
+  /** The study ids whose memo still holds its citable events ({@link rememberSummary}). */
+  private readonly citableOrder = new Set<string>()
 
   constructor(
     /** The learning directory the histories live in; a private storage root that no cause shown to the learner or the agent names ({@link sanitizeCause}). */
@@ -492,9 +495,10 @@ export class NodeTestHistoryStore {
       throw error
     })
     const studyIds = names.filter((name) => HISTORY_IDENTITY.test(name))
-    // A memo of a history whose folder is gone would keep a summary nobody lists.
-    for (const studyId of this.summaries.keys())
-      if (!studyIds.includes(studyId)) this.summaries.delete(studyId)
+    // A memo of a history whose folder is gone would keep a summary nobody lists; a set lookup keeps the prune linear (F77).
+    const present = new Set(studyIds)
+    for (const studyId of [...this.summaries.keys()])
+      if (!present.has(studyId)) this.forgetSummary(studyId)
     const summaries = await mapWithConcurrencyLimit(
       studyIds,
       NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
@@ -549,14 +553,52 @@ export class NodeTestHistoryStore {
           memo.citable,
           memo.needs,
         )
-        this.summaries.set(studyId, { ...memo, materialSignal, summary })
+        this.rememberSummary(studyId, { ...memo, materialSignal, summary })
         return summary
       }
     }
     const next = await this.readSummary(studyId, historySignal, materialSignal)
-    if (next) this.summaries.set(studyId, next)
-    else this.summaries.delete(studyId)
+    if (next) this.rememberSummary(studyId, next)
+    else this.forgetSummary(studyId)
     return next?.summary
+  }
+
+  /**
+   * Keeps a history's memo and bounds the memory of the citable maps: only the {@link NODE_HISTORY_CITABLE_MEMO_LIMIT} newest histories (by creation time, then study id) keep theirs, so a changed material of an older history reads its journal again instead of every listed history holding a map of all its events (F77).
+   * The history that loses its map is always the same one for the same set, so a list that reads one history again never makes another lose its map.
+   * @param studyId - The history's study id.
+   * @param memo - Its new memo.
+   * @example this.rememberSummary(studyId, memo)
+   */
+  private rememberSummary(studyId: string, memo: SummaryMemo): void {
+    this.summaries.set(studyId, memo)
+    if (memo.citable) this.citableOrder.add(studyId)
+    else this.citableOrder.delete(studyId)
+    while (this.citableOrder.size > NODE_HISTORY_CITABLE_MEMO_LIMIT) {
+      const creation = (id: string): string =>
+        `${this.summaries.get(id)?.summary.createdAt ?? ''}|${id}`
+      const oldest = [...this.citableOrder].reduce((left, right) =>
+        creation(left) <= creation(right) ? left : right,
+      )
+      this.citableOrder.delete(oldest)
+      const older = this.summaries.get(oldest)
+      if (older)
+        this.summaries.set(oldest, {
+          ...older,
+          citable: undefined,
+          needs: undefined,
+        })
+    }
+  }
+
+  /**
+   * Drops a history's memo with its place in the citable order; called when its folder is gone or its header no longer reads.
+   * @param studyId - The history's study id.
+   * @example this.forgetSummary(studyId)
+   */
+  private forgetSummary(studyId: string): void {
+    this.summaries.delete(studyId)
+    this.citableOrder.delete(studyId)
   }
 
   /**

@@ -1708,3 +1708,68 @@ test('the codebook_stop tool answers isError with NOT_FOUND for a run that does 
     await run.harness.close()
   }
 })
+
+// Value: protects=a continuation that finishes after the whole-run deadline already marked the test failed: the run stays failed and the late stop is not announced as a pause; fails_when=continueNodeTest sets nodePhase paused after its await, overwriting the deadline's failed phase so a failed run reads paused at a stop it cannot continue; why_new=the phase was set after the awaits without checking a deadline expiry meanwhile (F77 part 1); seam=the owned run's advance is held until the deadline passed and released right after maintain marked the run; no_claim=the real debugger's timing
+test('a continuation that finishes after the deadline marked the test failed leaves the run failed', async () => {
+  // Arrange
+  let nowMs = 1_000_000
+  let letAdvanceFinish!: () => void
+  const advanceHeld = new Promise<void>((resolve) => {
+    letAdvanceFinish = resolve
+  })
+  const run = await testRunHarness({ stops: 2, advanceHeld, now: () => nowMs })
+  try {
+    const { record } = await run.start()
+    const advancing = continueCurrentPause(run.service, record)
+    advancing.catch(() => undefined)
+    await waitUntil(() => record.nodePhase === 'advancing', 'the advance')
+    nowMs = record.deadlineAt + 1
+
+    // Act
+    run.service.maintain()
+    letAdvanceFinish()
+    await advancing.catch(() => undefined)
+    await waitUntil(() => record.stopped, 'the run released')
+
+    // Assert
+    assert.equal(record.nodePhase, 'failed')
+    assert.equal(
+      run.service.state(record).error?.message,
+      'Study wall deadline expired; history only.',
+    )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=the node-history resource summarizing the history only for its own page: its events and learning-material pages read no summary; fails_when=every page of the resource summarizes the history first, so paging through a long journal repeats a summary for each page; why_new=the resource summarized before branching (F77 part 3, F14); seam=the store's summarize is counted; no_claim=the summary's content (the coverage tests)
+test('the node-history resource summarizes only for the history page, not for its events or learning-material pages', async (context) => {
+  // Arrange
+  const run = await testRunHarness()
+  try {
+    const { record } = await run.start()
+    await continueCurrentPause(run.service, record)
+    const state = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    const historyUri = state.nodeTest!.historyUri!
+    const summaries = context.mock.method(
+      run.service.nodeHistoryStore!,
+      'summarize',
+    )
+
+    // Act
+    await readResource(run.service, `${historyUri}/events`)
+    await readResource(run.service, `${historyUri}/learning-material`)
+    const callsForSubPages = summaries.mock.callCount()
+    await readResource(run.service, historyUri)
+
+    // Assert
+    assert.equal(callsForSubPages, 0)
+    assert.equal(summaries.mock.callCount(), 1)
+  } finally {
+    context.mock.restoreAll()
+    await run.harness.close()
+  }
+})

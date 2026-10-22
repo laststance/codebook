@@ -1475,13 +1475,15 @@ export class StudyService {
         const next = await run.advance()
         await record.nodeHistoryWriter?.appendStop(next)
         record.nodeStops?.push(next)
-        record.nodePhase = 'paused'
+        // A deadline that passed during the advance already marked the test failed: the late stop is journaled, the phase stays (F77).
+        if (record.nodePhase === 'advancing') record.nodePhase = 'paused'
         return
       }
       const result = await run.complete()
       record.nodeResult = result
       await record.nodeHistoryWriter?.appendResult(result, result.elapsedMs)
-      record.nodePhase = 'completed'
+      // The same for a result that arrives after the deadline's failure (F77).
+      if (record.nodePhase === 'advancing') record.nodePhase = 'completed'
       // The exit already says the test did not pass; the run's error names why Vitest's report could not confirm the cited test.
       if (result.reportFailure !== undefined) {
         record.error = this.sanitizedError(
