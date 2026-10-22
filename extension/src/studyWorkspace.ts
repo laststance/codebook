@@ -1022,6 +1022,8 @@ export class StudyWorkspace {
   private pendingHistory?: number
   /** The request number of a Node test history that is still opening; a removal's neighbour and a delete request give way to it like to {@link pendingHistory}. */
   private pendingNodeHistory?: number
+  /** The study id of the Node test history that {@link pendingNodeHistory} is opening: only that replay's Application view reads as loading, so the replay still shown while another opens is left as it is (F143, F150). */
+  private pendingNodeHistoryStudyId?: string
   /** Replies owed to the webviews whose open request started a Recording load that is still in flight; {@link flushDeferredOpenReplies} posts them when the load has ended. */
   private deferredOpenReplies: {
     webview: Pick<vscode.Webview, 'postMessage'>
@@ -11198,6 +11200,7 @@ export class StudyWorkspace {
     try {
       // The opening marker is set inside the try, so its finally ends it even when the first publish throws.
       this.pendingNodeHistory = request
+      this.pendingNodeHistoryStudyId = studyId
       this.loading = true
       this.publish()
       await this.replaceUnavailableReplayDebugger()
@@ -11300,6 +11303,7 @@ export class StudyWorkspace {
     // A newer Node history request owns the marker by then.
     if (this.pendingNodeHistory !== request) return false
     this.pendingNodeHistory = undefined
+    this.pendingNodeHistoryStudyId = undefined
     return true
   }
 
@@ -12172,7 +12176,10 @@ export class StudyWorkspace {
         index: indexNodeTestOutput(history.entries),
       }
     // Only a test replay that is opening reads as loading, by its own marker: a background render's loading state, which may end in the middle of the open, never does.
-    const opening = this.pendingNodeHistory !== undefined
+    // The marker belongs to the replay being opened: while another replay is read, the one still shown keeps its output, scroll position and selection, and its name never stands under the loading line (F143, F150).
+    const opening =
+      this.pendingNodeHistory !== undefined &&
+      this.pendingNodeHistoryStudyId === history.header.studyId
     const key = JSON.stringify([
       history.header.studyId,
       history.entries.length,

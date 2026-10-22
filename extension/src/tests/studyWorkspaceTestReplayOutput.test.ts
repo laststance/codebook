@@ -28,14 +28,16 @@ function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
  */
 async function saveTwoStopNodeHistory(
   store: NodeTestHistoryStore,
-  options: { forged?: boolean } = {},
+  options: { forged?: boolean; testTitles?: string[] } = {},
 ) {
   const oneStop = nodeTestHistoryHeader(store.workspaceKey)
   // The second stop is declared at the same line, as a loop's second pass stops there again.
   const configuration = {
     ...oneStop.configuration,
     // A forged recording carries a right-to-left override in its title path, output and result tail (F131).
-    ...(options.forged ? { testTitles: ['suite \u202Etitle', 'works'] } : {}),
+    ...(options.forged || options.testTitles
+      ? { testTitles: options.testTitles ?? ['suite \u202Etitle', 'works'] }
+      : {}),
     additionalStops: [
       {
         ...oneStop.configuration.source,
@@ -966,6 +968,76 @@ test('a test replay’s Study message and Application header carry no bidirectio
   }
 })
 
+// Value: protects=while another test replay is read, the replay still shown keeps its output: nothing is posted into its document (no empty lines, no scroll to the top, no lost selection), the loading line carries only the name of the replay being opened, and a failed open leaves the shown replay as it was; fails_when=the shown replay receives a loading view with its own name and no lines, or an open that fails posts anything into it; why_new=F143 and F150 (the opening marker was global, so the loading view was projected from the replay still selected); seam=none; no_claim=the Study pane's own loading state
+test('opening another test replay leaves the shown replay’s output alone and names only the replay being opened', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const first = await saveTwoStopNodeHistory(store, {
+      testTitles: ['first suite', 'first works'],
+    })
+    const second = await saveTwoStopNodeHistory(store, {
+      testTitles: ['second suite', 'second works'],
+    })
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(first.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === first.studyId &&
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the first test replay lands on its first stop',
+      2_000,
+    )
+    const updatesBeforeFailure = harness.applicationOutputs().length
+
+    // Act
+    const read = store.read.bind(store)
+    let failNextRead = true
+    store.read = async (studyId) => {
+      if (failNextRead && studyId === second.studyId) {
+        failNextRead = false
+        throw new Error('The replay could not be read.')
+      }
+      return read(studyId)
+    }
+    await harness.reader.openLearningReplay(second.studyId)
+    const afterFailure = harness
+      .applicationOutputs()
+      .slice(updatesBeforeFailure)
+    const updatesBeforeOpening = harness.applicationOutputs().length
+    await harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === second.studyId &&
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the second test replay lands on its first stop',
+      2_000,
+    )
+    const whileOpening = harness
+      .applicationOutputs()
+      .slice(updatesBeforeOpening)
+
+    // Assert
+    assert.deepEqual(afterFailure, [])
+    assert.ok(
+      whileOpening.every((update) => !/first suite/.test(update.view.test)),
+      'no view names the replay that was shown before',
+    )
+    assert.ok(
+      whileOpening.every(
+        (update) =>
+          update.view.placeholder !== 'Loading recorded test output…' ||
+          /second suite/.test(update.view.test),
+      ),
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an open of another test replay that fails at its very start (its first publish throws, as a write into a released viewport lease can) ends its opening marker, so the replay still shown does not read as loading from then on; fails_when=the marker is set before the open's try and stays set, so every later moment of the shown replay posts "Loading recorded test output…" with no lines and removals stay refused; why_new=/ship Step 11's Claude adversarial review: a regression of 5359c28, which made the marker alone say that a replay opens; seam=the reader's publish, made to throw once; no_claim=why a publish throws, which F133 carries
 test('an open that fails at its first publish leaves the shown test replay not loading', async () => {
   // Arrange
@@ -1172,8 +1244,8 @@ test('a move to a stop or event that does not exist is refused by name and keeps
   }
 })
 
-// Value: protects=opening another test replay never shows the learner a stale or false pane: while it opens, the Application pane says the output is loading instead of keeping the replay before or claiming that no output was recorded, and the opened replay starts on its own first stop with that stop's first step, not the step the learner chose in the replay before even though both replays use the same step ids; fails_when=the pane keeps the earlier replay's output or says no output was recorded while the replay opens, the opened replay shows the step chosen in the replay before (its explanation and its same-moment marks swap), or the pane does not end on the new replay's first moment; why_new=PR-B1 keeps the learner's chosen step in the workspace (DS21) and takes the pane's loading state from the workspace's opening flag (DS7), which the projection's own test passes by hand; seam=none; no_claim=the loading line's drawing in the document (the Reader DOM check) or a replay opened while a browser replay is shown, which the host refuses
-test('opening another test replay shows its loading line first and starts on its own first step, not the step chosen before', async () => {
+// Value: protects=opening another test replay never shows the learner a stale or false pane: while it opens, the Application pane never claims that no output was recorded and never empties the replay before (F150; the opening replay's own loading line is pinned by the test on F143), and the opened replay starts on its own first stop with that stop's first step, not the step the learner chose in the replay before even though both replays use the same step ids; fails_when=the pane empties the earlier replay or says no output was recorded while the replay opens, the opened replay shows the step chosen in the replay before (its explanation and its same-moment marks swap), or the pane does not end on the new replay's first moment; why_new=PR-B1 keeps the learner's chosen step in the workspace (DS21) and takes the pane's loading state from the workspace's opening flag (DS7), which the projection's own test passes by hand; seam=none; no_claim=the loading line's drawing in the document (the Reader DOM check) or a replay opened while a browser replay is shown, which the host refuses
+test('opening another test replay starts on its own first step, not the step chosen before, and files its document under itself', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -1225,14 +1297,10 @@ test('opening another test replay shows its loading line first and starts on its
       .find((panel) => panel.kind === 'codebook.scopedBrowser')
 
     // Assert
-    assert.equal(
-      whileOpening[0]?.view.placeholder,
-      'Loading recorded test output…',
-    )
-    assert.deepEqual(whileOpening[0]?.view.lines, [])
-    assert.match(
-      application?.webview.html ?? '',
-      /<p id="test-output-placeholder" class="muted">Loading recorded test output…<\/p>/,
+    // The replay still shown is not emptied while the second opens (F150).
+    assert.ok(
+      whileOpening.every((update) => update.view.lines.length > 0),
+      'no view posted while the second replay opens is empty',
     )
     // The document is written again for the second replay, so the learner's follow choice and kept moment are filed under it, not the first (DS20).
     assert.ok(
