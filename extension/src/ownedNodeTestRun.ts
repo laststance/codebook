@@ -252,7 +252,6 @@ export class OwnedNodeTestRun {
       launch.stops[0]!.file,
       launch.stops[0]!.source.line,
       launch.stops[0]!.source.column,
-      'declared-line',
     )
     const started = await vscode.debug.startDebugging(
       vscode.workspace.getWorkspaceFolder(vscode.Uri.file(launch.workspace)),
@@ -503,7 +502,6 @@ export class OwnedNodeTestRun {
         next.file,
         next.source.line,
         next.source.column,
-        'declared-line',
       )
       const registered = await this.registeredAsDeclared(next.source, signal)
       this.ownedBreakpointId = registered.breakpointId
