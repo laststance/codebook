@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.2.37.0] - 2026-10-23 (development candidate)
+
+Cycle 0050's second pull request ([Issue #118](https://github.com/laststance/codebook/issues/118)): a test replay's Application pane and Study section. The recorded-source tab and the moves between moments come with the third.
+
+**The Application pane of a test replay.**
+
+- **Your place in the output is kept.** The choice to follow the latest output and the line you read are kept per replay by Codebook, not by the page, so a rebuilt pane, a Retry, a presentation change or a page VS Code reloads opens where you were, with **Jump to latest** when you were reading higher up. Scrolling up stops following and Jump to latest follows again, decided by the scroll position alone.
+- **Show recorded output brings a closed pane back above the source.** It opens in a group of its own above the recorded-source tab's group, and no other pane moves; when your editor kept the emptied group (`workbench.editor.closeEmptyGroups` off), the pane returns into it.
+- **Opening another test replay** leaves the replay you see as it is until the other one shows, and the loading line names the replay being opened. A view the page did not take is sent again.
+- **Output reads as the test printed it.** Color sequences and terminal strings that the recording split across two pieces are removed whole, an unterminated one removes only itself, and a recording full of them is cleaned in time linear in its length. Lines with emoji count each emoji once, and the muted lines read `1 earlier character not shown` and `1 Node inspector line hidden` in the singular.
+- **Faster in long recordings.** Moments in a burst are drawn once per frame, newest only, unchanged lines keep their place on the page, and the output is read once per opened replay.
+
+**The Study section of a test replay.**
+
+- **No hidden reordering.** Bidirectional and terminal controls are removed from every text the section, the Application header, Saved studies and the learning summary print: test titles and files, output and result lines, stop paths, frames and values, and the learning material's question, title, summary, participants and steps.
+- **Why a capture is partial or interrupted** shows under the status, on one line in test replay words.
+- **Inspect in native debugger beside Show Variables.** While the debugger shows the stop and its values are not loaded, the row says `Debugger stop selected`; once the debugger no longer shows the stop (you ended its session, or it could not start), **Inspect in native debugger** there starts it again.
+- **Quick moves add up.** Two quick Next presses move two stops, and a move that fails, or that a Close, a reopen, Return to Live or a browser recording cuts off, gives its place back, so the next move starts from the moment shown.
+- **Keyboard.** A long title is a tab stop that shows whole on focus, the Application pane's output region is a tab stop you can scroll by keyboard, a control that leaves during Play hands the focus to the transport, and a control you reach with Tab never hides under the sticky transport.
+- **The sequence diagram** wraps names and labels at word boundaries, also Japanese and Chinese text, and scrolls by keyboard to its last participant.
+- **Test replay words.** Saved studies rows read `Test replay · …`, and refusals say test replay where they said Node history: `Test replays cannot be deleted here yet.`, `There is no next stop in this test replay.`, `The replay debugger was stopped. Select this stop or use Inspect in native debugger to restart it.` (said by a seek or Play that reaches a stop after you stopped the debugger; Next stop, Previous stop or Inspect start it again).
+- **A browser recording opened while a test replay is selected** retires the test replay, and the Application pane shows the recording's own pages.
+
+**Another window of the same workspace.** A test history that another live window records is listed and opened as recording, not interrupted, and its journal is read only where it grew; once that window ends or crashes it reads interrupted. A writer record that could not be read for a moment is judged again a few seconds later.
+
+**Compatibility.** The MCP API stays 1.8. A history being recorded now carries a small writer record in its folder, removed when it seals; earlier versions ignore it, and test histories, learning materials and reader positions open in both directions unchanged.
+
+**Observed natively.** Show recorded output after closing the pane, in VS Code 1.142.0 and Cursor 3.26.16 on macOS: the pane returns alone above the source and nothing else moves. In VS Code, an output reached from a result read away from its end keeps following off and Jump to latest. Windows and Linux are not run.
+
 ## [0.2.36.0] - 2026-10-23 (development candidate)
 
 Cycle 0050 is a bug-fix cycle ([Issue #118](https://github.com/laststance/codebook/issues/118)): it fixes the defects Cycle 0049 left, in three pull requests merged in order. This version holds the first: the test run's start, stops and refusals, saving and storing test replays, causes that name no private path, the bundled skill and the tests that failed under load. The Application pane and the Study section come with the second, the recorded-source tab and the moves between moments with the third.
