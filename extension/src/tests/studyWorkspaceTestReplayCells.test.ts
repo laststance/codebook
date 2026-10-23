@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import {
   explainFirstStop,
   lastView,
@@ -30,7 +31,7 @@ async function openWithChosenStep(harness: Harness): Promise<History> {
       lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
       !lastView(harness)?.loading,
     'the test replay lands on its first stop',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
   await explainFirstStop(harness, history)
   harness.receiveContext({
@@ -43,7 +44,7 @@ async function openWithChosenStep(harness: Harness): Promise<History> {
   await waitUntil(
     () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
     'the chosen step is shown',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
   return history
 }
@@ -88,7 +89,7 @@ async function standAt(
       lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
       !lastView(harness)?.loading,
     'the replay stands at the start of the move',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
   // The reader position is written after the commit; the harness is not closed under that write.
   await waitUntil(
@@ -97,7 +98,7 @@ async function standAt(
         history.studyId,
       )) === sequence,
     'the start of the move is saved',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
 }
 
@@ -243,7 +244,7 @@ for (const move of MOVES_FROM_THE_FIRST_STOP) {
           await waitUntil(
             () => harness.reader['selectedNodeHistoryRequest'] > requestsBefore,
             'the seek’s selection overtakes the move',
-            2_000,
+            READER_RESULT_BOUND_MS,
           )
         const postedBeforeRelease = harness.postedMessages().length
         held.reject(
@@ -292,7 +293,7 @@ for (const move of MOVES_FROM_THE_FIRST_STOP) {
       await waitUntil(
         () => (lastView(harness)?.errors.length ?? 0) > 0,
         'the failed presentation is reported',
-        2_000,
+        READER_RESULT_BOUND_MS,
       )
 
       // Assert
@@ -344,7 +345,7 @@ test('a Play step whose debugger presentation fails pauses Play and leaves the m
     await waitUntil(
       () => (lastView(harness)?.errors.length ?? 0) > 0,
       'the failed presentation is reported',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -474,7 +475,7 @@ test('Play at the result starts nothing and tells no error', async () => {
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
       'the result is selected',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const controller = harness.reader['nodeHistoryPlaybackController']!
     const outputsBefore = harness.applicationOutputs().length
@@ -494,7 +495,7 @@ test('Play at the result starts nothing and tells no error', async () => {
           history.studyId,
         )) === 5,
       'the result’s reader position is written',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -520,7 +521,7 @@ test('Inspect on the selected stop keeps the step the learner chose', async () =
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.debuggerAvailable === false,
       'the ended session is told',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-stop',
@@ -531,7 +532,7 @@ test('Inspect on the selected stop keeps the step the learner chose', async () =
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.debuggerAvailable === true,
       'the stop is shown in the native debugger again',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -559,7 +560,7 @@ test('a Select event, a seek and an Inspect that the replay refuses change nothi
       await waitUntil(
         () => expectedError.test(lastView(harness)?.errors.at(-1) ?? ''),
         'the refusal is told',
-        2_000,
+        READER_RESULT_BOUND_MS,
       )
       refusals.push(lastView(harness)!.errors.at(-1))
     }

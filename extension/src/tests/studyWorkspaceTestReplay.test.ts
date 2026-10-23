@@ -121,7 +121,7 @@ test('Open replay opens a sealed test replay in a closed Study pane on its first
         lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
         !lastView(harness)?.loading,
       'the test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -151,7 +151,7 @@ test('Open replay opens a test replay at its saved reader position', async () =>
         lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
         !lastView(harness)?.loading,
       'the test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -213,7 +213,7 @@ test('a test replay whose stop does not verify opens on its first event', async 
         lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
         !lastView(harness)?.loading,
       'the test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -292,7 +292,7 @@ test('Open retained history opens the recorded part of a test history whose seal
         lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
         !lastView(harness)?.loading,
       'the retained history is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -320,7 +320,7 @@ test('Open replay of a test replay during a browser replay tells the learner one
     await waitUntil(
       () => harness.controller.state().readiness === 'ready',
       'the opened recording',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const warningsBefore = harness.warningDialogs.length
 
@@ -354,13 +354,13 @@ test('Retry during a browser replay presents no stop of the test replay selected
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
       'the test replay on its stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await harness.reader.openRecording(harness.studyId)
     await waitUntil(
       () => harness.controller.state().readiness === 'ready',
       'the opened recording',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const testStopPresentations = () =>
       harness.historicalDebugPresentations.filter((presentation) =>
@@ -458,7 +458,7 @@ test('choosing Close browser replay in the one-replay-at-a-time notice closes th
     await waitUntil(
       () => harness.controller.state().readiness === 'ready',
       'the opened recording',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.answerWarningDialogs(async () => 'Close browser replay')
 
@@ -631,7 +631,7 @@ test('Save learning replay of a live test run asks first, ends the run on Save n
         harness.reader.inspect().view?.nodeHistory?.header.studyId ===
           studyId && !harness.reader.inspect().view?.loading,
       'the partial test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -700,7 +700,7 @@ test('a saved test replay still opens when its learner decision, learning materi
         lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
         !lastView(harness)?.loading,
       'the test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -739,7 +739,7 @@ test('a refresh while a saved test replay is open lists the history sealed meanw
         lastView(harness)?.nodeHistory?.header.studyId === shown.studyId &&
         !lastView(harness)?.loading,
       'the saved test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const sealedMeanwhile = await saveOneStopNodeHistory(store)
     const presentationsBefore = harness.historicalDebugPresentations.length
@@ -1443,7 +1443,7 @@ test('a test run whose launch failed after its history began shows Preparing and
     await waitUntil(
       () => launchIsHeld,
       'the owned run is being created after the history began',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await readerSeams(harness).refresh()
     const whileStarting = {
@@ -1455,7 +1455,11 @@ test('a test run whose launch failed after its history began shows Preparing and
     // Act
     letLaunchFail()
     await record.preparation
-    await waitUntil(() => record.stopped, 'the failed run released', 2_000)
+    await waitUntil(
+      () => record.stopped,
+      'the failed run released',
+      READER_RESULT_BOUND_MS,
+    )
     await readerSeams(harness).refresh()
 
     // Assert
