@@ -110,7 +110,7 @@ test('Next stop in a test replay reopened after a browser recording cut off a sl
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const held = harness.holdHistoricalDebugPresentation(true)
     harness.receiveContext({
@@ -132,7 +132,7 @@ test('Next stop in a test replay reopened after a browser recording cut off a sl
     await waitUntil(
       () => shown() === 2,
       'the reopened test replay shows its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act
@@ -150,7 +150,7 @@ test('Next stop in a test replay reopened after a browser recording cut off a sl
     await waitUntil(
       () => shown() === 4,
       'the Next stop lands on the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert

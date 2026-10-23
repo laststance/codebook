@@ -12,6 +12,7 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 
@@ -167,7 +168,7 @@ async function openReplayAt(
       lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
       !lastView(harness)?.loading,
     `the test replay shows sequence ${sequence}`,
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
 }
 
@@ -192,7 +193,7 @@ async function selectMoment(
   await waitUntil(
     () => lastView(harness)?.nodeHistoryPosition?.sequence === sequence,
     `sequence ${sequence} is selected`,
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
 }
 
@@ -349,7 +350,7 @@ test('while the next stop’s debugger still loads, the slot shows no earlier st
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
       'the second stop commits',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -393,7 +394,7 @@ test('the debugger is presented at a stop only after the slot’s document shows
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
       'the stop commits',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -442,7 +443,7 @@ test('a slow reader position write does not hold the selected moment back', asyn
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
       'the result commits while its position write is held',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -486,7 +487,7 @@ test('a stop selection overtaken by an output selection leaves only the output o
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
       'the output commits',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     held.reject(new Error('Historical debugger presentation was superseded.'))
     await new Promise((resolve) => setImmediate(resolve))
@@ -896,7 +897,7 @@ test('returning to the shown output while a stop still presents leaves the debug
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 1,
       'the output stays selected',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
