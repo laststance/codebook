@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -1037,7 +1038,7 @@ test('a learner’s stop while a test run prepares before its history reads as s
       const other = run.service.start({
         instanceId: run.service.instanceId,
         profile: NODE_TEST_PROFILE,
-        key: `stopped-filler-${index}`,
+        key: randomUUID(),
         configuration: run.configuration,
       })
       await run.service.stop({
@@ -1060,7 +1061,7 @@ test('a learner’s stop after the test history began and before the first stop 
     const receipt = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'stopped-before-first-stop',
+      key: randomUUID(),
       configuration: run.configuration,
     })
     const record = run.service.record(receipt)
@@ -1099,7 +1100,7 @@ test('a test run stopped before its history began offers no read-history and fre
     const receipt = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'stopped-while-checking',
+      key: randomUUID(),
       configuration: run.configuration,
     })
     const record = run.service.record(receipt)
@@ -1121,7 +1122,7 @@ test('a test run stopped before its history began offers no read-history and fre
       const other = run.service.start({
         instanceId: run.service.instanceId,
         profile: NODE_TEST_PROFILE,
-        key: `slot-filler-${index}`,
+        key: randomUUID(),
         configuration: run.configuration,
       })
       await run.service.stop({
@@ -1229,7 +1230,7 @@ test('a test history sealed with no entry does not offer save-node-learning', as
     const receipt = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'sealed-with-no-entry',
+      key: randomUUID(),
       configuration: run.configuration,
     })
     const record = run.service.record(receipt)
@@ -1254,7 +1255,7 @@ test('explain_node_history answers IDEMPOTENCY_CONFLICT for a stale revision and
   // Arrange
   const run = await testRunHarness()
   const store = run.service.nodeHistoryStore!
-  const studyId = `${'1'.repeat(8)}-1111-1111-1111-${'1'.repeat(12)}_${'2'.repeat(8)}-2222-2222-2222-${'2'.repeat(12)}`
+  const studyId = `${randomUUID()}_${randomUUID()}`
   const content = materialCiting([
     { type: 'stop', sequence: 2, sourceHash: 'a'.repeat(64) },
   ])
@@ -1860,7 +1861,7 @@ test('a run refused at its admission and then stopped keeps refused-at-admission
     const receipt = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'refused-then-stopped',
+      key: randomUUID(),
       configuration: run.configuration,
     })
     const record = run.service.record(receipt)
