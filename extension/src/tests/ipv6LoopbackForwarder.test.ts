@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createConnection, createServer } from 'node:net'
+import { createConnection, createServer, type Socket } from 'node:net'
 import { test, type TestContext } from 'node:test'
 
 import { StudyError } from '../errors'
@@ -7,22 +7,35 @@ import { startIpv6LoopbackForwarder } from '../utils/startIpv6LoopbackForwarder'
 
 /** Starts a stand-in for the owned `next dev` on 127.0.0.1 that answers `echo:` plus what it receives; the port is the OS's choice. */
 async function startEchoServer(context: TestContext) {
-  const server = createServer((socket) =>
-    socket.on('data', (data) => socket.write(`echo:${data}`)),
-  )
+  const sockets = new Set<Socket>()
+  const server = createServer((socket) => {
+    sockets.add(socket)
+    socket.on('data', (data) => socket.write(`echo:${data}`))
+  })
   await new Promise<void>((resolve) =>
     server.listen({ host: '127.0.0.1', port: 0 }, resolve),
   )
-  context.after(() => new Promise((resolve) => server.close(resolve)))
+  context.after(() => {
+    for (const socket of sockets) socket.destroy()
+    return new Promise((resolve) => server.close(resolve))
+  })
   const address = server.address()
   assert.ok(address && typeof address === 'object')
   return address.port
 }
 
-/** Sends one message to `[::1]:port` and returns the reply, or the connect error code. */
+/** Longest wait for a reply; a broken forwarder then fails the test as 'TIMEOUT' instead of hanging it. */
+const EXCHANGE_TIMEOUT_MS = 3000
+
+/** Sends one message to `[::1]:port` and returns the reply, the connect error code, or 'TIMEOUT'. */
 function exchange(port: number, message: string): Promise<string> {
   return new Promise((resolve) => {
     const socket = createConnection({ host: '::1', port })
+    const timer = setTimeout(() => {
+      socket.destroy()
+      resolve('TIMEOUT')
+    }, EXCHANGE_TIMEOUT_MS)
+    socket.once('close', () => clearTimeout(timer))
     socket.once('data', (data) => {
       socket.destroy()
       resolve(String(data))
