@@ -2311,6 +2311,8 @@ export class StudyWorkspace {
         throw new Error('The test replay Restore was superseded.')
     }
     let pending!: Promise<PresentationState>
+    // Set when the Restore itself found the layout unconfirmed: that throw already carries the specific reason, which the catch below keeps.
+    let reasonKept = false
     // eslint-disable-next-line prefer-const -- the async body compares the shared operation against its own promise.
     pending = (async () => {
       try {
@@ -2325,21 +2327,23 @@ export class StudyWorkspace {
         if (this.presentationConfirmed) this.retireRefusalLines()
         this.publish()
         const state = this.presentationState()
-        if (!state.layoutConfirmed)
+        if (!state.layoutConfirmed) {
+          reasonKept = true
           throw new StudyError(
             'PRESENTATION_UNAVAILABLE',
             state.reason ?? 'The test replay layout is not confirmed.',
           )
+        }
         return {
           ...state,
           state: 'open' as const,
           ...(measured ? {} : { layoutMeasured: false as const }),
         }
       } catch (error) {
-        // A failed Restore resets the confirmation and tells why, as the article's Restore does (F433).
+        // A failed Restore resets the confirmation and tells why, as the article's Restore does (F433). The reason the unconfirmed layout already has stays; any other failure (the slot, the grid, a superseded Restore) becomes the reason, worded without the error class.
         if (transition.id === this.presentationId) {
           this.presentationConfirmed = false
-          this.presentationReason = String(error)
+          if (!reasonKept) this.presentationReason = this.describeFailure(error)
           this.publish()
         }
         throw error
