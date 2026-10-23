@@ -440,7 +440,7 @@ test('a run whose study library cannot be read ends as a missing prerequisite wh
   )
   assert.equal(
     started.record.error?.causeDetail,
-    'Error: EACCES: permission denied, scandir',
+    'EACCES: permission denied, scandir',
   )
   assert.equal(started.runtimeAcquisitions(), 0)
   assert.equal(checkpoint, 1)
@@ -1051,5 +1051,34 @@ test('a run whose final evidence write fails after its release freed every resou
       },
       nextStartRefusal: undefined,
     },
+  )
+})
+
+// Value: protects=the unreadable-library refusal naming no private path: its message and cause read <storage> where the library read failed on the storage root; fails_when=admitStudy words the read's error raw, so the refusal an agent receives carries the learning directory; why_new=admitStudy used thrownMessage and String(error) unsanitized (F219); seam=the store's admission read rejects with the service's storage root in its text; no_claim=the library-full wording
+test('a run whose study library cannot be read names no private path in its refusal', async (context) => {
+  // Arrange / Act
+  let storageRoot = ''
+  const started = await startRunWithStorage(
+    context,
+    2,
+    'study',
+    ({ store, service }) => {
+      storageRoot = service.causeRoots.storage[0]!
+      store.admitsStudy = () =>
+        Promise.reject(
+          new Error(
+            `EACCES: permission denied, scandir '${storageRoot}/library'`,
+          ),
+        )
+    },
+  )
+
+  // Assert
+  assert.deepEqual(
+    [started.record.error?.message, started.record.error?.causeDetail],
+    [
+      "The study library could not be read, so no run was started: EACCES: permission denied, scandir '<storage>/library'. Repair or remove the entry it names in the learning library, then start again. Existing learning was kept.",
+      "EACCES: permission denied, scandir '<storage>/library'",
+    ],
   )
 })

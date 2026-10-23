@@ -707,8 +707,7 @@ test('a run whose preparation fails with an error that is no StudyError names th
         code: 'RUNTIME_FAILED',
         message:
           'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
-        cause:
-          'Error: The dedicated Application layout could not be confirmed.',
+        cause: 'The dedicated Application layout could not be confirmed.',
       },
       journaledReasons: [
         'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
@@ -785,8 +784,7 @@ test('a run whose preparation fails and whose release then fails keeps the prepa
         code: 'RUNTIME_FAILED',
         message:
           'The study operation failed. Cause: The dedicated Application layout could not be confirmed.',
-        cause:
-          'Error: The dedicated Application layout could not be confirmed.',
+        cause: 'The dedicated Application layout could not be confirmed.',
       },
       cleanupError: {
         message: 'The study operation failed.',
@@ -1144,7 +1142,7 @@ test('a completed run whose release failed after its saved study was removed by 
   // The harness's own shutdown releases the run once the test has read it.
   runtime.evidence.failure = undefined
 
-  // Assert: before the exclusion the release's raw failure, with the storage path, was the run's error; after it the error names the failed write and the removal.
+  // Assert: before the exclusion the release's failure, with the storage path as <storage>, is the run's error; after it the error names the failed write and the removal.
   assert.ok('text' in resource)
   const failureSchema = z.object({
     code: z.string(),
@@ -1157,9 +1155,7 @@ test('a completed run whose release failed after its saved study was removed by 
   assert.deepEqual(
     {
       errorBefore: {
-        textBeforePath: errorBefore.message?.split(
-          runtime.evidence.directory,
-        )[0],
+        textBeforePath: errorBefore.message?.split('<storage>')[0],
         namesPath: errorBefore.namesPath,
       },
       terminalReason: state.terminalReason,
@@ -1170,7 +1166,7 @@ test('a completed run whose release failed after its saved study was removed by 
       errorBefore: {
         textBeforePath:
           "The study operation failed. Cause: Evidence write failed: Error: ENOENT: no such file or directory, open '",
-        namesPath: true,
+        namesPath: false,
       },
       terminalReason:
         "The study operation failed. Cause: Evidence write failed: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
@@ -1385,7 +1381,7 @@ test('a run whose study was removed during its preparation and found removed aft
       ).includes(path),
     },
     {
-      terminalNamedPathBefore: true,
+      terminalNamedPathBefore: false,
       terminalReason:
         "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
       error: {
@@ -4205,7 +4201,7 @@ test('a start whose book read fails with an error that is not the store’s refu
 
   // Assert
   assert.equal(record.error?.code, 'RUNTIME_FAILED')
-  assert.equal(record.error?.describe().cause, 'Error: disk read failed')
+  assert.equal(record.error?.describe().cause, 'disk read failed')
 })
 
 // Value: protects=the source-only help agreeing with the conflict's own answer; fails_when=the help still says "Revision conflict: read the current book.", which is what the conflict used to say; why_new=Cycle 0045 cause 5; seam=none

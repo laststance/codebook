@@ -536,13 +536,14 @@ export class StudyService {
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */
   async status() {
     const [prerequisites, repository] = await Promise.all([
-      this.environment
-        .prerequisites()
-        .catch((error) => ({ ready: false, missing: [String(error)] })),
+      this.environment.prerequisites().catch((error) => ({
+        ready: false,
+        missing: [this.sanitizedCause(error)],
+      })),
       this.repository
         ? this.sources({ instanceId: this.instanceId }).then(
             () => ({ ready: true, reason: undefined }),
-            (error) => ({ ready: false, reason: String(error) }),
+            (error) => ({ ready: false, reason: this.sanitizedCause(error) }),
           )
         : Promise.resolve({
             ready: false,
@@ -1237,7 +1238,7 @@ export class StudyService {
       throw new StudyError(
         String(error).includes('conflict:') ? 'BUSY' : 'RUNTIME_FAILED',
         'The action was not accepted.',
-        String(error),
+        this.sanitizedCause(error),
       )
     }
     const receipt = {
@@ -1466,7 +1467,7 @@ export class StudyService {
       throw new StudyError(
         String(error).includes('conflict:') ? 'STALE_PAUSE' : 'RUNTIME_FAILED',
         'Continue was not confirmed.',
-        String(error),
+        this.sanitizedCause(error),
       )
     }
     return { accepted: true, runUri: this.uri(record.id) }
@@ -2250,7 +2251,7 @@ export class StudyService {
         record.recordingReceipt = {
           ...receipt,
           status: 'failed',
-          reason: String(error).slice(0, MAX_UI_TEXT_CHARS),
+          reason: this.sanitizedCause(error),
         }
     }
   }
@@ -3377,9 +3378,7 @@ export class StudyService {
       // A test run refused before its history began recorded nothing: it gives up its slot and its start key (EN1).
       if (record.profile === NODE_TEST_PROFILE && !record.nodeHistoryWriter)
         record.historyExcluded = 'refused-at-preparation'
-      record.error = this.preparationError(record, error)
-      if (record.profile === NODE_TEST_PROFILE)
-        record.error = this.sanitizedError(record.error)
+      record.error = this.sanitizedError(this.preparationError(record, error))
       record.runtime?.fail(record.error.message)
       if (record.nodePhase) record.nodePhase = 'failed'
     }
@@ -3443,8 +3442,8 @@ export class StudyService {
         // The agent reads the code and message, not the cause, so the unreadable library is named there.
         throw new StudyError(
           'PREREQUISITE_MISSING',
-          `The study library could not be read, so no run was started: ${thrownMessage(error)}. Repair or remove the entry it names in the learning library, then start again. Existing learning was kept.`,
-          String(error),
+          `The study library could not be read, so no run was started: ${this.sanitizedCause(thrownMessage(error))}. Repair or remove the entry it names in the learning library, then start again. Existing learning was kept.`,
+          this.sanitizedCause(error),
         )
       },
     )
