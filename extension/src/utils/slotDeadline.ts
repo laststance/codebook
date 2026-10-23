@@ -27,8 +27,9 @@ export interface SlotDeadline {
    * Races a piece of work against this deadline.
    * @param work - The work; it keeps running after a loss, and its later outcome is for the caller to clean up.
    * @param what - What is waited for, named in the timeout; the deadline's own description when omitted.
+   * After the deadline passed, every call refuses at once, whatever state `work` is in (a step that starts late does not succeed). After {@link cancel}, the bounded work is over and no timer runs: the call returns `work` itself, unbounded.
    * @returns What `work` returns when it ends first.
-   * @throws {@link WaitTimeoutError} when the deadline passes first; `work`'s own failure when it ends first.
+   * @throws {@link WaitTimeoutError} when the deadline passed before the call or passes first; `work`'s own failure when it ends first.
    */
   within<Value>(work: Promise<Value>, what?: string): Promise<Value>
 }
@@ -51,6 +52,7 @@ export function startSlotDeadline(
 ): SlotDeadline {
   const controller = new AbortController()
   let passed = false
+  let cancelled = false
   let lapse: () => void = () => undefined
   const lapsed = new Promise<void>((resolve) => {
     lapse = resolve
@@ -63,10 +65,19 @@ export function startSlotDeadline(
   return {
     signal: controller.signal,
     expired: () => passed,
-    cancel: cancelTimer,
+    cancel: (): void => {
+      cancelled = true
+      cancelTimer()
+    },
     within: (work, what = description) => {
       // The lost work's own failure is the caller's to clean up, not an unhandled rejection.
       work.catch(() => undefined)
+      // A passed deadline refuses at once: a settled `work` must not win the race against the rejection.
+      if (passed) {
+        return Promise.reject(new WaitTimeoutError(waitTimeoutText(what)))
+      }
+      // A cancelled deadline has no timer to lapse, so racing it would only hang on never-ending work.
+      if (cancelled) return work
       return Promise.race([
         work,
         lapsed.then((): never => {
