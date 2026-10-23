@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { type TestContext, test } from 'node:test'
 
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
@@ -1191,6 +1191,348 @@ test('a rename whose slot cannot open leaves no earlier slot tab once the next m
     await harness.close()
   }
 })
+
+// Value: protects=Retry at a verified stop that shows its slot fine keeps everything as it is (F166 cell verified stop x Retry): one slot tab with the stop's bytes, line and label, the debugger on that stop and no error; fails_when=Retry closes or empties the slot, loses the label, or moves the debugger off the stop; why_new=F166 (verified stop x Retry had no test); seam=none; no_claim=a Retry that has a failure to answer (the open-failure test)
+test('Retry at a verified stop keeps its slot tab, label and debugger frames', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.label,
+      'Recorded test stop 1 · src/theme.ts:1',
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Retry at a moment that shows the placeholder keeps the one slot tab with the placeholder and no label, and the debugger on no stop (F166 cell placeholder x Retry); fails_when=Retry opens a second tab, loses the placeholder or puts a stop on the debugger; why_new=F166 (placeholder x Retry had no test); seam=none; no_claim=a Retry that has a failure to answer
+test('Retry at an output keeps the placeholder slot and no stop in the debugger', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), PLACEHOLDER)
+    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().at(-1),
+      'Not recorded at this moment',
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a stop in another file after an output renames the slot that showed the placeholder: the tab of the earlier file closes and the renamed slot holds the new stop (F166 cell placeholder x rename); fails_when=the placeholder's slot keeps its tab beside the renamed one, or the renamed slot keeps the placeholder; why_new=F166 (placeholder x rename had no test; the rename test starts at a stop); seam=none; no_claim=the group the tab opens in
+test('a stop in another file after an output renames the placeholder slot and closes its tab', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const placeholderSlot = slotTabs(harness)[0]!
+
+    // Act
+    await selectMoment(harness, history.studyId, 4)
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.notEqual(tabs[0], placeholderSlot)
+    assert.match(tabs[0]!, /\/Captured-theme-next\.ts$/)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_NEXT_TEXT)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a rename that starts at the placeholder and is overtaken before its slot opens, by the result, leaves one slot tab with the placeholder and no label (F166 cell placeholder x overtaken during a rename); fails_when=the overtaken rename leaves its tab beside the placeholder's, or its stop's bytes or label reach the result; why_new=F166 (placeholder x overtaken during a rename had no test); seam=the workspace harness's held native open of the renamed slot's document; no_claim=the debugger, which the overtaken-selection test covers
+test('a rename from the placeholder that the result overtakes leaves one slot tab with the placeholder', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const renamedSlot = slotTabs(harness)[0]!.replace(
+      /Captured-theme\.ts$/,
+      'Captured-theme-next.ts',
+    )
+    const heldOpen = harness.holdNextSource({ uri: renamedSlot })
+    const overtaken = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    await heldOpen.started
+
+    // Act
+    await selectMoment(harness, history.studyId, 5)
+    heldOpen.release()
+    await overtaken
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), PLACEHOLDER)
+    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 5)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a rename whose slot fails to open after a newer selection overtook it tells nothing and leaves the newer moment's slot alone (F166 cell failed open x overtaken during a rename); fails_when=the overtaken selection's failure shows as a row beside a moment that opened fine; why_new=F166 (failed open x overtaken during a rename had no test); seam=the workspace harness's held and rejected native open of the renamed slot's document; no_claim=the wording of the failure row
+test('a rename whose slot fails to open after the output overtook it tells no failure', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const renamedSlot = slotTabs(harness)[0]!.replace(
+      /Captured-theme\.ts$/,
+      'Captured-theme-next.ts',
+    )
+    const heldOpen = harness.holdNextSource({ uri: renamedSlot })
+    const overtaken = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    await heldOpen.started
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+    heldOpen.reject(new Error('Injected held slot open failure'))
+    await overtaken.catch(() => undefined)
+
+    // Assert
+    assert.equal(lastView(harness)?.errors.length, 0)
+    assert.equal(slotTabs(harness).length, 1)
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 3)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Makes one stop of the replays the workspace's store reads unverified: its captured text no longer hashes to its sealed hash, as after an edit of the captured file.
+ * @param context - The test's context, which restores the store's read.
+ * @param harness - The workspace harness.
+ * @param sequence - The stop to unverify.
+ * @example unverifyStop(context, harness, 4)
+ */
+function unverifyStop(
+  context: TestContext,
+  harness: Harness,
+  sequence: number,
+): void {
+  const store = harness.service.nodeHistoryStore!
+  const read = store.read.bind(store)
+  context.mock.method(store, 'read', async (studyId: string) => {
+    const index = await read(studyId)
+    return {
+      ...index,
+      entries: index.entries.map((entry) =>
+        entry.type === 'stop' && entry.sequence === sequence
+          ? {
+              ...entry,
+              debuggerSnapshot: {
+                ...entry.debuggerSnapshot,
+                frames: entry.debuggerSnapshot.frames.map((frame) => ({
+                  ...frame,
+                  source: frame.source && {
+                    ...frame.source,
+                    text: 'const nextTheme = "light";\n',
+                  },
+                })),
+              },
+            }
+          : entry,
+      ),
+    }
+  })
+}
+
+// Value: protects=moving from a stop whose source does not verify to a verified stop shows that stop's sealed source with its line and label in the slot (F179 cell unverified stop x select another moment); fails_when=the slot keeps the placeholder of the unverified stop, or the label is not drawn; why_new=F179 (unverified stop x select another moment had no slot test); seam=the store's read, whose second stop's captured text was edited; no_claim=the Study pane's unverified line, which the cells tests cover
+test('moving from a stop whose source does not verify to a verified stop shows its source and label in the slot', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    unverifyStop(context, harness, 4)
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 4)
+    const placeholderSlot = slotTabs(harness)[0]!
+    const placeholderAtUnverified =
+      await harness.readCapturedSource(placeholderSlot)
+
+    // Act
+    await selectMoment(harness, history.studyId, 2)
+
+    // Assert
+    assert.equal(placeholderAtUnverified, PLACEHOLDER)
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=selecting the stop whose source does not verify again leaves its placeholder slot untouched: no provider event, open or show, no stopped line or label, no new invalidation of the debugger and no error (F179 cell unverified stop x reselect); fails_when=the reselect runs the slot's cycle again, draws a label for the unverified stop or leaves the debugger on another stop; why_new=F179 (unverified stop x reselect had no test); seam=the store's read, whose second stop's captured text was edited, and counters on the editor's requests; no_claim=the Study pane's unverified line
+test('selecting a stop whose source does not verify again leaves its placeholder slot and the debugger as they are', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    unverifyStop(context, harness, 4)
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 4)
+    const asked = countSlotRequests(harness)
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+
+    // Act
+    await harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+
+    // Assert
+    assert.deepEqual(asked, { providerEvents: 0, opens: 0, shows: 0 })
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().length,
+      invalidationsBefore,
+    )
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      PLACEHOLDER,
+    )
+    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=returning to Live at a stop whose source does not verify closes the slot tab that shows its placeholder (F179 cell unverified stop x retire); fails_when=the retire leaves the placeholder's tab open with no replay behind it; why_new=F179 (unverified stop x retire had no test); seam=the store's read, whose second stop's captured text was edited; no_claim=a tab the learner pinned or edited
+test('returning to Live at a stop whose source does not verify closes the slot tab', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    unverifyStop(context, harness, 4)
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 4)
+    const openedSlots = slotTabs(harness)
+
+    // Act
+    await harness.reader['retireNodeHistorySelection']()
+
+    // Assert
+    assert.equal(openedSlots.length, 1)
+    assert.deepEqual(slotTabs(harness), [])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=selecting the output or the result again leaves the placeholder slot as it is: no provider event, open or show, and the debugger stays on no stop (F179 cells output x reselect and result x reselect); fails_when=a reselect of a moment that records no stop runs the slot's cycle again or puts a stop on the debugger; why_new=F179 (output x reselect and result x reselect had no test); seam=counters on the editor's requests; no_claim=the Study pane's rows
+for (const moment of [
+  { name: 'output', sequence: 3 },
+  { name: 'result', sequence: 5 },
+]) {
+  test(`selecting the ${moment.name} again leaves the placeholder slot and the debugger as they are`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const history = await saveTwoFileNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      await selectMoment(harness, history.studyId, moment.sequence)
+      const asked = countSlotRequests(harness)
+      const presentationsBefore = harness.historicalDebugPresentations.length
+      const invalidationsBefore =
+        harness.historicalDebugInvalidationLabels().length
+
+      // Act
+      await harness.reader['requestNodeHistoryEvent'](
+        harness.reader['selectedNodeHistory']!,
+        moment.sequence,
+      )
+
+      // Assert
+      assert.deepEqual(asked, { providerEvents: 0, opens: 0, shows: 0 })
+      assert.equal(
+        harness.historicalDebugPresentations.length,
+        presentationsBefore,
+      )
+      assert.equal(
+        harness.historicalDebugInvalidationLabels().length,
+        invalidationsBefore,
+      )
+      assert.equal(
+        await harness.readCapturedSource(slotTabs(harness)[0]!),
+        PLACEHOLDER,
+      )
+      assert.equal(lastView(harness)?.errors.length, 0)
+    } finally {
+      await harness.close()
+    }
+  })
+}
 
 // Value: protects=returning to Live while a renamed slot's document still opens closes every slot tab of the retired replay, the earlier file's included; fails_when=the retire closes only the renamed slot, which had no tab yet, and the earlier file's slot tab stays open with no replay behind it; why_new=PR-B2 /ship Step 9 state-machines review (critical: an orphan slot tab, retire during a pending rename); seam=the workspace harness's held native open of the renamed slot's document; no_claim=a slot tab the learner pinned or edited, which stays
 test('returning to Live while a renamed slot still opens closes every slot tab of the replay', async () => {
