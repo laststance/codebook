@@ -572,9 +572,40 @@ export async function workspaceHarness(
     }): readonly CodeLens[]
     onDidChangeCodeLenses?: (listener: () => void) => { dispose(): void }
   }
-  /** The CodeLens providers the reader registered; see `codeLensesOf`. */
+  /** The CodeLens providers the reader registered with the selector each was registered for; see `codeLensTitles`. */
   const codeLensProviders: { selector: unknown; provider: CodeLensProvider }[] =
     []
+  /** How many times a registered provider announced `onDidChangeCodeLenses`, as the editor counts the refreshes it would run; see `codeLensRefreshCount`. */
+  let codeLensRefreshes = 0
+  /**
+   * Tells whether a document selector, as `registerCodeLensProvider` takes it, matches a document, as the editor decides which providers it asks (a language id, a filter of scheme and language, or a list of them); a filter's pattern is not modelled and matches nothing.
+   * @param selector - The selector the provider was registered with.
+   * @param document - The document's address and language.
+   * @returns `true` when the editor would ask the provider about the document.
+   * @example documentSelectorMatches({ scheme: 'codebook-source' }, { uri, languageId: 'typescript' }) // => true for a codebook-source uri
+   */
+  function documentSelectorMatches(
+    selector: unknown,
+    document: { uri: Uri; languageId: string },
+  ): boolean {
+    if (Array.isArray(selector))
+      return selector.some((member) =>
+        documentSelectorMatches(member, document),
+      )
+    if (typeof selector === 'string')
+      return selector === '*' || selector === document.languageId
+    if (typeof selector !== 'object' || selector === null) return false
+    const filter = selector as {
+      scheme?: string
+      language?: string
+      pattern?: unknown
+    }
+    if (filter.pattern !== undefined) return false
+    return (
+      (filter.scheme === undefined || filter.scheme === document.uri.scheme) &&
+      (filter.language === undefined || filter.language === document.languageId)
+    )
+  }
   /** Every `revealRange` call of a recorded-source slot's editor, in order, with the first line of the revealed range; see `slotReveals`. */
   const slotRevealCalls: { uri: string; line: number }[] = []
   let lastSourceEditor: SourceEditor | undefined
@@ -3769,12 +3800,16 @@ export async function workspaceHarness(
         ) {
           const registration = { selector, provider }
           codeLensProviders.push(registration)
+          // The editor subscribes once, at registration, and refreshes the lenses of its open documents when the provider announces a change.
+          const refreshSubscription = provider.onDidChangeCodeLenses?.(() => {
+            codeLensRefreshes++
+          })
           return {
             dispose(): void {
-              codeLensProviders.splice(
-                codeLensProviders.indexOf(registration),
-                1,
-              )
+              refreshSubscription?.dispose()
+              // A second dispose of the same registration removes nothing (`indexOf` is -1 for a registration that is gone).
+              const index = codeLensProviders.indexOf(registration)
+              if (index >= 0) codeLensProviders.splice(index, 1)
             },
           }
         },
@@ -7014,9 +7049,28 @@ export async function workspaceHarness(
         (editor) => editor.document.uri.toString() === uri,
       )?.document
       assert.ok(document, `No editor shows ${uri}`)
+      // Only the providers registered for this document's scheme and language are asked, as the editor does.
       return codeLensProviders
+        .filter(({ selector }) =>
+          documentSelectorMatches(selector, {
+            uri: document.uri,
+            languageId:
+              virtualSourceDocuments.get(uri)?.languageId ?? 'plaintext',
+          }),
+        )
         .flatMap(({ provider }) => provider.provideCodeLenses(document))
         .map((lens) => lens.command?.title ?? '')
+    },
+    /** How many times a CodeLens provider announced a change since the harness started, as a refresh of the open lenses; the reader announces one whenever the slot's label is drawn or cleared. @example const before = harness.codeLensRefreshCount(); …; assert.ok(harness.codeLensRefreshCount() > before) */
+    codeLensRefreshCount: (): number => codeLensRefreshes,
+    /** How many CodeLens providers are registered now. @example assert.equal(harness.codeLensProviderCount(), 1) */
+    codeLensProviderCount: (): number => codeLensProviders.length,
+    /** Registers a CodeLens provider as another extension would, for the test of the registration's own dispose; returns its registration handle. @example const other = harness.registerOtherCodeLensProvider() */
+    registerOtherCodeLensProvider(): { dispose(): void } {
+      return editorDependencies.vscode.languages.registerCodeLensProvider(
+        { scheme: 'file' },
+        { provideCodeLenses: () => [] },
+      )
     },
     /**
      * Gives the keyboard to the editor group at a column, as a click in that group does, so a document another action shows in a different group comes to the front without becoming the active editor.

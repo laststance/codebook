@@ -2978,6 +2978,56 @@ test('a CodeLens above the stopped line carries the whole recorded label', async
   }
 })
 
+// Value: protects=the editor re-asking for the slot's CodeLens whenever the label is drawn or cleared (a moment selected, the slot retired), so a lens never stays on a line the replay left; fails_when=the reader draws or clears the label without announcing the change, or stops announcing at the retire; why_new=F373 (the fake never exercised onDidChangeCodeLenses); seam=the workspace harness's CodeLens refresh counter; no_claim=how many refreshes the editor runs for one announcement
+test('a CodeLens refresh is announced when a moment is selected and when the slot is retired', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const refreshesAtOpen = harness.codeLensRefreshCount()
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+    const refreshesAfterSelect = harness.codeLensRefreshCount()
+    await harness.reader['retireNodeSourceSlot']()
+
+    // Assert
+    assert.equal(refreshesAfterSelect > refreshesAtOpen, true)
+    assert.equal(harness.codeLensRefreshCount() > refreshesAfterSelect, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the fake editor asking a CodeLens provider only about documents its selector names, and one registration's second dispose removing nothing more; fails_when=a provider registered for another scheme still returns the slot's lens in a test, or a repeated dispose of another extension's registration removes the reader's provider; why_new=F373 (the fake asked every provider about every document and spliced index -1 on a second dispose); seam=the workspace harness's CodeLens registry; no_claim=the real editor's selector scoring
+test('a second dispose of another extension’s CodeLens registration keeps the slot’s CodeLens', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const providersWithReader = harness.codeLensProviderCount()
+    const other = harness.registerOtherCodeLensProvider()
+
+    // Act
+    other.dispose()
+    other.dispose()
+
+    // Assert
+    assert.equal(harness.codeLensProviderCount(), providersWithReader)
+    assert.deepEqual(harness.codeLensTitles(slotTabs(harness)[0]!), [
+      'Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a recorded path that holds icon syntax such as $(trash) showing as text in the CodeLens title, so a recording cannot draw an icon of its own there; fails_when=the title carries the path unescaped and the editor draws a codicon in place of the characters; why_new=F367 (the title stripped terminal controls only; the hover was escaped in F176); seam=the workspace harness's CodeLens provider; no_claim=how the editor draws the escaped title (the native check)
 test('a CodeLens title shows a recorded path with icon syntax as text', async () => {
   // Arrange
