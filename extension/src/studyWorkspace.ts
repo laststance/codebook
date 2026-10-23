@@ -729,6 +729,8 @@ export class StudyWorkspace {
   private selectedNodeHistorySequence?: number
   /** The moment the latest selection is going to, set before its first await and cleared when it commits, fails or is retired; a Next or Previous press moves on from it, so two quick presses add up (F129). */
   private requestedNodeHistorySequence?: number
+  /** The moment whose selection has left the shown one but not committed yet ({@link leaveNodeHistoryMoment}): while it equals {@link requestedNodeHistorySequence}, the Study position names that moment with no step or explanation and the Application header reads as loading (D29, F203). */
+  private nodeHistoryLeftFor?: number
   private selectedNodeHistoryDebugAvailable = false
   /** The selected Node stop reached native Run and Debug without its values loading; the reader shows how to load them. */
   private selectedNodeHistoryValuesUninspected = false
@@ -750,6 +752,14 @@ export class StudyWorkspace {
     history: NodeTestHistoryIndex
     bySequence: Map<number, number>
   }
+  /** The reader position writes of the test replays being committed: the latest position still to write and the write in flight, per study ({@link queueNodeHistoryPositionWrite}). */
+  private readonly nodeHistoryPositionWrites = new Map<
+    string,
+    {
+      latest?: { history: NodeTestHistoryIndex; sequence: number }
+      running?: Promise<void>
+    }
+  >()
   /** The count of the Application pane's test replay views, and what the last one showed, so its generation changes only when the shown moment does. */
   private nodeHistoryApplicationGeneration = 0
   private nodeHistoryApplicationMemo?: {
@@ -9182,6 +9192,7 @@ export class StudyWorkspace {
     this.selectedNodeHistoryRequest++
     // The cut-off selection no longer clears its requested moment (its token is gone), so the bump gives it back.
     this.requestedNodeHistorySequence = undefined
+    this.nodeHistoryLeftFor = undefined
     this.nodeHistoryPlaybackController?.abandon()
     this.replayUninspectedSnapshot = undefined
     this.selectedNodeHistoryValuesUninspected = false
@@ -11147,6 +11158,7 @@ export class StudyWorkspace {
     this.selectedNodeHistoryRequest++
     // The cut-off selection no longer clears its requested moment (its token is gone), so the bump gives it back.
     this.requestedNodeHistorySequence = undefined
+    this.nodeHistoryLeftFor = undefined
     this.nodeHistoryPlaybackController?.abandon()
     // The Node stop no longer owns Run and Debug: its hint goes, and Inspect restarts the debugger for it.
     this.selectedNodeHistoryValuesUninspected = false
@@ -11336,6 +11348,7 @@ export class StudyWorkspace {
       this.selectedNodeHistoryPage = 0
       this.selectedNodeHistorySequence = undefined
       this.requestedNodeHistorySequence = undefined
+      this.nodeHistoryLeftFor = undefined
       this.selectedNodeHistoryStepId = undefined
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
@@ -12123,6 +12136,7 @@ export class StudyWorkspace {
     this.nodeOutputReadings.clear()
     this.selectedNodeHistorySequence = undefined
     this.requestedNodeHistorySequence = undefined
+    this.nodeHistoryLeftFor = undefined
     this.selectedNodeHistoryStepId = undefined
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
@@ -12336,6 +12350,7 @@ export class StudyWorkspace {
     | 'nodeHistoryLearningSummary'
   > {
     if (!history) return {}
+    const leavingPosition = this.leavingNodeHistoryPosition(history)
     // The recorded texts the surfaces print come without terminal and bidirectional controls (F131).
     const shown = this.shownNodeHistory(history)
     // A stop verifies against the recorded source path, which the shown history may have stripped (F287).
@@ -12343,6 +12358,8 @@ export class StudyWorkspace {
     const position =
       selected && this.nodeHistoryEventPosition(history, selected.sequence)
     selected = position === undefined ? undefined : shown.entries[position]
+    const pendingEvent =
+      leavingPosition === undefined ? undefined : shown.entries[leavingPosition]
     history = shown
     if (this.selectedNodeHistoryOutputIndex?.history !== history)
       this.selectedNodeHistoryOutputIndex = {
@@ -12360,6 +12377,7 @@ export class StudyWorkspace {
       history.status,
       selected?.sequence,
       opening,
+      pendingEvent !== undefined,
     ])
     // The view is projected once per shown moment: every refresh publishes, and assembling the output again each time would cost its whole tail (F111).
     if (this.nodeHistoryApplicationMemo?.key !== key) {
@@ -12373,6 +12391,7 @@ export class StudyWorkspace {
           selected,
           generation,
           opening,
+          pendingEvent !== undefined,
         ),
       }
     }
@@ -12384,7 +12403,11 @@ export class StudyWorkspace {
       nodeHistoryApplication: this.nodeHistoryApplicationMemo.view,
       nodeHistorySection: projectNodeTestSection({
         history,
-        ...(selected ? { selected } : {}),
+        ...(pendingEvent
+          ? { selected: pendingEvent, pending: true }
+          : selected
+            ? { selected }
+            : {}),
         selectedStopVerified:
           selectedAsRecorded?.type === 'stop' &&
           nodeStopSourceMatches(selectedAsRecorded),
@@ -12396,6 +12419,22 @@ export class StudyWorkspace {
       }),
       ...(learning ? { nodeHistoryLearningSummary: learning } : {}),
     }
+  }
+
+  /**
+   * Finds the moment a selection that has left the shown one is going to, so the Study position names it and the Application header waits until it commits (D29, F203); called by {@link nodeHistoryViews}.
+   * @param history - The selected test replay as the store read it.
+   * @returns The moment's index in `history.entries`; `undefined` when no selection is leaving the shown moment.
+   * @example this.leavingNodeHistoryPosition(history) // => 3 while the selection of the fourth event holds the debugger
+   */
+  private leavingNodeHistoryPosition(
+    history: NodeTestHistoryIndex,
+  ): number | undefined {
+    const leaving = this.nodeHistoryLeftFor
+    return leaving !== undefined &&
+      leaving === this.requestedNodeHistorySequence
+      ? this.nodeHistoryEventPosition(history, leaving)
+      : undefined
   }
 
   /**
@@ -23606,15 +23645,19 @@ export class StudyWorkspace {
     sequence: number,
     options: NodeHistorySelectionOptions = {},
   ): Promise<void> {
-    // The token the selection below takes with its first statement; a newer selection takes the next one and owns the requested moment from then on.
+    // The token the selection below takes once it passes its refusal checks; a newer selection takes the next one and owns the requested moment from then on. A refused selection takes none and leaves the earlier selection's requested moment as it was (F165).
     const request = this.selectedNodeHistoryRequest + 1
-    this.requestedNodeHistorySequence = sequence
     try {
       await this.selectNodeHistoryEvent(history, sequence, options)
     } finally {
       // A selection that committed, was refused or failed gives the requested moment back, so the next Next or Previous press moves on from the shown one.
-      if (this.selectedNodeHistoryRequest === request)
+      if (this.selectedNodeHistoryRequest === request) {
+        const wasLeft = this.nodeHistoryLeftFor !== undefined
         this.requestedNodeHistorySequence = undefined
+        this.nodeHistoryLeftFor = undefined
+        // A selection that ends without committing gives the Study position and the Application header back to the shown moment.
+        if (wasLeft && !this.closing) this.publish()
+      }
     }
   }
 
@@ -23640,7 +23683,6 @@ export class StudyWorkspace {
       isCurrent,
     }: NodeHistorySelectionOptions = {},
   ): Promise<void> {
-    const request = ++this.selectedNodeHistoryRequest
     if (publish) this.nodeHistoryPlaybackController?.pause()
     const position = this.nodeHistoryEventPosition(history, sequence)
     const entry = position === undefined ? undefined : history.entries[position]
@@ -23657,9 +23699,12 @@ export class StudyWorkspace {
       throw new Error(
         'The replay debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
       )
+    // Every refusal is past: only a selection that goes on supersedes the earlier one, so a refused one cannot strip the shown moment's slot of an earlier selection that is still leaving it (F165, D34).
+    const request = ++this.selectedNodeHistoryRequest
+    this.requestedNodeHistorySequence = sequence
     // A step action or Inspect on the moment already shown keeps every surface; another moment leaves the earlier one at once.
     if (entry.sequence !== this.selectedNodeHistorySequence)
-      this.leaveNodeHistoryMoment()
+      this.leaveNodeHistoryMoment(entry.sequence)
     const slot = await this.showNodeSourceSlot(history, verifiedStop, request)
     if (!slot) return
     // A slot that could not open leaves the debugger on no stop; the moment still commits beside the slot's Study row (S2-1), and Play stops here instead of failing the same slot at every later event (F185).
@@ -23693,7 +23738,8 @@ export class StudyWorkspace {
       this.restoreWithdrawnNodeHistoryMoment(history, request)
       return
     }
-    // The slot's stopped line and label commit with the moment.
+    // The slot's stopped line and label commit with the moment, and the Study position and the Application header stop waiting for it.
+    this.nodeHistoryLeftFor = undefined
     if (this.nodeSourceSlot && slot !== 'failed')
       this.nodeSourceSlot = { ...this.nodeSourceSlot, stop: verifiedStop }
     this.decorateNodeSourceSlot(true)
@@ -23713,16 +23759,44 @@ export class StudyWorkspace {
     if (alignPlayback)
       this.nodeHistoryPlaybackController?.select(entry.sequence)
     if (publish) this.publish()
-    // The reader position is written after the commit, so a slow write never holds the shown moment back.
-    try {
-      await this.nodeHistoryStore!.saveReaderPosition(
-        history.header.studyId,
-        entry.sequence,
-        history,
-      )
-    } catch (error) {
-      this.report('history-position', error)
-    }
+    // The reader position is written after the commit and never awaited, so a slow or stuck write holds neither the shown moment nor Play back (F197).
+    this.queueNodeHistoryPositionWrite(history, entry.sequence)
+  }
+
+  /**
+   * Writes a test replay's reader position in the background, keeping only the latest position of each replay while a write runs, so Play and seeks never wait for the disk and a burst of moves costs one write at a time (F174, F197); called by {@link selectNodeHistoryEvent} after it commits.
+   * A failed write goes to the `history-position` row; the next position is written again.
+   * @param history - The selected test replay.
+   * @param sequence - The committed moment.
+   * @example this.queueNodeHistoryPositionWrite(history, 4)
+   */
+  private queueNodeHistoryPositionWrite(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+  ): void {
+    const studyId = history.header.studyId
+    const writer = this.nodeHistoryPositionWrites.get(studyId) ?? {}
+    this.nodeHistoryPositionWrites.set(studyId, writer)
+    writer.latest = { history, sequence }
+    if (writer.running) return
+    writer.running = (async () => {
+      while (writer.latest) {
+        const next = writer.latest
+        writer.latest = undefined
+        try {
+          await this.nodeHistoryStore!.saveReaderPosition(
+            studyId,
+            next.sequence,
+            next.history,
+          )
+        } catch (error) {
+          this.report('history-position', error)
+        }
+      }
+    })().finally(() => {
+      writer.running = undefined
+      if (!writer.latest) this.nodeHistoryPositionWrites.delete(studyId)
+    })
   }
 
   /**
@@ -23741,6 +23815,11 @@ export class StudyWorkspace {
     this.replayDebugger?.invalidate()
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
+    // The Study position and the Application header go back to the committed moment the slot and the debugger return to.
+    if (this.nodeHistoryLeftFor !== undefined) {
+      this.nodeHistoryLeftFor = undefined
+      this.publish()
+    }
     const committed = history.entries.find(
       (entry) => entry.sequence === this.selectedNodeHistorySequence,
     )
@@ -23844,21 +23923,29 @@ export class StudyWorkspace {
   }
 
   /**
-   * Takes the earlier moment off the test replay's debugger and recorded-source slot before the next moment's bytes load (EN8 step 1): the debugger thread reads "Not recorded at this moment" and a slot that showed a stop shows its loading text with no stopped line or label; called by {@link selectNodeHistoryEvent} when it selects another moment.
-   * @example this.leaveNodeHistoryMoment()
+   * Takes the earlier moment off every surface of the test replay before the next moment's bytes load (EN8 step 1): the debugger thread reads "Not recorded at this moment" and a slot that showed a stop shows its loading text with no stopped line or label;
+   * called by {@link selectNodeHistoryEvent} when it selects another moment.
+   * Every surface leaves in this one host turn and one publish: the Study position names the moment the selection is going to with its step and explanation cleared, and the Application header reads as loading, until the commit (D29, F203).
+   * @param sequence - The moment the selection is going to.
+   * @example this.leaveNodeHistoryMoment(4)
    */
-  private leaveNodeHistoryMoment(): void {
+  private leaveNodeHistoryMoment(sequence: number): void {
     this.replayDebugger?.invalidate()
+    // The moment shown so far is left on the Study and Application panes, unless the replay shows no moment yet (the open's first selection).
+    const leavesShownMoment = this.selectedNodeHistorySequence !== undefined
+    if (leavesShownMoment) this.nodeHistoryLeftFor = sequence
     const slot = this.nodeSourceSlot
     // A slot that holds the placeholder or its loading text shows no earlier moment.
-    if (!slot?.stop) return
-    this.nodeSourceSlot = {
-      ...slot,
-      text: NODE_RECORDED_SOURCE_TEXT.loading,
-      stop: undefined,
+    if (slot?.stop) {
+      this.nodeSourceSlot = {
+        ...slot,
+        text: NODE_RECORDED_SOURCE_TEXT.loading,
+        stop: undefined,
+      }
+      this.decorateNodeSourceSlot()
+      this.sourceChanges.fire(slot.uri)
     }
-    this.decorateNodeSourceSlot()
-    this.sourceChanges.fire(slot.uri)
+    if (leavesShownMoment) this.publish()
   }
 
   /**

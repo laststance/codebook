@@ -73,16 +73,23 @@ test('a test replay’s Application document is written once and each later mome
       atOpen?.view.lines.map((line) => line.text),
       ['RUN src/theme.test.ts'],
     )
-    const later = harness.applicationOutputs().slice(updatesAtOpen)
+    // Each move posts the header that waits for the commit (D29, F203) and then the moment itself.
+    const allLater = harness.applicationOutputs().slice(updatesAtOpen)
     // Every later moment reaches the Application pane itself, not another pane (F126).
     assert.deepEqual(
-      later.map((update) => update.panel),
-      ['codebook.scopedBrowser', 'codebook.scopedBrowser'],
+      allLater.map((update) => update.panel),
+      Array(4).fill('codebook.scopedBrowser'),
     )
     assert.deepEqual(
-      later.map((update) => update.view.time),
-      ['Recorded test output · 0.40 s', 'Recorded test output · 0.30 s'],
+      allLater.map((update) => update.view.time),
+      [
+        'Recorded test output',
+        'Recorded test output · 0.40 s',
+        'Recorded test output',
+        'Recorded test output · 0.30 s',
+      ],
     )
+    const later = [allLater[1]!, allLater[3]!]
     assert.equal(later[0]?.view.end, 'Test passed · exit code 0')
     assert.deepEqual(
       later[1]?.view.lines.map((line) => [line.channel, line.text]),
@@ -92,8 +99,10 @@ test('a test replay’s Application document is written once and each later mome
       ],
     )
     assert.ok(
-      (atOpen?.generation ?? 0) < (later[0]?.generation ?? 0) &&
-        (later[0]?.generation ?? 0) < (later[1]?.generation ?? 0),
+      (atOpen?.generation ?? 0) < (allLater[0]?.generation ?? 0) &&
+        (allLater[0]?.generation ?? 0) < (allLater[1]?.generation ?? 0) &&
+        (allLater[1]?.generation ?? 0) < (allLater[2]?.generation ?? 0) &&
+        (allLater[2]?.generation ?? 0) < (allLater[3]?.generation ?? 0),
       'each later moment carries a newer generation',
     )
     // The Study views never carry the recorded output, which is the Application pane's alone.
@@ -970,7 +979,11 @@ test('a view the Application webview did not take is posted again at the next pu
     const attempts: number[] = []
     let refuseNext = true
     application.webview.postMessage = (message) => {
-      if (message.type === 'node-history-output') {
+      // The header that waits for the commit (D29, F203) is posted too; the refused view is the moment's own.
+      if (
+        message.type === 'node-history-output' &&
+        message.view.time !== 'Recorded test output'
+      ) {
         attempts.push(message.generation)
         if (refuseNext) {
           refuseNext = false

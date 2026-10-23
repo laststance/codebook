@@ -455,6 +455,64 @@ test('while the next stop’s debugger still loads, the slot shows no earlier st
   }
 })
 
+// Value: protects=every surface leaves the earlier moment in one step (D29, F203): while the next stop's debugger presentation is held, the debugger has been emptied once, the slot holds the new stop's bytes with no line or label, the Study position names the stop being selected with no explanation, and the Application header has no time; the commit then shows all of them together; fails_when=the Study position, its explanation or the Application header keep the earlier moment beside the new stop's slot, or the debugger keeps the earlier frames; why_new=N49 part 7's 0.1 to 0.6 s of mixed moments; seam=the workspace harness's held historical debug presentation; no_claim=the native frames of the transition, which the driving agent's N49 recheck reads
+test('while the next stop’s debugger presentation is held, the Study position and the Application header have left the earlier moment', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const shownBefore = lastView(harness)?.nodeHistorySection
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    const held = harness.holdHistoricalDebugPresentation(true)
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 4,
+    })
+    await held.started
+    const duringSection = lastView(harness)?.nodeHistorySection
+    const duringApplication = harness.applicationOutputs().at(-1)?.view
+    const invalidationsDuring =
+      harness.historicalDebugInvalidationLabels().length - invalidationsBefore
+    const tabsDuring = slotTabs(harness)
+    const labelsDuring = slotLabels(harness)
+    held.release()
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      'the second stop commits',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(shownBefore?.position, 'Stop 1 of 2 · 0.20 s')
+    assert.equal(duringSection?.position, 'Stop 2 of 2 · 0.30 s')
+    assert.equal(duringSection?.explanation, undefined)
+    assert.equal(duringSection?.selectedStepId, undefined)
+    assert.equal(duringApplication?.time, 'Recorded test output')
+    assert.equal(duringApplication?.region, undefined)
+    assert.equal(invalidationsDuring, 1)
+    assert.equal(tabsDuring.length, 1)
+    assert.deepEqual(labelsDuring, [])
+    assert.equal(
+      lastView(harness)?.nodeHistorySection?.position,
+      'Stop 2 of 2 · 0.30 s',
+    )
+    assert.equal(
+      harness.applicationOutputs().at(-1)?.view.time,
+      'Recorded test output · 0.30 s',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the debugger is presented only once the slot's document shows the stop's bytes, so its frame never points at a line of earlier text; fails_when=the debugger presentation starts while the slot's document still shows the placeholder; why_new=Design 4's order, step 2 before step 3 (slotReady, AC6); seam=the workspace harness's held delivery of a provider result to the open slot document (a delay between the slot's bytes and the frames); no_claim=how long the native editor takes to apply a provider result
 test('the debugger is presented at a stop only after the slot’s document shows that stop’s bytes', async () => {
   // Arrange
@@ -1058,6 +1116,77 @@ test('a Play step withdrawn after its slot showed the next stop shows the commit
     await harness.close()
   }
 })
+
+// Value: protects=a selection that is refused before it changes anything (an event the replay lacks, a seek at a debugger the learner stopped) supersedes no earlier selection: the Play step it found leaving the committed stop, withdrawn meanwhile, still shows the committed stop again in the slot with its line and label; fails_when=the refused selection takes the request token, so the withdrawn step's return is dropped and the slot keeps its loading text or the withdrawn stop's bytes with no stopped line or label beside the committed stop's Study position; why_new=F165 (D34: the request is taken after the refusal checks); seam=the workspace harness's held document open of the next stop's slot, with the caller's isCurrent turned false while the open is held, and the ended historical debugger session; no_claim=the debugger's own restart
+for (const refusal of [
+  {
+    name: 'an event the replay lacks',
+    refuse: (harness: Harness): Promise<void> =>
+      harness.reader['requestNodeHistoryEvent'](
+        harness.reader['selectedNodeHistory']!,
+        99,
+        { publish: false, alignPlayback: false },
+      ),
+    prepare: (_harness: Harness) => undefined,
+  },
+  {
+    name: 'a seek at a debugger the learner stopped',
+    refuse: (harness: Harness): Promise<void> =>
+      harness.reader['requestNodeHistoryEvent'](
+        harness.reader['selectedNodeHistory']!,
+        2,
+        { publish: false, alignPlayback: false },
+      ),
+    prepare: (harness: Harness): void => harness.endHistoricalDebugSession(),
+  },
+]) {
+  test(`${refusal.name} refused while a withdrawn Play step is leaving the committed stop leaves that stop in the slot with its line and label`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const history = await saveTwoFileNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      const selected = harness.reader['selectedNodeHistory']!
+      let wanted = true
+      const held = harness.holdNextSource()
+      const step = harness.reader['requestNodeHistoryEvent'](selected, 4, {
+        publish: false,
+        alignPlayback: false,
+        isCurrent: () => wanted,
+      })
+      await held.started
+      refusal.prepare(harness)
+      wanted = false
+
+      // Act: the refused selection arrives while the step's slot opens; the open then completes.
+      const refused = await refusal.refuse(harness).then(
+        () => 'accepted',
+        () => 'refused',
+      )
+      held.release()
+      await step
+      await waitUntil(
+        () => slotLabels(harness).length === 1,
+        'the committed stop’s label is drawn again',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // Assert
+      assert.equal(refused, 'refused')
+      assert.equal(harness.reader['selectedNodeHistorySequence'], 2)
+      const tabs = slotTabs(harness)
+      assert.equal(tabs.length, 1)
+      assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+      assert.deepEqual(slotLabels(harness), [
+        '  Recorded: src/theme.ts:1 · 0.20 s',
+      ])
+    } finally {
+      await harness.close()
+    }
+  })
+}
 
 // Value: protects=a Play step or seek that the learner withdrew (Pause or dispose, with no newer selection) while its recorded-source slot was still failing to open commits nothing: not its moment, not its page, not its reader position; fails_when=the failed-slot branch skips the caller's withdrawal check and the moment (sequence 2) becomes the selected one after the learner paused; why_new=F282: only the debugger branch checked isCurrent; seam=the workspace harness's held and rejected non-file document open, with the caller's isCurrent turned false while the open is held; no_claim=the wording of the slot's failure row
 test('a Play step withdrawn while its slot fails to open commits no moment', async () => {

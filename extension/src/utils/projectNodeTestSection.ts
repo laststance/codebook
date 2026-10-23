@@ -58,6 +58,8 @@ export type NodeTestSectionInput = {
   /** The step committed with the selected event (DS21); one that names no step of the event falls back to the event's first step. */
   chosenStepId?: string
   applicationClosed: boolean
+  /** `true` while the selected event is only the moment a selection is going to: the locator names it, and the explanation, the steps and the not-recorded lines of the moment left are not shown until it commits (D29, F203). */
+  pending?: boolean
 }
 
 /**
@@ -75,10 +77,16 @@ export function projectNodeTestSection(
   const { history, selected, learning } = input
   const stops = history.entries.filter((entry) => entry.type === 'stop')
   const verdict = historyVerdict(history)
-  const moment = momentSteps(selected, learning, input.chosenStepId)
-  const explanation = momentExplanation(selected, moment.selectedStep)
+  // A moment that is only pending has no step, explanation or not-recorded line yet.
+  const pendingMoment = input.pending === true
+  const moment = pendingMoment
+    ? { sameMomentStepIds: [] as string[] }
+    : momentSteps(selected, learning, input.chosenStepId)
+  const explanation = pendingMoment
+    ? undefined
+    : momentExplanation(selected, moment.selectedStep)
   const unverifiedStop =
-    selected?.type === 'stop' && !input.selectedStopVerified
+    !pendingMoment && selected?.type === 'stop' && !input.selectedStopVerified
   const timeline = projectNodeHistoryTimeline(history)
   const marks = timeline ? { timeline } : {}
   return {
@@ -87,7 +95,9 @@ export function projectNodeTestSection(
     ...(selected ? { position: positionLine(selected, stops.length) } : {}),
     ...(explanation === undefined ? {} : { explanation }),
     // The 4A line stands at an output, the result and a stop whose source does not verify.
-    ...(selected && (selected.type !== 'stop' || unverifiedStop)
+    ...(selected &&
+    !pendingMoment &&
+    (selected.type !== 'stop' || unverifiedStop)
       ? { notRecorded: NODE_TEST_REPLAY_TEXT.notRecorded }
       : {}),
     ...(unverifiedStop
@@ -97,7 +107,9 @@ export function projectNodeTestSection(
       ? NODE_TEST_REPLAY_TEXT.applicationClosed
       : NODE_TEST_REPLAY_TEXT.outputPointer,
     applicationClosed: input.applicationClosed,
-    ...(moment.selectedStepId ? { selectedStepId: moment.selectedStepId } : {}),
+    ...('selectedStepId' in moment && moment.selectedStepId
+      ? { selectedStepId: moment.selectedStepId }
+      : {}),
     sameMomentStepIds: moment.sameMomentStepIds,
     stepActions: stepActionLabels(history, learning),
     events: describeNodeTestReplay({
