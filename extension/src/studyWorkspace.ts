@@ -25475,7 +25475,7 @@ export class StudyWorkspace {
   /**
    * Closes every unpinned, unchanged recorded-source slot tab of this workspace but the one a moment shows: the earlier file's at a rename, one that a rename left when a newer selection overtook it or its slot could not open, and, when its test replay is retired, all of them; called by {@link showNodeSourceSlot}, {@link settleLateSlotShow} and {@link retireNodeHistorySelection}.
    * The close is registered by the address of each tab it closes until the editor answers, so a show of that address waits for it ({@link openNodeSourceSlot}).
-   * @param kept - The slot the current moment shows, which stays; `undefined` closes every slot tab.
+   * @param kept - The slot the current moment shows, which stays; `undefined` closes every slot tab. A given slot also closes the captured-source tabs of a browser replay the test replay took the surfaces from, which would otherwise stand beside the slot with another recording's source under the same title (F459).
    * @param only - Closes just the tabs of this address, whatever `kept` is.
    * @throws When the editor keeps a tab it was asked to close.
    * @example await this.closeNodeSourceSlotTabs(this.nodeSourceSlot?.uri)
@@ -25491,7 +25491,8 @@ export class StudyWorkspace {
         !tab.isPinned &&
         this.ownsCapturedSourceTab(tab) &&
         tab.input instanceof vscode.TabInputText &&
-        isNodeSourceSlotPath(tab.input.uri.path) &&
+        // A retired browser replay's own captured-source tab (not the slot's) goes when a slot is kept; a learner's file is no captured source and never matches.
+        (isNodeSourceSlotPath(tab.input.uri.path) || (!only && kept)) &&
         (only
           ? tab.input.uri.toString() === only.toString()
           : tab.input.uri.toString() !== kept?.toString())
