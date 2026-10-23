@@ -114,3 +114,34 @@ test('an introducer with no terminator within 4,096 code points removes only its
   assert.equal(closed, 'z')
   assert.equal(strayAtEnd, 'pq')
 })
+
+// Value: protects=output dense with unterminated 8-bit introducers is stripped in time linear in its length, so a hostile 8 MiB journal cannot stall the extension host; fails_when=200,000 U+009D take more than 500 ms (the scan of 4,096 code points per introducer returned: about 800 million steps) or the introducers are not all removed; why_new=F289; seam=none; no_claim=the speed of ordinary output
+test('200,000 unterminated 8-bit introducers are stripped in within 500 ms', () => {
+  // Arrange
+  const dense = `${'\u009D'.repeat(200_000)}tail`
+  const startedAt = performance.now()
+
+  // Act
+  const shown = stripTerminalControls(dense)
+  const elapsedMs = performance.now() - startedAt
+
+  // Assert
+  assert.equal(shown, 'tail')
+  assert.ok(elapsedMs < 500, `took ${Math.round(elapsedMs)} ms`)
+})
+
+// Value: protects=the linear scan keeps the closure-rule-7 reach of a string: an introducer whose terminator lies 4,096 code points away goes whole even when astral characters sit between, and one a code point further is a stray; fails_when=the bound counts UTF-16 units instead of code points, or a nested introducer inside a string splits it; why_new=F289 (the scan was rewritten); seam=none; no_claim=anything beyond the bound
+test('the string bound counts code points and a nested introducer stays inside its string', () => {
+  // Arrange
+  const exactlyAtBound = `\u009D${'😀'.repeat(4_096)}\u0007kept`
+  const oneBeyond = `\u009D${'😀'.repeat(4_097)}\u0007kept`
+  const nested = 'a\u009Dtitle\u009Dmore\u0007b'
+
+  // Act
+  const shown = [exactlyAtBound, oneBeyond, nested].map(stripTerminalControls)
+
+  // Assert
+  assert.equal(shown[0], 'kept')
+  assert.equal(shown[1], `${'😀'.repeat(4_097)}kept`)
+  assert.equal(shown[2], 'ab')
+})
