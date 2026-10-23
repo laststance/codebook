@@ -27,7 +27,7 @@ export function parseForeignPreviewObstacle(
   text: string,
 ): { tabName: string; viewColumn: number } | undefined {
   const match =
-    /A destination group contains a foreign preview: "([^"]+)" in editor group (\d+)\./.exec(
+    /A destination group contains a foreign preview: "([\s\S]+?)" in editor group (\d+)\./.exec(
       text,
     )
   return match
