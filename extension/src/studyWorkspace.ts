@@ -80,6 +80,9 @@ import {
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_FOCUS_RELEASE_WAIT_MS,
   SUMMARY_PLACEMENT_ACTION,
+  MOVE_VIEWS_COMMAND,
+  SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
+  SUMMARY_BESIDE_CHAT_MOVED_KEY,
   SUMMARY_PLACEMENT_ANSWERED_KEY,
   SUMMARY_PLACEMENT_CONTEXT_KEY,
   SUMMARY_PLACEMENT_OFFER,
@@ -534,6 +537,8 @@ type WorkspaceContext = Pick<
 > & {
   globalStorageUri: Pick<vscode.Uri, 'fsPath'>
   workspaceState: Pick<vscode.Memento, 'get' | 'update'>
+  /** The profile-wide state; absent in a host context that gives none, where nothing is moved once-per-profile. */
+  globalState?: Pick<vscode.Memento, 'get' | 'update'>
 }
 // What the reader selects while no saved study is shown: at first start, and after the last study that could be opened was removed.
 const NO_STUDY_SELECTION: RetainedStudySelection = {
@@ -11282,7 +11287,11 @@ export class StudyWorkspace {
       }
     }
     const outcome = await this.openNodeHistory(studyId, this.revision)
-    if (outcome.status !== 'failed') return
+    if (outcome.status !== 'failed') {
+      // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
+      await this.moveSummaryBesideChatOnce()
+      return
+    }
     const roots = this.service?.causeRoots ?? { storage: [] }
     const cause = sanitizeCause(outcome.error, roots)
     const stack = sanitizedStack(outcome.error, roots)
@@ -18481,6 +18490,11 @@ export class StudyWorkspace {
     }
     try {
       assertCurrent()
+      // The learner's own entry moves the summary beside the chat once per profile; an agent's never does (F209).
+      if (!keepsViewsInFront) {
+        await this.moveSummaryBesideChatOnce()
+        assertCurrent()
+      }
       const focusOptions = preserveFocus ? { preserveFocus: true } : undefined
       // Only explicit replay entry reveals the bottom controls; passive ticks never reopen a closed panel, and an agent's entry switches no panel container.
       if (this.revealsObservedMoments(revealPlayback, keepsViewsInFront)) {
@@ -18571,6 +18585,36 @@ export class StudyWorkspace {
    */
   private isCursorHost(): boolean {
     return vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
+  }
+
+  /**
+   * Moves the Learning summary beside VS Code's chat, once per profile, at the learner's own first replay open; {@link showLearningSummary} (the learner's entry, not an agent's) and {@link openNodeHistoryFromHost} call it.
+   *
+   * The manifest contributes the summary's container to the Activity Bar, because Cursor refuses a secondary side bar container. VS Code's internal `vscode.moveViews` puts the view into the Chat container, as the product image's region 2 shows. The profile flag is written before the move and read back, so the move happens once and a place the learner chose afterwards is never overridden; a refused or missing command leaves the view in the Activity Bar and is reported to Output › Codebook. Nothing happens in Cursor.
+   *
+   * @example await this.moveSummaryBesideChatOnce()
+   */
+  private async moveSummaryBesideChatOnce(): Promise<void> {
+    const state = this.context.globalState
+    if (!state || this.isCursorHost()) return
+    if (state.get<boolean>(SUMMARY_BESIDE_CHAT_MOVED_KEY)) return
+    const surface = 'layout:summary-beside-chat'
+    try {
+      await state.update(SUMMARY_BESIDE_CHAT_MOVED_KEY, true)
+      // A flag that did not persist would repeat the move at every open: no move without it.
+      if (state.get<boolean>(SUMMARY_BESIDE_CHAT_MOVED_KEY) !== true)
+        throw new Error('The profile flag of the summary move was not saved.')
+      await vscode.commands.executeCommand(
+        MOVE_VIEWS_COMMAND,
+        SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
+      )
+    } catch (error) {
+      const roots = this.service?.causeRoots ?? { storage: [] }
+      this.diagnostics?.log({
+        surface,
+        cause: sanitizeCause(error, roots),
+      })
+    }
   }
 
   /**

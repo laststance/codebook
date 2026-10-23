@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import {
   readerSeams,
@@ -3090,6 +3091,94 @@ test('Focus Explanation opens the Study pane again for a selected test replay wh
 
     // Assert
     assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+const SUMMARY_MOVE = {
+  viewIds: ['codebook.learningSummary'],
+  destinationId: 'workbench.panel.chat',
+}
+
+// Value: protects=the Learning summary's place beside VS Code's chat (the PNG's region 2) without overriding the learner: the learner's first Open replay in a profile moves the view into the Chat container once, and later opens never move it again (a place the learner chose stays); fails_when=the move repeats at every open, runs at no open, or the profile flag is not kept; why_new=Cycle 0050 F209 and D31 (Cursor rejects the secondary side bar container, so the manifest uses the Activity Bar); seam=workspaceHarness (VS Code), openLearningReplay, the fake vscode.moveViews and the profile state
+test('the first Open replay of a profile in VS Code moves the Learning summary beside the chat once and later opens leave it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    const afterFirst = harness.moveViewsCalls()
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.deepEqual(afterFirst, [SUMMARY_MOVE])
+    assert.deepEqual(harness.moveViewsCalls(), [SUMMARY_MOVE])
+    assert.equal(
+      harness.profileState.get('codebook.summaryBesideChatMoved.v1'),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Cursor's Learning summary staying in its own Activity Bar container: Cursor has no Chat container to move the view into, and moving views there is not Codebook's to do; fails_when=the move runs in Cursor; why_new=Cycle 0050 F209 and D31; seam=workspaceHarness with useHostAppName('Cursor'), openLearningReplay
+test('the first Open replay in Cursor moves no view', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useHostAppName('Cursor')
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.deepEqual(harness.moveViewsCalls(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a host that does not register the internal vscode.moveViews command: the replay still opens, the summary stays in the Activity Bar, one Output › Codebook entry names the refusal, and the move is not tried again at every open; fails_when=the refusal fails the open, is silent, or repeats; why_new=Cycle 0050 F209 and D31 (the command and the container id are internal to VS Code); seam=workspaceHarness removeHostCommands('vscode.moveViews'), diagnostics
+test('a host without vscode.moveViews still opens the replay and reports the refusal once to the Output channel', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.removeHostCommands('vscode.moveViews')
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      history.studyId,
+    )
+    assert.deepEqual(
+      logged.map((entry) => entry.surface),
+      ['layout:summary-beside-chat'],
+    )
+    assert.match(logged[0]!.cause, /vscode\.moveViews/)
   } finally {
     await harness.close()
   }

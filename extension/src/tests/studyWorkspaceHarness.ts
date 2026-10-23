@@ -3836,6 +3836,10 @@ export async function workspaceHarness(
           // Both native hosts reject a command they do not register, in these words.
           if (absentHostCommands.has(name))
             throw new Error(`command '${name}' not found`)
+          if (name === 'vscode.moveViews') {
+            moveViewsCalls.push(structuredClone(layout))
+            return
+          }
           // A context key changes no pane, focus or layout; it is kept apart from the recorded native commands.
           if (name === 'setContext') {
             contextKeys.set(String(layout), contextValue)
@@ -5014,6 +5018,15 @@ export async function workspaceHarness(
       presentationPreferences.set(key, structuredClone(value))
     },
   }
+  /** The profile-wide state of the fake extension context (`globalState`), and the `vscode.moveViews` arguments the reader sent; see `profileState` and `moveViewsCalls`. */
+  const profileState = new Map<string, unknown>()
+  const moveViewsCalls: unknown[] = []
+  const globalState = {
+    get: <Value>(key: string) => profileState.get(key) as Value | undefined,
+    update: async (key: string, value: unknown): Promise<void> => {
+      profileState.set(key, structuredClone(value))
+    },
+  }
   /** Makes one more reader over the same fake editor and storage, as the extension does after a change of the workspace's folders; `handedOverArchives` are the study archives the reader before it could not save and released. @example const replacement = harness.createReader(undefined, harness.reader.releaseUnsavedStudies()) */
   const createReader = (
     extensionPath = join(harness.directory, 'extension'),
@@ -5027,6 +5040,7 @@ export async function workspaceHarness(
         globalStorageUri: { fsPath: join(harness.directory, 'storage') },
         subscriptions: [],
         workspaceState,
+        globalState,
       },
       controls,
       handedOverArchives,
@@ -5601,6 +5615,10 @@ export async function workspaceHarness(
       activeTextEditorChanged(editor)
       changedGroups({ opened: [], closed: [], changed: [group] })
     },
+    /** The arguments of every `vscode.moveViews` the reader ran. @example harness.moveViewsCalls() // => [{ viewIds: ['codebook.learningSummary'], destinationId: 'workbench.panel.chat' }] */
+    moveViewsCalls: () => [...moveViewsCalls],
+    /** The fake profile-wide state (`globalState`) of the extension context. @example harness.profileState.get('codebook.summaryBesideChatMoved.v1') */
+    profileState,
     movePanel(kind: string, column: number): void {
       const panel = [...panels].find((panel) => panel.kind === kind)
       assert.ok(panel)

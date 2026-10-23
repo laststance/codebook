@@ -230,19 +230,17 @@
           "id": "codebook",
           "title": "codebook",
           "icon": "src/assets/book.svg"
+        },
+        {
+          "id": "codebookLearning",
+          "title": "Learning summary",
+          "icon": "src/assets/book.svg"
         }
       ],
       "panel": [
         {
           "id": "codebookMoments",
           "title": "codebook",
-          "icon": "src/assets/book.svg"
-        }
-      ],
-      "secondarySidebar": [
-        {
-          "id": "codebookLearning",
-          "title": "Learning summary",
           "icon": "src/assets/book.svg"
         }
       ]

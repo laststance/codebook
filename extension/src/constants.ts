@@ -476,6 +476,16 @@ export const CHAT_KEYBOARD_RETURNED_MESSAGES = {
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'
+/** Profile-wide (global state) key recording that Codebook moved the Learning summary beside VS Code's chat once, at the learner's first replay open; it keeps that move to once, so a place the learner chose afterwards is never overridden (F209, D31). */
+export const SUMMARY_BESIDE_CHAT_MOVED_KEY =
+  'codebook.summaryBesideChatMoved.v1'
+/** VS Code's internal command that moves views into a container; its argument is {@link SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT}. Internal to VS Code, so a missing or refusing command is expected and only reported (F209). */
+export const MOVE_VIEWS_COMMAND = 'vscode.moveViews'
+/** The argument that moves the Learning summary into VS Code's Chat container, the secondary side bar the PNG's region 2 shows (F209, D31). */
+export const SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT = {
+  viewIds: ['codebook.learningSummary'],
+  destinationId: 'workbench.panel.chat',
+} as const
 /** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
 export const SUMMARY_PLACEMENT_OFFER =
   'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'
