@@ -2169,10 +2169,18 @@ test('Focus source pressed while a stop selection is leaving its stop waits for 
     )
 
     // Act
+    // The leave settle's timer is set by the selection before Focus source is pressed; the clock moves only once it stands.
+    await waitUntil(
+      () => harness.pendingSlotTimers() > 0,
+      'the leave settle waits for the native views',
+      READER_RESULT_BOUND_MS,
+    )
     const focusing = harness.reader.action('source')
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    for (let turn = 0; turn < 10; turn++)
+      await new Promise((resolve) => setImmediate(resolve))
     harness.elapseSlotClock(299)
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    for (let turn = 0; turn < 10; turn++)
+      await new Promise((resolve) => setImmediate(resolve))
     const showsBeforeSettle = harness.textDocumentShows().length
     harness.elapseSlotClock(1)
     await focusing

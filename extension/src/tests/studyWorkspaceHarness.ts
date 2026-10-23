@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
+import { afterEach } from 'node:test'
 import { promisify } from 'node:util'
 
 import {
@@ -91,6 +92,28 @@ function isFakeStackFrame(
 }
 type NativeVariablesHiding =
   'never-opened' | 'missed-the-stop' | 'shows-another-session'
+
+/** The errors that listeners of `onDidChangeVisibleTextEditors` threw in tests whose harness closed since the last hook run; reported once by the `afterEach` hook below, so the failure stands beside the test's own assertion error and never replaces it (F405). */
+const unreportedListenerErrors: unknown[] = []
+
+/**
+ * Hands out and forgets the listener errors that harness `close` recorded, as the hook below reports them; also read by the fidelity test of that hand-over.
+ * @returns The errors recorded since the last call; an empty list when none, and after a call there is none left to report.
+ * @example expect(takeUnreportedListenerErrors()).toHaveLength(0)
+ */
+export function takeUnreportedListenerErrors(): unknown[] {
+  return unreportedListenerErrors.splice(0)
+}
+
+// A hook failure is reported by the runner apart from the test body's own failure, and only once, whatever number of times a test closes its harness.
+afterEach(() => {
+  const errors = takeUnreportedListenerErrors()
+  if (errors.length > 0)
+    throw new AggregateError(
+      errors,
+      `A listener of onDidChangeVisibleTextEditors threw ${errors.length} time(s) during the test: ${errors.map(String).join('; ')}`,
+    )
+})
 
 /**
  * Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions.
@@ -7772,15 +7795,10 @@ export async function workspaceHarness(
       pendingEditorTimers.clear()
       pendingDisposedTabCloses.length = 0
       await harness.close()
-      // The host only logs a throwing listener; the fake keeps the error, so the test that caused it fails here, after every resource is released.
-      if (
-        !visibleEditorListenerErrorsExpected &&
-        visibleEditorListenerErrors.length > 0
-      )
-        throw new AggregateError(
-          visibleEditorListenerErrors,
-          `A listener of onDidChangeVisibleTextEditors threw ${visibleEditorListenerErrors.length} time(s) during the test: ${visibleEditorListenerErrors.map(String).join('; ')}`,
-        )
+      // The host only logs a throwing listener; the fake keeps the error and hands it to the afterEach hook, which fails the test that caused it without replacing that test's own failure. Handed over once: a second close adds nothing.
+      if (!visibleEditorListenerErrorsExpected)
+        unreportedListenerErrors.push(...visibleEditorListenerErrors)
+      visibleEditorListenerErrors.length = 0
     },
     /** Declares that the test makes a listener of `onDidChangeVisibleTextEditors` throw on purpose (the fidelity test of the isolation), so `close` does not fail it. @example harness.expectVisibleEditorListenerErrors() */
     expectVisibleEditorListenerErrors(): void {

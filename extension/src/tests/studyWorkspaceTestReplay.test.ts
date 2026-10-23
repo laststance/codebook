@@ -4,10 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { NODE_TEST_HISTORY_DIRECTORY, NODE_TEST_PROFILE } from '../constants'
-import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
-import type { NodeTestSourceStop } from '../ownedNodeTestRun'
-import type { NodeTestRuntime } from '../runtime'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
@@ -25,89 +22,13 @@ import {
 } from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
+import { startLiveTestRun } from './utils/startLiveTestRun'
 import { saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
+import { twoStopOwnedRun } from './utils/twoStopOwnedRun'
 
 /** The last view the reader posted to its panes. */
 function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
   return harness.postedMessages().slice(-1)[0]
-}
-
-/**
- * Builds a fake owned Node run with two declared stops and a passing result, as a live test run the workspace's Save acts on.
- * @param source - The cited source of both stops.
- * @param sourceText - The cited source's text, which each stop's debugger snapshot holds so the stop verifies.
- * @returns The run, which pauses at its first stop and reaches the second one when it advances.
- * @example const run = twoStopOwnedRun(configuration.source, sourceText)
- */
-function twoStopOwnedRun(
-  source: NodeTestConfiguration['source'],
-  sourceText: string,
-): NodeTestRuntime {
-  const stops = [0, 1].map(
-    (index) =>
-      ({
-        index,
-        runId: 'node-run',
-        sessionId: 'owned-session',
-        threadId: 7,
-        elapsedMs: 10 + index * 10,
-        worker: { pid: 1, processGroup: 1, workspace: '/private/test' },
-        source,
-        frame: {
-          id: 10 + index,
-          name: 'schedule',
-          line: source.line,
-          column: source.column,
-        },
-        variables: [{ name: 'delayMs', value: '5000', variablesReference: 0 }],
-        facts: [
-          { path: 'delayMs', mode: 'value', display: '5000', type: 'number' },
-        ],
-        debuggerSnapshot: {
-          version: 1,
-          frames: [
-            {
-              name: 'schedule',
-              line: source.line,
-              column: source.column,
-              source: {
-                name: source.path,
-                text: sourceText,
-                hash: sha256(sourceText),
-                line: source.line,
-              },
-              scopes: [{ name: 'Local', variables: [0] }],
-            },
-          ],
-          variables: [
-            { name: 'delayMs', value: '5000', type: 'number', children: [] },
-          ],
-          limitations: [],
-        },
-      }) satisfies NodeTestSourceStop,
-  )
-  let cursor = 0
-  return {
-    id: 'node-run',
-    async prepare() {
-      return stops[cursor]!
-    },
-    hasNextStop() {
-      return cursor < stops.length - 1
-    },
-    async advance() {
-      return stops[++cursor]!
-    },
-    async complete() {
-      return {
-        exitCode: 0,
-        signal: null,
-        output: 'Tests 1 passed',
-        elapsedMs: 40,
-      }
-    },
-    async stop(): Promise<void> {},
-  }
 }
 
 // Value: protects=Open replay of a sealed test replay while the Study pane is closed: the pane opens and the replay lands on its first verified stop with the replay debugger presented; fails_when=Open replay goes to the browser replay's controller, the closed pane stays closed, or the replay lands on the output banner; why_new=Open replay opened only browser recordings (C49-2, DS1, DS10, AC4); seam=the editor and the debugger are fakes; no_claim=the host's own pane arrangement (N49)
@@ -770,55 +691,6 @@ test('a refresh while a saved test replay is open lists the history sealed meanw
     await harness.close()
   }
 })
-
-/**
- * Starts a live test run of two declared stops on a workspace harness and waits for its preparation, so the status bar item and Save act on a run paused at its first stop.
- * @param harness - The workspace harness whose service runs it.
- * @param runName - The start's idempotency key, named by what the run is for.
- * @returns The run's record and its study id.
- * @example const { record, studyId } = await startLiveTestRun(harness, 'closed-pane-save-item')
- */
-async function startLiveTestRun(
-  harness: Pick<
-    Awaited<ReturnType<typeof workspaceHarness>>,
-    'service' | 'configuration' | 'directory'
-  >,
-  runName: string,
-) {
-  const { service, configuration } = harness
-  const sourceText = await readFile(
-    join(harness.directory, configuration.source.path),
-    'utf8',
-  )
-  service.environment.build.sourceHash = 'f'.repeat(64)
-  service.environment.createNodeTestRun = async () =>
-    twoStopOwnedRun(configuration.source, sourceText)
-  const receipt = service.start({
-    instanceId: service.instanceId,
-    profile: NODE_TEST_PROFILE,
-    key: runName,
-    configuration: {
-      version: 1,
-      adapter: 'vitest-node',
-      book: configuration.book,
-      testFile: 'src/scheduler.test.ts',
-      testHash: 'a'.repeat(64),
-      testTitles: ['job scheduler', 'runs a delayed job after its timer'],
-      source: configuration.source,
-      inspections: configuration.inspections.slice(0, 1),
-      additionalStops: [
-        {
-          ...configuration.source,
-          anchorIndex: 0,
-          inspections: configuration.inspections.slice(0, 1),
-        },
-      ],
-    },
-  })
-  const record = service.record(receipt)
-  await record.preparation
-  return { record, studyId: `${service.instanceId}_${record.id}` }
-}
 
 // Value: protects=a delayed Save click for an earlier test run: it is refused with the session-changed sentence and the current run is neither asked about nor stopped; fails_when=a stale status item click saves or stops the run now owned by the workspace; why_new=the stale-click guard was tested for browser recordings only (F23, gap E6); seam=a fake owned Node run; no_claim=the browser save's own test
 test('a delayed Save click for an earlier test run is refused and leaves the current run running', async () => {

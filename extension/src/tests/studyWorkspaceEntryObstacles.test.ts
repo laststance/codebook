@@ -415,8 +415,8 @@ test('Open replay beside a non-text preview that cannot be kept tells the learne
   }
 })
 
-// Value: protects=the learner who chose Keep Tab Open for a non-text preview that cannot be kept, when a test replay's Open replay was refused for it, being told once and the Output › Codebook receiving no open:test-replay entry for the refusal the keep notice already explained; fails_when=a refused Keep Tab Open is followed by the test replay's load-failure notification and Output entry; why_new=Cycle 0050 F394 (openNodeHistoryFromHost told the failure after the keep notice); seam=openNodeHistory answering a foreign-preview failure, addNonTextPreview behind another tab, answerWarningDialogs, the diagnostics log and the harness's error notifications; no_claim=how the replay's open meets the preview (the F158 rounds above)
-test('a test replay Open replay refused for a non-text preview that cannot be kept tells the learner once and writes no open failure', async (context) => {
+// Value: protects=the learner who chose Keep Tab Open for a non-text preview that cannot be kept, when a test replay's Open replay was refused for it, being told once by the keep notice, with no second notification, and the refusal recorded in one Output › Codebook open:test-replay entry (F407); fails_when=a refused Keep Tab Open is followed by the test replay's load-failure notification, or leaves no Output entry; why_new=Cycle 0050 F394 (openNodeHistoryFromHost told the failure after the keep notice); seam=openNodeHistory answering a foreign-preview failure, addNonTextPreview behind another tab, answerWarningDialogs, the diagnostics log and the harness's error notifications; no_claim=how the replay's open meets the preview (the F158 rounds above)
+test('a test replay Open replay refused for a non-text preview that cannot be kept tells the learner once and records the refusal in one Output entry', async (context) => {
   // Arrange
   const harness = await workspaceHarness(false)
   const logged: CodebookDiagnostic[] = []
@@ -453,8 +453,14 @@ test('a test replay Open replay refused for a non-text preview that cannot be ke
     )
     assert.deepEqual(harness.errorMessages, [])
     assert.deepEqual(
-      logged.map((entry) => entry.surface),
-      [],
+      logged.map((entry) => [entry.surface, entry.studyId, entry.cause]),
+      [
+        [
+          'open:test-replay',
+          'a_b',
+          'A destination group contains a foreign preview: "diagram.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+        ],
+      ],
     )
   } finally {
     context.mock.restoreAll()
