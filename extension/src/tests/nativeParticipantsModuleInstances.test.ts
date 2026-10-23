@@ -852,3 +852,33 @@ test('an older script’s read that ends after a newer script of the same addres
   const instances = [...harness.run['stops'][0]!.instances.keys()].sort()
   assert.deepEqual(instances, ['save-1', 'save-2'])
 })
+
+// Value: protects=a script announced once keeping one announcement order however many declared stops share its module, and the orders ending with the run (F483); fails_when=each stop's adoption overwrites the script's order with a newer count, so an older script can look newer than a later one, or the orders stay held after the run was cleaned up; why_new=F483 (CodeRabbit CLI/OCR low of the review of ccfe301d..c9664ea3: F476's orders were overwritten per stop and removed only by a same-address script); seam=two declared stops in one module, announceModuleInAnotherLayer, and the run's private announcement map; no_claim=the orders of scripts of other modules
+test('two declared stops in one module keep one announcement order for the script, and the orders end with the run', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server', 'server'])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+
+  // Act
+  harness.announceModuleInAnotherLayer(
+    'server',
+    'middleware',
+    'middleware',
+    ';AAAA',
+  )
+  await waitUntil(
+    () => journaled(harness, 'stop.instance-sealed').length === 2,
+    'both stops accepted the instance',
+  )
+  const ordersWhileRunning = [...harness.run['scriptAnnouncements']]
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(JSON.stringify(ordersWhileRunning), '[["server:middleware",1]]')
+  assert.equal(harness.run['scriptAnnouncements'].size, 0)
+})
