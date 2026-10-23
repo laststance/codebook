@@ -1009,7 +1009,10 @@ test('a run whose final evidence write fails after its release freed every resou
 
   // Assert: the terminal reason and the error's cause with the evidence folder's path replaced, which the system's error names.
   const withoutPath = (text: string): string =>
-    text.replace(evidenceDirectory, '<evidence directory>')
+    text
+      .replace(evidenceDirectory, '<evidence directory>')
+      // The service already shows the folder with its private root replaced.
+      .replace(/<workspace>\/\.runtime\/[0-9a-f-]{36}/, '<evidence directory>')
   assert.ok('text' in resource)
   const state = z
     .object({
@@ -1042,7 +1045,7 @@ test('a run whose final evidence write fails after its release freed every resou
       cleanupError: undefined,
       state: 'stopped',
       terminalReason:
-        "Error: ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
+        "ENOENT: no such file or directory, open '<evidence directory>/events.jsonl'",
       error: {
         code: 'RUNTIME_FAILED',
         message: 'The run failed in its runtime.',

@@ -1301,7 +1301,7 @@ test("a run that failed itself on a removed study's evidence write and was stopp
       ).includes(path),
     },
     {
-      terminalNamedPathBefore: true,
+      terminalNamedPathBefore: false,
       terminalReason:
         "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
       runNamesPath: false,

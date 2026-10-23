@@ -2268,9 +2268,10 @@ export class StudyService {
    */
   private runEvidenceFailure(record: StudyRecord): string | undefined {
     if (isStudyRemovalExclusion(record.historyExcluded)) return undefined
-    return record.stopped
+    const failure = record.stopped
       ? record.evidenceFailureAtStop
       : record.runtime?.evidence.failure
+    return failure === undefined ? undefined : this.sanitizedCause(failure)
   }
 
   /**
@@ -2288,14 +2289,14 @@ export class StudyService {
     runtime: RuntimeView | undefined,
   ): string | undefined {
     const failure = runtime?.failures[0]
-    // Only a removed study's failure that names its evidence directory is worded again.
+    // Only a removed study's failure that names its evidence directory is worded again; any other is shown with its private roots replaced (F233).
     if (
       !runtime ||
       failure === undefined ||
       !isStudyRemovalExclusion(record.historyExcluded) ||
       !failure.includes(runtime.artifactDirectory)
     )
-      return failure
+      return failure === undefined ? undefined : this.sanitizedCause(failure)
     return this.writeFailureError(
       record,
       'Evidence buffering or persistence failed.',
