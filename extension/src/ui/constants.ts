@@ -25,8 +25,11 @@ const STUDY_SEQUENCE_LAYOUT = {
   topPaddingPx: 72,
   rowHeightPx: 64,
   nameYpx: 24,
-  // The average width of one character of the diagram's 12 px text and the room a name or label leaves at both sides of its box; a column holds floor((width - padding) / charWidth) characters (F206).
+  // The width of one character of the diagram's 12 px text by kind and the room a name or label leaves at both sides of its box; a line holds the characters whose widths fit in (box width - padding) (F206, F293); the widths below estimate a diagram that cannot measure its text. A Japanese, Chinese or Korean glyph and a full-width form is about one em wide, an upper-case Latin letter wider than a lower-case one.
+  fontSizePx: 12,
   charWidthPx: 6.5,
+  wideCharWidthPx: 13,
+  upperCharWidthPx: 8.5,
   columnPaddingPx: 16,
   nameLineHeightPx: 14,
   lifelineYpx: 66,

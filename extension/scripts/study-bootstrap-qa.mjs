@@ -1256,10 +1256,7 @@ async function check(page, options, collected) {
       })
       const nodeStop = {
         sequence: 2,
-        type: 'stop',
-        index: 0,
         eventIndex: 1,
-        elapsedMs: 1200,
         sourceAvailable: true,
         debuggerAvailable: true,
       }
@@ -1747,7 +1744,6 @@ async function check(page, options, collected) {
         nodeHistoryPosition: {
           ...nodeStop,
           sequence: 3,
-          index: 1,
           eventIndex: 1,
           debuggerAvailable: false,
         },
@@ -1936,7 +1932,12 @@ async function check(page, options, collected) {
       }
       const notRecordedLine = 'Source and debugger not recorded at this moment.'
       /** The Study message of the job scheduler's test replay at one selected event. */
-      const testReplayAt = (position, section, mode = 'paused') => ({
+      const testReplayAt = (
+        position,
+        section,
+        mode = 'paused',
+        positionMs = 0,
+      ) => ({
         ...nodeReader,
         nodeHistoryEventCount: 4,
         nodeHistory: {
@@ -1950,28 +1951,27 @@ async function check(page, options, collected) {
         nodeHistoryPlayback: {
           mode,
           sequence: position.sequence,
-          positionMs: position.elapsedMs,
+          positionMs,
           startMs: 100,
           endMs: 900,
           loading: false,
         },
       })
       const atFirstOutput = testReplayAt(
-          { sequence: 1, type: 'output', eventIndex: 0, elapsedMs: 100 },
+          { sequence: 1, eventIndex: 0 },
           {
             position: 'Output · 0.10 s',
             notRecorded: notRecordedLine,
             previousStop: false,
             nextStop: true,
           },
+          'paused',
+          100,
         ),
         atStop = testReplayAt(
           {
             sequence: 3,
-            type: 'stop',
-            index: 0,
             eventIndex: 2,
-            elapsedMs: 420,
             sourceAvailable: true,
             debuggerAvailable: true,
           },
@@ -1983,9 +1983,11 @@ async function check(page, options, collected) {
             previousStop: false,
             nextStop: false,
           },
+          'paused',
+          420,
         ),
         atResult = testReplayAt(
-          { sequence: 4, type: 'result', eventIndex: 3, elapsedMs: 900 },
+          { sequence: 4, eventIndex: 3 },
           {
             position: 'Result · Test passed · exit code 0 · 0.90 s',
             explanation: 'The job ran after its timer, so the test passed.',
@@ -1994,6 +1996,8 @@ async function check(page, options, collected) {
             previousStop: true,
             nextStop: false,
           },
+          'paused',
+          900,
         )
       /** Reads the section's lines, the step marked current and the steps marked as the same recorded moment. */
       const replaySectionLines = () =>
@@ -2079,11 +2083,13 @@ async function check(page, options, collected) {
       // Act
       await publish(
         testReplayAt(
-          { sequence: 1, type: 'output', eventIndex: 0, elapsedMs: 100 },
+          { sequence: 1, eventIndex: 0 },
           {
             captureReason:
               'Capture interrupted: Interrupted test replay after its verified prefix: Error: EIO',
           },
+          'paused',
+          100,
         ),
       )
       const interruptedReason = await readCaptureReason()
@@ -2128,8 +2134,10 @@ async function check(page, options, collected) {
       const firstOutputCoverage = await readCoverage()
       await publish(
         testReplayAt(
-          { sequence: 1, type: 'output', eventIndex: 0, elapsedMs: 100 },
+          { sequence: 1, eventIndex: 0 },
           { timeline: undefined, previousStop: false, nextStop: false },
+          'paused',
+          100,
         ),
       )
       const oneEventCoverage = await readCoverage()
@@ -2170,11 +2178,16 @@ async function check(page, options, collected) {
       // Arrange: the stop of the replay while the learner has closed the Application pane.
       const paneClosedLine = 'The Application pane is closed.'
       await publish(
-        testReplayAt(atStop.nodeHistoryPosition, {
-          ...atStop.nodeHistorySection,
-          applicationClosed: true,
-          pointer: paneClosedLine,
-        }),
+        testReplayAt(
+          atStop.nodeHistoryPosition,
+          {
+            ...atStop.nodeHistorySection,
+            applicationClosed: true,
+            pointer: paneClosedLine,
+          },
+          'paused',
+          420,
+        ),
       )
       const whenClosed = await page.evaluate(() => ({
         rowShown: !document.getElementById('node-history-closed').hidden,
@@ -2228,6 +2241,7 @@ async function check(page, options, collected) {
           atStop.nodeHistoryPosition,
           atStop.nodeHistorySection,
           'playing',
+          420,
         ),
       )
       await page.locator('#node-history-playback-toggle').focus()
@@ -2261,7 +2275,7 @@ async function check(page, options, collected) {
           ]),
       })
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
-      // Value: protects=the keyboard's whole path through a test replay (DS17): Open the replay from Saved studies (the list's own key handling is the browser's), then Step details, a step, Next stop, Previous stop, a seek and Pause in the Study pane, and then the Application pane's output region, which the first Tab of the document reaches and a page key scrolls; fails_when=choosing the replay by keyboard asks the host for another entry or nothing, a step of the path is not reachable, or the output region is no tab stop, has no name or does not scroll by keyboard; why_new=F122 (AC13 path): the keyboard case began after Open and never reached the output region; seam=none; no_claim=the host's answer to each request (the workspace tests) (stand-ins: the pane's sent messages and a document of the Application pane in a page of its own)
+      // Value: protects=the keyboard's whole path through a test replay (DS17): Open the replay from Saved studies (the list's own key handling is the browser's), then Step details, a step, Next stop, Previous stop, a seek and Pause in the Study pane, and then the Application pane's output region, which the first Tab of the document reaches and a page key scrolls; fails_when=choosing the replay by keyboard asks the host for another entry or nothing, a step of the path is not reached by Tab presses (a control outside the tab order passes a script focus, F295), or the output region is no tab stop, has no name or does not scroll by keyboard; why_new=F122 (AC13 path): the keyboard case began after Open and never reached the output region; seam=none; no_claim=the host's answer to each request (the workspace tests) (stand-ins: the pane's sent messages and a document of the Application pane in a page of its own)
       // Arrange: a saved replay listed in Saved studies and none opened.
       await publish({
         ...options.message,
@@ -2318,12 +2332,21 @@ async function check(page, options, collected) {
         ['pause', '#node-history-playback-toggle', atStop],
       ]) {
         await publish(at)
-        await page.locator(selector).focus()
-        reachableControls[name] = await page.evaluate(
-          (selector) =>
-            document.activeElement === document.querySelector(selector),
-          selector,
-        )
+        // The press count that reaches the control by Tab from the replay chooser (0 when it is outside the tab order or beyond the limit), never a script focus: a control with tabindex -1 or one that is hidden is not reached (F295).
+        await page.locator('#studies').focus()
+        let presses = 0
+        for (let press = 1; press <= 120 && presses === 0; press++) {
+          await page.keyboard.press('Tab')
+          if (
+            await page.evaluate(
+              (selector) =>
+                document.activeElement === document.querySelector(selector),
+              selector,
+            )
+          )
+            presses = press
+        }
+        reachableControls[name] = presses > 0
       }
       // Act: the output region of the Application pane, from the first Tab of its document.
       const outputPage = await page.context().newPage()
@@ -2629,7 +2652,7 @@ async function check(page, options, collected) {
           hostileReading.explanation?.endsWith(' <b>bold</b>') === true,
       })
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
-      // Value: protects=the sticky test replay transport is counted in the pane's focus scroll room, so a control reached by Shift+Tab (Step details, a step, the learner's choice, Events) is never scrolled under it; the transport sticks below the live strip of a running study, not over it; a transport taller than the fraction of the pane that may stay fixed flows with the page; fails_when=a focused control's top lies under the transport (focus obscured), the transport and the live strip cover each other, or a pane too short for a fixed bar still pins it; why_new=F128 (pass 1b red team): --codebook-sticky-height measured the live strip only and the transport had no flowing fallback; seam=none; no_claim=native pixels (stand-ins: the Study message of a stop at 960 x 420 px, real Shift+Tab presses)
+      // Value: protects=the sticky test replay transport is counted in the pane's focus scroll room, so a control reached by Shift+Tab (Step details, a step, the learner's choice, Events) is never scrolled under it; the transport sticks below the live strip of a running study, not over it; a transport taller than the fraction of the pane that may stay fixed flows with the page; fails_when=a focused control's top lies under the transport (focus obscured, also with the live strip pinned above it at 960 x 600, F294), the transport and the live strip cover each other, or a pane too short for a fixed bar still pins it; why_new=F128 (pass 1b red team): --codebook-sticky-height measured the live strip only and the transport had no flowing fallback; seam=none; no_claim=native pixels (stand-ins: the Study message of a stop at 960 x 420 px, real Shift+Tab presses)
       // Arrange: the stop's section in a short pane with Step details and the event list open, scrolled to the end.
       await page.setViewportSize({ width: 960, height: 420 })
       await publish(atStop)
@@ -2695,15 +2718,27 @@ async function check(page, options, collected) {
           ),
       )
       const withRunningStudy = await readStickyBars()
+      // Act: with both bars pinned (the live strip and the transport at 960 x 600), Shift+Tab from the event list back toward the transport, reading each focused control's clearance (F294).
+      await page.locator('#node-history-events-details > summary').focus()
+      const withBothBars = [await readStickyBars()]
+      for (let press = 0; press < 12; press++) {
+        await page.keyboard.press('Shift+Tab')
+        const reading = await readStickyBars()
+        withBothBars.push(reading)
+        if (reading.focusedInTransport) break
+      }
       await publish({ ...atStop, liveState: undefined })
       await page.setViewportSize({ width: 600, height: 800 })
       // Assert
+      const scrolledBelowBothBars = withBothBars.filter(
+        (reading) => !reading.focusedInTransport,
+      )
       const scrolledBelowTransport = focusReadings.filter(
         (reading) => !reading.focusedInTransport,
       )
       cases.push({
         name: 'a control reached by Shift+Tab is never scrolled under the test replay transport, a pane too short for a fixed bar flows it, and a running study keeps it below the live strip',
-        actual: { focusReadings, inShortPane, withRunningStudy },
+        actual: { focusReadings, inShortPane, withRunningStudy, withBothBars },
         passed:
           scrolledBelowTransport.length >= 3 &&
           scrolledBelowTransport.every(
@@ -2714,7 +2749,14 @@ async function check(page, options, collected) {
           ) &&
           inShortPane.position === 'static' &&
           withRunningStudy.stripSticky &&
-          withRunningStudy.transportTop >= withRunningStudy.stripBottom - 1,
+          withRunningStudy.transportTop >= withRunningStudy.stripBottom - 1 &&
+          // Both bars pinned: the focused control lies below the lower of the two (a focus scroll room without the strip scrolls it under the transport).
+          scrolledBelowBothBars.length >= 3 &&
+          scrolledBelowBothBars.every(
+            (reading) =>
+              reading.stripSticky &&
+              reading.focusedTop >= reading.transportBottom - 1,
+          ),
       })
       // Arrange: the section's states before it has a replay or an event to show (DS7), in the pane's fixed words (the String catalog): no replay saved, replays saved and none chosen, then a replay with no event selected and no saved learning, then the same replay with its learning again.
       /** Reads the section's status and locator lines, whether it says that no learning was saved, and what of the replay's diagram and steps is drawn. */
@@ -3411,6 +3453,23 @@ async function check(page, options, collected) {
           focusedTestLine.displayed === 'block' &&
           fittingTestLine.tabindex === null,
       })
+      // Value: protects=a test line that fits after the learner has focused and left it drops its tab stop (the stop is decided again on blur); fails_when=a line that was cut while it held the focus, came to fit meanwhile and kept tabindex=0 after the focus left it, so a keyboard learner tabs through a title that needs no stop; why_new=F297 (OCR batch C): installClampedTitleStop measured only at load and resize, and not while the heading held the focus; seam=none; no_claim=the Study pane's own titles (they are measured after every message and were not red)
+      // Arrange: a cut test line that holds the keyboard focus.
+      await setTestLine(
+        'src/jobs.test.ts › job scheduler › runs a delayed job after its timer fires and reports the result to the caller › even when the fake clock advances twice',
+      )
+      await applicationPage.locator('#test-output-test').focus()
+      // Act: the name becomes short while focused (the resize skips a focused line), then the focus leaves.
+      await setTestLine('src/jobs.test.ts')
+      const whileFocused = await readTestLine()
+      await applicationPage.evaluate(() => document.activeElement.blur())
+      const afterBlur = await readTestLine()
+      // Assert
+      cases.push({
+        name: 'a test line that came to fit while it held the focus drops its tab stop when the focus leaves it',
+        actual: { whileFocused, afterBlur },
+        passed: whileFocused.tabindex === '0' && afterBlur.tabindex === null,
+      })
       // Value: protects=three cells of the Application document's follow state that no case read, each its own case below: a document that follows the output ignores an older view and stays at the end; a learner who stopped following and scrolls back to the end follows again, with Jump to latest gone; a document loaded again never uses the newer view or the choice not to follow that another replay left in the webview's kept state (it shows its own first view, at the end, with Jump to latest hidden, as its options say); fails_when=an older view moves a following document off its latest moment, scrolling back to the end leaves Jump to latest and the choice behind, or another replay's kept view (a newer generation) or kept choice not to follow is read by this replay's document; why_new=F125 (the document's following x an older view, not-following x a scroll back to the end) and F147 (another replay's newer kept view); seam=none; no_claim=VS Code's own state transport (stand-ins: a stub of the webview API with a kept state)
       // Arrange: a document of its own in a page, as the cases above build one.
       const cellPage = await page.context().newPage()
@@ -3949,7 +4008,7 @@ async function check(page, options, collected) {
       )
       // Value: protects=the browser summary's sequence renders the markup of the golden fixture, so a change of the shared renderer shows as a change of this fixture with a reason; fails_when=the shared renderer changes the diagram's elements or attributes without the fixture and its reason changing together (the fixture changed once, for F206: a loop's label is centered on its lifeline); why_new=PR-B1 shared the renderer with test replays (Design 5, AC14); seam=none; no_claim=how the diagram looks (native pixels)
       cases.push({
-        name: 'the saved learning sequence of a browser replay renders the same markup as before its renderer was shared with test replays',
+        name: 'the saved learning sequence of a browser replay renders the markup of its golden fixture: the same elements and attributes as before the renderer was shared with test replays, with a loop label centered on its lifeline',
         actual: sequenceMarkup,
         passed: sequenceMarkup === options.goldenLearningSequence,
       })
@@ -4020,6 +4079,66 @@ async function check(page, options, collected) {
       await page.screenshot({
         path: `${options.output}/wide-sequence-scrolled.png`,
       })
+      /** Reads where a sequence diagram's names and labels lie: outside its bounds, over each other, below their own arrow or beyond its top and bottom. Runs in the page. */
+      const readSequenceGeometry = (region) => {
+        const svg = region.querySelector('svg'),
+          participants = svg.querySelectorAll('line').length,
+          diagramWidth = Number(svg.getAttribute('width')),
+          diagramHeight = Number(svg.getAttribute('height')),
+          read = (text) =>
+            [...text.querySelectorAll('tspan')].length
+              ? [...text.querySelectorAll('tspan')]
+                  .map((span) => span.textContent)
+                  .join('')
+              : text.textContent,
+          boxes = [...svg.querySelectorAll('text')].map((text) => {
+            const box = text.getBBox()
+            return {
+              words: read(text),
+              left: box.x,
+              right: box.x + box.width,
+              top: box.y,
+              bottom: box.y + box.height,
+            }
+          }),
+          arrows = [...svg.querySelectorAll('path')].map((path) => {
+            const [, x, y] = path
+              .getAttribute('d')
+              .match(/^M ([\d.]+) ([\d.]+)/)
+            return { x: Number(x), y: Number(y) }
+          }),
+          labels = boxes.slice(participants),
+          overlapping = []
+        for (let first = 0; first < boxes.length; first++)
+          for (let second = first + 1; second < boxes.length; second++) {
+            const a = boxes[first],
+              b = boxes[second]
+            if (
+              a.left < b.right - 0.5 &&
+              b.left < a.right - 0.5 &&
+              a.top < b.bottom - 0.5 &&
+              b.top < a.bottom - 0.5
+            )
+              overlapping.push(`${a.words} / ${b.words}`)
+          }
+        return {
+          diagramWidth,
+          diagramHeight,
+          outside: boxes
+            .filter((box) => box.left < -0.5 || box.right > diagramWidth + 0.5)
+            .map((box) => box.words),
+          overlapping,
+          belowArrow: labels
+            .filter((label, index) => label.bottom > arrows[index].y + 0.5)
+            .map((label) => label.words),
+          aboveTop: boxes
+            .filter((box) => box.top < -0.5)
+            .map((box) => box.words),
+          beyondBottom: boxes
+            .filter((box) => box.bottom > diagramHeight + 0.5)
+            .map((box) => box.words),
+        }
+      }
       // Value: protects=the shared sequence renderer at the Study pane's width names every interaction: participant names and step labels break between words and never inside one, no label ends in an ellipsis, the diagram grows taller for the extra lines, every name and label stays inside the diagram's bounds, and a diagram wider than the pane scrolls inside its own region so the last participant is reachable by keyboard; fails_when=a word is cut (`fetchFilteredInvoice` / `s`), a label is shortened with `…`, a fourth participant lies beyond the right edge with no way to scroll to it, or the page itself scrolls sideways; why_new=F206 (N49 VS Code, Minor, AC-LEARNING) and D24: the renderer cut names every 20 characters and labels at 20 characters with an ellipsis; seam=none; no_claim=native pixels (a screenshot is kept beside the result) (stand-ins: the Study message of a browser summary at 420 px, the width of a Study pane)
       // Arrange: four participants, one with a long identifier, and labels longer than one line, in a Study pane of 420 px.
       await page.setViewportSize({ width: 420, height: 720 })
@@ -4098,6 +4217,9 @@ async function check(page, options, collected) {
               document.documentElement.clientWidth,
           }
         })
+      const namedGeometry = await page
+        .locator('#learning-sequence .sequence-diagram')
+        .evaluate(readSequenceGeometry)
       await page.locator('#learning-sequence .sequence-diagram').focus()
       for (let index = 0; index < 40; index++)
         await page.keyboard.press('ArrowRight')
@@ -4115,7 +4237,7 @@ async function check(page, options, collected) {
       // Assert
       cases.push({
         name: 'a sequence at the Study pane’s width wraps names and labels at word boundaries without an ellipsis, keeps them inside the diagram and scrolls to its last participant by keyboard',
-        actual: { namedDiagram, namedDiagramScrolled },
+        actual: { namedDiagram, namedGeometry, namedDiagramScrolled },
         passed:
           namedDiagram.lines.some(
             (line) => line.words === 'fetchFilteredInvoices',
@@ -4127,11 +4249,77 @@ async function check(page, options, collected) {
           namedDiagram.lines.some((line) => line.tspans > 1) &&
           !namedDiagram.hasEllipsis &&
           namedDiagram.outside.length === 0 &&
+          // Vertical placement: no two texts overlap, each label sits above its own arrow, and nothing lies above or below the diagram (F296).
+          namedGeometry.overlapping.length === 0 &&
+          namedGeometry.belowArrow.length === 0 &&
+          namedGeometry.aboveTop.length === 0 &&
+          namedGeometry.beyondBottom.length === 0 &&
           namedDiagram.height > 72 + 3 * 64 &&
           namedDiagram.regionScrollWidth > namedDiagram.regionWidth &&
           !namedDiagram.pageOverflow &&
           namedDiagramScrolled.focused &&
           namedDiagramScrolled.reachesEnd,
+      })
+      // Value: protects=a sequence diagram shows Japanese participant names and step labels (text without spaces, about 12 px a glyph) and an upper-case label whole at the Study pane's width: every name and label lies inside the diagram (no clip at the left edge), no two texts overlap, each step's label sits above its own arrow and inside the span of its columns, and the diagram grows taller for the extra lines; fails_when=columns are sized at the width of a lower-case Latin letter and lines break only at spaces, so a Japanese label stays one line wider than its column and overlaps its neighbours, or an upper-case label is cut by the next column; why_new=F293 (OCR batch C, F206's scope; the owner reads Japanese): the renderer measured 6.5 px a character and wrapped at spaces only; seam=none; no_claim=native pixels or the font a host substitutes (stand-ins: the Study message of a browser summary at 420 px)
+      // Arrange: Japanese and upper-case participant names and labels, in a Study pane of 420 px.
+      const japaneseLearning = JSON.parse(JSON.stringify(learning))
+      japaneseLearning.recording.learningSummary.content.participants = [
+        { id: 'page', label: '請求書の一覧ページ' },
+        { id: 'action', label: '請求書を取得するサーバーアクション' },
+        { id: 'gateway', label: 'API GATEWAY' },
+      ]
+      japaneseLearning.recording.learningSummary.content.steps = [
+        {
+          id: 'ask',
+          from: 'page',
+          to: 'action',
+          label: '検索条件に一致する請求書をまとめて取得するよう依頼する',
+          explanation: 'ページが検索語を渡す。',
+          evidence: 'observed',
+          reference,
+        },
+        {
+          id: 'forward',
+          from: 'action',
+          to: 'gateway',
+          label: 'VALIDATE THE REQUEST BODY AND FORWARD IT',
+          explanation: 'The action forwards the request.',
+          evidence: 'source-derived',
+          reference,
+        },
+        {
+          id: 'loop',
+          from: 'gateway',
+          to: 'gateway',
+          label: '応答をキャッシュに保存して、次の依頼に備える',
+          explanation: 'ゲートウェイが状態を保つ。',
+          evidence: 'unknown',
+        },
+      ]
+      japaneseLearning.recording.learningSummary.positions = [
+        { stepId: 'ask', elapsedMs: 1000 },
+        { stepId: 'forward', elapsedMs: 2000 },
+      ]
+      // Act
+      await publish(japaneseLearning)
+      await page.locator('.sequence-diagram').scrollIntoViewIfNeeded()
+      const japaneseDiagram = await page
+        .locator('#learning-sequence .sequence-diagram')
+        .evaluate(readSequenceGeometry)
+      await page.screenshot({
+        path: `${options.output}/japanese-sequence-study-width.png`,
+      })
+      // Assert
+      cases.push({
+        name: 'a sequence with Japanese and upper-case names and labels keeps every text inside the diagram, above its own arrow and clear of its neighbours at the Study pane’s width',
+        actual: japaneseDiagram,
+        passed:
+          japaneseDiagram.outside.length === 0 &&
+          japaneseDiagram.overlapping.length === 0 &&
+          japaneseDiagram.belowArrow.length === 0 &&
+          japaneseDiagram.aboveTop.length === 0 &&
+          japaneseDiagram.beyondBottom.length === 0 &&
+          japaneseDiagram.diagramHeight > 72 + 3 * 64,
       })
       // Arrange: the Learning summary as a narrow side bar at default zoom, with a long saved title (Cycle 0044, 0031-U3).
       await page.setViewportSize({ width: 300, height: 720 })
@@ -5109,6 +5297,32 @@ async function check(page, options, collected) {
         passed: (await focusedControl()) === 'node-history-playback-toggle',
       })
 
+      // Value: protects=a keyboard learner on Inspect in native debugger keeps the pane's focus when the control is hidden (the stop's values load, or Play moves to an output), as with Show Variables: it goes to the first usable control of the transport, never to the document body; fails_when=Inspect is hidden through `hidden` alone, so the focused control disappears and the focus falls to the body; why_new=F292 (OCR batch C): the Inspect control was hidden with no focus handling; seam=none; no_claim=the host's answer to the press or native pixels
+      // Arrange: the selected stop has no native values, so Inspect in native debugger is offered, and the keyboard stands on it.
+      await publish(nodeWithoutNativeValues)
+      await page.locator('#node-history-inspect').focus()
+      const inspectFocused = await page.evaluate(
+        () => document.activeElement?.id,
+      )
+      // Act: the values load, so the control is hidden.
+      await publish(nodeWithNativeValues)
+      const afterInspectHidden = await page.evaluate(() => ({
+        inspectHidden: document.getElementById('node-history-inspect').hidden,
+        focusedId: document.activeElement?.id ?? '',
+        inTransport: document
+          .getElementById('node-history-transport')
+          .contains(document.activeElement),
+      }))
+      // Assert
+      cases.push({
+        name: 'when Inspect in native debugger is hidden while the keyboard stands on it, the focus goes to the test replay transport, not to the document body',
+        actual: { inspectFocused, afterInspectHidden },
+        passed:
+          inspectFocused === 'node-history-inspect' &&
+          afterInspectHidden.inspectHidden &&
+          afterInspectHidden.inTransport,
+      })
+
       // Act: Play cannot take the focus at the end of a recording (PC-3.7).
       const atRecordingEnd = {
         ...withValues,
@@ -5591,12 +5805,7 @@ async function check(page, options, collected) {
           ],
         },
         nodeHistoryEventCount: 2,
-        nodeHistoryPosition: {
-          type: 'output',
-          sequence: 1,
-          eventIndex: 0,
-          elapsedMs: 0,
-        },
+        nodeHistoryPosition: { sequence: 1, eventIndex: 0 },
         nodeHistoryPlayback: {
           mode: 'paused',
           sequence: 1,
