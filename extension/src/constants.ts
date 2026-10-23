@@ -1271,8 +1271,10 @@ export const DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS = 500
 export const DEVELOPMENT_PORT_RELEASE_WAIT_MS = 5_000
 /** The pause between two checks while {@link DEVELOPMENT_PORT_RELEASE_WAIT_MS} runs. */
 export const DEVELOPMENT_PORT_RELEASE_POLL_MS = 100
-/** Bounds how deep the `dev` script reader follows `concurrently "…"` quoted commands inside each other (a count, not a duration). */
+/** Bounds how deep the `dev` script reader descends (a count, not a duration): every step into another command line grows the same depth, whether it is a quoted command (`concurrently "…"`, `sh -c "…"`, `cmd /c "…"`, `cross-env-shell "…"`) or another script (`npm run x`, `pnpm x`, `bun dev`, `concurrently npm:x`). The `dev` script is depth 0; no step is taken from depth {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}, so a delegation cycle stops there and the segment is reported as unread. */
 export const DEVELOPMENT_SCRIPT_NESTING_LIMIT = 2
+/** Bounds the part of an unread `dev` script segment that `applicationPortSource` quotes (code points, not bytes). */
+export const DEVELOPMENT_SCRIPT_UNREAD_SEGMENT_MAX_CHARS = 120
 /** The only variables the owned `next dev` inherits from the extension host. */
 export const DEVELOPMENT_SERVER_INHERITED_ENVIRONMENT_NAMES = [
   'PATH',

@@ -32,27 +32,41 @@ type PortState = 'free' | 'in-use' | 'not-permitted'
 /**
  * Asks whether something accepts a TCP connection on one loopback address.
  * A listener bound to `::` or `::1` (the learner's `next dev`) does not stop a bind to 127.0.0.1, so binding alone cannot see it.
+ * @param signal - The run's cancellation; an abort ends the pending connect at once instead of after its timeout (F456).
  * @returns `true` only for an accepted connection; `false` for every error (refused, no such address, EPERM…) and for a timeout (Windows reports a refused loopback connect only after 1 to 2 s of SYN retries, so a timeout proves nothing); the bind probe decides.
+ * @throws The signal's reason when the run is cancelled.
  * @example await isListeningAt(createConnection, '::1', 3165) // true while the learner's dev server runs
  */
 function isListeningAt(
   connect: ConnectLoopback,
   host: string,
   port: number,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    // A run already cancelled opens no connection.
+    if (signal?.aborted) return reject(signal.reason)
     const socket = connect({ host, port })
+    const onAbort = (): void => {
+      socket.destroy()
+      reject(signal?.reason)
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    socket.once('close', () => signal?.removeEventListener('abort', onAbort))
     socket.setTimeout(DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS)
     socket.once('connect', () => {
+      signal?.removeEventListener('abort', onAbort)
       socket.destroy()
       resolve(true)
     })
     socket.once('timeout', () => {
+      signal?.removeEventListener('abort', onAbort)
       socket.destroy()
       resolve(false)
     })
     // Any connect error (refused, EPERM, ETIMEDOUT, ECONNRESET…) proves no accepted connection; the bind probe decides.
     socket.once('error', () => {
+      signal?.removeEventListener('abort', onAbort)
       socket.destroy()
       resolve(false)
     })
@@ -75,13 +89,16 @@ async function lookAtPort(
   port: number,
   connect: ConnectLoopback,
   bind: BindProbe,
+  signal?: AbortSignal,
 ): Promise<PortState> {
   if (
-    (await isListeningAt(connect, '127.0.0.1', port)) ||
-    (await isListeningAt(connect, '::1', port))
+    (await isListeningAt(connect, '127.0.0.1', port, signal)) ||
+    (await isListeningAt(connect, '::1', port, signal))
   )
     return 'in-use'
   const failure = await bind(port)
+  // A cancel during the bind probe is honored as soon as the probe returns.
+  signal?.throwIfAborted()
   if (!failure) return 'free'
   if (failure.code === 'EADDRINUSE') return 'in-use'
   if (failure.code === 'EACCES') return 'not-permitted'
@@ -103,6 +120,7 @@ export type PortCheckOptions = {
  *
  * Called during repository-browser preparation by {@link ConfiguredBrowserRun}, before the app is started.
  * A listener is found by connecting to `127.0.0.1` and `[::1]` (a wildcard or IPv6 listener does not block a bind) and by binding the address Codebook uses.
+ * A port that another Codebook run has claimed and still runs is refused even when the probe reads it free, because that run's `next dev` may not have bound yet (F449).
  * A port that Codebook's own earlier run is still releasing is waited for within {@link DEVELOPMENT_PORT_RELEASE_WAIT_MS}; if it stays busy the refusal names that run, not the learner's dev server.
  *
  * @param declared - The port and where it was declared ({@link readDeclaredDevelopmentPort}).
@@ -121,13 +139,13 @@ export async function assertDevelopmentPortFree(
   const connect = options.connect ?? createConnection
   const bind = options.bind ?? tryBind
   const { port, source } = declared
-  let state = await lookAtPort(port, connect, bind)
+  let state = await lookAtPort(port, connect, bind, options.signal)
   // A run Codebook is stopping releases the port within moments, and a new listener would break its listener check; wait for the release whatever the first look found.
   if (isOwnedDevelopmentPortReleasing(port)) {
     const latest: { state: PortState } = { state }
     await waitUntil(
       async () => {
-        latest.state = await lookAtPort(port, connect, bind)
+        latest.state = await lookAtPort(port, connect, bind, options.signal)
         return (
           !isOwnedDevelopmentPortReleasing(port) && latest.state !== 'in-use'
         )
@@ -142,9 +160,9 @@ export async function assertDevelopmentPortFree(
     })
     state = latest.state
   }
-  // A free port holds no listener, whatever a stuck claim says.
-  if (state === 'free') return
   const owned = ownedDevelopmentPortState(port)
+  // A free port holds no listener, whatever a stuck (stopping) claim says. Another run's live claim still refuses: that run has claimed the port and its `next dev` has not bound yet, so a free probe only means it is early (F449).
+  if (state === 'free' && owned !== 'running') return
   const pinned = `the project declares it (${source}): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port.`
   if (state === 'not-permitted')
     throw new StudyError(
