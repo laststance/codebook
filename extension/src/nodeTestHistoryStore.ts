@@ -15,6 +15,7 @@ import {
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_WRITER_FILE,
+  NODE_TEST_WRITER_RECHECK_MS,
   NODE_TEST_HISTORY_LIMIT_BYTES,
   NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
   NODE_TEST_HISTORY_MAX_ENTRIES,
@@ -319,6 +320,11 @@ function emptySummary(header: NodeTestHistoryHeader): NodeTestHistorySummary {
 export class NodeTestHistoryStore {
   private readonly directory: string
   private readonly active = new Set<string>()
+  /** The last verdict on the writer of each history another window records, with the writer record's file signal and the time it was judged: "gone" is final for that record, "live" is kept until the record changes or {@link NODE_TEST_WRITER_RECHECK_MS} passes (F260). */
+  private readonly writerVerdicts = new Map<
+    string,
+    { signal: string; live: boolean; judgedAtMs: number }
+  >()
   /** The histories this window ever started: a writer record of one of them never makes it a history another window writes, whatever a failed removal left ({@link writtenElsewhere}). */
   private readonly startedHere = new Set<string>()
   private readonly readerPositionWrites = new Map<string, Promise<void>>()
@@ -363,6 +369,11 @@ export class NodeTestHistoryStore {
     readonly workspaceKey: string,
     private readonly capacity: () => number = () => 64,
     private readonly savedArtifactCount: () => Promise<number> = async () => 0,
+    /** The clock and the judge of another window's writer; a test names its own to count the queries. */
+    private readonly writerJudge: {
+      now: () => number
+      isLive: (historyDirectory: string) => Promise<boolean>
+    } = { now: Date.now, isLive: isNodeTestWriterLive },
   ) {
     this.directory = join(learningDirectory, NODE_TEST_HISTORY_DIRECTORY)
   }
@@ -729,6 +740,7 @@ export class NodeTestHistoryStore {
   private forgetSummary(studyId: string): void {
     this.summaries.delete(studyId)
     this.citableOrder.delete(studyId)
+    this.writerVerdicts.delete(studyId)
   }
 
   /**
@@ -778,7 +790,29 @@ export class NodeTestHistoryStore {
    */
   private async writtenElsewhere(studyId: string): Promise<boolean> {
     if (this.active.has(studyId) || this.startedHere.has(studyId)) return false
-    return isNodeTestWriterLive(this.path(studyId))
+    const directory = this.path(studyId)
+    const signal = await lstat(
+      join(directory, NODE_TEST_HISTORY_WRITER_FILE),
+    ).then(
+      (entry) => `${entry.size}:${entry.mtimeMs}:${entry.ino}`,
+      () => undefined,
+    )
+    // Without a record there is no writer to ask.
+    if (signal === undefined) {
+      this.writerVerdicts.delete(studyId)
+      return false
+    }
+    const now = this.writerJudge.now()
+    const kept = this.writerVerdicts.get(studyId)
+    // A verdict is reused for the same record: "gone" for good, "live" until the recheck interval passes (the judge starts a process).
+    if (
+      kept?.signal === signal &&
+      (!kept.live || now - kept.judgedAtMs < NODE_TEST_WRITER_RECHECK_MS)
+    )
+      return kept.live
+    const live = await this.writerJudge.isLive(directory)
+    this.writerVerdicts.set(studyId, { signal, live, judgedAtMs: now })
+    return live
   }
 
   /**

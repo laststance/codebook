@@ -173,3 +173,63 @@ test('fifty refreshes of a history another window records read at most twice its
   )
   assert.equal(summary?.status, 'recording')
 })
+
+/** A second window whose judge of the writer counts its queries and whose clock the test moves. */
+async function windowWithCountedJudge(context: TestContext) {
+  const { writing, directory, workspaceKey } = await twoWindows(context)
+  const clock = { nowMs: 1_000_000 }
+  const judge = { queries: 0, live: true }
+  const reading = new NodeTestHistoryStore(
+    directory,
+    workspaceKey,
+    () => 64,
+    async () => 0,
+    {
+      now: () => clock.nowMs,
+      isLive: async () => {
+        judge.queries += 1
+        return judge.live
+      },
+    },
+  )
+  return { writing, reading, clock, judge, workspaceKey }
+}
+
+// Value: protects=the cost of watching another window's recording: the writer is judged (a process query) once per recheck interval, not at every 250 ms refresh; fails_when=each refresh asks the judge, so fifty refreshes make fifty queries; why_new=F260's first fix judged the writer at every refresh, spawning ps or PowerShell four times a second; seam=injected clock and judge; no_claim=the judge's own correctness
+test('fifty refreshes of a history another window records query its writer at most once per recheck interval', async (context) => {
+  // Arrange
+  const { writing, reading, clock, judge, workspaceKey } =
+    await windowWithCountedJudge(context)
+  await writing.start(nodeTestHistoryHeader(workspaceKey))
+
+  // Act
+  for (let index = 0; index < 50; index++) {
+    await reading.list()
+    clock.nowMs += 250
+  }
+
+  // Assert
+  assert.ok(judge.queries >= 1, `queries: ${judge.queries}`)
+  assert.ok(judge.queries <= 4, `queries: ${judge.queries}`)
+})
+
+// Value: protects=a crash seen from another window within the recheck interval; fails_when=the kept "live" verdict is never rechecked, so a crashed writer reads recording for good; why_new=the verdict is now kept between refreshes (F260); seam=injected clock and judge; no_claim=the judge's own correctness
+test('a writer that becomes gone is listed interrupted at the first refresh after the recheck interval', async (context) => {
+  // Arrange
+  const { writing, reading, clock, judge, workspaceKey } =
+    await windowWithCountedJudge(context)
+  await writing.start(nodeTestHistoryHeader(workspaceKey))
+  const [whileLive] = await reading.list()
+  judge.live = false
+  clock.nowMs += 4_999
+  const [insideInterval] = await reading.list()
+
+  // Act
+  clock.nowMs += 1
+  const [afterInterval] = await reading.list()
+
+  // Assert
+  assert.equal(whileLive?.status, 'recording')
+  assert.equal(insideInterval?.status, 'recording')
+  assert.equal(afterInterval?.status, 'interrupted')
+})
