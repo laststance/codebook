@@ -2427,11 +2427,17 @@ export class StudyWorkspace {
    */
   private confirmCompositionByReceipt(): void {
     this.presentationConfirmed = Boolean(this.layoutReceipt)
-    if (this.presentationConfirmed) {
-      this.presentationReason = undefined
-      this.errors.delete('layout')
-      this.errors.delete('presentation')
-    }
+    if (this.presentationConfirmed) this.retireRefusalLines()
+  }
+
+  /**
+   * Drops the reason and the layout and presentation lines an earlier refused request left; called by {@link confirmCompositionByReceipt} and by {@link open} once its entry holds a layout receipt.
+   * @example this.retireRefusalLines() // the Study pane no longer shows the refusal of an agent's earlier request
+   */
+  private retireRefusalLines(): void {
+    this.presentationReason = undefined
+    this.errors.delete('layout')
+    this.errors.delete('presentation')
   }
 
   /**
@@ -8321,6 +8327,13 @@ export class StudyWorkspace {
       // An enlarged pane needs explicit Restore; a later Open must not certify its retained grid receipt.
       if (!this.presentationTransition && !this.enlargedLayoutReceipt)
         this.presentationConfirmed = Boolean(this.layoutReceipt)
+      // An entry that arranged the panes retires the lines of an earlier refused request (F389: an agent's refusal stayed in the Study pane after the learner's Open replay arranged it).
+      if (
+        this.presentationConfirmed &&
+        !this.presentationTransition &&
+        !this.presentationReason?.includes(FIRST_REPLAY_POSITION_WARNING)
+      )
+        this.retireRefusalLines()
       if (
         !this.liveComposition &&
         firstOpen &&
@@ -19935,6 +19948,7 @@ export class StudyWorkspace {
         sourceEditorReported() &&
         namedColumn !== sourceBorrow?.viewColumn &&
         vscode.window.tabGroups.activeTabGroup.viewColumn === namedColumn
+      const groupsBeforeFocus = this.refusalGroupViews()
       const emptyFirstGroup = vscode.window.tabGroups.all.some(
         (group) =>
           group.viewColumn === vscode.ViewColumn.One && !group.tabs.length,
@@ -20016,6 +20030,7 @@ export class StudyWorkspace {
       }
       // What the borrow left in front of the first group, for a refused change's give-back (row 728).
       this.firstGroupFrontAtBorrow = this.frontTabOfFirstGroup()
+      const focusArmed = { atMs: performance.now(), before: groupsBeforeFocus }
       await waitUntil(
         () => {
           const currentInput = vscode.window.tabGroups.all.find(
@@ -20064,9 +20079,7 @@ export class StudyWorkspace {
                 this.editorTabName(foreignPreview.tab),
                 foreignPreview.group.viewColumn,
               )
-            : unreportedEditorFocusObstacle(
-                PRESENTATION_READY_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
-              ),
+            : this.tellUnreportedEditorFocus(focusArmed),
         )
       })
       assertCurrent()
@@ -21592,6 +21605,33 @@ export class StudyWorkspace {
                 : 'other',
       })),
     }))
+  }
+
+  /**
+   * Writes one Output › Codebook entry for a main editor that reported no keyboard focus, and returns the refusal sentence the entry throws; called by {@link readMainEditorGrid} when its wait ends (F389).
+   * The entry names the groups and tabs before the first group was focused and now, so the next native take tells what the first group held while the editor reported nothing.
+   * @param armed - The time the wait began and the groups before the focus command.
+   * @returns The sentence {@link unreportedEditorFocusObstacle} words.
+   * @example throw new StudyError('PRESENTATION_UNAVAILABLE', this.tellUnreportedEditorFocus(armed))
+   */
+  private tellUnreportedEditorFocus(armed: {
+    atMs: number
+    before: RefusalGroupView[]
+  }): string {
+    this.diagnostics?.log({
+      surface: 'presentation:focus-unreported',
+      cause: describePlacementRefusal({
+        guard: 'main editor focus report',
+        armedAtMs: armed.atMs,
+        nowMs: performance.now(),
+        before: armed.before,
+        after: this.refusalGroupViews(),
+        events: this.placementEvents.since(armed.atMs),
+      }),
+    })
+    return unreportedEditorFocusObstacle(
+      PRESENTATION_READY_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
+    )
   }
 
   /**

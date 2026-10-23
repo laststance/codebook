@@ -1683,6 +1683,75 @@ test('a failed Study entry of Open replay after a live node-test run is told in 
   }
 })
 
+// Value: protects=the Study pane after an agent's Study workspace request was refused beside Cursor's Agent and the learner's Open replay then arranged the panes: the pane and the presentation state no longer show the refusal; fails_when=the entry that arranged the panes leaves the reason and error line of the agent's earlier refusal in place ("Error: The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …" above the test replay); why_new=Cycle 0050 F389 (Cursor 3.26.16: the refusal stayed in the Study pane after a successful Open replay); seam=the workspace harness with Cursor's chat part, unreported pane focus and a fake clock
+test("Open replay that arranges the panes after an agent's refused Study workspace request clears the refusal from the Study pane", async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    const { record, studyId } = await startLiveTestRun(harness, 'agent-refusal')
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    await readerSeams(harness).refresh()
+    for (const generation of [1, 2])
+      await harness.service.continue({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        participant: 'server',
+        sessionId: 'owned-session',
+        threadId: 7,
+        generation,
+      })
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+    })
+    await readerSeams(harness).refresh()
+    await harness.reader.saveLearningReplay(studyId)
+    const before = harness.reader.presentationState()
+    enableFakeClock(context)
+    const agentRequest = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        },
+        'agent',
+      )
+      .then(
+        () => 'arranged',
+        (error: unknown) => String(error),
+      )
+    await advanceClockUntilSettled(context, agentRequest, 6_000)
+    const refusal = await agentRequest
+    resetFakeClock(context)
+
+    // Act: the learner clicks into a file and opens the test replay.
+    harness.focusMutableDraft('utils.ts', 1)
+    await harness.reader.openLearningReplay(studyId)
+
+    // Assert
+    assert.match(refusal, /did not report the keyboard focus within 5 s/)
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.doesNotMatch(
+      harness.reader.presentationState().reason ?? '',
+      /did not report the keyboard focus/,
+    )
+    assert.equal(JSON.stringify(lastView(harness)?.errors), '[]')
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
 // Value: protects=the first Open replay after a node-test run beside Cursor's Agent, which Cursor refuses with the unreported-focus sentence after five seconds: the refusal is told in Output › Codebook and in a notification instead of failing the command bare, and after the learner clicks into a file the next Open replay opens the Study pane with the replay; fails_when=the refusal escapes openLearningReplay with no Output entry, or the retry shows the replay without a Study pane; why_new=Cycle 0050 F384 (N50 Cursor 3.26.16); seam=workspaceHarness with the fake owned Node run, addSeparateEditorPart and leavePaneFocusUnreportedBesideChat (Cursor's chat part), the fake clock, focusMutableDraft as the learner's click; no_claim=Cursor's own focus reports
 test('Open replay refused beside the Cursor Agent is told in Output and the retry after a click into a file shows the Study pane', async (context) => {
   // Arrange
@@ -1737,10 +1806,12 @@ test('Open replay refused beside the Cursor Agent is told in Output and the retr
 
     // Assert
     assert.equal(firstResult, 'returned')
-    assert.equal(logged.length, 1)
-    assert.equal(logged[0]!.surface, 'open:test-replay')
+    const openFailures = logged.filter(
+      (entry) => entry.surface === 'open:test-replay',
+    )
+    assert.equal(openFailures.length, 1)
     assert.match(
-      logged[0]!.cause,
+      openFailures[0]!.cause,
       /did not report the keyboard focus within 5 s/,
     )
     assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
