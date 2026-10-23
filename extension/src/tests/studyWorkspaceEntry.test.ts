@@ -2761,30 +2761,26 @@ test('a live entry from the Study layout arranges the application above the sour
 })
 
 for (const besideChat of [false, true])
-  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read; why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; seam=passthrough native-command and arrange observers
+  // Value: protects=retirement before native measurement and one final arrangement measurement; fails_when=a disposed Context tab is measured or arrange repeats its initial read; why_new=Cycle 0045 SP-5 with PC-3.8, reconciled with dedicated App preparation; the tab's close held until the final arrangement began, so its wait is reached (Cycle 0050 F240); seam=passthrough native-command and arrange observers installed before the run starts, the final arrangement told by the context pane it retires (F154); no_claim=where the final arrangement runs, during preparation or at the explicit open
   test(`live entry waits for retired Study tabs before measurement and measures its final arrangement once${besideChat ? ', returning the keyboard to chat' : ''}`, async () => {
     // Arrange: native tab retirement is delayed, and App preparation has its own separate measurements.
     const harness = await workspaceHarness()
     const executeCommand = harness.editor.commands.executeCommand,
       arrange = harness.reader['arrange'],
       readsWithRetiredTab: boolean[] = [],
-      arrangements: string[][] = []
+      arrangements: {
+        retiresContextPane: boolean
+        commands: string[]
+        readsWithRetiredTab: boolean[]
+      }[] = []
     try {
       harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
       const chat = besideChat ? harness.addSeparateEditorPart() : undefined
       await harness.reader.open()
       harness.closeDisposedPanelTabsLater()
-      harness.service.start({
-        instanceId: harness.service.instanceId,
-        profile: 'repository-browser',
-        configuration: harness.configuration,
-        key: randomUUID(),
-      })
-      await [...harness.service.records.values()][0]!.preparation
-      // Name the actual chat tab so this entry owns its final focus return.
-      chat?.focusTab()
-      const commandsBefore = harness.commands.length
-      // Observe actual native effects without changing their arguments, responses or timing.
+      // The editor closes the retired Study context tab only once the final arrangement began, so that arrangement meets the tab and must wait for its close (F240).
+      harness.holdDisposedPanelTabCloses()
+      // Observe actual native effects without changing their arguments, responses or timing, from before the run starts: the live entry's final arrangement can run while the run prepares, on a loaded machine before the explicit open below (F154).
       harness.editor.commands.executeCommand = async (...args) => {
         if (args[0] === 'vscode.getEditorLayout')
           readsWithRetiredTab.push(
@@ -2799,13 +2795,33 @@ for (const besideChat of [false, true])
         return executeCommand.call(harness.editor.commands, ...args)
       }
       harness.reader['arrange'] = async (...args): Promise<void> => {
-        const start = harness.commands.length
+        const start = harness.commands.length,
+          readsStart = readsWithRetiredTab.length
+        const arranged = arrange.apply(harness.reader, args)
+        // The arrangement that retires the context pane runs up to its wait for the tab's close in this turn; the editor closes the tab in the next one.
+        if (args[5] !== undefined)
+          setImmediate(() => harness.closePendingDisposedPanelTabs())
         try {
-          await arrange.apply(harness.reader, args)
+          await arranged
         } finally {
-          arrangements.push(harness.commands.slice(start))
+          arrangements.push({
+            // The final arrangement of a live entry is the one that retires the Study context pane (its sixth argument).
+            retiresContextPane: args[5] !== undefined,
+            commands: harness.commands.slice(start),
+            readsWithRetiredTab: readsWithRetiredTab.slice(readsStart),
+          })
         }
       }
+      harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await [...harness.service.records.values()][0]!.preparation
+      // Name the actual chat tab so this entry owns its final focus return.
+      chat?.focusTab()
+      const commandsBefore = harness.commands.length
 
       // Act
       await harness.reader.open()
@@ -2814,17 +2830,21 @@ for (const besideChat of [false, true])
       assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
       assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
       assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
-      assert.equal(readsWithRetiredTab.length > 0, true)
-      assert.equal(readsWithRetiredTab.includes(true), false)
-      assert.deepEqual(
-        arrangements.map((commands) => {
-          const batch = commands.indexOf('runCommands')
-          assert.notEqual(batch, -1)
-          return commands
-            .slice(0, batch)
-            .filter((command) => command === 'vscode.getEditorLayout').length
-        }),
-        [1],
+      const finalArrangements = arrangements.filter(
+        (arrangement) => arrangement.retiresContextPane,
+      )
+      assert.equal(finalArrangements.length, 1)
+      const { commands, readsWithRetiredTab: finalReads } =
+        finalArrangements[0]!
+      assert.equal(finalReads.length > 0, true)
+      assert.equal(finalReads.includes(true), false)
+      const batch = commands.indexOf('runCommands')
+      assert.notEqual(batch, -1)
+      assert.equal(
+        commands
+          .slice(0, batch)
+          .filter((command) => command === 'vscode.getEditorLayout').length,
+        1,
       )
       if (chat) {
         assert.equal(chat.focused(), true)
