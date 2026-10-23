@@ -1504,6 +1504,54 @@ async function check(page, options, collected) {
           !rowInspectAfterValues.visible &&
           !rowInspectForMismatch.visible,
       })
+      // Value: protects=the row's Inspect in native debugger follows the selected stop, not the page of the event list: once the learner pages the list away from the stop, the row still offers Inspect for that stop and a press selects it; fails_when=the row looks for the selected stop among the shown page's events, so it hides the control while another page of events shows; why_new=F353 (hosted CodeRabbit on #120); seam=none; no_claim=the host's paging and its selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
+      // Arrange: the selected stop is event 1 of 26; the event list shows the second page, which holds outputs only.
+      const laterPage = {
+        ...nodeReader,
+        nodeHistoryEventCount: 26,
+        nodeHistoryPage: 1,
+        nodeHistoryPageCount: 2,
+        nodeHistory: {
+          ...nodeReader.nodeHistory,
+          entries: [
+            {
+              type: 'output',
+              sequence: 27,
+              channel: 'stdout',
+              elapsedMs: 4800,
+              text: 'page two output',
+            },
+          ],
+        },
+        nodeHistoryUnverifiedStops: [],
+      }
+      // Act: the learner ended the native session, then pages the list away from the stop.
+      await publish({
+        ...laterPage,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          debuggerAvailable: false,
+          nativeValuesUninspected: false,
+        },
+      })
+      const rowInspectOnLaterPage = await rowInspectState()
+      await page.evaluate(() => {
+        window.sent.length = 0
+      })
+      if (rowInspectOnLaterPage.visible) await rowInspect.click()
+      const rowInspectOnLaterPageRequests = await page.evaluate(() =>
+        window.sent.filter((message) => message.type === 'node-history-stop'),
+      )
+      // Assert
+      cases.push({
+        name: 'the row offers Inspect in native debugger for the selected stop while the event list shows another page, and its press selects that stop (F353)',
+        actual: { rowInspectOnLaterPage, rowInspectOnLaterPageRequests },
+        passed:
+          rowInspectOnLaterPage.visible &&
+          rowInspectOnLaterPage.label === 'Inspect in native debugger' &&
+          rowInspectOnLaterPageRequests.length === 1 &&
+          rowInspectOnLaterPageRequests[0].sequence === 2,
+      })
       // Act: the selected stop's captured source no longer matches its recorded hash.
       await publish({
         ...nodeReader,
@@ -3367,6 +3415,43 @@ async function check(page, options, collected) {
           !afterMissingAnchor.atEnd &&
           afterMissingAnchor.jumpShown,
       })
+      // Value: protects=a document that does not follow keeps the line the learner reads where it stood when a later moment's kept output drops its earliest lines (the kept tail slides), whatever the webview's own scroll anchoring does; fails_when=the update only records the scroll position, so the lines dropped above move the learner's line up and the region shows later lines than the learner read; why_new=F354 (hosted CodeRabbit on #120); seam=the browser's scroll anchoring is turned off in the region (`overflow-anchor: none`), so the case sees the document's own anchor and not Chromium's; no_claim=Chromium's scroll anchoring in VS Code's and Cursor's webviews
+      // Arrange: the learner reads line 20, 7 px into it, not following.
+      const slidingPage = await openApplication(
+        withReading(options.html.applicationAtResult, {
+          follow: false,
+          anchor: { line: 20, offsetPx: 7 },
+        }),
+      )
+      await slidingPage.evaluate(() => {
+        document.getElementById('test-output').style.overflowAnchor = 'none'
+      })
+      const beforeSlide = await readDocument(slidingPage)
+      // Act: the next moment keeps the output from line 10 on.
+      await postToDocument(slidingPage, {
+        type: 'node-history-output',
+        generation: 4,
+        view: {
+          ...resultView,
+          generation: 4,
+          lines: resultView.lines.filter((value) => value.number >= 10),
+        },
+      })
+      await settleFrames(slidingPage)
+      const afterSlide = await readDocument(slidingPage)
+      await slidingPage.close()
+      // Assert
+      cases.push({
+        name: 'a document that does not follow keeps the line the learner reads in place when the next moment drops the earliest kept lines (F354)',
+        actual: { beforeSlide, afterSlide },
+        passed:
+          beforeSlide.firstLine === 20 &&
+          beforeSlide.offsetPx === 7 &&
+          afterSlide.firstLine === 20 &&
+          afterSlide.offsetPx === 7 &&
+          !afterSlide.atEnd &&
+          afterSlide.jumpShown,
+      })
       // Value: protects=the document draws only the host's output updates: a message of another kind, or an update without a numeric generation or a view, changes nothing, and a later valid update still draws; fails_when=a malformed update is drawn (a string generation compares as a number and replaces the shown moment) or throws so that later updates stop; why_new=F308 (PR-2 coverage audit): the message filter (F304's isOutputUpdate) had no case; seam=none; no_claim=the host's own filter of the document's reports (readNodeTestOutputReport's unit test)
       // Act: foreign and malformed messages, then a valid newer update.
       const malformedPage = await openApplication(options.html.application)
@@ -4206,6 +4291,14 @@ async function check(page, options, collected) {
           },
         },
       }
+      // The golden below pins the diagram's markup, not a system's fonts: while this sample is drawn every character measures 6 px, so its labels break where they break on every system (F350: Chrome on CI's Linux measured "1. Observed submission" wider than its 144 px box and wrapped it, while the Mac's font fits it).
+      const measureText = await page.evaluateHandle(() => {
+        const measured = CanvasRenderingContext2D.prototype.measureText
+        CanvasRenderingContext2D.prototype.measureText = function (value) {
+          return { width: [...value].length * 6 }
+        }
+        return measured
+      })
       await publish(learning)
       await page.locator('#learning-material').scrollIntoViewIfNeeded()
       const diagram = await page.evaluate(() => ({
@@ -4237,7 +4330,12 @@ async function check(page, options, collected) {
       const sequenceMarkup = await page.evaluate(
         () => document.getElementById('learning-sequence').innerHTML,
       )
-      // Value: protects=the browser summary's sequence renders the markup of the golden fixture, so a change of the shared renderer shows as a change of this fixture with a reason; fails_when=the shared renderer changes the diagram's elements or attributes without the fixture and its reason changing together (the fixture changed once, for F206: a loop's label is centered on its lifeline); why_new=PR-B1 shared the renderer with test replays (Design 5, AC14); seam=none; no_claim=how the diagram looks (native pixels)
+      // The diagrams after this one are measured in the page's own font again.
+      await page.evaluate((measured) => {
+        CanvasRenderingContext2D.prototype.measureText = measured
+      }, measureText)
+      await measureText.dispose()
+      // Value: protects=the browser summary's sequence renders the markup of the golden fixture, so a change of the shared renderer shows as a change of this fixture with a reason; fails_when=the shared renderer changes the diagram's elements or attributes without the fixture and its reason changing together (the fixture changed once, for F206: a loop's label is centered on its lifeline); why_new=PR-B1 shared the renderer with test replays (Design 5, AC14); seam=none; why_changed=F350 (required CI on #120): the label's break followed the runner's default font, so the fixture held only where the Mac's font fits the label; the sample is now drawn with every character measured 6 px; no_claim=how the diagram looks (native pixels) and where the page's own fonts break its labels (the F206 and F293 cases measure those)
       cases.push({
         name: 'the saved learning sequence of a browser replay renders the markup of its golden fixture: the same elements and attributes as before the renderer was shared with test replays, with a loop label centered on its lifeline',
         actual: sequenceMarkup,

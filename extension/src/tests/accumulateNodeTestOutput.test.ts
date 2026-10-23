@@ -376,7 +376,7 @@ test('the output index keeps no object per line and still shows the right lines'
   )
 })
 
-// Value: protects=showing the output up to a moment costs about its kept tail, however many lines it holds and however long its last line is: 262,144 one-character lines and one unfinished line of 8 MiB are each assembled in well under a second; fails_when=the kept lines are put first one by one (quadratic in the kept lines: about 4 s for 262,144) or a whole line is handed to the cut, which spreads it into characters (its whole length per selection); why_new=/ship Step 11's Codex adversarial review and the carried F107 and F108: about 0.5 s per selection for 65,536 short lines, recomputed at every 250 ms refresh (F111); why_changed=F325 (PR-2 /ship Step 9 pass 2 testing): one timed run could fail on a runner pause, so the short lines' time is the fastest of three, and the long line's 200 ms bound could not catch the whole-line spread it named (about 20 ms), so it is now the length the cut reads; seam=none; no_claim=the Application document's own update, which the Reader DOM check times
+// Value: protects=showing the output up to a moment costs about its kept tail, however many lines it holds and however long its last line is: 262,144 one-character lines and one unfinished line of 8 MiB are each assembled in well under a second; fails_when=the kept lines are put first one by one (quadratic in the kept lines: about 4 s for 262,144) or a whole line is handed to the cut, which spreads it into characters (its whole length per selection); why_new=/ship Step 11's Codex adversarial review and the carried F107 and F108: about 0.5 s per selection for 65,536 short lines, recomputed at every 250 ms refresh (F111); why_changed=F325 (PR-2 /ship Step 9 pass 2 testing): one timed run could fail on a runner pause, so the short lines' time is the fastest of three, and the long line's 200 ms bound could not catch the whole-line spread it named (about 20 ms), so it is now the length the cut reads, and F352 (hosted CodeRabbit on #120): that bound passed when the cut was never called, so the test also asserts that it was; seam=none; no_claim=the Application document's own update, which the Reader DOM check times
 test('showing the output up to a moment costs about its tail for many short lines and one very long line', (context) => {
   // Arrange
   const shortLines = indexNodeTestOutput(
@@ -416,6 +416,11 @@ test('showing the output up to a moment costs about its tail for many short line
   assert.equal(oneLine.lines[0]?.text.length, 65_536)
   // gstack-timing-ok: the quadratic assembly takes about 4 s even as the fastest of three runs on the Mac (forced probe, F325); the linear one takes a few milliseconds, so the bound leaves a wide margin under load
   assert.ok(shortMs < 1_000, `262,144 lines took ${shortMs.toFixed(0)} ms`)
+  // The cut was reached at all: with no recorded call the bound below would compare -Infinity and pass (F352).
+  assert.ok(
+    cuts.mock.callCount() >= 1,
+    'the cut was never called for the 8 MiB line',
+  )
   // One 8 MiB line costs its 65,536-character tail: the cut reads at most two units per kept character, never the whole line (a whole-line spread costs about 20 ms here, which no wall-clock bound can tell from load).
   assert.ok(
     longestCutInput <= 131_072,

@@ -2374,6 +2374,7 @@ function studyClient(
   }
   /**
    * Offers Inspect in native debugger beside the values hint and Show Variables (DS6) for the selected stop, so the learner finds it without opening the event list: pressed ("Debugger stop selected") while the debugger shows the stop and its values are not loaded, and a press that starts the debugger again once it does not show the stop (F348); called by {@link renderTestReplayMoment} for every Study message.
+   * The stop is read from the selected moment's position, which the host sends whatever page the event list shows, so paging the list away from the stop keeps the control (F353).
    * @param message - The current Study message.
    * @param wanted - Whether the row wants the control: the selected stop's values are not loaded, or the debugger does not show the stop.
    * @param replaying - Whether a browser recording is shown, which disables the control.
@@ -2385,16 +2386,12 @@ function studyClient(
     replaying: boolean,
   ): void => {
     const inspect = element('node-history-inspect')
-    const stop = message.nodeHistory?.entries.find(
-      (entry) =>
-        entry.type === 'stop' &&
-        entry.sequence === message.nodeHistoryPosition?.sequence,
-    )
+    const position = message.nodeHistoryPosition
+    // Only a selected stop has `sourceAvailable`, true when the extension verified its captured source.
     const offered =
       wanted &&
       inspect instanceof HTMLButtonElement &&
-      stop?.type === 'stop' &&
-      testReplayStopInspectable(stop, message, true)
+      position?.sourceAvailable === true
     // Hidden through the rule Show Variables follows: a keyboard learner on it is handed to the transport, not to the page (F292).
     offerShowVariables(
       'node-history-inspect',
@@ -2403,8 +2400,8 @@ function studyClient(
       'node-history',
     )
     if (!offered) return
-    const shown = Boolean(message.nodeHistoryPosition?.debuggerAvailable)
-    inspect.dataset.nodeHistorySequence = String(stop.sequence)
+    const shown = Boolean(position.debuggerAvailable)
+    inspect.dataset.nodeHistorySequence = String(position.sequence)
     inspect.textContent = shown
       ? 'Debugger stop selected'
       : 'Inspect in native debugger'
@@ -2992,7 +2989,7 @@ function studyClient(
     }
   }
   /**
-   * Says whether a stop can be inspected in the native debugger: the extension verified its captured source (the host names every shown stop that failed in `nodeHistoryUnverifiedStops`), and a selected stop's source is available; called by {@link testReplayInspectControl} and {@link renderTestReplayInspect}.
+   * Says whether a stop can be inspected in the native debugger: the extension verified its captured source (the host names every shown stop that failed in `nodeHistoryUnverifiedStops`), and a selected stop's source is available; called by {@link testReplayInspectControl}.
    * @param entry - The stop.
    * @param message - The current Study message.
    * @param isSelected - Whether the stop is the selected event.

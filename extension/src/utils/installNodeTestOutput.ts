@@ -221,7 +221,16 @@ export function installNodeTestOutput(
     else if (reading.anchor) restoreAnchor(reading.anchor)
     else settle()
   }
+  /** Places the region after a view was drawn: following goes to the end; otherwise the learner's line stands where it stood, whatever the webview's own scroll anchoring did with lines dropped above it (F354), or the position is recorded as the document's own. */
+  const placeReading = (anchor: NodeTestOutputAnchor | undefined): void => {
+    // A shorter output clamps the scroll position: that is the document's change, never the learner's return to the end (DS20), and `settle` records it as such.
+    if (follow) toEnd()
+    else if (anchor && drawn.has(anchor.line)) restoreAnchor(anchor)
+    else settle()
+  }
   const apply = (view: NodeTestApplicationView): void => {
+    // The line the learner reads, taken before the lines change: a view that drops earlier lines would otherwise move it up (F354).
+    const readingAnchor = follow ? undefined : currentAnchor()
     document.title = view.name
     element('test-output-main').setAttribute('aria-label', view.name)
     element('test-output-time').textContent = view.time
@@ -234,9 +243,7 @@ export function installNodeTestOutput(
     line('test-output-placeholder', view.placeholder)
     line('test-output-end', view.end)
     placeLines(view.lines)
-    // A shorter output clamps the scroll position: that is the document's change, never the learner's return to the end (DS20), and `settle` records it as such.
-    if (follow) toEnd()
-    else settle()
+    placeReading(readingAnchor)
     jump.hidden = follow
   }
   /** Draws the newest view that came since the last frame, and takes the host's reading when the update carries it. */

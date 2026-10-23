@@ -23614,10 +23614,15 @@ export class StudyWorkspace {
         keepOpenWithoutDebugger,
         isCurrent,
       ))
-    )
+    ) {
+      this.restoreWithdrawnNodeHistoryMoment(history, request)
       return
+    }
     // A caller that withdrew meanwhile (Pause, dispose) commits nothing, also after a slot that failed to open, which skips the debugger's own check.
-    if (this.isNodeHistoryRequestOutdated(request, isCurrent)) return
+    if (this.isNodeHistoryRequestOutdated(request, isCurrent)) {
+      this.restoreWithdrawnNodeHistoryMoment(history, request)
+      return
+    }
     // The slot's stopped line and label commit with the moment.
     if (this.nodeSourceSlot && slot !== 'failed')
       this.nodeSourceSlot = { ...this.nodeSourceSlot, stop: verifiedStop }
@@ -23648,6 +23653,68 @@ export class StudyWorkspace {
     } catch (error) {
       this.report('history-position', error)
     }
+  }
+
+  /**
+   * Shows the committed moment again on the recorded-source slot and the replay debugger after its caller withdrew a selection that had already shown another moment there, so no surface keeps the withdrawn moment beside the Study position (F351); called by {@link selectNodeHistoryEvent} when it commits nothing.
+   * It waits one turn of the event loop and acts only if no newer selection took the request token meanwhile: a seek that withdrew a Play step selects its own moment at once and then owns the surfaces, and a close or a browser recording retires the replay. A debugger the learner stopped stays stopped.
+   * @param history - The selected test replay.
+   * @param request - The withdrawn selection's request token.
+   * @example this.restoreWithdrawnNodeHistoryMoment(history, request)
+   */
+  private restoreWithdrawnNodeHistoryMoment(
+    history: NodeTestHistoryIndex,
+    request: number,
+  ): void {
+    setTimeout(() => {
+      // A newer selection, a close or another replay owns the surfaces now.
+      if (
+        request !== this.selectedNodeHistoryRequest ||
+        this.closing ||
+        this.selectedNodeHistory !== history
+      )
+        return
+      void this.showCommittedNodeHistoryMoment(history, request).catch(
+        (error: unknown) => this.report('history-source', error),
+      )
+    }, 0)
+  }
+
+  /**
+   * Shows the committed moment of a test replay on the recorded-source slot and, unless the learner stopped it, in the replay debugger, with its stopped line and label; called by {@link restoreWithdrawnNodeHistoryMoment}.
+   * @param history - The selected test replay.
+   * @param request - The request token it acts for; a newer selection ends it.
+   * @example await this.showCommittedNodeHistoryMoment(history, request)
+   */
+  private async showCommittedNodeHistoryMoment(
+    history: NodeTestHistoryIndex,
+    request: number,
+  ): Promise<void> {
+    const committed = this.selectedNodeHistorySequence
+    const position =
+      committed === undefined
+        ? undefined
+        : this.nodeHistoryEventPosition(history, committed)
+    const entry = position === undefined ? undefined : history.entries[position]
+    if (!entry) return
+    const verifiedStop =
+      entry.type === 'stop' && nodeStopSourceMatches(entry) ? entry : undefined
+    const slot = await this.showNodeSourceSlot(history, verifiedStop, request)
+    if (!slot || slot === 'failed') return
+    // A debugger the learner stopped is restarted only by the learner's own selection.
+    const presented =
+      this.replayDebugger?.available === false ||
+      (await this.presentNodeHistoryDebuggerOrKeepOpen(
+        verifiedStop,
+        slot,
+        request,
+        true,
+      ))
+    if (!presented || request !== this.selectedNodeHistoryRequest) return
+    if (this.nodeSourceSlot)
+      this.nodeSourceSlot = { ...this.nodeSourceSlot, stop: verifiedStop }
+    this.decorateNodeSourceSlot()
+    this.publish()
   }
 
   /**
