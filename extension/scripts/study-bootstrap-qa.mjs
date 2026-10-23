@@ -1254,9 +1254,10 @@ async function check(page, options, collected) {
           (await page.locator('#playback-hint').isHidden()) &&
           (await page.locator('#playback-reason').isVisible()),
       })
+      // The one-event history's stop is its first event (F305).
       const nodeStop = {
         sequence: 2,
-        eventIndex: 1,
+        eventIndex: 0,
         sourceAvailable: true,
         debuggerAvailable: true,
       }
@@ -2277,10 +2278,7 @@ async function check(page, options, collected) {
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
       // Value: protects=the keyboard's whole path through a test replay (DS17): Open the replay from Saved studies (the list's own key handling is the browser's), then Step details, a step, Next stop, Previous stop, a seek and Pause in the Study pane, and then the Application pane's output region, which the first Tab of the document reaches and a page key scrolls; fails_when=choosing the replay by keyboard asks the host for another entry or nothing, a step of the path is not reached by Tab presses (a control outside the tab order passes a script focus, F295), or the output region is no tab stop, has no name or does not scroll by keyboard; why_new=F122 (AC13 path): the keyboard case began after Open and never reached the output region; seam=none; no_claim=the host's answer to each request (the workspace tests) (stand-ins: the pane's sent messages and a document of the Application pane in a page of its own)
       // Arrange: a saved replay listed in Saved studies and none opened.
-      await publish({
-        ...options.message,
-        revision: revisionAt(5),
-        studies: [
+      const savedReplays = [
           {
             id: 'job-study',
             savedAt: '2026-10-22T06:00:00.000Z',
@@ -2300,10 +2298,22 @@ async function check(page, options, collected) {
             metadata: 'validated',
           },
         ],
-        nodeHistoryCatalog: [
+        savedReplayCatalog = [
           { studyId: 'job-study' },
           { studyId: 'other-replay' },
-        ],
+        ]
+      await publish({
+        ...options.message,
+        revision: revisionAt(5),
+        studies: savedReplays,
+        nodeHistoryCatalog: savedReplayCatalog,
+      })
+      // The replay chosen below, at a moment: Saved studies still lists both replays, and the history shown is the chosen one (F306).
+      const openedAt = (at) => ({
+        ...at,
+        studies: savedReplays,
+        nodeHistoryCatalog: savedReplayCatalog,
+        nodeHistory: { ...at.nodeHistory, header: { studyId: 'other-replay' } },
       })
       await page.evaluate(() => {
         window.sent = []
@@ -2319,7 +2329,8 @@ async function check(page, options, collected) {
       // The native list's own key handling is the browser's (it opens a popup on some systems); the choice is made as the list reports it.
       await page.selectOption('#studies', 'other-replay')
       const openRequests = await sentHistory()
-      const reachableControls = {}
+      const reachableControls = {},
+        listedWhileOpen = []
       for (const [name, selector, at] of [
         [
           'stepDetails',
@@ -2331,7 +2342,13 @@ async function check(page, options, collected) {
         ['playhead', '#node-history-playhead', atStop],
         ['pause', '#node-history-playback-toggle', atStop],
       ]) {
-        await publish(at)
+        await publish(openedAt(at))
+        listedWhileOpen.push({
+          listed: await page
+            .locator('#studies option')
+            .evaluateAll((choices) => choices.map((choice) => choice.value)),
+          chosen: await page.locator('#studies').inputValue(),
+        })
         // The press count that reaches the control by Tab from the replay chooser (0 when it is outside the tab order or beyond the limit), never a script focus: a control with tabindex -1 or one that is hidden is not reached (F295).
         await page.locator('#studies').focus()
         let presses = 0
@@ -2403,6 +2420,7 @@ async function check(page, options, collected) {
         name: 'the keyboard reaches a test replay from Open through Step details, Next stop, Previous stop, a seek and Pause to the Application pane’s output region (DS17)',
         actual: {
           openRequests,
+          listedWhileOpen,
           reachableControls,
           outputRegion,
           outputScrolledByKey,
@@ -2412,6 +2430,12 @@ async function check(page, options, collected) {
             JSON.stringify([
               { type: 'node-history', studyId: 'other-replay' },
             ]) &&
+          listedWhileOpen.every(
+            ({ listed, chosen }) =>
+              listed.includes('job-study') &&
+              listed.includes('other-replay') &&
+              chosen === 'other-replay',
+          ) &&
           Object.values(reachableControls).every(Boolean) &&
           outputRegion.focused &&
           outputRegion.role === 'region' &&
@@ -5333,7 +5357,6 @@ async function check(page, options, collected) {
           revision: revisionAt(13),
           nodeHistoryPosition: {
             ...nodeStop,
-            eventIndex: 0,
             nativeValuesUninspected: true,
           },
           nodeHistoryPlayback: {
@@ -5348,7 +5371,7 @@ async function check(page, options, collected) {
         nodeWithNativeValues = {
           ...nodeWithoutNativeValues,
           revision: revisionAt(14),
-          nodeHistoryPosition: { ...nodeStop, eventIndex: 0 },
+          nodeHistoryPosition: nodeStop,
         }
       await publish(nodeWithoutNativeValues)
       await page.locator('#node-history-show-variables').focus()
@@ -5443,14 +5466,13 @@ async function check(page, options, collected) {
         ...singleEvent,
         nodeHistoryPosition: {
           ...nodeStop,
-          eventIndex: 0,
           nativeValuesUninspected: true,
         },
       })
       await page.locator('#node-history-show-variables').focus()
       await publish({
         ...singleEvent,
-        nodeHistoryPosition: { ...nodeStop, eventIndex: 0 },
+        nodeHistoryPosition: nodeStop,
       })
       const focusWithSingleEvent = await page.evaluate(() => ({
         transportDisabled: [
