@@ -786,3 +786,69 @@ test('HMR churn of one layer’s module does not keep the first sealing of anoth
     { count: 10, journalLimit: 100 },
   ])
 })
+
+// Value: protects=the journal staying bounded when the script address of a module changes with every rebuild (a chunk id or layer per save), whose first entry of each address is always journaled; fails_when=every new address adds one journal entry without a ceiling, so a long session of saves fills the evidence budget; why_new=F473 (OCR low/medium of the review of ef03b741..ccfe301d: F467's first entries are keyed by the address and unbounded); seam=announceModuleInAnotherLayer for 180 different layers, one script each; no_claim=the evidence budget's own size
+test('180 different script addresses of one module keep the instance journal at 150 entries with the rest counted', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await startActionWithoutPause(harness)
+  // Act: every save announces the module under an address of its own, and the run takes each before the next arrives.
+  for (let save = 0; save < 180; save++) {
+    harness.announceModuleInAnotherLayer(
+      'server',
+      `save-${save}`,
+      `layer${save}`,
+      ';AAAA',
+    )
+    await waitUntil(
+      () =>
+        harness.scriptSourceReads.some(
+          (read) => read.scriptId === `save-${save}`,
+        ),
+      `the run read save ${save}`,
+    )
+    await settle()
+  }
+  await harness.run.stop()
+  // Assert: 100 up to the cap, 50 more as first entries of their address, 30 only counted.
+  assert.equal(journaled(harness, 'stop.instance-sealed').length, 150)
+  assert.deepEqual(journaled(harness, 'stop.module-events-not-journaled'), [
+    { count: 30, journalLimit: 100 },
+  ])
+})
+
+// Value: protects=an older script's read ending after a newer script of the same address was accepted not removing that newer script from the stop's instances; fails_when=the older read's end forgets every script of the address that holds no pause, so the newer accepted script is gone and a later pause in it cannot be judged by its map; why_new=F476 (CodeRabbit CLI minor of the review of ef03b741..ccfe301d: F460 keeps the older script while a pause is held in it); seam=holdScriptSourceRead on the older script, a pause held in it at a place its map puts on another line, a newer script of the same layer accepted first, the stop's instances read through the run's private members; no_claim=what the run does with a pause in the newer script afterwards
+test('an older script’s read that ends after a newer script of the same address was accepted keeps the newer script an instance', async (context) => {
+  // Arrange: the older script maps its generated line 3 to source line 2, and a pause is held in it while its text is read.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  harness.holdSourceBoundWait()
+  await startActionWithoutPause(harness)
+  const olderRead = harness.holdScriptSourceRead('server', 'save-1')
+  harness.announceModuleInAnotherLayer(
+    'server',
+    'save-1',
+    'middleware',
+    ';AAAA;AACA',
+  )
+  harness.pauseInScript('server', 'save-1', 2, 0)
+  await settle()
+  // Act: the newer script of the address is accepted first, then the older read ends.
+  harness.announceModuleInAnotherLayer(
+    'server',
+    'save-2',
+    'middleware',
+    ';AAAA',
+  )
+  await waitUntil(
+    () => journaled(harness, 'stop.instance-sealed').length === 1,
+    'the newer script accepted',
+  )
+  olderRead.release()
+  await waitUntil(
+    () => journaled(harness, 'stop.instance-sealed').length === 2,
+    'the older script accepted',
+  )
+  // Assert
+  const instances = [...harness.run['stops'][0]!.instances.keys()].sort()
+  assert.deepEqual(instances, ['save-1', 'save-2'])
+})
