@@ -1262,7 +1262,7 @@ export const REPOSITORY_DISCOVERY_CANDIDATE_LIMIT = 2_048
 export const REPOSITORY_DISCOVERY_TIMEOUT_MS = 30_000
 export const REPOSITORY_APPLICATION_LOG_LIMIT_BYTES = 262_144
 export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
-/** Next's own development port, used when neither the dev script nor an env file declares one. */
+/** Next's own development port, used when the dev script declares no port. */
 export const DEVELOPMENT_SERVER_DEFAULT_PORT = 3000
 export const DEVELOPMENT_SERVER_MAX_PORT = 65_535
 /** Bounds one loopback connect that asks whether something already listens on the project's port; a connect that times out proves nothing (Windows reports a refused loopback connect only after its SYN retries, 1 to 2 s), so the bind probe decides. */
@@ -1271,9 +1271,9 @@ export const DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS = 500
 export const DEVELOPMENT_PORT_RELEASE_WAIT_MS = 5_000
 /** The pause between two checks while {@link DEVELOPMENT_PORT_RELEASE_WAIT_MS} runs. */
 export const DEVELOPMENT_PORT_RELEASE_POLL_MS = 100
-/** Bounds the `$VAR` substitutions applied to one env value, so a self-referencing value (`A=$A`) ends instead of looping. */
-export const DEVELOPMENT_ENV_EXPANSION_STEP_LIMIT = 64
-/** The only variables the owned `next dev` inherits from the extension host; the declared-port reader expands `$VAR` references against these, as Next does against its own environment. */
+/** Bounds how deep the `dev` script reader follows `concurrently "…"` quoted commands inside each other (a count, not a duration). */
+export const DEVELOPMENT_SCRIPT_NESTING_LIMIT = 2
+/** The only variables the owned `next dev` inherits from the extension host. */
 export const DEVELOPMENT_SERVER_INHERITED_ENVIRONMENT_NAMES = [
   'PATH',
   'HOME',
@@ -1291,7 +1291,7 @@ export const OWNED_APPLICATION_LOOPBACK_HOSTS = [
   '127.0.0.1',
   '[::1]',
 ] as const
-/** Bounds how much of a project's package.json or env file is read to find its declared port. */
+/** Bounds how much of a project's package.json is read to find its declared port. */
 export const DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES = 1_048_576
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT = 8

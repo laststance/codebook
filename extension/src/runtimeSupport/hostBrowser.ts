@@ -337,7 +337,12 @@ export class HostBrowser {
         type: 'pwa-chrome',
         request: 'launch',
         runtimeExecutable,
-        runtimeArgs: ['--headless=new', '--remote-debugging-pipe'],
+        runtimeArgs: [
+          '--headless=new',
+          '--remote-debugging-pipe',
+          // Defense in depth for D66: `localhost` resolves to the server's own 127.0.0.1 here, never to another listener on ::1.
+          '--host-resolver-rules=MAP localhost 127.0.0.1',
+        ],
         userDataDir: this.managedProfile,
         cleanUp: 'wholeBrowser',
         browserLaunchLocation: 'workspace',

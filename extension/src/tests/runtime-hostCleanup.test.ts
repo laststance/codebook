@@ -97,7 +97,10 @@ async function loadHostBrowser(
 async function managedBrowser(
   context: TestContext,
   options: {
-    startDebugging?: () => Promise<boolean>
+    startDebugging?: (
+      folder: unknown,
+      configuration: { runtimeArgs?: string[] },
+    ) => Promise<boolean>
     onEvent?: (type: string) => void
     removeFolder?: typeof removeWithoutFollowing
     removeAbandonedProfiles?: (root: string) => Promise<string[]>
@@ -1736,4 +1739,31 @@ test('a sweep of abandoned profile folders that fails leaves the launch and the 
       'browser.cleanup-verified',
     ],
   )
+})
+
+// Value: protects=the recorded Chrome resolves localhost to 127.0.0.1 only (D66 defense in depth: no other listener on ::1 can answer for the owned origin); fails_when=the launch omits the host-resolver rule; why_new=F427; seam=the real adapter with the editor's debugger start recording its configuration; no_claim=Chrome honoring the rule (checked natively)
+test('the managed Chrome launch maps localhost to 127.0.0.1', async (context) => {
+  // Arrange
+  let runtimeArgs: string[] | undefined
+  const managed = await managedBrowser(context, {
+    startDebugging: async (_folder, configuration) => {
+      runtimeArgs = configuration.runtimeArgs
+      return true
+    },
+  })
+
+  // Act
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  await managed.browser.close()
+
+  // Assert
+  // The adapter runs in its own context, so its array is copied before the comparison.
+  assert.deepEqual(Array.from(runtimeArgs ?? []), [
+    '--headless=new',
+    '--remote-debugging-pipe',
+    '--host-resolver-rules=MAP localhost 127.0.0.1',
+  ])
 })

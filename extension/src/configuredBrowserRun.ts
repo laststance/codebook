@@ -137,6 +137,10 @@ import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
+import {
+  startIpv6LoopbackForwarder,
+  type Ipv6LoopbackForwarder,
+} from './utils/startIpv6LoopbackForwarder'
 import { takenStopPosition } from './utils/takenStopPosition'
 import { thrownMessage } from './utils/thrownMessage'
 import { withFinalPeriod } from './utils/withFinalPeriod'
@@ -369,6 +373,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private origin?: string
   /** Where the app's port was declared, reported beside the origin so a default is visible. */
   private portSource?: string
+  /** Codebook's listener on `[::1]:<port>` (D66), closed with the run. */
+  private ipv6Forwarder?: Ipv6LoopbackForwarder
+  /** Whether `[::1]` at the port is the run's own, so the origin checks accept it. */
+  private ownsIpv6Loopback = false
   private operation?: ConfiguredRuntimeView['operation']
   private snapshot?: ConfiguredRuntimeSnapshot
   private snapshotReady = false
@@ -495,7 +503,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.options.workspace,
     )
     this.portSource = declaredPort.source
-    await assertDevelopmentPortFree(declaredPort)
+    await assertDevelopmentPortFree(declaredPort, {
+      signal: this.abort.signal,
+    })
     this.alive()
     this.app = launchDevelopmentServer(
       this.options.workspace,
@@ -511,6 +521,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.definition.configuration.entryPath,
       ),
     )
+    // `localhost` may resolve to ::1: Codebook owns that endpoint for the whole run, or the host has none (D66).
+    this.ipv6Forwarder = await startIpv6LoopbackForwarder(declaredPort.port)
+    this.ownsIpv6Loopback = this.ipv6Forwarder !== undefined
     this.alive()
     // The lock's identity is read with exact numbers: a file id can be larger than a number holds exactly.
     const developmentLock = await lstat(
@@ -649,7 +662,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const storage = this.definition.configuration.initialStorage ?? []
     if (storage.length) {
       await cdp.request('Page.addScriptToEvaluateOnNewDocument', {
-        source: `if(${JSON.stringify(loopbackOriginsOf(this.origin))}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
+        source: `if(${JSON.stringify(loopbackOriginsOf(this.origin, this.ownsIpv6Loopback))}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
       })
       this.alive()
     }
@@ -660,7 +673,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.waitForDom('before')
     this.alive()
     const inputs = this.definition.configuration.initialInputs ?? []
-    await prepareRepositoryInputs(cdp, inputs, this.origin, () => this.alive())
+    await prepareRepositoryInputs(
+      cdp,
+      inputs,
+      loopbackOriginsOf(this.origin, this.ownsIpv6Loopback),
+      () => this.alive(),
+    )
     this.alive()
     if (inputs.length)
       this.evidence.record('inputs.prepared', { count: inputs.length })
@@ -5351,7 +5369,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     if (
       identity.exceptionDetails ||
-      !isOwnedApplicationOrigin(identity.result.value, this.origin!)
+      !isOwnedApplicationOrigin(
+        identity.result.value,
+        this.origin!,
+        this.ownsIpv6Loopback,
+      )
     )
       throw new Error('Selected page left its owned application origin')
     const action = this.definition.configuration.action
@@ -5917,6 +5939,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     failures.push(...(await this.stopKnownDebuggers()))
     failures.push(
       ...(await settleCleanup([
+        {
+          description: 'owned [::1] forwarder stop',
+          release: () => this.ipv6Forwarder?.close(),
+        },
         {
           description: 'owned application stop',
           release: () => this.app?.close(),

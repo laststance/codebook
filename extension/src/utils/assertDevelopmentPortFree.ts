@@ -6,19 +6,14 @@ import {
   DEVELOPMENT_PORT_RELEASE_WAIT_MS,
 } from '../constants'
 import { StudyError } from '../errors'
+import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
-import { ownedDevelopmentPortState } from './ownedDevelopmentPorts'
+import {
+  isOwnedDevelopmentPortReleasing,
+  ownedDevelopmentPortState,
+} from './ownedDevelopmentPorts'
 import type { DeclaredDevelopmentPort } from './readDeclaredDevelopmentPort'
-
-/** Connect errors that prove nothing listens there (or that the host has no such loopback address). */
-const NOT_LISTENING_CODES = new Set([
-  'ECONNREFUSED',
-  'EADDRNOTAVAIL',
-  'ENETUNREACH',
-  'EHOSTUNREACH',
-  'EAFNOSUPPORT',
-])
 
 /** Opens one loopback connection attempt; {@link createConnection} in production, a stand-in in tests. */
 export type ConnectLoopback = (options: {
@@ -37,8 +32,7 @@ type PortState = 'free' | 'in-use' | 'not-permitted'
 /**
  * Asks whether something accepts a TCP connection on one loopback address.
  * A listener bound to `::` or `::1` (the learner's `next dev`) does not stop a bind to 127.0.0.1, so binding alone cannot see it.
- * @returns `true` only for an accepted connection; `false` when the connect is refused, the address does not exist, or the connect times out (Windows reports a refused loopback connect only after 1 to 2 s of SYN retries, so a timeout proves nothing and the bind probe decides).
- * @throws An unexpected socket error.
+ * @returns `true` only for an accepted connection; `false` for every error (refused, no such address, EPERM…) and for a timeout (Windows reports a refused loopback connect only after 1 to 2 s of SYN retries, so a timeout proves nothing); the bind probe decides.
  * @example await isListeningAt(createConnection, '::1', 3165) // true while the learner's dev server runs
  */
 function isListeningAt(
@@ -46,7 +40,7 @@ function isListeningAt(
   host: string,
   port: number,
 ): Promise<boolean> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const socket = connect({ host, port })
     socket.setTimeout(DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS)
     socket.once('connect', () => {
@@ -57,10 +51,10 @@ function isListeningAt(
       socket.destroy()
       resolve(false)
     })
-    socket.once('error', (error: NodeJS.ErrnoException) => {
+    // Any connect error (refused, EPERM, ETIMEDOUT, ECONNRESET…) proves no accepted connection; the bind probe decides.
+    socket.once('error', () => {
       socket.destroy()
-      if (error.code && NOT_LISTENING_CODES.has(error.code)) resolve(false)
-      else reject(error)
+      resolve(false)
     })
   })
 }
@@ -100,6 +94,8 @@ export type PortCheckOptions = {
   bind?: BindProbe
   /** Replaces {@link DEVELOPMENT_PORT_RELEASE_WAIT_MS}. */
   releaseWaitMs?: number
+  /** Ends the wait for a stopping run when the run is cancelled. */
+  signal?: AbortSignal
 }
 
 /**
@@ -126,27 +122,34 @@ export async function assertDevelopmentPortFree(
   const bind = options.bind ?? tryBind
   const { port, source } = declared
   let state = await lookAtPort(port, connect, bind)
-  if (state === 'free') return
-  const owned = ownedDevelopmentPortState(port)
-  // A run Codebook is stopping releases the port within moments; wait for it before judging.
-  if (state === 'in-use' && owned === 'stopping') {
+  // A run Codebook is stopping releases the port within moments, and a new listener would break its listener check; wait for the release whatever the first look found.
+  if (isOwnedDevelopmentPortReleasing(port)) {
     const latest: { state: PortState } = { state }
     await waitUntil(
-      async () =>
-        (latest.state = await lookAtPort(port, connect, bind)) !== 'in-use',
+      async () => {
+        latest.state = await lookAtPort(port, connect, bind)
+        return (
+          !isOwnedDevelopmentPortReleasing(port) && latest.state !== 'in-use'
+        )
+      },
       `port ${port} released by Codebook's earlier run`,
       options.releaseWaitMs ?? DEVELOPMENT_PORT_RELEASE_WAIT_MS,
-      undefined,
+      options.signal,
       DEVELOPMENT_PORT_RELEASE_POLL_MS,
-    ).catch(() => undefined)
-    if (latest.state === 'free') return
+    ).catch((error: unknown) => {
+      // Only the end of the budget is expected; a cancel or a probe failure surfaces.
+      if (!(error instanceof WaitTimeoutError)) throw error
+    })
     state = latest.state
   }
+  // A free port holds no listener, whatever a stuck claim says.
+  if (state === 'free') return
+  const owned = ownedDevelopmentPortState(port)
   const pinned = `the project declares it (${source}): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port.`
   if (state === 'not-permitted')
     throw new StudyError(
       'PREREQUISITE_MISSING',
-      `Port ${port} is not permitted for Codebook on this machine (the operating system refuses to let this program listen on it, as for a port below 1024 without administrator rights or a port range the system reserves), and ${pinned} Ask the learner to declare a port from 1024 up for the project (the dev script's -p/--port or PORT in an env file), or to allow listening on port ${port}, then start again.`,
+      `Port ${port} is not permitted for Codebook on this machine (the operating system refuses to let this program listen on it, as for a port below 1024 without administrator rights or a port range the system reserves), and ${pinned} Ask the learner to declare a port from 1024 up for the project (the -p/--port of next dev or a PORT= in the dev script), or to allow listening on port ${port}, then start again.`,
     )
   if (owned !== undefined)
     throw new StudyError(
