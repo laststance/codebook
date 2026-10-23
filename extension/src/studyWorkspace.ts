@@ -84,6 +84,7 @@ import {
   SUMMARY_PLACEMENT_ACTION,
   FOREIGN_PREVIEW_ACTION,
   MOVE_VIEWS_COMMAND,
+  REFUSAL_REPORT_GROUP_TABS,
   SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
   SUMMARY_BESIDE_CHAT_MOVED_KEY,
   SUMMARY_PLACEMENT_ANSWERED_KEY,
@@ -294,7 +295,6 @@ import { parseRecordedStudyGroups } from './utils/parseRecordedStudyGroups'
 import {
   describePlacementRefusal,
   PlacementEventLog,
-  REFUSAL_REPORT_TABS_PER_GROUP,
   type RefusalGroupView,
 } from './utils/placementRefusalReport'
 import { plannedStopLine } from './utils/plannedStopLine'
@@ -21580,7 +21580,7 @@ export class StudyWorkspace {
     return vscode.window.tabGroups.all.map((group) => ({
       viewColumn: group.viewColumn,
       isActive: group === active,
-      tabs: group.tabs.slice(0, REFUSAL_REPORT_TABS_PER_GROUP).map((tab) => ({
+      tabs: group.tabs.slice(0, REFUSAL_REPORT_GROUP_TABS).map((tab) => ({
         label: sanitizeCause(tab.label, roots),
         kind:
           tab.input instanceof vscode.TabInputText
