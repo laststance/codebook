@@ -3,6 +3,8 @@ import { z } from 'zod'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import type { Cdp } from '../runtimeSupport/cdp'
 
+import { loopbackOriginsOf } from './ownedApplicationOrigin'
+
 const resultSchema = z.object({
   ready: z.boolean(),
   reason: z.string().optional(),
@@ -15,10 +17,12 @@ export async function prepareRepositoryInputs(
   origin: string,
   assertCurrent: () => void,
 ): Promise<void> {
+  // The page may sit on any loopback name of the owned port (D65).
+  const origins = loopbackOriginsOf(origin)
   for (const [index, input] of inputs.entries()) {
     assertCurrent()
     const selected = await cdp.request('Runtime.evaluate', {
-      expression: `(${selectInput.toString()})(${JSON.stringify(input.selector)},${JSON.stringify(origin)})`,
+      expression: `(${selectInput.toString()})(${JSON.stringify(input.selector)},${JSON.stringify(origins)})`,
       returnByValue: false,
     })
     const objectId = selected.result.objectId
@@ -35,7 +39,7 @@ export async function prepareRepositoryInputs(
         const result = await cdp.request('Runtime.callFunctionOn', {
           objectId,
           functionDeclaration: inspectInput.toString(),
-          arguments: [{ value: { ...input, origin, phase } }],
+          arguments: [{ value: { ...input, origins, phase } }],
           returnByValue: true,
         })
         assertCurrent()
@@ -58,9 +62,9 @@ export async function prepareRepositoryInputs(
   }
 }
 
-/** Resolves one node without modifying the target page or copying its current input value. @example selectInput('#email', origin) */
-function selectInput(selector: string, origin: string) {
-  if (location.origin !== origin) return undefined
+/** Resolves one node without modifying the target page or copying its current input value. @example selectInput('#email', origins) */
+function selectInput(selector: string, origins: string[]) {
+  if (!origins.includes(location.origin)) return undefined
   const matches = document.querySelectorAll(selector)
   return matches.length === 1 ? matches[0] : undefined
 }
@@ -71,11 +75,11 @@ function inspectInput(
   input: {
     selector: string
     text: string
-    origin: string
+    origins: string[]
     phase: 'focus' | 'verify'
   },
 ) {
-  if (location.origin !== input.origin)
+  if (!input.origins.includes(location.origin))
     return { ready: false, reason: 'wrong-origin' }
   const matches = document.querySelectorAll(input.selector),
     element = matches[0]
