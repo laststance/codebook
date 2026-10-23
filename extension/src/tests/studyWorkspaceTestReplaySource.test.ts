@@ -3565,3 +3565,71 @@ test('Restore after Enlarge with a test replay selected confirms the layout agai
     await harness.close()
   }
 })
+
+// Value: protects=Restore Study workspace layout with a test replay selected: the recorded-source slot comes back in front at the source position and the Study pane shows no error; fails_when=Restore falls through to the article's placement and ends with "No selected immutable source is available."; why_new=F413 (N50 VS Code 1.142.0: the pane named Restore as the recovery and Restore refused); seam=the workspace harness with a test replay opened through Open replay
+test('Restore Study workspace layout with a test replay selected shows its slot again and no error', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+    harness.closeTabByHand(slotTab)
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(slotTabs(harness).length, 1)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(JSON.stringify(lastView(harness)?.errors), '[]')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Study pane's destination line after the learner's own file stands in front of a test replay's slot and Focus source brings the slot back; fails_when=the line "The application or source pane is no longer in its Study destination" stays because the article's source column is compared for a test replay, or no line names the slot while it is covered; why_new=F412 (N50: the line stayed after Focus source with the slot back in front); seam=the workspace harness with a test replay opened through Open replay
+test('the Study pane names the covered recorded source while the learner’s file is in front of the slot and reads confirmed after Focus source', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slotUri = slotTabs(harness)[0]!
+    const slotColumn = harness.groups.find((group) =>
+      group.tabs.some(
+        (tab) =>
+          (
+            tab.input as { uri?: { toString(): string } } | undefined
+          )?.uri?.toString() === slotUri,
+      ),
+    )!.viewColumn
+    harness.focusMutableDraft('utils.ts', slotColumn)
+    const whileCovered = harness.reader.presentationState().reason
+
+    // Act
+    await harness.reader.action('source')
+
+    // Assert
+    assert.equal(
+      whileCovered,
+      'The recorded source of the test replay is not shown in its pane. Use Focus source to show it again.',
+    )
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(harness.reader.presentationState().reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})

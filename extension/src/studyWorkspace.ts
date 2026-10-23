@@ -2157,13 +2157,9 @@ export class StudyWorkspace {
       return pending
     }
     const state = this.presentationState()
-    if (
-      input.action === 'restore' &&
-      input.mode === state.mode &&
-      this.enlargedLayoutReceipt
-    ) {
-      return this.confirmEnlargedLayout(input, requester)
-    }
+    // An Enlarge's Restore, and a test replay's (which has no article source for the placement below), are answered by the retained layout itself (F413).
+    const retainedRestore = this.restoreRetainedLayout(input, state, requester)
+    if (retainedRestore) return retainedRestore
     // Selecting the current arrangement repairs geometry without replacing panes or touching foreign previews.
     if (
       (input.action === 'restore' || input.action === 'select') &&
@@ -2238,6 +2234,73 @@ export class StudyWorkspace {
     this.presentationOperation = pending
     this.publish()
     return pending
+  }
+
+  /**
+   * Answers a Restore that the retained layout itself carries out: the confirmation of an Enlarge, or a selected test replay's recorded-source slot shown again; asked by {@link admitPresentation} before the article's placement.
+   * @param input - The requested change.
+   * @param state - The current presentation state.
+   * @param requester - Who asked.
+   * @returns The pending answer, or `undefined` when the article's placement applies.
+   * @example const retained = this.restoreRetainedLayout(input, state, 'agent')
+   */
+  private restoreRetainedLayout(
+    input: PresentationIntent,
+    state: PresentationState,
+    requester: PresentationRequester,
+  ): Promise<PresentationState> | undefined {
+    if (
+      input.action === 'restore' &&
+      input.mode === state.mode &&
+      this.enlargedLayoutReceipt
+    )
+      return this.confirmEnlargedLayout(input, requester)
+    if (this.isTestReplayRestore(input, state))
+      return this.restoreTestReplayArrangement()
+    return undefined
+  }
+
+  /**
+   * Says whether a presentation request is a Restore or selection of the Study workspace that a selected test replay's composition answers; asked by {@link admitPresentation} before the article's placement (F413).
+   * @param input - The requested change.
+   * @param state - The current presentation state.
+   * @returns `true` when the unconfirmed Study workspace is requested again while a test replay holds the composition and both Study panes stand.
+   * @example this.isTestReplayRestore(input, this.presentationState()) // => true for Restore beside a selected test replay
+   */
+  private isTestReplayRestore(
+    input: PresentationIntent,
+    state: PresentationState,
+  ): boolean {
+    return (
+      (input.action === 'restore' || input.action === 'select') &&
+      input.mode === 'study-workspace' &&
+      input.mode === state.mode &&
+      !state.layoutConfirmed &&
+      this.testReplayHoldsComposition() &&
+      Boolean(this.app && this.contextPanel)
+    )
+  }
+
+  /**
+   * Restores the composition of a selected test replay: its recorded-source slot is shown again at the source position and the layout is confirmed from the receipt the entry took; called by {@link changePresentation} for a Restore or a selection of the Study workspace while a test replay holds the composition (F413).
+   * A test replay has no article source, so the article's placement ({@link placePresentation}) cannot run for it.
+   * @returns The presentation state, open.
+   * @throws `PRESENTATION_UNAVAILABLE` naming the reason when the layout is still not confirmed, as when a pane stands outside its Study destination.
+   * @example await this.restoreTestReplayArrangement() // the slot tab is back in front at the source position
+   */
+  private async restoreTestReplayArrangement(): Promise<PresentationState> {
+    await this.focusNodeSourceSlot()
+    this.presentationControlRevision++
+    this.presentationConfirmed = Boolean(this.layoutReceipt)
+    if (this.presentationConfirmed) this.retireRefusalLines()
+    this.publish()
+    const state = this.presentationState()
+    if (!state.layoutConfirmed)
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        state.reason ?? 'The test replay layout is not confirmed.',
+      )
+    return { ...state, state: 'open' as const }
   }
 
   /** Lets explicit MCP recovery return from another editor to the existing explanation without changing layout or execution. @example await this.focusCurrentPresentation(input) */
