@@ -16098,6 +16098,13 @@ export class StudyWorkspace {
     assertCurrent: () => void,
   ): Promise<void> {
     const learnerView = this.watchLearnerViewDuringApplicationMove()
+    // The editor may remove the group the move empties together with its report of the move, before the wait below begins (Cursor 3.26.16 reported the removal 44 ms after the move began and the pane's new column with it, F382): that removal is this move's own effect, so it is marked from before the move is issued and the groups behind it keep their identities.
+    const previousChange = this.applicationGroupChange
+    const expectedRemoval: StudyWorkspace['applicationGroupChange'] =
+      emptiedIdentity !== undefined && this.closesEmptyEditorGroups()
+        ? { kind: 'remove', identity: emptiedIdentity }
+        : undefined
+    if (expectedRemoval) this.applicationGroupChange = expectedRemoval
     try {
       panel.reveal(vscode.ViewColumn.One, true)
       // The editor reports the move later; a placement guard taken before that report reads this own move as a learner change.
@@ -16113,6 +16120,8 @@ export class StudyWorkspace {
       assertCurrent()
       learnerView.assertUnchanged()
     } finally {
+      if (expectedRemoval && this.applicationGroupChange === expectedRemoval)
+        this.applicationGroupChange = previousChange
       learnerView.dispose()
     }
   }
