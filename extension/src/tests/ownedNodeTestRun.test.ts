@@ -2000,7 +2000,7 @@ test('a Node test stop whose pending registration names no column yet is accepte
   }
 })
 
-// Value: protects=a second Node test stop that the adapter first answers as pending and then binds at another column; fails_when=the pending reply is taken as accepted and the other column is found only at the pause, one resume later; why_new=Cycle 0037 D6; seam=the fake session answers getDebugProtocolBreakpoint
+// Value: protects=a second Node test stop that the adapter first answers as pending and then binds at another column; fails_when=the pending reply is taken as accepted and the other column is found only at the pause, one resume later; why_new=Cycle 0037 D6; why_changed=F299: since D16 a stop is captured on its declared line at the column the debugger binds, so the refusal says the stop is captured on its declared line, not at its declared position; seam=the fake session answers getDebugProtocolBreakpoint
 test('a second Node test stop answered as pending and then bound on another line is refused before the test continues, naming both positions', async () => {
   // Arrange: the first stop is acknowledged at its declared 1:14; the next one is answered pending without a position and is bound at 2:1.
   const harness = await nodeRunHarness({
@@ -2023,7 +2023,7 @@ test('a second Node test stop answered as pending and then bound on another line
     // Assert
     assert.equal(
       refusal,
-      'Error: Declared breakpoint 1:14 is bound at 2:1; this stop is captured at its declared position, so declare 2:1 or another statement.',
+      'Error: Declared breakpoint 1:14 is bound at 2:1; this stop is captured on its declared line, so declare 2:1 or another statement.',
     )
     // Only the continuation from the entry pause to the first stop was sent.
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
@@ -2318,6 +2318,7 @@ for (const when of [
   'at the binding read',
   'right after the binding read',
 ] as const)
+  // Value: protects=a second stop answered pending and then verified by news on another line is refused before the test continues, with the sentence that names both positions and says the stop is captured on its declared line; fails_when=the news is missed (the stop ends at its budget) or the refusal names another position or the old wording; why_new=Cycle 0046 (row 130); why_changed=F299: the sentence says the stop is captured on its declared line (D16), not at its declared position; seam=the fake session's breakpoint news; no_claim=js-debug's own news timing
   // Cycle 0046 (row 130): red while the read of a binding had to name its column and the adapter's news never reached the owned breakpoint: both editors drop the column from the news about a breakpoint requested at column 1, so nothing was refused and the test was resumed towards a stop that could not be captured at its declared position.
   test(`a second Node test stop declared at column 1 that the adapter answers as pending and verifies by news on another line ${when} is refused before the test continues, naming both positions`, async () => {
     // Arrange: both stops are declared at 1:1. The first is acknowledged there; the next one is answered pending and then verified by news at 2:14, and the editor answers its binding without a column.
@@ -2342,7 +2343,7 @@ for (const when of [
       // Assert
       assert.equal(
         refusal,
-        'Error: Declared breakpoint 1:1 is bound at 2:14; this stop is captured at its declared position, so declare 2:14 or another statement.',
+        'Error: Declared breakpoint 1:1 is bound at 2:14; this stop is captured on its declared line, so declare 2:14 or another statement.',
       )
       // Only the continuation from the entry pause to the first stop was sent.
       assert.equal(
@@ -2355,6 +2356,7 @@ for (const when of [
     }
   })
 
+// Value: protects=news that names another line and no column refuses the stop before the test continues, naming that line and saying the stop is captured on its declared line; fails_when=a binding without a column decides nothing, or the refusal keeps the old wording; why_new=Cycle 0046 (row 130); why_changed=F299: the sentence says the stop is captured on its declared line (D16); seam=the fake session's breakpoint news; no_claim=which editor drops the column
 // Cycle 0046 (row 130): without a column from the editor or from the adapter, the line decides. Red while a binding without a column decided nothing, also on another line.
 test('a second Node test stop declared at column 1 whose news names another line and no column is refused before the test continues, naming that line', async () => {
   // Arrange: the next stop is answered pending and then verified by news that names line 2 and no column.
@@ -2379,7 +2381,7 @@ test('a second Node test stop declared at column 1 whose news names another line
     // Assert
     assert.equal(
       refusal,
-      'Error: Declared breakpoint 1:1 is bound on line 2; this stop is captured at its declared position, so declare a statement of line 2 or another statement.',
+      'Error: Declared breakpoint 1:1 is bound on line 2; this stop is captured on its declared line, so declare a statement of line 2 or another statement.',
     )
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
   } finally {
@@ -2418,6 +2420,7 @@ test('a second Node test stop declared at column 1 whose news names its declared
   }
 })
 
+// Value: protects=news on another line that arrives after the test was resumed ends the wait for the stop at once with the refusal, which says the stop is captured on its declared line; fails_when=the wait runs to the stop's budget, or the refusal keeps the old wording; why_new=Cycle 0046 (row 130); why_changed=F299: the sentence says the stop is captured on its declared line (D16); seam=the fake session's breakpoint news and a 300 ms stop budget; no_claim=js-debug's own news timing
 // Cycle 0046 (row 130): news that arrives only after the test was resumed ends the wait for the stop at once; red while the adapter's news never reached the owned breakpoint, so a stop bound where the test does not run ended as "Timed out waiting for checked Node source stop".
 test('a second Node test stop that the adapter verifies by news on another line after the test was resumed ends the wait for it with the refusal, not with the timeout', async () => {
   // Arrange: the next stop is answered pending and stays so until the test is resumed; then the adapter verifies it at 2:14, which the test does not run. The stop's budget is 300 ms.
@@ -2443,7 +2446,7 @@ test('a second Node test stop that the adapter verifies by news on another line 
     // Assert
     assert.equal(
       refusal,
-      'Error: Declared breakpoint 1:1 is bound at 2:14; this stop is captured at its declared position, so declare 2:14 or another statement.',
+      'Error: Declared breakpoint 1:1 is bound at 2:14; this stop is captured on its declared line, so declare 2:14 or another statement.',
     )
   } finally {
     await harness.run.stop()

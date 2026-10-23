@@ -865,7 +865,7 @@ test('a moved acknowledgement followed by a failed duplicate reply for the same 
   assert.equal(breakpoint.verifiedPlace(session), undefined)
 })
 
-// Value: protects=a pending server stop learning where the adapter bound it when its module loads, so its deadline can name that place and a pause is compared with it; fails_when=the adapter's DAP breakpoint event is ignored and the place stays unknown; why_new=Cycle 0043 R8/O1 (only a setBreakpoints reply gave a place); seam=none
+// Value: protects=a pending server stop learning where the adapter bound it when its module loads, so its deadline can name that place and a pause is compared with it; fails_when=the adapter's DAP breakpoint event is ignored and the place stays unknown; why_new=Cycle 0043 R8/O1 (only a setBreakpoints reply gave a place); why_changed=F299: since D16 a stop is captured on its declared line at the column the debugger binds, so the refusal says the stop is captured on its declared line, not at its declared position; seam=none
 test('a pending registration that the adapter later reports verified on a later line the owner’s rule accepts gains that moved place, and one on a refused line does not', async () => {
   // Arrange: the owner declared 20:5 and its rule accepts line 21; the registration is pending.
   const { breakpoint, session, request, response, signal } =
@@ -1009,7 +1009,7 @@ test('the read of a pending breakpoint requested at column 1 refuses a binding w
   const answers = [await readWhenAnswered(22), await readWhenAnswered(20)]
   // Assert
   assert.deepEqual(answers, [
-    'Error: Declared breakpoint 20:1 is bound on line 22; this stop is captured at its declared position, so declare a statement of line 22 or another statement.',
+    'Error: Declared breakpoint 20:1 is bound on line 22; this stop is captured on its declared line, so declare a statement of line 22 or another statement.',
     'bound as declared',
   ])
 })
