@@ -9,6 +9,7 @@ import {
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
@@ -30,7 +31,7 @@ async function openAtFirstStop(
       lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
       !lastView(harness)?.loading,
     'the test replay lands on its first stop',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
 }
 
@@ -140,7 +141,7 @@ test('a background render overtaken by a move keeps the later moment in the Appl
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
       'Next stop reaches the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     releaseList()
     await rendering
@@ -193,7 +194,7 @@ test('a render that settles while another test replay opens ends on that replay�
         lastView(harness)?.nodeHistory?.header.studyId === other.studyId &&
         !lastView(harness)?.loading,
       'the other test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -248,7 +249,7 @@ test('opening the test replay that is shown keeps its document, shows loading an
           history.studyId,
         )) === 4,
       'the second stop is shown and saved',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const documentBefore = applicationReading(harness).html
     const held = harness.holdHistoricalDebugPresentation(true)
@@ -267,7 +268,7 @@ test('opening the test replay that is shown keeps its document, shows loading an
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
         !lastView(harness)?.loading,
       'the replay returns to its saved moment',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -381,7 +382,7 @@ test('a browser study chosen over a selected test replay replaces it only once i
         lastView(harness)?.model.selection.studyId === harness.studyId &&
         !lastView(harness)?.loading,
       'the browser study replaces the test replay',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     gate.restore()
 
@@ -416,7 +417,7 @@ test('a browser study that fails to read leaves the selected test replay shown',
           /could not be read/.test(error),
         ) && !lastView(harness)?.loading,
       'the failed read is told and loading ends',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     gate.restore()
 
@@ -461,19 +462,23 @@ test('a browser study overtaken by choosing the test replay again leaves the rep
         lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
         !lastView(harness)?.loading,
       'the replay is chosen again',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     gate.release()
     await waitUntil(
       () => gate.finishedReads() >= 1,
       'the overtaken study’s read ends',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await new Promise<void>((resolve) => setImmediate(resolve))
     await harness.controller.settle()
     gate.restore()
 
     // Assert
+    // The reader's own state is read as well as the last posted view: a read that retires the replay without publishing leaves the posted view looking right.
+    const reading = harness.reader.inspect().view
+    assert.equal(reading?.nodeHistory?.header.studyId, history.studyId)
+    assert.equal(reading?.nodeHistoryPosition?.sequence, 2)
     assert.equal(
       lastView(harness)?.nodeHistory?.header.studyId,
       history.studyId,
@@ -574,7 +579,7 @@ test('with a live run’s viewport lease the Application pane writes another rep
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
       'Next stop reaches the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const afterMove = {
       html: applicationReading(harness).html,
@@ -590,7 +595,7 @@ test('with a live run’s viewport lease the Application pane writes another rep
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.applicationClosed === true,
       'the section says the Application pane is closed',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const outputsAtClose = harness.applicationOutputs().length
     harness.receiveContext({
@@ -603,7 +608,7 @@ test('with a live run’s viewport lease the Application pane writes another rep
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
       'Previous stop returns to the first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -649,7 +654,7 @@ test('a render that settles while the shown test replay opens again ends on its 
           history.studyId,
         )) === 4,
       'the second stop is shown and saved',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const held = harness.holdHistoricalDebugPresentation(true)
     const outputsBefore = harness.applicationOutputs().length
@@ -665,7 +670,7 @@ test('a render that settles while the shown test replay opens again ends on its 
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
         !lastView(harness)?.loading,
       'the replay returns to its saved moment',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert

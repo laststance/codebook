@@ -3411,7 +3411,7 @@ async function check(page, options, collected) {
           focusedTestLine.displayed === 'block' &&
           fittingTestLine.tabindex === null,
       })
-      // Value: protects=three cells of the Application document's follow state that no case read, each its own case below: a document that follows the output ignores an older view and stays at the end; a learner who stopped following and scrolls back to the end follows again, with Jump to latest gone; a document loaded again never uses the newer view another replay left in the kept state; fails_when=an older view moves a following document off its latest moment, scrolling back to the end leaves Jump to latest and the choice behind, or another replay's kept view (a newer generation) is shown in this replay's document; why_new=F125 (the document's following x an older view, not-following x a scroll back to the end) and F147 (another replay's newer kept view); seam=none; no_claim=VS Code's own state transport (stand-ins: a stub of the webview API with a kept state)
+      // Value: protects=three cells of the Application document's follow state that no case read, each its own case below: a document that follows the output ignores an older view and stays at the end; a learner who stopped following and scrolls back to the end follows again, with Jump to latest gone; a document loaded again never uses the newer view or the choice not to follow that another replay left in the webview's kept state (it shows its own first view, at the end, with Jump to latest hidden, as its options say); fails_when=an older view moves a following document off its latest moment, scrolling back to the end leaves Jump to latest and the choice behind, or another replay's kept view (a newer generation) or kept choice not to follow is read by this replay's document; why_new=F125 (the document's following x an older view, not-following x a scroll back to the end) and F147 (another replay's newer kept view); seam=none; no_claim=VS Code's own state transport (stand-ins: a stub of the webview API with a kept state)
       // Arrange: a document of its own in a page, as the cases above build one.
       const cellPage = await page.context().newPage()
       await cellPage.setViewportSize({ width: 760, height: 360 })
@@ -3464,13 +3464,9 @@ async function check(page, options, collected) {
             atEnd:
               output.scrollHeight - output.scrollTop - output.clientHeight <= 2,
             jumpHidden: document.getElementById('test-output-jump').hidden,
-            followKept: window.savedState?.testOutputFollow,
           }
         })
       await loadCellDocument(undefined)
-      const ownHistory = await cellPage.evaluate(
-        () => window.savedState?.testOutputHistory,
-      )
       // Act: a following document is told a newer moment, then an older one.
       await postCellView(6, options.testReplayViews.result)
       const followingAtNewest = await readCell()
@@ -3504,9 +3500,9 @@ async function check(page, options, collected) {
           ),
       )
       const followingAgain = await readCell()
-      // Act: a document of this replay loaded with the newer view another replay kept.
+      // Act: a document of this replay, written with the host's reading (following), loaded in a webview whose kept state holds the newer view and the choice not to follow that another replay left (D22: the document reads only the host's reading in its options, never the kept state).
       await loadCellDocument({
-        testOutputHistory: `${ownHistory}-another-replay`,
+        testOutputHistory: 'another-replay',
         testOutputFollow: false,
         testOutputView: {
           ...options.testReplayViews.result,
@@ -3538,8 +3534,9 @@ async function check(page, options, collected) {
         name: 'a document loaded again never shows the newer view that another replay left in the kept state (DS20)',
         actual: { withOtherReplaysState },
         passed:
-          withOtherReplaysState.time !== 'Recorded test output · 9.99 s' &&
-          withOtherReplaysState.atEnd,
+          withOtherReplaysState.time === 'Recorded test output · 0.10 s' &&
+          withOtherReplaysState.atEnd &&
+          withOtherReplaysState.jumpHidden,
       })
       await applicationPage.close()
       // Assert

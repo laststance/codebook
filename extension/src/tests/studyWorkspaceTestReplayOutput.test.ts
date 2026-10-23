@@ -8,6 +8,7 @@ import {
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import {
   explainFirstStop,
   lastView,
@@ -29,7 +30,7 @@ test('a test replay’s Application document is written once and each later mome
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const application = harness
       .nativePanels()
@@ -47,7 +48,7 @@ test('a test replay’s Application document is written once and each later mome
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
       'the result is selected',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-step',
@@ -59,7 +60,7 @@ test('a test replay’s Application document is written once and each later mome
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
       'the second stop is selected',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -116,7 +117,7 @@ test('stop moves skip outputs and a summary step’s action selects its event an
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const sourceHash = history.configuration.source.hash
     await harness.service.explainNodeHistory({
@@ -155,7 +156,7 @@ test('stop moves skip outputs and a summary step’s action selects its event an
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'read',
       'the saved material shows the stop’s first step',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act
@@ -169,7 +170,7 @@ test('stop moves skip outputs and a summary step’s action selects its event an
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
       'the chosen step is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const chosen = lastView(harness)?.nodeHistorySection
     harness.receiveContext({
@@ -182,7 +183,7 @@ test('stop moves skip outputs and a summary step’s action selects its event an
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
       'Next stop reaches the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const atSecondStop = lastView(harness)?.nodeHistorySection
     harness.receiveContext({
@@ -195,7 +196,7 @@ test('stop moves skip outputs and a summary step’s action selects its event an
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
       'Previous stop returns to the first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -232,7 +233,7 @@ test('closing the Application pane makes the test replay section say so and movi
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const application = harness
       .nativePanels()
@@ -245,7 +246,7 @@ test('closing the Application pane makes the test replay section say so and movi
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.applicationClosed === true,
       'the section says the Application pane is closed',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const whenClosed = lastView(harness)?.nodeHistorySection
     harness.receiveContext({
@@ -258,7 +259,7 @@ test('closing the Application pane makes the test replay section say so and movi
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
       'Next stop reaches the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -295,7 +296,7 @@ test('Focus application in a browser replay leaves an Application pane the learn
           .nativePanels()
           .some((panel) => panel.kind === 'codebook.scopedBrowser'),
       'the Application pane is closed',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act
@@ -328,7 +329,7 @@ test('Show recorded output brings a closed Application pane back at the selected
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const closedPane = harness
       .nativePanels()
@@ -337,7 +338,7 @@ test('Show recorded output brings a closed Application pane back at the selected
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.applicationClosed === true,
       'the section says the Application pane is closed',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     // The learner moves on while the pane is closed: the reopened pane shows this later moment.
     harness.receiveContext({
@@ -350,7 +351,7 @@ test('Show recorded output brings a closed Application pane back at the selected
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
       'Next stop reaches the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act
@@ -363,7 +364,7 @@ test('Show recorded output brings a closed Application pane back at the selected
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.applicationClosed === false,
       'the section says the Application pane is back',
-      3_000,
+      READER_RESULT_BOUND_MS,
     )
     const reopened = harness
       .nativePanels()
@@ -408,7 +409,7 @@ test('returning to Live releases the test replay’s output index with its selec
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const cache = harness.reader as unknown as {
       selectedNodeHistoryOutputIndex?: unknown
@@ -420,7 +421,7 @@ test('returning to Live releases the test replay’s output index with its selec
     await waitUntil(
       () => lastView(harness)?.nodeHistory === undefined,
       'the reader leaves the test replay',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -446,7 +447,7 @@ test('a seek or an Inspect away from a chosen step and back shows the moment’s
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await explainFirstStop(harness, history)
     /** Chooses `keep` on the first stop, as a click on its step action does. */
@@ -461,7 +462,7 @@ test('a seek or an Inspect away from a chosen step and back shows the moment’s
       await waitUntil(
         () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
         'the chosen step is shown',
-        2_000,
+        READER_RESULT_BOUND_MS,
       )
     }
     /** Waits until the selection reaches an event. */
@@ -471,7 +472,7 @@ test('a seek or an Inspect away from a chosen step and back shows the moment’s
           lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
           !lastView(harness)?.loading,
         what,
-        2_000,
+        READER_RESULT_BOUND_MS,
       )
     await chooseKeep()
 
@@ -523,7 +524,7 @@ test('a refused step action keeps the selected moment and the step the learner c
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await explainFirstStop(harness, history)
     harness.receiveContext({
@@ -536,7 +537,7 @@ test('a refused step action keeps the selected moment and the step the learner c
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
       'the chosen step is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act
@@ -550,7 +551,7 @@ test('a refused step action keeps the selected moment and the step the learner c
     await waitUntil(
       () => (lastView(harness)?.errors.length ?? 0) > 0,
       'the selection is refused',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -584,7 +585,7 @@ test('a step action whose debugger presentation fails keeps the step the learner
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await explainFirstStop(harness, history)
     harness.receiveContext({
@@ -597,7 +598,7 @@ test('a step action whose debugger presentation fails keeps the step the learner
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
       'the chosen step is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const held = harness.holdHistoricalDebugPresentation(true)
     harness.receiveContext({
@@ -614,7 +615,7 @@ test('a step action whose debugger presentation fails keeps the step the learner
     await waitUntil(
       () => (lastView(harness)?.errors.length ?? 0) > 0,
       'the failed presentation is reported',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -648,7 +649,7 @@ test('a step action overtaken before its stop is shown leaves the step the learn
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await explainFirstStop(harness, history)
     harness.receiveContext({
@@ -661,7 +662,7 @@ test('a step action overtaken before its stop is shown leaves the step the learn
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
       'the chosen step is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const held = harness.holdHistoricalDebugPresentation(true)
     harness.receiveContext({
@@ -679,7 +680,7 @@ test('a step action overtaken before its stop is shown leaves the step the learn
     await waitUntil(
       () => harness.reader['selectedNodeHistoryRequest'] > requestsBeforeSeek,
       'the seek’s selection overtakes the step action',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     held.reject(new Error('Historical debugger presentation was superseded.'))
     await seeking
@@ -719,7 +720,7 @@ test('a render that settles while a test replay opens keeps its loading line unt
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -765,7 +766,7 @@ test('an unchanged moment of a test replay reuses its Application view at each S
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act
@@ -799,7 +800,7 @@ test('a test replay’s Study message and Application header carry no bidirectio
         lastView(harness)?.nodeHistoryPosition?.sequence !== undefined &&
         !lastView(harness)?.loading,
       'the test replay lands on its first event',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const message = lastView(harness)
     const application = harness.reader['message']().nodeHistoryApplication
@@ -849,7 +850,7 @@ test('opening another test replay leaves the shown replay’s output alone and n
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the first test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const updatesBeforeFailure = harness.applicationOutputs().length
 
@@ -875,7 +876,7 @@ test('opening another test replay leaves the shown replay’s output alone and n
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the second test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const whileOpening = harness
       .applicationOutputs()
@@ -914,7 +915,7 @@ test('publishing a test replay into a disposed Application panel does not throw'
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const application = harness
       .nativePanels()
@@ -955,7 +956,7 @@ test('a view the Application webview did not take is posted again at the next pu
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const application = harness
       .nativePanels()
@@ -981,12 +982,16 @@ test('a view the Application webview did not take is posted again at the next pu
       studyId: history.studyId,
       sequence: 5,
     })
-    await waitUntil(() => attempts.length === 1, 'the view is posted', 2_000)
+    await waitUntil(
+      () => attempts.length === 1,
+      'the view is posted',
+      READER_RESULT_BOUND_MS,
+    )
     await waitUntil(
       () =>
         harness.reader['shownNodeHistoryApplicationGeneration'] === undefined,
       'the refused view is forgotten',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.reader['publish']()
 
@@ -1013,7 +1018,7 @@ test('a rewritten Application document takes the learner’s reading the host fi
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const application = harness
       .nativePanels()
@@ -1062,7 +1067,7 @@ test('a ready Application document that is behind is sent the current view and r
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-event',
@@ -1073,7 +1078,7 @@ test('a ready Application document that is behind is sent the current view and r
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
       'the result is selected',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const current = harness.reader['message']().nodeHistoryApplication!
     const posted = harness.applicationOutputs().length
@@ -1128,7 +1133,7 @@ test('an open that fails at its first publish leaves the shown test replay not l
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the first test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const reader = harness.reader
     const publish = reader['publish'].bind(reader)
@@ -1172,7 +1177,7 @@ test('a background render while a test replay is selected keeps its Application 
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const outputsBefore = harness.applicationOutputs().length
 
@@ -1220,13 +1225,13 @@ test('a move to a stop or event that does not exist is refused by name and keeps
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await explainFirstStop(harness, history)
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'read',
       'the saved material shows the stop’s first step',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-event',
@@ -1238,7 +1243,7 @@ test('a move to a stop or event that does not exist is refused by name and keeps
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
       'the chosen step is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const updatesAtFirstStop = harness.applicationOutputs().length
 
@@ -1253,7 +1258,7 @@ test('a move to a stop or event that does not exist is refused by name and keeps
     await waitUntil(
       () => (lastView(harness)?.errors.length ?? 0) > 0,
       'the move before the first stop is refused',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const afterStopRefusal = lastView(harness)
     const updatesAfterStopRefusal = harness.applicationOutputs().length
@@ -1266,7 +1271,7 @@ test('a move to a stop or event that does not exist is refused by name and keeps
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
       'the result is selected',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const updatesAtResult = harness.applicationOutputs().length
     harness.receiveContext({
@@ -1281,7 +1286,7 @@ test('a move to a stop or event that does not exist is refused by name and keeps
         lastView(harness)?.errors[0] ===
         'Error: There is no next event in this test replay.',
       'the move past the result is refused',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const afterEventRefusal = lastView(harness)
 
@@ -1338,7 +1343,7 @@ test('opening another test replay starts on its own first step, not the step cho
         lastView(harness)?.nodeHistorySection?.selectedStepId === 'read' &&
         !lastView(harness)?.loading,
       'the first test replay lands on its first stop and its first step',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-event',
@@ -1350,7 +1355,7 @@ test('opening another test replay starts on its own first step, not the step cho
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
       'the step chosen in the first replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const updatesBeforeOpening = harness.applicationOutputs().length
 
@@ -1362,7 +1367,7 @@ test('opening another test replay starts on its own first step, not the step cho
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the second test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const whileOpening = harness
       .applicationOutputs()

@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import {
   explainFirstStop,
   lastView,
@@ -30,7 +31,7 @@ async function openWithChosenStep(harness: Harness): Promise<History> {
       lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
       !lastView(harness)?.loading,
     'the test replay lands on its first stop',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
   await explainFirstStop(harness, history)
   harness.receiveContext({
@@ -43,7 +44,7 @@ async function openWithChosenStep(harness: Harness): Promise<History> {
   await waitUntil(
     () => lastView(harness)?.nodeHistorySection?.selectedStepId === 'keep',
     'the chosen step is shown',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
   return history
 }
@@ -88,7 +89,7 @@ async function standAt(
       lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
       !lastView(harness)?.loading,
     'the replay stands at the start of the move',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
   // The reader position is written after the commit; the harness is not closed under that write.
   await waitUntil(
@@ -97,7 +98,7 @@ async function standAt(
         history.studyId,
       )) === sequence,
     'the start of the move is saved',
-    2_000,
+    READER_RESULT_BOUND_MS,
   )
 }
 
@@ -206,7 +207,7 @@ const MOVES_FROM_THE_FIRST_STOP: Move[] = [
 for (const move of MOVES_FROM_THE_FIRST_STOP) {
   // A seek that has started presents and commits on its own; the case of a seek overtaken by a newer seek is its own test below.
   if (!move.throughController)
-    // Value: protects=a move overtaken before its debugger presentation shows commits nothing of its own: the moment, the step the learner chose and its explanation stay as they were, and the overtaken press says nothing; fails_when=the overtaken move's moment or first step is committed or outlives it, or the superseded presentation is reported as an error; why_new=F139: only an overtaken step action was tested; seam=the workspace harness's held historical debug presentation, rejected as superseded; no_claim=the move that overtakes it (a seek onto the shown moment)
+    // Value: protects=a move overtaken before its debugger presentation shows commits nothing of its own: the moment, the step the learner chose and its explanation stay as they were, and the overtaken press says nothing; fails_when=the overtaken move's moment or first step is committed (even for an instant, in a view posted after its presentation ends) or outlives it, or the superseded presentation is reported as an error; why_new=F139: only an overtaken step action was tested; seam=the workspace harness's held historical debug presentation, rejected as superseded; no_claim=the move that overtakes it (a seek onto the shown moment)
     test(`a ${move.name} overtaken before its stop is shown leaves the moment and the step the learner chose`, async () => {
       // Arrange
       const harness = await workspaceHarness()
@@ -217,6 +218,18 @@ for (const move of MOVES_FROM_THE_FIRST_STOP) {
         const held = harness.holdHistoricalDebugPresentation(
           move.recordedStopOnly,
         )
+        // The move's own selection is kept so the test can wait for its end, whatever the product awaits after the presentation.
+        const reader = harness.reader as unknown as {
+          selectNodeHistoryEvent: (...args: unknown[]) => Promise<void>
+        }
+        const selectNodeHistoryEvent =
+          reader.selectNodeHistoryEvent.bind(reader)
+        const selections: Promise<void>[] = []
+        reader.selectNodeHistoryEvent = (...args): Promise<void> => {
+          const selection = selectNodeHistoryEvent(...args)
+          selections.push(selection)
+          return selection
+        }
         harness.receiveContext(
           move.message(history, lastView(harness)!.revision),
         )
@@ -231,14 +244,26 @@ for (const move of MOVES_FROM_THE_FIRST_STOP) {
           await waitUntil(
             () => harness.reader['selectedNodeHistoryRequest'] > requestsBefore,
             'the seek’s selection overtakes the move',
-            2_000,
+            READER_RESULT_BOUND_MS,
           )
+        const postedBeforeRelease = harness.postedMessages().length
         held.reject(
           new Error('Historical debugger presentation was superseded.'),
         )
         await seeking
+        // The overtaken move can end after the seek has: wait for its own selection to end before reading what was shown.
+        await selections[0]
 
         // Assert
+        // The overtaken move must not show its own moment even for an instant: every view posted from the release on stands at the moment the learner was at.
+        const sequencesShownAfterRelease = harness
+          .postedMessages()
+          .slice(postedBeforeRelease)
+          .flatMap((view) =>
+            view.nodeHistoryPosition ? [view.nodeHistoryPosition.sequence] : [],
+          )
+          .filter((sequence) => sequence !== (move.startSequence ?? 2))
+        assert.deepEqual(sequencesShownAfterRelease, [])
         assert.deepEqual(shownMoment(harness), before)
         assert.equal(shownMoment(harness).sequence, move.startSequence ?? 2)
         assert.equal(lastView(harness)?.errors.length, 0)
@@ -268,7 +293,7 @@ for (const move of MOVES_FROM_THE_FIRST_STOP) {
       await waitUntil(
         () => (lastView(harness)?.errors.length ?? 0) > 0,
         'the failed presentation is reported',
-        2_000,
+        READER_RESULT_BOUND_MS,
       )
 
       // Assert
@@ -320,7 +345,7 @@ test('a Play step whose debugger presentation fails pauses Play and leaves the m
     await waitUntil(
       () => (lastView(harness)?.errors.length ?? 0) > 0,
       'the failed presentation is reported',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -450,7 +475,7 @@ test('Play at the result starts nothing and tells no error', async () => {
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
       'the result is selected',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const controller = harness.reader['nodeHistoryPlaybackController']!
     const outputsBefore = harness.applicationOutputs().length
@@ -470,7 +495,7 @@ test('Play at the result starts nothing and tells no error', async () => {
           history.studyId,
         )) === 5,
       'the result’s reader position is written',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -496,7 +521,7 @@ test('Inspect on the selected stop keeps the step the learner chose', async () =
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.debuggerAvailable === false,
       'the ended session is told',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-stop',
@@ -507,7 +532,7 @@ test('Inspect on the selected stop keeps the step the learner chose', async () =
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.debuggerAvailable === true,
       'the stop is shown in the native debugger again',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -535,7 +560,7 @@ test('a Select event, a seek and an Inspect that the replay refuses change nothi
       await waitUntil(
         () => expectedError.test(lastView(harness)?.errors.at(-1) ?? ''),
         'the refusal is told',
-        2_000,
+        READER_RESULT_BOUND_MS,
       )
       refusals.push(lastView(harness)!.errors.at(-1))
     }
