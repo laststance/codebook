@@ -1247,7 +1247,6 @@ export class StudyWorkspace {
     private readonly slotTimers: DeadlineTimers = REAL_DEADLINE_TIMERS,
   ) {
     this.handedOverArchives = [...handedOverArchives]
-    void [this.slotTimers, startSlotDeadline]
     this.readPresentationPreference()
     this.installReaders()
     // Activation constructs the reader before this host creates any pane, so every Codebook pane in the window now is an earlier host's.
@@ -24102,7 +24101,10 @@ export class StudyWorkspace {
       } catch (error) {
         if (request !== this.selectedNodeHistoryRequest) throw error
         // The Study position stays on the moment committed before, so the slot and the debugger go back to it: no surface shows the moment whose presentation failed (F199).
-        await this.returnToCommittedNodeMoment(history, request)
+        // A failed return is told on the slot's row, and the presentation's own failure still reaches the caller (F368).
+        await this.returnToCommittedNodeMoment(history, request).catch(
+          (returnError: unknown) => this.report('history-source', returnError),
+        )
         throw error
       }
     }

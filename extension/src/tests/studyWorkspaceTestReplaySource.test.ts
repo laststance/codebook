@@ -667,6 +667,44 @@ test('a reader position queued as the position write loop ends is still written'
   }
 })
 
+// Value: protects=the failure of a moment's presentation reaching the learner as itself when the return to the committed moment fails too, so the Study names why the moment did not open and not a secondary slot error; fails_when=the return's error replaces the presentation's error; why_new=F368 (the return was awaited inside the catch, so its throw hid the original); seam=the workspace harness's held historical debug presentation, rejected, and the return to the committed moment made to throw; no_claim=what the return would have shown
+test('a failed presentation is reported as itself when the return to the committed moment fails too', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    context.mock.method(
+      harness.reader as unknown as {
+        returnToCommittedNodeMoment: () => Promise<void>
+      },
+      'returnToCommittedNodeMoment',
+      () => Promise.reject(new Error('The return failed.')),
+    )
+    const held = harness.holdHistoricalDebugPresentation(true)
+    const selecting = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    // The rejection is awaited below, after the held presentation fails.
+    const outcome = assert.rejects(selecting, {
+      message: 'The presentation failed.',
+    })
+    await held.started
+
+    // Act
+    held.reject(new Error('The presentation failed.'))
+
+    // Assert
+    await outcome
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=two quick selections show only the last one: the first selection, overtaken while its debugger presentation loads, commits nothing, and the slot, its label and the Study position all show the last moment; fails_when=the overtaken stop's label, slot bytes or Study position appear after the later selection; why_new=Design 4's generations (rapid seeks, AC6); seam=the workspace harness's held historical debug presentation; no_claim=Play's own pacing (the timeline and pacing tests)
 test('a stop selection overtaken by an output selection leaves only the output on every surface', async () => {
   // Arrange
