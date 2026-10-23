@@ -1683,8 +1683,8 @@ test('a failed Study entry of Open replay after a live node-test run is told in 
   }
 })
 
-// Value: protects=the Study pane after an agent's Study workspace request was refused beside Cursor's Agent and the learner's Open replay then arranged the panes: the pane and the presentation state no longer show the refusal; fails_when=the entry that arranged the panes leaves the reason and error line of the agent's earlier refusal in place ("Error: The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …" above the test replay); why_new=Cycle 0050 F389 (Cursor 3.26.16: the refusal stayed in the Study pane after a successful Open replay); seam=the workspace harness with Cursor's chat part, unreported pane focus and a fake clock
-test("Open replay that arranges the panes after an agent's refused Study workspace request clears the refusal from the Study pane", async (context) => {
+// Value: protects=the Study pane after an agent's Study workspace request was refused beside Cursor's Agent and the learner's Open replay then arranged the panes: the pane and the presentation state no longer show the refusal; fails_when=a selected test replay still reports the article's captured-source reason "The current captured source is not ready in its native pane. Use Focus source to show it again." (F390), or the entry that arranged the panes leaves the reason and error line of the agent's earlier refusal in place ("Error: The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …" above the test replay); why_new=Cycle 0050 F389 (Cursor 3.26.16: the refusal stayed in the Study pane after a successful Open replay); seam=the workspace harness with Cursor's chat part, unreported pane focus and a fake clock
+test("Open replay that arranges the panes after an agent's refused Study workspace request shows neither that refusal nor a captured-source reason", async (context) => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -1741,9 +1741,10 @@ test("Open replay that arranges the panes after an agent's refused Study workspa
     // Assert
     assert.match(refusal, /did not report the keyboard focus within 5 s/)
     assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    // No refusal of the agent's request and no captured-source reason of the article is shown beside a test replay (F389, F390).
     assert.doesNotMatch(
       harness.reader.presentationState().reason ?? '',
-      /did not report the keyboard focus/,
+      /captured source|did not report the keyboard focus/,
     )
     assert.equal(JSON.stringify(lastView(harness)?.errors), '[]')
   } finally {

@@ -1319,7 +1319,9 @@ export class StudyWorkspace {
       (this.liveComposition || this.summaryComposition
         ? !panes.context
         : panes.contextColumn === descriptor.contextColumn)
-    const currentSourceReady = this.sourceReady()
+    // A selected or opening test replay does no article source work (D32, F390): its recorded-source slot is its own source, so the article's captured source is no condition of its layout.
+    const currentSourceReady =
+      this.sourceReady() || this.testReplayHoldsComposition()
     const matchingLayoutReceipt = Boolean(
       this.layoutReceipt?.mode === 'study' &&
       this.sameStudyPanePositions(this.layoutReceipt.panes),
@@ -19764,6 +19766,27 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Says that the editor holds exactly two groups, the main editor's one group with no learner's editor (empty, or only Codebook panes) and one group of another part that holds only a chat, so that a layout read of either part counts one group and the main editor's grid is known without a focus report (F389).
+   * Cursor reports no keyboard focus for an empty group or a Codebook pane beside its Agent chat part, so the wait of {@link readMainEditorGrid} could never end for an empty main editor. With one group on each side the count a read answers is the main editor's whichever part answered, which is the proof the focus report gives elsewhere. Any other shape (a learner's tab in the first group, more groups, a second part with editors) still needs the report.
+   * @param count - The group count the layout read answered.
+   * @returns `true` for that shape; `false` otherwise.
+   * @example this.isSoleMainGroupBesideChat(1) // => true with an empty first group and Cursor's Agent chat in the second
+   */
+  private isSoleMainGroupBesideChat(count: number): boolean {
+    const groups = vscode.window.tabGroups.all
+    if (count !== 1 || groups.length !== 2) return false
+    const [first, other] = groups
+    return Boolean(
+      first &&
+      other &&
+      first.viewColumn === vscode.ViewColumn.One &&
+      first.tabs.every((tab) => this.isCodebookPaneInput(tab.input)) &&
+      other.tabs.length > 0 &&
+      !holdsEditorTab(other, editorTabInputKinds(vscode)),
+    )
+  }
+
   /** Measures the main editor part before {@link arrange} or presentation placement; global chat/floating groups remain protected outside its leaves. @example const grid = await this.readMainEditorGrid(signal, assertCurrent) */
   private async readMainEditorGrid(
     signal: AbortSignal | undefined,
@@ -20052,7 +20075,10 @@ export class StudyWorkspace {
             )
           }
           return (
-            firstFocused() || primaryEditorReported() || sourceEditorReported()
+            firstFocused() ||
+            primaryEditorReported() ||
+            sourceEditorReported() ||
+            this.isSoleMainGroupBesideChat(count ?? 0)
           )
         },
         'identifiable primary editor focus',
