@@ -604,3 +604,147 @@ test('closing the reader ends the record of the left browser replay’s tabs', a
     await harness.close()
   }
 })
+
+// Value: protects=a record that a later leave of a browser replay made while the close of an earlier record was held keeping its other tabs when that close finishes, so the next test replay stop still closes them (F493); fails_when=the finished close clears the whole record, so the tab of the newer leave stays beside the test replay for good; why_new=F493 (OCR of the review of c9664ea3..673b2923: F484's fix clears the whole record after its awaited close); seam=the workspace harness's tab model, restoreLeftoverCapturedSource, holdNextTabCloseEffect, returnCurrentSelection, openRecording, and the workspace's private close of the retired record and its private field; no_claim=the deadline that abandons a slot's wait for the close (the close is called directly)
+test('a browser replay left while an earlier close is held keeps its tab on the record when that close finishes', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const first = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-first.ts`,
+    })
+    await harness.reader['returnCurrentSelection']('learner')
+    const held = harness.holdNextTabCloseEffect()
+    const closing = harness.reader['closeRetiredBrowserReplaySourceTabs']()
+    await held.started
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const second = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-second.ts`,
+    })
+    await harness.reader['returnCurrentSelection']('learner')
+
+    // Act
+    held.release()
+    await closing
+
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(tabs.includes(first), false)
+    assert.equal(tabs.includes(second), true)
+    assert.equal(
+      harness.reader['retiredBrowserReplayTabs']?.has(second as never),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a captured-source tab that the learner closes by hand after Cursor rebuilt the tab objects, and reopens at the same address, surviving the test replay (F494); fails_when=the close of a rebuilt tab matches no entry, so the entry stays and the next slot show closes the tab the learner reopened by its address; why_new=F494 (OCR low, CodeRabbit CLI major, of the review of c9664ea3..673b2923: F485's fallback by address keeps entries nothing can end); seam=the workspace harness's Cursor model (rebuildTabObjectsAtGroupRemoval and rebuildTabObjectsNow), restoreLeftoverCapturedSource, closeTabByHand, returnCurrentSelection and openLearningReplay; no_claim=the native tab strip
+test('a captured-source tab the learner closes after Cursor rebuilt the tab objects and reopens at that address survives the test replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    harness.rebuildTabObjectsAtGroupRemoval()
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const path = `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-actions.ts`
+    const browserTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path,
+    })
+    await harness.reader['returnCurrentSelection']('learner')
+    // Cursor builds every tab object anew; the record holds the old one.
+    harness.rebuildTabObjectsNow()
+    const rebuiltTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find(
+        (tab) =>
+          tab !== browserTab &&
+          (tab.input as { uri?: { path: string } }).uri?.path === path,
+      )
+    assert.ok(rebuiltTab)
+    harness.closeTabByHand(rebuiltTab)
+    const reopenedTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path,
+    })
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(tabs.includes(reopenedTab), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a captured-source tab that the learner moves to another group after leaving a browser replay (the editor reports a close and an open) staying beside the test replay as the learner's own, the rule the README states (F495); fails_when=the moved tab's entry is not forgotten at the close half of the move, so the next slot show closes the tab the learner placed; why_new=F495 (OCR low, to verify, of the review of c9664ea3..673b2923: a move may arrive as a close and an open); seam=the workspace harness's two native groups, restoreLeftoverCapturedSource in each, closeTabByHand for the close half of the move, returnCurrentSelection and openLearningReplay; no_claim=that an editor reports a move as a close and an open (VS Code documents the tab objects as replaced when a tab changes group; no native receipt of Cursor)
+test('a captured-source tab the learner moved to another group after leaving a browser replay stays beside the test replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: [{ size: 490 }, { size: 490 }],
+    })
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const path = `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-actions.ts`
+    const browserTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      column: 1,
+      path,
+    })
+    await harness.reader['returnCurrentSelection']('learner')
+    // The move: the old tab object closes in its group and a new one opens in the other.
+    harness.closeTabByHand(browserTab)
+    const movedTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      column: 2,
+      path,
+    })
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(tabs.includes(movedTab), true)
+    assert.equal(harness.groups.length >= 2, true)
+  } finally {
+    await harness.close()
+  }
+})

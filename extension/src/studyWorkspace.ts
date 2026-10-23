@@ -25539,12 +25539,37 @@ export class StudyWorkspace {
         !isNodeSourceSlotPath(uri.path) &&
         (retired.has(tab) || replacedAddresses.has(uri.toString())),
     )
-    // Only a close the editor accepted ends the record; a refused one throws above and the record stays for the next slot show (F484). The tabs' own close events may have shortened it meanwhile.
-    this.retiredBrowserReplayTabs = undefined
+    // Only a close the editor accepted ends its entries; a refused one throws above and the record stays for the next slot show (F484). The tabs' own close events may have shortened it, and a leave while the close was held may have made a new record, whose other tabs stay (F493).
+    this.dropClosedRetiredBrowserReplayEntries(retired, replacedAddresses)
   }
 
   /**
-   * Removes tabs the editor closed from the record of the retired browser replay's tabs, so a tab opened later at the same address is not taken for one of them (F485); called by the tab listener of {@link watchKeyboardOutsideEditors}.
+   * Removes from the current record the entries of the record a finished close was for, so a record a later leave made while that close was held keeps its other tabs (F493); called by {@link closeRetiredBrowserReplaySourceTabs}.
+   * @param closedRecord - The record the close was made from.
+   * @param replacedAddresses - The addresses of its entries whose tab objects the editor had replaced, which the close picked by address.
+   * @example this.dropClosedRetiredBrowserReplayEntries(retired, new Set())
+   */
+  private dropClosedRetiredBrowserReplayEntries(
+    closedRecord: ReadonlyMap<vscode.Tab, string>,
+    replacedAddresses: ReadonlySet<string>,
+  ): void {
+    const current = this.retiredBrowserReplayTabs
+    if (!current) return
+    const live = new Set(
+      vscode.window.tabGroups.all.flatMap((group) => group.tabs),
+    )
+    const rest = new Map(
+      [...current].filter(
+        ([tab, address]) =>
+          !closedRecord.has(tab) &&
+          !(replacedAddresses.has(address) && !live.has(tab)),
+      ),
+    )
+    this.retiredBrowserReplayTabs = rest.size ? rest : undefined
+  }
+
+  /**
+   * Removes tabs the editor closed from the record of the retired browser replay's tabs, so a tab opened later at the same address is not taken for one of them (F485); a close of a tab no entry holds ends the entry of a replaced tab object at that address, unless another tab shows it (F494); called by the tab listener of {@link watchKeyboardOutsideEditors}.
    * @param closed - The tabs the editor reports closed.
    * @example this.forgetClosedRetiredBrowserReplayTabs(event.closed)
    */
@@ -25552,10 +25577,27 @@ export class StudyWorkspace {
     closed: readonly vscode.Tab[],
   ): void {
     const retired = this.retiredBrowserReplayTabs
-    if (!retired || !closed.some((tab) => retired.has(tab))) return
+    if (!retired) return
+    const live = new Set(
+      vscode.window.tabGroups.all.flatMap((group) => group.tabs),
+    )
+    const addressOf = (tab: vscode.Tab): string | undefined =>
+      tab.input instanceof vscode.TabInputText
+        ? tab.input.uri.toString()
+        : undefined
+    const liveAddresses = new Set([...live].map(addressOf))
     const kept = new Map(retired)
-    for (const tab of closed) kept.delete(tab)
-    this.retiredBrowserReplayTabs = kept
+    for (const tab of closed) {
+      if (kept.delete(tab)) continue
+      // A tab object the editor rebuilt (Cursor) is in no entry: the learner closing it by hand ends the entry its address stands for, unless another tab still shows that address (F494).
+      const address = addressOf(tab)
+      if (address === undefined || liveAddresses.has(address)) continue
+      const stale = [...kept].find(
+        ([entry, entryAddress]) => entryAddress === address && !live.has(entry),
+      )
+      if (stale) kept.delete(stale[0])
+    }
+    if (kept.size !== retired.size) this.retiredBrowserReplayTabs = kept
   }
 
   /**
