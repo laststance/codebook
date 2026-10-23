@@ -2264,7 +2264,7 @@ export class StudyWorkspace {
    * Says whether a presentation request is a Restore or selection of the Study workspace that a selected test replay's composition answers; asked by {@link admitPresentation} before the article's placement (F413).
    * @param input - The requested change.
    * @param state - The current presentation state.
-   * @returns `true` when the unconfirmed Study workspace is requested again while a test replay holds the composition and both Study panes stand.
+   * @returns `true` for a Restore of the Study workspace, or a selection of it while its layout is unconfirmed, while a test replay holds the composition and both Study panes stand.
    * @example this.isTestReplayRestore(input, this.presentationState()) // => true for Restore beside a selected test replay
    */
   private isTestReplayRestore(
@@ -2272,10 +2272,11 @@ export class StudyWorkspace {
     state: PresentationState,
   ): boolean {
     return (
-      (input.action === 'restore' || input.action === 'select') &&
+      // A Restore always answers (the article's placement would front its captured source over the slot, F413); a selection only repairs an unconfirmed layout.
+      (input.action === 'restore' ||
+        (input.action === 'select' && !state.layoutConfirmed)) &&
       input.mode === 'study-workspace' &&
       input.mode === state.mode &&
-      !state.layoutConfirmed &&
       this.testReplayHoldsComposition() &&
       Boolean(this.app && this.contextPanel)
     )
