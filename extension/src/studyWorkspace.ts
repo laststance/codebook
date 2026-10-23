@@ -887,6 +887,8 @@ export class StudyWorkspace {
   }
   private contextPanel?: vscode.WebviewPanel
   private liveComposition = false
+  /** `true` while {@link openNodeHistoryFromHost} enters the Study composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
+  private hostOpeningTestReplay = false
   /**
    * The explicit Live intent {@link returnCurrentSelection} records for an open reader, so Open and cold reentry, also after a Close, prepare the chat layout before a runtime starts: the record that was current then, and whether it had stopped. A Close keeps it, and so does a Return that arranged nothing, since the selection either leaves follows the current run in Live; a run that starts after it and the stop of the current run end it ({@link isLiveCompositionRequested}, Cycle 0046 OCR1-8).
    */
@@ -7894,8 +7896,10 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
       const currentRecord = this.currentRecord()
+      // A selected or opening test replay is read in the Study composition, whatever run is current (F208).
       const liveComposition =
         !this.recordingActive &&
+        !this.testReplayHoldsComposition() &&
         this.selection.follow &&
         this.selection.tab === 'live' &&
         Boolean(
@@ -8635,6 +8639,8 @@ export class StudyWorkspace {
     if (action === 'focus-app') await this.focusApplication()
     if (action === 'focus-context') {
       if (this.summaryComposition) await this.showLearningSummary()
+      // A Study composition without its pane (closed, or lost to an earlier Live composition) gets it back (F208).
+      else if (!this.contextPanel && !this.liveComposition) await this.open()
       else this.contextPanel?.reveal(undefined, false)
     }
     if (action === 'read-app') await this.readStudyPane('app')
@@ -11217,6 +11223,19 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether a test replay is selected, opening, or about to open from the host, so that {@link open} arranges the Study composition and not the Live one; read by {@link open}.
+   * @returns `true` while a test replay needs the Study pane.
+   * @example if (this.testReplayHoldsComposition()) liveComposition = false
+   */
+  private testReplayHoldsComposition(): boolean {
+    return (
+      this.hostOpeningTestReplay ||
+      this.selectedNodeHistory !== undefined ||
+      this.pendingNodeHistory !== undefined
+    )
+  }
+
+  /**
    * Says whether a study id names a test replay: a test history the last refresh listed, or a node-test run of this window's service; read by {@link openLearningReplay}.
    * @param studyId - The study id the status item or a command names.
    * @returns `true` for a test replay.
@@ -11253,7 +11272,15 @@ export class StudyWorkspace {
       await this.returnCurrentSelection('learner')
       if (this.recordingActive) return
     }
-    if (!this.opened) await this.open()
+    // The Live composition has no Study pane: the open enters the Study composition first (F208).
+    if (!this.opened || this.liveComposition) {
+      this.hostOpeningTestReplay = true
+      try {
+        await this.open()
+      } finally {
+        this.hostOpeningTestReplay = false
+      }
+    }
     const outcome = await this.openNodeHistory(studyId, this.revision)
     if (outcome.status !== 'failed') return
     const roots = this.service?.causeRoots ?? { storage: [] }
@@ -14389,6 +14416,8 @@ export class StudyWorkspace {
       // A first acquisition cannot register beside an earlier host's leftover pane.
       if (!this.app && this.deadPaneTabs().length)
         await this.retirePreviousApplicationPanes(signal)
+      // An explicit entry takes the pane where it stands when it left the group Codebook allocated (F208).
+      if (manualEntry) this.adoptDisplacedApplication()
       const existing = this.existingApplicationForPreparation(
         manualEntry,
         retiredContextGroup,
@@ -14450,6 +14479,24 @@ export class StudyWorkspace {
       ((takenByEditor, stillCurrent) =>
         giveBack(takenByEditor, stillCurrent, proof))
     return { proofKeptKeyboard: chatReturn === undefined, chatReturn }
+  }
+
+  /**
+   * Turns an Application owner whose pane left its allocated group (a Return that failed and kept the record, or a learner's move) into a manual one, so that an explicit entry reconciles the pane where it stands through {@link prepareParkedApplication} and not with the background refusal "The Application group changed" (F208); called by {@link prepareApplicationGroup} for an explicit entry only.
+   * @example if (manualEntry) this.adoptDisplacedApplication()
+   */
+  private adoptDisplacedApplication(): void {
+    const owned = this.applicationGroup,
+      panel = this.app
+    if (!owned || owned.parked || !panel) return
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) =>
+        this.editorGroupIdentities.get(candidate) === owned.identity,
+    )
+    // A pane still in its allocated group needs no adoption.
+    if (group?.viewColumn === panel.viewColumn) return
+    owned.parked = true
+    owned.manual = true
   }
 
   /**
@@ -17334,7 +17381,7 @@ export class StudyWorkspace {
     // A manual move is never repaired by background capture; explicit recovery owns that choice.
     if (!isInOwnedGroup)
       throw new Error(
-        'The Application group changed. Use Codebook: Focus Application or Restore layout explicitly.',
+        'The Application group changed. Use Codebook: Open Study Workspace, Focus Application or Restore layout explicitly.',
       )
     return panel
   }

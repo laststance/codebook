@@ -2973,3 +2973,124 @@ test("a live entry from the three-pane Study layout stays confirmed when the con
     await harness.close()
   }
 })
+
+// Value: protects=Open replay during a live run: the learner reaches the test replay's Study pane (its transport, position and summary) instead of a replay shown only in the Application, the slot and the debugger; fails_when=the live composition keeps the reader without a Study pane while a test replay is opening or selected; why_new=Cycle 0050 F208 (N49 Cursor part 7: Open replay after a live run opened no Study pane); seam=workspaceHarness with the controlled runtime, the reader's open, returnToCurrent and openLearningReplay, panelColumn
+test('Open replay during a live run creates the Study pane and selects the test replay in it', async () => {
+  // Arrange: the learner returned the Study to the current run, and a run started, so the reader stands in the Live composition without a Study pane.
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const overview = harness.reader.presentationState()
+    await harness.reader.returnToCurrent({
+      presentationId: overview.presentationId,
+      expectedRevision: overview.reader.contentRevision,
+    })
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    await readerSeams(harness).refresh()
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      history.studyId,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the explicit Open Study Workspace after a run left the Application pane outside the group Codebook allocated for it (a failed Return Current kept the record): the open reconciles the pane where it stands, instead of refusing with "The Application group changed"; fails_when=an explicit open takes the kept record for a background capture and throws the refusal that only a background acquisition should keep; why_new=Cycle 0050 F208 cause (b) (N49 Cursor part 7); seam=workspaceHarness with the controlled runtime, movePanel, the reader's open and returnToCurrent, panelColumn, errorLines
+test('Open Study Workspace after the Application pane left its allocated group opens without the Application group refusal', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const overview = harness.reader.presentationState()
+    await harness.reader.returnToCurrent({
+      presentationId: overview.presentationId,
+      expectedRevision: overview.reader.contentRevision,
+    })
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    await readerSeams(harness).refresh()
+    const appColumn = harness.panelColumn('codebook.scopedBrowser')!
+    harness.movePanel('codebook.scopedBrowser', appColumn + 1)
+    assert.notEqual(harness.panelColumn('codebook.scopedBrowser'), appColumn)
+
+    // Act
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(await opening, 'opened')
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+    assert.notEqual(harness.panelColumn('codebook.scopedBrowser'), undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Focus Explanation for a test replay whose Study pane is gone: the command opens the pane again so the transport, position and summary are reachable, instead of changing nothing visible; fails_when=the focus action only reveals an existing pane; why_new=Cycle 0050 F208 (Focus Explanation changed nothing visible after Open replay lost its Study pane); seam=workspaceHarness, openLearningReplay, tabGroups.close of the Study pane's tab, the reader's focus-context action, panelColumn
+test('Focus Explanation opens the Study pane again for a selected test replay whose pane was closed', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await harness.editor.window.tabGroups.close(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter(
+          (tab) =>
+            tab.input instanceof harness.editor.TabInputWebview &&
+            tab.input.viewType.includes('codebook.studyContext'),
+        ),
+      true,
+    )
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+
+    // Act
+    await harness.reader.action('focus-context')
+
+    // Assert
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+  } finally {
+    await harness.close()
+  }
+})
