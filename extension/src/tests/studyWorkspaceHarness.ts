@@ -5081,11 +5081,14 @@ export async function workspaceHarness(
   let preferenceFailure = false
   let nextPreference: { wait: Promise<void>; entered(): void } | undefined
   const workspaceState = {
-    get: <Value>(key: string, defaultValue?: Value) =>
-      ((key === APPLICATION_GROUP_MARKER_KEY
-        ? applicationGroupMarkers.get(key)
-        : presentationPreferences.get(key)) ?? defaultValue) as
-        Value | undefined,
+    get: <Value>(key: string, defaultValue?: Value) => {
+      const stored =
+        key === APPLICATION_GROUP_MARKER_KEY
+          ? applicationGroupMarkers.get(key)
+          : presentationPreferences.get(key)
+      // The Memento answers the default only for a key whose value is `undefined`; a stored `null` is a value.
+      return (stored === undefined ? defaultValue : stored) as Value | undefined
+    },
     update: async (key: string, value: unknown): Promise<void> => {
       if (key === APPLICATION_GROUP_MARKER_KEY) {
         applicationGroupMarkers.set(key, toMementoValue(value))
@@ -5703,6 +5706,8 @@ export async function workspaceHarness(
     moveViewsCalls: () => [...moveViewsCalls],
     /** What the listeners of `onDidChangeVisibleTextEditors` threw; the fake isolates a throwing listener as the extension host does and keeps its error here. @example assert.deepEqual(harness.visibleEditorListenerErrors, []) */
     visibleEditorListenerErrors,
+    /** The fake `workspaceState` of the extension context, as the reader gets it: values are kept as JSON and only a missing or `undefined` value answers the default. @example harness.workspaceState.get('key', false) */
+    workspaceState,
     /** The fake `globalState` of the extension context, as the reader gets it: values are kept as JSON and a missing key answers the default. @example harness.globalState.get('key', false) */
     globalState,
     /** The fake profile-wide state (`globalState`) of the extension context. @example harness.profileState.get('codebook.summaryBesideChatMoved.v1') */

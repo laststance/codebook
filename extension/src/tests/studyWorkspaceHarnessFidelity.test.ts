@@ -128,3 +128,23 @@ test('a visible-editors listener that throws fails the test whose close caused i
     /onDidChangeVisibleTextEditors threw 1 time\(s\) during the test: Error: Listener failed\./,
   )
 })
+
+// Value: protects=the fake workspace state answering a stored null as the editor's Memento does, so a reader that stores null is tested against the real answer and not the default; fails_when=the fake treats a stored null like a missing key and answers the default; why_new=Cycle 0050 F399 (workspaceState.get used ?? defaultValue); seam=the harness's fake workspaceState; no_claim=the persistence of the real Memento across restarts
+test('the fake workspace state answers a stored null and the default only for a missing key', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  try {
+    const { workspaceState } = harness
+
+    // Act
+    await workspaceState.update('stored-null', null)
+    await workspaceState.update('stored-zero', 0)
+
+    // Assert
+    assert.equal(workspaceState.get('stored-null', 'fallback'), null)
+    assert.equal(workspaceState.get('stored-zero', 'fallback'), 0)
+    assert.equal(workspaceState.get('missing', 'fallback'), 'fallback')
+  } finally {
+    await harness.close()
+  }
+})
