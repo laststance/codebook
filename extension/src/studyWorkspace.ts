@@ -11506,8 +11506,16 @@ export class StudyWorkspace {
     // A learner's preview tab that blocks the open is answered with a choice and a retry (F158).
     const answer = await this.resolveForeignPreviewRefusal(cause)
     if (answer === 'retry') return this.openNodeHistoryFromHost(studyId)
-    // The keep-open refusal has told the learner already; a second notification and Output entry would repeat it.
-    if (answer === 'told') return
+    // The keep-open refusal has told the learner already, so no second notification follows; the refusal is still recorded once in Output › Codebook, where other open refusals are, so a later take can tell why the replay did not open (F407).
+    if (answer === 'told') {
+      this.diagnostics?.log({
+        surface: 'open:test-replay',
+        studyId,
+        profile: NODE_TEST_PROFILE,
+        cause,
+      })
+      return
+    }
     await this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
   }
 
