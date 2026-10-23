@@ -12694,20 +12694,32 @@ export class StudyWorkspace {
   }
 
   /**
-   * Waits, for at most {@link NODE_HISTORY_POSITION_DRAIN_MS}, until the reader position writes that Play and the selections started have returned, so a close does not leave a write running into storage that is being removed (F197); called by {@link close}.
+   * Waits, for at most {@link NODE_HISTORY_POSITION_DRAIN_MS}, until no reader position write runs, so a close does not leave a write running into storage that is being removed (F197); called by {@link close}.
+   * A loop that {@link runNodeHistoryPositionWrites} restarts from its own end (F366) is not in the writes seen at the first look, so the wait looks again after each round until none runs or the bound is reached (F395).
    * @example await this.drainNodeHistoryPositionWrites()
    */
   private async drainNodeHistoryPositionWrites(): Promise<void> {
-    const running = [...this.nodeHistoryPositionWrites.values()].flatMap(
-      (writer) => (writer.running ? [writer.running] : []),
-    )
-    if (!running.length) return
+    const runningWrites = (): Promise<void>[] =>
+      [...this.nodeHistoryPositionWrites.values()].flatMap((writer) =>
+        writer.running ? [writer.running] : [],
+      )
+    if (!runningWrites().length) return
     let cancel = (): void => {}
+    let bounded = false
     const bound = new Promise<void>((resolve) => {
-      cancel = this.slotTimers.set(resolve, NODE_HISTORY_POSITION_DRAIN_MS)
+      cancel = this.slotTimers.set(() => {
+        bounded = true
+        resolve()
+      }, NODE_HISTORY_POSITION_DRAIN_MS)
     })
     try {
-      await Promise.race([Promise.allSettled(running), bound])
+      // Each round waits for the writes running now; a loop restarted at their end shows in the next round.
+      for (
+        let running = runningWrites();
+        running.length && !bounded;
+        running = runningWrites()
+      )
+        await Promise.race([Promise.allSettled(running), bound])
     } finally {
       cancel()
     }

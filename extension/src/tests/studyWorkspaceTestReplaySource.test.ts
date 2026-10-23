@@ -667,6 +667,68 @@ test('a reader position queued as the position write loop ends is still written'
   }
 })
 
+// Value: protects=closing the reader waits for a reader position that was queued as the write loop ended and written by the loop the end restarted, so no save runs after the close resolved; fails_when=the close waits only for the writes running when it began, returns while the restarted loop still saves, and the save then lands in storage that is being removed; why_new=Cycle 0050 F395 (the drain snapshotted the running writes once, and the F366 restart is not in the snapshot); seam=the history store's position write, answered by a held thenable whose continuation queues the next position behind the loop's own, and a second write that ends after 300 ms; no_claim=the bound NODE_HISTORY_POSITION_DRAIN_MS on a write that never returns
+test('closing the reader waits for the position write that the write loop restarted at its end', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const order: string[] = []
+  let releaseFirstWrite = (): void => {}
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await openReplayAt(harness, history.studyId, 2)
+    const selected = harness.reader['selectedNodeHistory']!
+    // Wait for the open's own position write to end, so only the two writes of this test remain.
+    await waitUntil(
+      () => harness.reader['nodeHistoryPositionWrites'].size === 0,
+      'the open’s position write ends',
+      READER_RESULT_BOUND_MS,
+    )
+    const firstWriteHeld = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    context.mock.method(
+      store,
+      'saveReaderPosition',
+      (...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>) => {
+        if (args[1] === 2)
+          // The loop awaits this thenable: once released, the next position is queued right behind the loop's own continuation, before the run's end is announced.
+          return {
+            then(onFulfilled: () => void): void {
+              void firstWriteHeld.then(() => {
+                onFulfilled()
+                queueMicrotask(() =>
+                  harness.reader['queueNodeHistoryPositionWrite'](selected, 3),
+                )
+              })
+            },
+          } as unknown as Promise<void>
+        return new Promise<void>((resolve) => {
+          setTimeout(() => {
+            order.push('second position saved')
+            resolve()
+          }, 300)
+        })
+      },
+    )
+    harness.reader['queueNodeHistoryPositionWrite'](selected, 2)
+
+    // Act
+    const closing = harness.reader.close().then(() => {
+      order.push('reader closed')
+    })
+    releaseFirstWrite()
+    await closing
+
+    // Assert
+    assert.deepEqual(order, ['second position saved', 'reader closed'])
+  } finally {
+    releaseFirstWrite()
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the failure of a moment's presentation reaching the learner as itself when the return to the committed moment fails too, so the Study names why the moment did not open and not a secondary slot error; fails_when=the return's error replaces the presentation's error; why_new=F368 (the return was awaited inside the catch, so its throw hid the original); seam=the workspace harness's held historical debug presentation, rejected, and the return to the committed moment made to throw; no_claim=what the return would have shown
 test('a failed presentation is reported as itself when the return to the committed moment fails too', async (context) => {
   // Arrange
