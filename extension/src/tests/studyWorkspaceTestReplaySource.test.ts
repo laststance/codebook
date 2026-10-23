@@ -1065,11 +1065,9 @@ function countSlotRequests(harness: Harness) {
     harness.editor.window,
   )
   harness.editor.window.showTextDocument = ((...args: unknown[]) => {
-    if (
-      String(args[0] && (args[0] as { uri?: unknown }).uri).includes(
-        '/node-history-slot/',
-      )
-    )
+    // The editor takes a document or its address; the address of a document is its `uri`.
+    const shown = args[0] as { uri?: unknown } | undefined
+    if (String(shown?.uri ?? shown).includes('/node-history-slot/'))
       counts.shows++
     return (show as (...rest: unknown[]) => unknown)(...args)
   }) as typeof harness.editor.window.showTextDocument
