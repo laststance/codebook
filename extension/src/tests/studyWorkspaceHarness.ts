@@ -3434,6 +3434,10 @@ export async function workspaceHarness(
   }
   /** Whether the fake recorded viewport has a required frame queued behind one in flight, which makes it drop preview frames; see `holdRequiredFramePending`. */
   let requiredFramePending = false
+  /** Whether the fake recorded viewport has a pause image pinned, which makes its delivery refuse preview frames; see `holdPausePinned`. */
+  let pausePinned = false
+  /** Whether the fake recorded viewport has no renderer epoch (the renderer was suspended and has not shaken hands again), which makes its delivery refuse every frame; see `holdRendererEpochMissing`. */
+  let rendererEpochMissing = false
   const viewportEvents: string[] = [],
     viewportInstances: WorkspaceViewport[] = []
   /** Models the leased renderer contract so workspace tests fail when retirement precedes transfer. @example reader.presentation.createViewport('run', record, fail, 'normal') */
@@ -3607,7 +3611,7 @@ export async function workspaceHarness(
     }
     /**
      * Shows the next recorded frame at once and clears nothing, as the real viewport's non-required preview frame does; the later required frame follows with the receipt.
-     * The frame is dropped under the real viewport's conditions: the viewport is not a recording, is closed or historical, or a required frame is pending (see `holdRequiredFramePending`); the pane then keeps what it showed.
+     * The frame is dropped under the conditions of the real viewport and {@link FrameDelivery.accepts}: the viewport is not a recording, is closed or historical, the delivery has no renderer epoch (see `holdRendererEpochMissing`), a pause image is pinned (see `holdPausePinned`), or a required frame is pending (see `holdRequiredFramePending`); the pane then keeps what it showed.
      * @returns `true` when the frame was shown; `false` when it was dropped.
      * @example viewport.previewRecorded(png.toString('base64'), 'Recorded · 1.50 s')
      */
@@ -3616,6 +3620,8 @@ export async function workspaceHarness(
         this.mode !== 'recording' ||
         this.closed ||
         this.historical ||
+        rendererEpochMissing ||
+        pausePinned ||
         requiredFramePending
       )
         return false
@@ -7593,6 +7599,22 @@ export async function workspaceHarness(
      */
     holdRequiredFramePending(isPending: boolean): void {
       requiredFramePending = isPending
+    },
+    /**
+     * Makes the fake recorded viewport drop its preview frames, as the real one does while a pause image is pinned (`FrameDelivery.accepts` takes only required frames when frozen), until the test lifts it.
+     * @param isPinned - `true` while a pause image is pinned; `false` lifts it.
+     * @example harness.holdPausePinned(true)
+     */
+    holdPausePinned(isPinned: boolean): void {
+      pausePinned = isPinned
+    },
+    /**
+     * Makes the fake recorded viewport drop its preview frames, as the real one does while its delivery has no renderer epoch (`FrameDelivery.accepts` is false after a suspended renderer and before the next handshake), until the test lifts it.
+     * @param isMissing - `true` while the renderer has no epoch; `false` lifts it.
+     * @example harness.holdRendererEpochMissing(true)
+     */
+    holdRendererEpochMissing(isMissing: boolean): void {
+      rendererEpochMissing = isMissing
     },
     holdNextImage() {
       let release = (): void => {},

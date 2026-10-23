@@ -4132,6 +4132,112 @@ test('a seek whose preview frame is dropped clears the pane rather than keeping 
   }
 })
 
+// Value: protects=a seek whose preview frame the viewport drops (a pause image is pinned) clearing the pane instead of leaving the earlier moment's pixels beside the next moment's source and values; fails_when=the invalidation ignores that previewRecorded returned false while a pause image is pinned, so the earlier frame stays painted; why_new=Cycle 0050 F396 (the fake dropped previews only beside a pending required frame, so a regression in the other two drop conditions could not be reproduced); seam=the harness's fake recorded viewport dropping previews under holdPausePinned and a held paint of the required frame; no_claim=the webview's own swap
+test('a seek whose preview frame is dropped while a pause image is pinned clears the pane rather than keeping the earlier moment’s pixels', async () => {
+  // Arrange: a stop is shown with its frame; the application sent a newer frame at 900 ms.
+  const newerPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const harness = await recordedReaderHarness(
+    true,
+    true,
+    1,
+    async (stopped) => {
+      const recording = [...stopped.service.records.values()][0]!.recording!
+      recording.frame({ bytes: newerPng, elapsedMs: 900, kind: 'stream' })
+    },
+  )
+  try {
+    const { controller, studyId, png } = harness
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    assert.equal(harness.displayedImage(), png.toString('base64'))
+    harness.holdPausePinned(true)
+    // The required frame of the seek's moment is held in the renderer, so what the pane shows before it paints is what the invalidation left.
+    const paint = harness.holdNextImage()
+
+    // Act
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 900,
+    })
+    await paint.started
+    const shownBeforePaint = harness.displayedImage()
+    paint.release()
+    await controller.settle()
+
+    // Assert
+    assert.equal(shownBeforePaint, undefined)
+    assert.equal(harness.displayedImage(), newerPng.toString('base64'))
+  } finally {
+    harness.holdPausePinned(false)
+    await harness.close()
+  }
+})
+
+// Value: protects=a seek whose preview frame the viewport drops (the delivery has no renderer epoch) clearing the pane instead of leaving the earlier moment's pixels beside the next moment's source and values; fails_when=the invalidation ignores that previewRecorded returned false while the delivery has no renderer epoch, so the earlier frame stays painted; why_new=Cycle 0050 F396 (the fake dropped previews only beside a pending required frame, so a regression in the other two drop conditions could not be reproduced); seam=the harness's fake recorded viewport dropping previews under holdRendererEpochMissing and a held paint of the required frame; no_claim=the webview's own swap
+test('a seek whose preview frame is dropped while the renderer has no epoch clears the pane rather than keeping the earlier moment’s pixels', async () => {
+  // Arrange: a stop is shown with its frame; the application sent a newer frame at 900 ms.
+  const newerPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const harness = await recordedReaderHarness(
+    true,
+    true,
+    1,
+    async (stopped) => {
+      const recording = [...stopped.service.records.values()][0]!.recording!
+      recording.frame({ bytes: newerPng, elapsedMs: 900, kind: 'stream' })
+    },
+  )
+  try {
+    const { controller, studyId, png } = harness
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    assert.equal(harness.displayedImage(), png.toString('base64'))
+    harness.holdRendererEpochMissing(true)
+    // The required frame of the seek's moment is held in the renderer, so what the pane shows before it paints is what the invalidation left.
+    const paint = harness.holdNextImage()
+
+    // Act
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 900,
+    })
+    await paint.started
+    const shownBeforePaint = harness.displayedImage()
+    paint.release()
+    await controller.settle()
+
+    // Assert
+    assert.equal(shownBeforePaint, undefined)
+    assert.equal(harness.displayedImage(), newerPng.toString('base64'))
+  } finally {
+    harness.holdRendererEpochMissing(false)
+    await harness.close()
+  }
+})
+
 for (const failure of ['corrupt', 'future', 'missing'] as const)
   test(`a ${failure} configured recording keeps the real article return pose, learner ledger and input count intact`, async () => {
     // Arrange
