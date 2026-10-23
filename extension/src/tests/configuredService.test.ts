@@ -3068,6 +3068,41 @@ test('a continuation without the answer argument answers accepted at once', asyn
   assert.equal(runtime.snapshots.length, 1)
 })
 
+// Value: protects=a repository-browser run whose Stop failed to release it: the run resource offers only stop, withdraws the browser's continueArguments, and codebook_continue refuses with STALE_PAUSE without reaching the runtime; fails_when=a run whose release failed keeps offering repository-click or continue for a pause it can no longer resume (the node-test profile's F91 fix reaches the shared state, not only that profile); why_new=the F91 test covers the node-test profile only, while the cleanupError guards were added to the shared canControl, nextActions and the repository-browser continue (F91, D18); seam=runtime.stop rejects once, as a still-alive owned process does; no_claim=the node-test profile (nodeTestRunLifecycle covers it)
+test('a repository-browser run whose release failed offers only stop and refuses a continue with STALE_PAUSE', async (context) => {
+  // Arrange: a run paused at its first stop, whose runtime cannot be released once.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, record, continueArguments } =
+    await runPausedAtFirstStop(context, 'release-fails', () => nowMs)
+  const stopRuntime = runtime.stop.bind(runtime)
+  runtime.stop = async (): Promise<void> => {
+    runtime.stop = stopRuntime
+    throw new Error('Owned process still alive')
+  }
+
+  // Act
+  const stopRefusal = await service.stop(receipt).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const afterFailedRelease = service.state(record)
+  const continueRefusal = await service.continue(continueArguments).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(stopRefusal instanceof Error)
+  assert.deepEqual(afterFailedRelease.nextActions, ['stop'])
+  assert.equal(
+    afterFailedRelease.participants.browser.continueArguments,
+    undefined,
+  )
+  assert.ok(continueRefusal instanceof StudyError)
+  assert.equal(continueRefusal.code, 'STALE_PAUSE')
+  assert.equal(runtime.status, 'paused-browser')
+})
+
 // The Study pane's Continue sends the run resource's arguments as they are: it must return at the acknowledgement.
 test('the pane’s continuation with the run resource’s arguments answers at the acknowledgement, without waiting for the next state', async (context) => {
   // Arrange: a run is paused at its first stop.
