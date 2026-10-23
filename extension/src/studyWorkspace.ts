@@ -278,6 +278,7 @@ import {
   isProportionalEditorLayout,
 } from './utils/isProportionalEditorLayout'
 import { isSameEditorLayoutShape } from './utils/isSameEditorLayoutShape'
+import { isShownRefusal } from './utils/isShownRefusal'
 import { isWikiGroupBesideTextEditor } from './utils/isWikiGroupBesideTextEditor'
 import { layoutKeepsEveryGroup } from './utils/layoutKeepsEveryGroup'
 import { libraryHasRoom } from './utils/libraryHasRoom'
@@ -1315,13 +1316,14 @@ export class StudyWorkspace {
     // A stable receipt may describe a learner collision; only the mode's distinct destinations qualify as confirmed.
     const matchingColumns =
       panes.appColumn === descriptor.appColumn &&
-      panes.sourceColumn === descriptor.sourceColumn &&
+      // A test replay's source is its slot, whose position {@link layoutSourceReady} checks (F402).
+      (this.testReplayHoldsComposition() ||
+        panes.sourceColumn === descriptor.sourceColumn) &&
       (this.liveComposition || this.summaryComposition
         ? !panes.context
         : panes.contextColumn === descriptor.contextColumn)
-    // A selected or opening test replay does no article source work (D32, F390): its recorded-source slot is its own source, so the article's captured source is no condition of its layout.
-    const currentSourceReady =
-      this.sourceReady() || this.testReplayHoldsComposition()
+    // A selected or opening test replay does no article source work (D32, F390): its own source is the slot it shows at the source position, not the article's captured source (F402).
+    const currentSourceReady = this.layoutSourceReady()
     const matchingLayoutReceipt = Boolean(
       this.layoutReceipt?.mode === 'study' &&
       this.sameStudyPanePositions(this.layoutReceipt.panes),
@@ -1337,7 +1339,10 @@ export class StudyWorkspace {
       if (!currentSourceReady) {
         const playback = this.playback?.state()
         // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover. A recording whose load failed shows no source until it is opened again. Otherwise the reason says how the source stands (row 695).
-        if (playback?.readiness === 'loading')
+        if (this.testReplayHoldsComposition())
+          reason =
+            'The recorded source of the test replay is not shown in its pane. Use Focus source to show it again.'
+        else if (playback?.readiness === 'loading')
           reason = 'The recorded source is opening in its native pane.'
         else if (this.recordingActive && playback?.readiness === 'failed')
           reason = recordingNotShownReason(playback.reason)
@@ -2793,7 +2798,7 @@ export class StudyWorkspace {
       (!this.recordingActive || this.playback?.bundle() === bundle) &&
       this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) &&
       this.sameStudyPanePositions(receipt.panes) &&
-      this.sourceReady() &&
+      this.layoutSourceReady() &&
       Boolean(this.app?.visible && this.contextPanel?.visible) &&
       this.hasMainEditorFocus(STUDY_EDITOR_GROUP_COUNT)
     let confirmed = false
@@ -8778,7 +8783,7 @@ export class StudyWorkspace {
           error instanceof StudyError ? error.causeDetail : String(error),
         )
         // A refusal the presentation reason already shows (the status line outside the controls) is not told a second time as an error row; both are retired together by {@link retireRefusalLines} (F400).
-        if (this.presentationReason?.includes(cause)) this.publish()
+        if (isShownRefusal(this.presentationReason, cause)) this.publish()
         else this.report('layout', new Error(cause))
       }
     }
@@ -14512,6 +14517,34 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Says whether the source the layout shows is ready: the article's captured source ({@link sourceReady}), or, while a test replay is selected or opening, the replay's own recorded-source slot with its tab in front at the source position and its content committed (F402).
+   * Read by {@link presentationState} for `layoutConfirmed` and by {@link confirmEnlargedLayout} before an Enlarge's Restore confirms, so both apply one rule.
+   * @returns `true` when the source of the current composition is shown.
+   * @example this.layoutSourceReady() // => false while the slot's tab is closed under a selected test replay
+   */
+  private layoutSourceReady(): boolean {
+    if (!this.testReplayHoldsComposition()) return this.sourceReady()
+    const slot = this.nodeSourceSlot,
+      held = this.nodeSourceSlotHeld
+    if (
+      !this.opened ||
+      this.closing ||
+      !slot ||
+      held?.text !== slot.text ||
+      held.address !== slot.uri.toString()
+    )
+      return false
+    const column = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
+    const front = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === column,
+    )?.activeTab?.input
+    return (
+      front instanceof vscode.TabInputText &&
+      front.uri.toString() === slot.uri.toString()
+    )
+  }
+
   /** Confirms the selected immutable source reached an active native tab before control or MCP reveal succeeds. @example this.sourceReady() */
   private sourceReady(): boolean {
     return (
@@ -19783,7 +19816,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says that the editor holds exactly two groups, the main editor's one group with no learner's editor (empty, or only Codebook panes) and one group of another part that holds only a chat, so that a layout read of either part counts one group and the main editor's grid is known without a focus report (F389).
+   * Says that the editor holds exactly two groups, the main editor's one group with no learner's editor (empty, or holding only Codebook's own panes: an entry places its Application pane there before it measures) and one group of another part that holds only a chat, so that a layout read of either part counts one group and the main editor's grid is known without a focus report (F389).
    * Cursor reports no keyboard focus for an empty group or a Codebook pane beside its Agent chat part, so the wait of {@link readMainEditorGrid} could never end for an empty main editor. With one group on each side the count a read answers is the main editor's whichever part answered, which is the proof the focus report gives elsewhere. Any other shape (a learner's tab in the first group, more groups, a second part with editors) still needs the report.
    * @param count - The group count the layout read answered.
    * @returns `true` for that shape; `false` otherwise.
@@ -19987,13 +20020,22 @@ export class StudyWorkspace {
         sourceEditorReported() &&
         namedColumn !== sourceBorrow?.viewColumn &&
         vscode.window.tabGroups.activeTabGroup.viewColumn === namedColumn
-      const groupsBeforeFocus = this.refusalGroupViews()
+      // The refusal report's window opens with its snapshot, so the events of the borrow and focus commands are in it (F404).
+      const focusArmed = {
+        atMs: performance.now(),
+        before: this.refusalGroupViews(),
+      }
       const emptyFirstGroup = vscode.window.tabGroups.all.some(
         (group) =>
           group.viewColumn === vscode.ViewColumn.One && !group.tabs.length,
       )
       // Beside another editor part an empty first group reports no keyboard focus at all (no text editor, and the editor keeps naming the group it named before): the measurement is refused at once, naming that group, instead of waiting for a report that never comes (row 610).
-      if (!useCitation && !sourceBorrow && emptyFirstGroup)
+      if (
+        !useCitation &&
+        !sourceBorrow &&
+        emptyFirstGroup &&
+        !this.isSoleMainGroupBesideChat(count)
+      )
         throw new StudyError(
           'PRESENTATION_UNAVAILABLE',
           emptyFirstGroupObstacle(),
@@ -20069,7 +20111,6 @@ export class StudyWorkspace {
       }
       // What the borrow left in front of the first group, for a refused change's give-back (row 728).
       this.firstGroupFrontAtBorrow = this.frontTabOfFirstGroup()
-      const focusArmed = { atMs: performance.now(), before: groupsBeforeFocus }
       await waitUntil(
         () => {
           const currentInput = vscode.window.tabGroups.all.find(

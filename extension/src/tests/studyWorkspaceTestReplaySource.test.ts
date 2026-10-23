@@ -3506,3 +3506,54 @@ test('the position line and the playback readout say the requested moment is loa
     await harness.close()
   }
 })
+
+// Value: protects=the Study layout reading as confirmed only while the selected test replay's recorded-source slot is shown at the source position; fails_when=a closed slot tab still reads layoutConfirmed true because a selected test replay counts as a ready source; why_new=F402 (OCR M1: F390 made a selected replay a ready source whatever the slot showed)
+test('a selected test replay whose recorded-source slot tab was closed does not read the layout as confirmed', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const shownWithSlot = harness.reader.presentationState().layoutConfirmed
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+
+    // Act
+    harness.closeTabByHand(slotTab)
+
+    // Assert
+    assert.equal(shownWithSlot, true)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Enlarge then Restore with a test replay selected ending confirmed; fails_when=the Restore still requires the article's captured source, which a test replay never shows, and ends unconfirmed; why_new=F402 (OCR M1 and CodeRabbit: confirmEnlargedLayout kept its own source rule)
+test('Restore after Enlarge with a test replay selected confirms the layout again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await harness.reader.action('enlarge-app')
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
