@@ -233,3 +233,21 @@ test('a writer that becomes gone is listed interrupted at the first refresh afte
   assert.equal(insideInterval?.status, 'recording')
   assert.equal(afterInterval?.status, 'interrupted')
 })
+
+// Value: protects=a crash seen from another window although the clock was stepped backwards: a kept "live" verdict whose judging time lies in the future is rechecked, not trusted for the length of the step; fails_when=the negative difference passes as "inside the interval" and a crashed writer's history stays listed as recording until the clock catches up; why_new=F284: the recheck compared wall-clock times; seam=injected clock and judge; no_claim=the judge's own correctness
+test('a writer that becomes gone is listed interrupted at the next refresh after the clock stepped backwards', async (context) => {
+  // Arrange
+  const { writing, reading, clock, judge, workspaceKey } =
+    await windowWithCountedJudge(context)
+  await writing.start(nodeTestHistoryHeader(workspaceKey))
+  const [whileLive] = await reading.list()
+  judge.live = false
+  clock.nowMs -= 3_600_000
+
+  // Act
+  const [afterStep] = await reading.list()
+
+  // Assert
+  assert.equal(whileLive?.status, 'recording')
+  assert.equal(afterStep?.status, 'interrupted')
+})

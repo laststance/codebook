@@ -380,7 +380,7 @@ export class NodeTestHistoryStore {
 
   /**
    * Reserves a private history before the owned test process can start; called by {@link StudyService} when it admits a Node test run.
-   * The admission and the creation of the history's folder with its header run under the storage lock of the learning directory ({@link withStorageLock}), as the start of a recording does, so two starts never both take the last place, in one window or in two: the lock is held from the count until the header is written, so every other start is decided either before this folder exists or when its header does. No start is noted beside the lock. Under the lock the start reads the directory and the headers of the histories and writes one header and one empty journal, all on the local disk; it waits for nothing else.
+   * The admission and the creation of the history's folder with its header run under the storage lock of the learning directory ({@link withStorageLock}), as the start of a recording does, so two starts never both take the last place, in one window or in two: the lock is held from the count until the header is written, so every other start is decided either before this folder exists or when its header does. No start is noted beside the lock. Under the lock the start reads the directory and the headers of the histories and writes one header, one empty journal and the writer record ({@link writeNodeTestWriterRecord}, F260) by which other windows tell this history from a crashed one, all on the local disk; it waits for nothing else.
    * @param input - The history's header without its version; its study id names the history's folder.
    * @returns The writer of the reserved history.
    * @throws When the header belongs to another workspace or exceeds its storage limit, when the saved studies and the histories together reach the saved study limit, when the study id already has a history, and when the history's first files cannot be written; "Learning storage is locked …", naming the lock file, while another window holds the storage lock or a lock stays that cannot be judged: nothing was written then. Only a history the list shows counts ({@link listedHistoryCount}): a stray entry of the history directory and a folder without a readable header take no place of the limit. A start that fails leaves no folder behind: the header's size is checked before the folder is made, and a folder whose first files could not be written is removed again.
@@ -425,7 +425,7 @@ export class NodeTestHistoryStore {
   }
 
   /**
-   * Admits one history under the saved study limit and makes its folder with its first files; the body of {@link start}, run while the storage lock is held.
+   * Admits one history under the saved study limit, makes its folder with its first files (the header and the empty journal) and writes its writer record ({@link writeNodeTestWriterRecord}, F260); the body of {@link start}, run while the storage lock is held.
    * @param header - The validated header of this workspace.
    * @returns The writer of the reserved history.
    * @throws What {@link start} names for a full store, a header above its limit and files that cannot be written.
@@ -804,10 +804,12 @@ export class NodeTestHistoryStore {
     }
     const now = this.writerJudge.now()
     const kept = this.writerVerdicts.get(studyId)
-    // A verdict is reused for the same record: "gone" for good, "live" until the recheck interval passes (the judge starts a process).
+    // A verdict is reused for the same record: "gone" for good, "live" until the recheck interval passes (the judge starts a process). A clock stepped backwards gives a negative difference and no reuse, so a crashed writer is not listed as recording for the length of the step (F284).
+    const sinceJudgedMs = kept ? now - kept.judgedAtMs : 0
     if (
       kept?.signal === signal &&
-      (!kept.live || now - kept.judgedAtMs < NODE_TEST_WRITER_RECHECK_MS)
+      (!kept.live ||
+        (sinceJudgedMs >= 0 && sinceJudgedMs < NODE_TEST_WRITER_RECHECK_MS))
     )
       return kept.live
     const live = await this.writerJudge.isLive(directory)
