@@ -713,6 +713,16 @@ test('a reselect of the shown stop whose slot fails to open empties the debugger
     const history = await saveOneStopNodeHistory(store)
     await store.saveReaderPosition(history.studyId, 2)
     await openReplayAt(harness, history.studyId, 2)
+    // The learner closes the slot's tab by hand, so a reselect of the shown stop opens the slot again.
+    const slotAddress = slotTabs(harness)[0]!
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+    harness.closeTabByHand(slotTab)
     const invalidationsBefore =
       harness.historicalDebugInvalidationLabels().length
     harness.failCurrentSourceOpen()
@@ -733,10 +743,10 @@ test('a reselect of the shown stop whose slot fails to open empties the debugger
       false,
     )
     assert.equal(
-      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      await harness.readCapturedSource(slotAddress),
       '// Loading recorded source…\n',
     )
-    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(harness.reader['nodeSourceSlot']?.stop, undefined)
   } finally {
     harness.restoreCurrentSourceOpen()
     await harness.close()
@@ -924,6 +934,116 @@ test('the failure row of a slot stays in the Study message until the retried mom
       /could not open the recorded source of stop 1/,
     )
     assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Counts what the reader asks of the editor for the recorded-source slot while a test runs: the provider events it fires for the slot, and the documents it opens and shows.
+ * @param harness - The workspace harness.
+ * @returns The counters, read after the moves.
+ * @example const asked = countSlotRequests(harness); await selectMoment(harness, id, 3); asked.providerEvents // => 1
+ */
+function countSlotRequests(harness: Harness) {
+  const counts = { providerEvents: 0, opens: 0, shows: 0 }
+  harness.reader['sourceChanges'].event((uri) => {
+    if (uri.path.includes('/node-history-slot/')) counts.providerEvents++
+  })
+  const open = harness.editor.workspace.openTextDocument.bind(
+    harness.editor.workspace,
+  )
+  harness.editor.workspace.openTextDocument = ((...args: unknown[]) => {
+    if (String(args[0]).includes('/node-history-slot/')) counts.opens++
+    return (open as (...rest: unknown[]) => unknown)(...args)
+  }) as typeof harness.editor.workspace.openTextDocument
+  const show = harness.editor.window.showTextDocument.bind(
+    harness.editor.window,
+  )
+  harness.editor.window.showTextDocument = ((...args: unknown[]) => {
+    if (
+      String(args[0] && (args[0] as { uri?: unknown }).uri).includes(
+        '/node-history-slot/',
+      )
+    )
+      counts.shows++
+    return (show as (...rest: unknown[]) => unknown)(...args)
+  }) as typeof harness.editor.window.showTextDocument
+  return counts
+}
+
+// Value: protects=Play over outputs and the result leaves an unchanged recorded-source slot as it is (F174): the placeholder is already in an open tab, so a move from one output to the result asks the editor for no provider event, no open and no show; fails_when=every move runs the slot's whole cycle although its bytes did not change; why_new=F174 (every Play event ran provider event, open and show); seam=counters on the reader's provider event and on the editor's open and show; no_claim=the cost of one cycle
+test('a move between two moments that record no stop leaves the recorded-source slot untouched', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const asked = countSlotRequests(harness)
+
+    // Act
+    await selectMoment(harness, history.studyId, 5)
+
+    // Assert
+    assert.deepEqual(asked, { providerEvents: 0, opens: 0, shows: 0 })
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      PLACEHOLDER,
+    )
+    assert.equal(slotTabs(harness).length, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a move from a stop to an output asks the editor for the slot's text once, not once for the loading text and once for the new text (F174); fails_when=the leave step fires a provider event of its own; why_new=F174 (a stop-to-output move fired the provider twice); seam=counters on the reader's provider event and on the editor's open and show; no_claim=the cost of one event
+test('a move from a stop to an output asks the editor for the slot’s text once', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const asked = countSlotRequests(harness)
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+
+    // Assert
+    assert.deepEqual(asked, { providerEvents: 1, opens: 1, shows: 1 })
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      PLACEHOLDER,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the slider's marks of a test replay are mapped from its journal once per opened history (F162, F190): every Study message and every move carries the very same timeline object, so no publish maps the whole journal again or verifies every stop's sealed source again; fails_when=a Study message maps the journal onto the timeline again; why_new=F162 and F190 (projectNodeTestSection mapped the whole history at every message); seam=the reader's message, read by hand, with object identity as the count of projections; no_claim=the marks' values, which the projection's own tests pin
+test('the slider’s marks are mapped once per opened test replay, not at every Study message', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const atOpen = harness.reader['message']().nodeHistorySection?.timeline
+
+    // Act
+    const again = harness.reader['message']().nodeHistorySection?.timeline
+    await selectMoment(harness, history.studyId, 4)
+    const afterMove = harness.reader['message']().nodeHistorySection?.timeline
+
+    // Assert
+    assert.deepEqual(atOpen?.recordedPoints, [200, 300])
+    assert.equal(again, atOpen)
+    assert.equal(afterMove, atOpen)
   } finally {
     await harness.close()
   }

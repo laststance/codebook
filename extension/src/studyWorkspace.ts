@@ -283,6 +283,10 @@ import { paneKeyboardTimeoutMessage } from './utils/paneKeyboardTimeoutMessage'
 import { parseRecordedStudyGroups } from './utils/parseRecordedStudyGroups'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
+import {
+  type NodeHistoryTimeline,
+  projectNodeHistoryTimeline,
+} from './utils/projectNodeHistoryTimeline'
 import { projectNodeLearningSummary } from './utils/projectNodeLearningSummary'
 import {
   projectNodeTestApplication,
@@ -766,6 +770,11 @@ export class StudyWorkspace {
       running?: Promise<void>
     }
   >()
+  /** The slider's marks of the selected test replay, mapped once per history object ({@link nodeHistoryTimelineMarks}). */
+  private nodeHistoryTimeline?: {
+    history: NodeTestHistoryIndex
+    marks: { timeline?: NodeHistoryTimeline }
+  }
   /** The count of the Application pane's test replay views, and what the last one showed, so its generation changes only when the shown moment does. */
   private nodeHistoryApplicationGeneration = 0
   private nodeHistoryApplicationMemo?: {
@@ -785,6 +794,8 @@ export class StudyWorkspace {
     text: string
     stop?: NodeTestHistoryStop
   }
+  /** The address and bytes the slot's open tab last showed in full ({@link showNodeSourceSlot}); a moment with the same address and bytes leaves the slot as it is ({@link nodeSourceSlotShows}). Dropped when the slot's text is reset or the slot is retired. */
+  private nodeSourceSlotHeld?: { address: string; text: string }
   /** The closes of recorded-source slot tabs that the editor has not answered yet, by the closing tab's address: a show of that address waits for its own close ({@link showNodeSourceSlot}), so a close an older selection issued never closes the tab a newer one shows again (F196). */
   private readonly nodeSourceSlotCloses = new Map<string, Promise<unknown>>()
   /** The newest selection request whose slot show reached its sweep: a slower show of an older request that finds a newer one done closes its own tab itself ({@link settleOvertakenSlotShow}). */
@@ -12174,6 +12185,7 @@ export class StudyWorkspace {
   private async retireNodeSourceSlot(): Promise<void> {
     const slot = this.nodeSourceSlot
     this.nodeSourceSlot = undefined
+    this.nodeSourceSlotHeld = undefined
     // A slot that could not open belonged to the retired replay: its row and Retry go with it.
     const removedRow = this.errors.delete('history-source')
     this.clearNodeSourceSlotDecorations()
@@ -12438,9 +12450,29 @@ export class StudyWorkspace {
           ? { chosenStepId: this.selectedNodeHistoryStepId }
           : {}),
         applicationClosed: !this.app,
+        marks: this.nodeHistoryTimelineMarks(history),
       }),
       ...(learning ? { nodeHistoryLearningSummary: learning } : {}),
     }
+  }
+
+  /**
+   * Gives the slider's marks of a test replay, mapped from its journal once per opened history: a Study message at every move would otherwise map every event again and verify every stop's sealed source at the first publish again (F162, F190); called by {@link nodeHistoryViews}.
+   * @param history - The shown test replay (its sanitized copy); a history read again is another object and is mapped again.
+   * @returns The marks, whose `timeline` is absent for a history with nothing to mark.
+   * @example this.nodeHistoryTimelineMarks(shown) // => { timeline: { startMs: 0, endMs: 2000, gaps: [...], recordedPoints: [1000] } }
+   */
+  private nodeHistoryTimelineMarks(history: NodeTestHistoryIndex): {
+    timeline?: NodeHistoryTimeline
+  } {
+    if (this.nodeHistoryTimeline?.history !== history) {
+      const timeline = projectNodeHistoryTimeline(history)
+      this.nodeHistoryTimeline = {
+        history,
+        marks: timeline ? { timeline } : {},
+      }
+    }
+    return this.nodeHistoryTimeline.marks
   }
 
   /**
@@ -23972,8 +24004,12 @@ export class StudyWorkspace {
       this.selectedNodeHistorySequence !== sequence
     this.nodeSurfacesSequence = undefined
     if (leavesShownMoment) this.nodeHistoryLeftFor = sequence
-    // A slot that holds the placeholder or its loading text shows no earlier moment.
-    if (this.nodeSourceSlot?.stop) this.resetNodeSourceSlotText()
+    const slot = this.nodeSourceSlot
+    // A slot that holds the placeholder or its loading text shows no earlier moment. The earlier stop's line and label go now; its bytes stay until the new moment's show replaces them, so a move asks the editor for the slot's text once (F174).
+    if (slot?.stop) {
+      this.nodeSourceSlot = { ...slot, stop: undefined }
+      this.decorateNodeSourceSlot()
+    }
     if (leavesShownMoment) this.publish()
   }
 
@@ -24001,6 +24037,7 @@ export class StudyWorkspace {
       text: NODE_RECORDED_SOURCE_TEXT.loading,
       stop: undefined,
     }
+    this.nodeSourceSlotHeld = undefined
     this.decorateNodeSourceSlot()
     this.sourceChanges.fire(slot.uri)
   }
@@ -24037,6 +24074,10 @@ export class StudyWorkspace {
       )
       if (uri === 'failed' || uri === undefined) return uri
       this.nodeSourceSlotShownRequest = request
+      this.nodeSourceSlotHeld = this.nodeSourceSlot && {
+        address: uri.toString(),
+        text: this.nodeSourceSlot.text,
+      }
       // A tab that stays open does not fail the slot that shows its bytes: it is told apart, and the moment commits (F185).
       const closeFailure = await this.closeEarlierNodeSourceSlots(uri, deadline)
       if (request !== this.selectedNodeHistoryRequest) return undefined
@@ -24085,6 +24126,11 @@ export class StudyWorkspace {
       const text =
         verifiedStop?.debuggerSnapshot.frames[0]?.source?.text ??
         NODE_RECORDED_SOURCE_TEXT.placeholder
+      // A slot whose open tab already shows these bytes is left as it is: no provider event, no open, no show (Play over outputs and the result, F174).
+      if (this.nodeSourceSlotShows(uri, text)) {
+        this.nodeSourceSlot = { studyId, uri, text }
+        return request === this.selectedNodeHistoryRequest ? uri : undefined
+      }
       // The stopped line and label wait for the commit ({@link selectNodeHistoryEvent}), so no editor event draws them before the debugger shows the stop.
       this.nodeSourceSlot = { studyId, uri, text }
       this.sourceChanges.fire(uri)
@@ -24110,6 +24156,29 @@ export class StudyWorkspace {
     } finally {
       stopNudge()
     }
+  }
+
+  /**
+   * Says whether the recorded-source slot already holds a moment's bytes in an open tab, so showing the moment needs no provider event, open or show (F174); called by {@link openNodeSourceSlotWithinDeadline}.
+   * @param uri - The address the moment's slot has.
+   * @param text - The bytes the moment's slot must show.
+   * @returns `true` when the slot's open tab last showed these bytes at this address in full ({@link nodeSourceSlotHeld}) and no close of it is running.
+   * @example this.nodeSourceSlotShows(uri, NODE_RECORDED_SOURCE_TEXT.placeholder) // => true at the second of two outputs in a row
+   */
+  private nodeSourceSlotShows(uri: vscode.Uri, text: string): boolean {
+    const address = uri.toString()
+    return (
+      this.nodeSourceSlotHeld?.address === address &&
+      this.nodeSourceSlotHeld.text === text &&
+      !this.nodeSourceSlotCloses.has(address) &&
+      vscode.window.tabGroups.all.some((group) =>
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            tab.input.uri.toString() === address,
+        ),
+      )
+    )
   }
 
   /**

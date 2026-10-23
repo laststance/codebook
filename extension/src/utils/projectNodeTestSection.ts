@@ -58,6 +58,8 @@ export type NodeTestSectionInput = {
   /** The step committed with the selected event (DS21); one that names no step of the event falls back to the event's first step. */
   chosenStepId?: string
   applicationClosed: boolean
+  /** The slider's marks made once for this history by the caller ({@link projectNodeHistoryTimeline}); `timeline` is absent for a history with nothing to mark. Without it the section maps the whole history itself. */
+  marks?: { timeline?: NodeHistoryTimeline }
   /** `true` while the selected event is only the moment a selection is going to: the locator names it, and the explanation, the steps and the not-recorded lines of the moment left are not shown until it commits (D29, F203). */
   pending?: boolean
 }
@@ -87,7 +89,10 @@ export function projectNodeTestSection(
     : momentExplanation(selected, moment.selectedStep)
   const unverifiedStop =
     !pendingMoment && selected?.type === 'stop' && !input.selectedStopVerified
-  const timeline = projectNodeHistoryTimeline(history)
+  // The caller keeps the marks per history, so a Study message maps the journal onto the timeline only for a history it has not mapped (F162, F190).
+  const timeline = input.marks
+    ? input.marks.timeline
+    : projectNodeHistoryTimeline(history)
   const marks = timeline ? { timeline } : {}
   return {
     status: sectionStatus(history, stops, verdict, learning),
