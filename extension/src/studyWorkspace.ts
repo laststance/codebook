@@ -11513,8 +11513,11 @@ export class StudyWorkspace {
     await this.replaceUnavailableReplayDebugger(signal)
     signal.throwIfAborted()
     // A recording that loads retires a selected test replay, as choosing a browser study does: the pane then shows the recording's own pages (D20).
-    await this.retireNodeHistorySelection()
-    signal.throwIfAborted()
+    // Only a selected replay is retired, so a load with none selected adds no wait before the recording becomes active.
+    if (this.selectedNodeHistory) {
+      await this.retireNodeHistorySelection()
+      signal.throwIfAborted()
+    }
     this.recordingActive = true
     this.pendingHistory = undefined
     // A study this window still holds (a run of this session) is selected with its own item: paired with the item shown before, every reader update until the recording is read failed with "Selected item belongs to another configured article.", and that line stayed.

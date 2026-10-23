@@ -1278,7 +1278,7 @@ test('Previous event from the landing reaches the start of the replay, and a fur
     assert.equal(
       JSON.stringify(lastView(harness)?.errors),
       JSON.stringify([
-        'Error: There is no previous event in this Node history.',
+        'Error: There is no previous event in this test replay.',
       ]),
     )
   } finally {
