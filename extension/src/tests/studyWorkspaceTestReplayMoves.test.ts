@@ -111,8 +111,8 @@ test('a Next stop whose presentation failed leaves the next Next stop to move fr
   }
 })
 
-// Value: protects=a Close during a slow Next gives the requested moment back: the Close bumps the selection token, so the cut-off move's own cleanup no longer does, and the next Next must move on from the shown moment, not from the one the cut-off move was going to; fails_when=the requested moment (sequence 4) outlives the Close and the next Next starts from it, skipping a stop; why_new=F283: only a matching token cleared the requested moment, and Close (and a browser recording's admission) bumps the token without clearing it; seam=the workspace harness's held historical debug presentation, then Close; no_claim=the wording of the failure the cut-off move reports
-test('a Close during a slow Next stop leaves no requested moment for the next Next to start from', async () => {
+// Value: protects=a Close during a slow Next gives the requested moment back: the Close bumps the selection token, so the cut-off move's own cleanup no longer does; when the learner brings the replay back and presses Next stop once, it lands on the stop after the shown one, not one further; fails_when=the cut-off move's target (the second stop) outlives the Close and the next Next stop starts from it, so there is no stop after it and the press is refused; why_new=F283: only a matching token cleared the requested moment, and Close (and a browser recording's admission) bumps the token without clearing it; seam=the workspace harness's held historical debug presentation, then Close and Focus application; no_claim=the wording of the failure the cut-off move reports
+test('Next stop after a Close that cut off a slow Next stop moves on from the shown stop', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -137,14 +137,34 @@ test('a Close during a slow Next stop leaves no requested moment for the next Ne
       unit: 'stop',
     })
     await held.started
-    assert.equal(harness.reader['requestedNodeHistorySequence'], 4)
+    await harness.reader.close()
+    held.reject(new Error('Historical debugger presentation was superseded.'))
+    await harness.reader.action('focus-app')
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition !== undefined,
+      'the replay is shown again',
+      2_000,
+    )
+    const shown = lastView(harness)?.nodeHistoryPosition?.sequence
 
     // Act
-    await harness.reader.close()
+    harness.receiveContext({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'stop',
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      'the Next stop lands on the second stop',
+      2_000,
+    )
 
     // Assert
+    assert.equal(shown, 2)
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 4)
     assert.equal(harness.reader['requestedNodeHistorySequence'], undefined)
-    held.reject(new Error('Historical debugger presentation was superseded.'))
   } finally {
     await harness.close()
   }
