@@ -165,7 +165,7 @@ test('a background render overtaken by a move keeps the later moment in the Appl
   }
 })
 
-// Value: protects=a background render that settles while another test replay opens does not end that open's loading line early or leave a placeholder: the pane ends on the opened replay's first moment; fails_when=the render's end reads as the open's end, so the pane says "No test output recorded up to this moment." for the replay that is still opening; why_new=F147: only the first open of a replay was tested; seam=the workspace harness's held historical debug presentation; no_claim=the Study pane's loading line
+// Value: protects=a background render that settles while another test replay opens does not end that open's loading line early or leave a placeholder: the opening replay's document still reads its loading line after the render, and the pane ends on the opened replay's first moment; fails_when=the render's end reads as the open's end, so the pane says "No test output recorded up to this moment." for the replay that is still opening, or loses its loading line before the open ends; why_new=F147: only the first open of a replay was tested; why_changed=F280: another replay's loading line is written into its own document (F150, D22), never posted into the shown one, so the case reads the document while the open is held; seam=the workspace harness's held historical debug presentation; no_claim=the Study pane's loading line
 test('a render that settles while another test replay opens ends on that replayâ€™s first moment', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -182,6 +182,10 @@ test('a render that settles while another test replay opens ends on that replayâ
 
     // Act
     await harness.reader.action('retry')
+    const afterRender = {
+      html: applicationReading(harness).html,
+      placeholder: harness.applicationOutputs().at(-1)?.view.placeholder,
+    }
     held.release()
     await opening
     await waitUntil(
@@ -194,11 +198,14 @@ test('a render that settles while another test replay opens ends on that replayâ
 
     // Assert
     const posted = harness.applicationOutputs().slice(outputsBefore)
-    assert.ok(
-      posted.some(
-        (update) => update.view.placeholder === 'Loading recorded test outputâ€¦',
-      ),
-      'the open tells its loading line',
+    assert.match(
+      afterRender.html,
+      /Loading recorded test outputâ€¦<\/p>/,
+      'the opening replay still tells its loading line after the render',
+    )
+    assert.notEqual(
+      afterRender.placeholder,
+      'No test output recorded up to this moment.',
     )
     assert.ok(
       posted.every(
