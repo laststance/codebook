@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import {
   readerSeams,
@@ -2973,3 +2974,274 @@ test("a live entry from the three-pane Study layout stays confirmed when the con
     await harness.close()
   }
 })
+
+// Value: protects=Open replay during a live run: the learner reaches the test replay's Study pane (its transport, position and summary) instead of a replay shown only in the Application, the slot and the debugger; fails_when=the live composition keeps the reader without a Study pane while a test replay is opening or selected; why_new=Cycle 0050 F208 (N49 Cursor part 7: Open replay after a live run opened no Study pane); seam=workspaceHarness with the controlled runtime, the reader's open, returnToCurrent and openLearningReplay, panelColumn
+test('Open replay during a live run creates the Study pane and selects the test replay in it', async () => {
+  // Arrange: the learner returned the Study to the current run, and a run started, so the reader stands in the Live composition without a Study pane.
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const overview = harness.reader.presentationState()
+    await harness.reader.returnToCurrent({
+      presentationId: overview.presentationId,
+      expectedRevision: overview.reader.contentRevision,
+    })
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    await readerSeams(harness).refresh()
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      history.studyId,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the explicit Open Study Workspace after a run left the Application pane outside the group Codebook allocated for it (a failed Return Current kept the record): the open reconciles the pane where it stands, instead of refusing with "The Application group changed"; fails_when=an explicit open takes the kept record for a background capture and throws the refusal that only a background acquisition should keep; why_new=Cycle 0050 F208 cause (b) (N49 Cursor part 7); seam=workspaceHarness with the controlled runtime, movePanel, the reader's open and returnToCurrent, panelColumn, errorLines
+test('Open Study Workspace after the Application pane left its allocated group opens without the Application group refusal', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  await harness.reader.attach(harness.service)
+  readerSeams(harness).stopOwnTimer()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const overview = harness.reader.presentationState()
+    await harness.reader.returnToCurrent({
+      presentationId: overview.presentationId,
+      expectedRevision: overview.reader.contentRevision,
+    })
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    await readerSeams(harness).refresh()
+    const appColumn = harness.panelColumn('codebook.scopedBrowser')!
+    harness.movePanel('codebook.scopedBrowser', appColumn + 1)
+    assert.notEqual(harness.panelColumn('codebook.scopedBrowser'), appColumn)
+
+    // Act
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(await opening, 'opened')
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+    assert.notEqual(harness.panelColumn('codebook.scopedBrowser'), undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Focus Explanation for a test replay whose Study pane is gone: the command opens the pane again so the transport, position and summary are reachable, instead of changing nothing visible; fails_when=the focus action only reveals an existing pane; why_new=Cycle 0050 F208 (Focus Explanation changed nothing visible after Open replay lost its Study pane); seam=workspaceHarness, openLearningReplay, tabGroups.close of the Study pane's tab, the reader's focus-context action, panelColumn
+test('Focus Explanation opens the Study pane again for a selected test replay whose pane was closed', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await harness.editor.window.tabGroups.close(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter(
+          (tab) =>
+            tab.input instanceof harness.editor.TabInputWebview &&
+            tab.input.viewType.includes('codebook.studyContext'),
+        ),
+      true,
+    )
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+
+    // Act
+    await harness.reader.action('focus-context')
+
+    // Assert
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+const SUMMARY_MOVE = {
+  viewIds: ['codebook.learningSummary'],
+  destinationId: 'workbench.panel.chat',
+}
+
+// Value: protects=the Learning summary's place beside VS Code's chat (the PNG's region 2) without overriding the learner: the learner's first Open replay in a profile moves the view into the Chat container once, and later opens never move it again (a place the learner chose stays); fails_when=the move repeats at every open, runs at no open, or the profile flag is not kept; why_new=Cycle 0050 F209 and D31 (Cursor rejects the secondary side bar container, so the manifest uses the Activity Bar); seam=workspaceHarness (VS Code), openLearningReplay, the fake vscode.moveViews and the profile state
+test('the first Open replay of a profile in VS Code moves the Learning summary beside the chat once and later opens leave it', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    const afterFirst = harness.moveViewsCalls()
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.deepEqual(afterFirst, [SUMMARY_MOVE])
+    assert.deepEqual(harness.moveViewsCalls(), [SUMMARY_MOVE])
+    assert.equal(
+      harness.profileState.get('codebook.summaryBesideChatMoved.v1'),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Cursor's Learning summary staying in its own Activity Bar container: Cursor has no Chat container to move the view into, and moving views there is not Codebook's to do; fails_when=the move runs in Cursor; why_new=Cycle 0050 F209 and D31; seam=workspaceHarness with useHostAppName('Cursor'), openLearningReplay
+test('the first Open replay in Cursor moves no view', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useHostAppName('Cursor')
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.deepEqual(harness.moveViewsCalls(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a host that does not register the internal vscode.moveViews command: the replay still opens, the summary stays in the Activity Bar, one Output › Codebook entry names the refusal, and the move is not tried again at every open; fails_when=the refusal fails the open, is silent, or repeats; why_new=Cycle 0050 F209 and D31 (the command and the container id are internal to VS Code); seam=workspaceHarness removeHostCommands('vscode.moveViews'), diagnostics
+test('a host without vscode.moveViews still opens the replay and reports the refusal once to the Output channel', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.removeHostCommands('vscode.moveViews')
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      history.studyId,
+    )
+    assert.deepEqual(
+      logged.map((entry) => entry.surface),
+      ['layout:summary-beside-chat'],
+    )
+    assert.match(logged[0]!.cause, /vscode\.moveViews/)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Open replay from a closed reader showing only the replay's own recorded-source slot: the Study's article selection opens no source tab and no captured-source warning beside it; fails_when=the entry renders the article's source first (a `Captured-overview` tab and "Configured source is unavailable") before the replay opens; why_new=Cycle 0050 F156 (PR-B2 spike, both hosts); seam=workspaceHarness, openLearningReplay, the fake tab model
+test('Open replay from a closed reader opens no source tab of the Study’s article beside the replay’s slot', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    const sourceTabs = harness.groups
+      .flatMap((group) => group.tabs)
+      .map((tab) => tab.label)
+      .filter((label) => label.startsWith('Captured-'))
+    assert.deepEqual(sourceTabs, ['Captured-theme.ts'])
+    assert.deepEqual([...(harness.reader.inspect().view?.errors ?? [])], [])
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const row of [
+  {
+    kind: 'history-position',
+    method: 'readReaderPosition',
+    line: 'reader position file unreadable',
+  },
+  {
+    kind: 'history-learning',
+    method: 'readLearningMaterial',
+    line: 'learning material file unreadable',
+  },
+] as const)
+  // Value: protects=the Study pane's lines of a retired test replay not staying beside the current run: the row of a reader position or a learning material that could not be read belongs to the replay and goes when the learner returns to Live; fails_when=the retire clears the source row only, so the retired replay's `history-position` and `history-learning` rows survive a return to Live; why_new=Cycle 0050 F178 (sideways sweep of F164, present on main); seam=workspaceHarness, a rejecting NodeTestHistoryStore read, the reader's return-current action, errorLines
+  test(`returning to Live removes the retired test replay’s ${row.kind} row`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const store = harness.service.nodeHistoryStore!
+      const history = await saveOneStopNodeHistory(store)
+      await harness.reader.action('retry')
+      context.mock.method(store, row.method, async () => {
+        throw new Error(row.line)
+      })
+      await harness.reader.openLearningReplay(history.studyId)
+      assert.equal(readerSeams(harness).errorLines().includes(row.line), true)
+
+      // Act
+      await harness.reader.action('return-current')
+
+      // Assert
+      assert.equal(readerSeams(harness).errorLines().includes(row.line), false)
+    } finally {
+      context.mock.restoreAll()
+      await harness.close()
+    }
+  })

@@ -17,9 +17,11 @@ import type {
   RecordingIndex,
 } from '../recordingSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 
 /** Supplies deterministic recorded identities to control-concurrency tests, without live browser/debugger effects. @example const data = playbackFixture() */
 function playbackFixture(): PlaybackData {
@@ -1911,4 +1913,113 @@ test('the seek description names the snap distance the seek applies', async () =
     description,
     'Required only for seek; use a position within the returned recording range. A position less than 5 ms before a recorded stop presents that stop. Omit for open, play and pause.',
   )
+})
+
+// Value: protects=a seek keeping the shown pixels while the next frame's bytes are read, and handing that frame to the pane in the same step that retires the old moment; fails_when=the seek retires the moment (and blanks the pane) before the frame resolves, which showed dark frames for 0.5 to 1.2 s at a stop's entry (F3, D29); why_new=Cycle 0050 F3 (observed in Cycle 0044 on Linux); seam=a gated frame read
+test('a seek retires the shown moment only after the next frame is read and hands that frame to the leave', async () => {
+  // Arrange
+  let releaseRead = (): void => {}
+  const readHeld = new Promise<void>((resolve) => {
+    releaseRead = resolve
+  })
+  let holdNextRead = false
+  const leaves: Array<{ keepPixels?: boolean; next?: number }> = []
+  const player = playbackHarness({
+    frame: async (_study, hash) => {
+      if (holdNextRead) await readHeld
+      return Buffer.from(hash)
+    },
+    invalidate: (keepPixels, next) => {
+      leaves.push({ keepPixels, next: next?.positionMs })
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  const leavesBeforeSeek = leaves.length
+  holdNextRead = true
+
+  // Act
+  player.seek(120)
+  await Promise.resolve()
+  const leavesWhileHeld = leaves.slice(leavesBeforeSeek)
+  releaseRead()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(leavesWhileHeld, [])
+  assert.deepEqual(leaves.slice(leavesBeforeSeek), [
+    { keepPixels: false, next: 120 },
+  ])
+  assert.equal(player.controller.state().presentedMs, 120)
+  await player.controller.dispose()
+})
+
+// Value: protects=the bound of a frame read: a read that outlasts it blanks the pane (the page is hidden) instead of leaving the old moment's pixels for ever; fails_when=the controller waits for the frame without a bound; why_new=Cycle 0050 F3 (D29: the page is hidden only when no frame exists or the read passes its bound); seam=a gated frame read and frameReadBoundMs
+test('a seek whose frame read passes its bound blanks the pane without a frame, and the frame still presents when it arrives', async () => {
+  // Arrange
+  let releaseRead = (): void => {}
+  const readHeld = new Promise<void>((resolve) => {
+    releaseRead = resolve
+  })
+  let holdNextRead = false
+  const leaves: Array<{ next?: number }> = []
+  const player = playbackHarness({
+    frameReadBoundMs: 1,
+    frame: async (_study, hash) => {
+      if (holdNextRead) await readHeld
+      return Buffer.from(hash)
+    },
+    invalidate: (_keepPixels, next) => {
+      leaves.push({ next: next?.positionMs })
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  const leavesBeforeSeek = leaves.length
+  holdNextRead = true
+
+  // Act
+  player.seek(120)
+  await waitUntil(
+    () => leaves.length > leavesBeforeSeek,
+    'the pane blanks at the bound',
+    READER_RESULT_BOUND_MS,
+  )
+  const leavesAtBound = leaves.slice(leavesBeforeSeek)
+  releaseRead()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(leavesAtBound, [{ next: undefined }])
+  assert.equal(leaves.length, leavesBeforeSeek + 1)
+  assert.equal(player.controller.state().presentedMs, 120)
+  await player.controller.dispose()
+})
+
+// Value: protects=a stop's entry during Play handing the stop's frame to the pane at the leave, so the pane never shows a blank page while the stop's source and values are presented; fails_when=the stop's entry retires the image without the next frame (the dark frames of F3 at a stop's entry); why_new=Cycle 0050 F3; seam=none
+test('Play that reaches a recorded stop hands the stop’s frame to the leave', async () => {
+  // Arrange
+  const leaves: Array<{ keepPixels?: boolean; next?: number }> = []
+  const player = playbackHarness({
+    invalidate: (keepPixels, next) => {
+      leaves.push({ keepPixels, next: next?.positionMs })
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(50)
+  await player.controller.settle()
+  player.play()
+  const leavesAtPlay = leaves.length
+
+  // Act
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(leaves.slice(leavesAtPlay), [
+    { keepPixels: false, next: 100 },
+  ])
+  await player.controller.dispose()
 })

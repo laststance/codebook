@@ -1,4 +1,7 @@
-import { PLAYBACK_TICK_INTERVAL_MS } from './constants'
+import {
+  PLAYBACK_FRAME_READ_BOUND_MS,
+  PLAYBACK_TICK_INTERVAL_MS,
+} from './constants'
 import type { PlaybackCommand } from './playbackSchemas'
 import type { RecordingContext, RecordingIndex } from './recordingSchemas'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
@@ -31,7 +34,7 @@ export interface PlaybackDependencies {
   frame(studyId: string, hash: string, signal: AbortSignal): Promise<Buffer>
   present(bundle: PlaybackBundle, signal: AbortSignal): Promise<void>
   /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded, when Play leaves a stop for no stop with a recorded frame on both sides (the end of the stop's pause), or when Pause finds no frame in flight: the frame on screen stays until the next moment paints, instead of a blank pane. */
-  invalidate(keepPixels?: boolean): void
+  invalidate(keepPixels?: boolean, next?: PlaybackFramePreview): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
   /** Whether the committed moment can be shown again as it is: the reader is open and its historical debugger is usable. Defaults to true. */
@@ -40,6 +43,13 @@ export interface PlaybackDependencies {
   readerOpen?(): boolean
   now?(): number
   manualTicks?: boolean
+  /** How long a read of the next frame may keep the shown pixels before the pane blanks; defaults to {@link PLAYBACK_FRAME_READ_BOUND_MS}. */
+  frameReadBoundMs?: number
+}
+/** The next moment's frame, handed to {@link PlaybackDependencies.invalidate} when it is already read, so the pane shows it at once and never blanks. */
+export interface PlaybackFramePreview {
+  image: Buffer
+  positionMs: number
 }
 interface PresentationRequest {
   revision: number
@@ -58,6 +68,9 @@ export class PlaybackController {
   private presented?: PlaybackBundle
   private requestedMs?: number
   private cleared = false
+  /** `true` while an explicit move waits for its frame: the work of the shown moment is retired but its pixels and native state stay until the frame is read ({@link leaveShownMoment}). */
+  private leaveOwed = false
+  private leaveTimer?: ReturnType<typeof setTimeout>
   private boundaries: number[] = []
   private mode: 'paused' | 'playing' = 'paused'
   private readiness: 'idle' | 'loading' | 'ready' | 'failed' = 'idle'
@@ -407,7 +420,13 @@ export class PlaybackController {
     clear = true,
     keepPixels = false,
   ): void {
-    if (clear) this.invalidate(keepPixels)
+    // An explicit move within a loaded recording retires the shown moment's work now and its pixels once the next frame is read (F3).
+    if (clear && !keepPixels && this.data && this.presented) {
+      this.presentationRevision++
+      this.abort?.abort(new Error('Playback presentation superseded'))
+      this.cleared = true
+      this.leaveOwed = true
+    } else if (clear) this.invalidate(keepPixels)
     else {
       this.presentationRevision++
       this.abort?.abort(new Error('New playback frame'))
@@ -471,18 +490,33 @@ export class PlaybackController {
             request.restore?.projection ??
             projectRecording(data.index, data.context, positionMs)
           const frameHash = projection.frame?.hash
+          // A moment with no frame leaves at once: the pane shows its gap, not the old pixels.
+          if (!frameHash && this.leaveOwed) this.leaveShownMoment()
           let image =
             request.restore?.image ??
             (frameHash && this.presented?.projection.frame?.hash === frameHash
               ? this.presented.image
               : undefined)
           if (frameHash && !image) {
-            image = await untilAborted(
-              this.dependencies.frame(request.studyId, frameHash, abort.signal),
-              abort.signal,
-            )
+            // The shown pixels stay while the bytes are read; only a read that passes its bound blanks the pane.
+            this.armLeaveBound()
+            try {
+              image = await untilAborted(
+                this.dependencies.frame(
+                  request.studyId,
+                  frameHash,
+                  abort.signal,
+                ),
+                abort.signal,
+              )
+            } finally {
+              clearTimeout(this.leaveTimer)
+            }
             if (!current()) continue
           }
+          // The frame is read: the shown moment leaves in one step, and the pane swaps to the next frame without a blank.
+          if (this.leaveOwed)
+            this.leaveShownMoment(image && { image, positionMs })
           const bundle: PlaybackBundle = request.restore ?? {
             studyId: request.studyId,
             contextHash: data.contextHash,
@@ -506,6 +540,7 @@ export class PlaybackController {
             // The end of a stop's pause keeps the image while the stop's values retire, and the next frame replaces it once painted; every other stop change clears it until the next moment paints.
             this.dependencies.invalidate(
               leavesStopForNoStop(this.presented?.projection, projection),
+              image && { image, positionMs },
             )
             this.dependencies.changed()
           }
@@ -541,6 +576,7 @@ export class PlaybackController {
           this.stopTimer()
           this.readiness = 'failed'
           this.reason = String(error)
+          this.leaveOwed = false
           this.dependencies.invalidate()
           this.dependencies.changed()
         }
@@ -583,7 +619,31 @@ export class PlaybackController {
     this.presentationRevision++
     this.abort?.abort(new Error('Playback presentation superseded'))
     this.cleared = true
+    this.leaveOwed = false
+    clearTimeout(this.leaveTimer)
     this.dependencies.invalidate(keepPixels)
+  }
+
+  /**
+   * Retires the shown moment's pixels and native state after an explicit move read its frame; called by {@link pump} with the frame, or without one when the moment has none or the read passed its bound.
+   * @param next - The next moment's frame, shown at once in place of a blank pane.
+   * @example this.leaveShownMoment(image && { image, positionMs })
+   */
+  private leaveShownMoment(next?: PlaybackFramePreview): void {
+    this.leaveOwed = false
+    clearTimeout(this.leaveTimer)
+    this.dependencies.invalidate(false, next)
+    this.dependencies.changed()
+  }
+
+  /** Starts the bound after which a frame read that is still pending blanks the pane; {@link pump} arms it for each read of an owed leave. @example this.armLeaveBound() */
+  private armLeaveBound(): void {
+    if (!this.leaveOwed) return
+    clearTimeout(this.leaveTimer)
+    this.leaveTimer = setTimeout(() => {
+      if (this.leaveOwed) this.leaveShownMoment()
+    }, this.dependencies.frameReadBoundMs ?? PLAYBACK_FRAME_READ_BOUND_MS)
+    this.leaveTimer.unref()
   }
 
   /** Serializes explicit navigation saves and records the confirmed position that the next open of the same study prefers over the stored preference, also when its save fails; callbacks receive the confirmed bundle, never requested position B. @example this.remember() */

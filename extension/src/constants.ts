@@ -476,6 +476,21 @@ export const CHAT_KEYBOARD_RETURNED_MESSAGES = {
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'
+/** The two buttons of the modal warning that answers a foreign preview tab blocking Open replay; each one retries the open (F158, D33). */
+export const FOREIGN_PREVIEW_ACTION = {
+  keepOpen: 'Keep Tab Open',
+  close: 'Close Tab',
+} as const
+/** Profile-wide (global state) key recording that Codebook moved the Learning summary beside VS Code's chat once, at the learner's first replay open; it keeps that move to once, so a place the learner chose afterwards is never overridden (F209, D31). */
+export const SUMMARY_BESIDE_CHAT_MOVED_KEY =
+  'codebook.summaryBesideChatMoved.v1'
+/** VS Code's internal command that moves views into a container; its argument is {@link SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT}. Internal to VS Code, so a missing or refusing command is expected and only reported (F209). */
+export const MOVE_VIEWS_COMMAND = 'vscode.moveViews'
+/** The argument that moves the Learning summary into VS Code's Chat container, the secondary side bar the PNG's region 2 shows (F209, D31). */
+export const SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT = {
+  viewIds: ['codebook.learningSummary'],
+  destinationId: 'workbench.panel.chat',
+} as const
 /** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
 export const SUMMARY_PLACEMENT_OFFER =
   'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'
@@ -729,6 +744,8 @@ export const PNG_WIDTH_OFFSET = 16
 export const PNG_HEIGHT_OFFSET = 20
 export const PNG_SIGNATURE_HEX = '89504e470d0a1a0a0000000d49484452'
 export const PLAYBACK_TICK_INTERVAL_MS = 50
+/** How long an explicit move within a loaded recording waits for the next frame's bytes with the shown pixels untouched before the Application pane blanks to its loading line; a frame read that passes it hides the page, a read that ends sooner swaps the pixels without a dark frame (F3, D29). */
+export const PLAYBACK_FRAME_READ_BOUND_MS = 1_000
 /** The longest Play waits between two events of a test replay, however far apart the journal recorded them (the test ran unrecorded between stops). */
 export const NODE_HISTORY_PLAY_MAX_DWELL_MS = 1_500
 export const PLAYBACK_PREFERENCE_FILE = 'playback.v1.json'

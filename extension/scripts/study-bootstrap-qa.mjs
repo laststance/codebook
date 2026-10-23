@@ -773,12 +773,19 @@ async function check(page, options, collected) {
             .outerHTML,
       )
       // Value: protects=the browser transport's slider keeps the markup it had before its drawing was shared with test replays (AC14): the gap and stop marks, mapped and unknown, in the same elements and attributes; fails_when=the shared drawing changes the browser slider's DOM, so a recording's transport reads or looks different; why_new=PR-B2 shared the coverage drawing and pinned the old markup as a text fixture; seam=none; no_claim=how the slider looks (native pixels)
+      // Computed percentages (left and width of the marks) are compared to a tenth of a percent, so a harmless rounding change of the drawing does not break the fixture (F202).
+      const tenthsOfPercent = (markup) =>
+        markup.replace(
+          /(\d+(?:\.\d+)?)%/g,
+          (_, percent) => `${Math.round(Number(percent) * 10) / 10}%`,
+        )
       cases.push({
         name: 'the browser transport’s slider with its gap and stop marks, mapped and unknown, renders the same markup as before its drawing was shared with test replays',
         actual: `${mappedTransportMarkup}\n---\n${unknownTransportMarkup}`,
         passed:
-          `${mappedTransportMarkup}\n---\n${unknownTransportMarkup}` ===
-          options.goldenHistoryTransport,
+          tenthsOfPercent(
+            `${mappedTransportMarkup}\n---\n${unknownTransportMarkup}`,
+          ) === tenthsOfPercent(options.goldenHistoryTransport),
       })
       cases.push({
         name: 'an old replay without sealed history avoids invented coverage marks',
@@ -2201,14 +2208,26 @@ async function check(page, options, collected) {
         })
       // Act
       const firstOutputCoverage = await readCoverage()
-      await publish(
-        testReplayAt(
-          { sequence: 1, eventIndex: 0 },
-          { timeline: undefined, previousStop: false, nextStop: false },
-          'paused',
-          100,
-        ),
+      // A history of exactly one event: its events, count and range are the event's alone, and its section has no timeline (F160).
+      const fourEventReplay = testReplayAt(
+        { sequence: 1, eventIndex: 0 },
+        { timeline: undefined, previousStop: false, nextStop: false },
+        'paused',
+        100,
       )
+      await publish({
+        ...fourEventReplay,
+        nodeHistoryEventCount: 1,
+        nodeHistory: {
+          ...fourEventReplay.nodeHistory,
+          entries: replayEntries.slice(0, 1),
+        },
+        nodeHistoryPlayback: {
+          ...fourEventReplay.nodeHistoryPlayback,
+          startMs: 100,
+          endMs: 100,
+        },
+      })
       const oneEventCoverage = await readCoverage()
       // Assert
       cases.push({
@@ -2241,6 +2260,43 @@ async function check(page, options, collected) {
               height: 0,
             },
           }),
+      })
+      // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
+      // Value: protects=a test replay's open putting its section in view once, so the Study's article above it does not push the transport out of sight, while the learner's later scroll is left alone and the next open scrolls again; fails_when=the message's scroll token is ignored, is honoured at every message (the learner cannot scroll away), or the next open does not scroll; why_new=F156 (the test replay section started far below the article); seam=none; no_claim=where the host places the pane (the native check)
+      // Arrange: a short pane (240 px), the section below the fold, the page at its top; at the end of the page the section's top is its header's height from the pane's top, inside the pane.
+      await page.setViewportSize({ width: 600, height: 240 })
+      await publish(atFirstOutput)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      const sectionTop = () =>
+        page.evaluate(() =>
+          Math.round(
+            document.getElementById('node-history').getBoundingClientRect().top,
+          ),
+        )
+      const topBeforeOpen = await sectionTop()
+      // Act
+      await publish({ ...atFirstOutput, nodeHistoryScrollToken: 11 })
+      const topAtOpen = await sectionTop()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await publish({ ...atFirstOutput, nodeHistoryScrollToken: 11 })
+      const topAfterLearnerScroll = await sectionTop()
+      await publish({ ...atFirstOutput, nodeHistoryScrollToken: 12 })
+      const topAtNextOpen = await sectionTop()
+      await page.setViewportSize({ width: 600, height: 800 })
+      // Assert
+      cases.push({
+        name: 'a test replay’s open scrolls its section into view once, and a later message of the same open leaves the learner’s scroll alone',
+        actual: {
+          topBeforeOpen,
+          topAtOpen,
+          topAfterLearnerScroll,
+          topAtNextOpen,
+        },
+        passed:
+          topBeforeOpen > 100 &&
+          topAtOpen < 240 &&
+          topAfterLearnerScroll === topBeforeOpen &&
+          topAtNextOpen < 240,
       })
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
       // Value: protects=a closed Application pane is named in the test replay section with a way back: the row with Show recorded output appears, its click asks the host for the pane (`focus-app`), and the row goes once the pane is back; fails_when=the row stays hidden while the pane is closed, the button sends another action (`arrange`, which could not bring the pane back), or the row stays after the pane is back; why_new=Step 9 pass 1b's QA critical (Show recorded output could not bring the pane back) and pass 2's testing review: no DOM case showed the row or clicked it; seam=none; no_claim=that the host builds the pane again, which studyWorkspaceTestReplayOutput.test.ts proves
