@@ -407,8 +407,14 @@ test('a Node history seek outside the recorded time range is refused and keeps t
   const afterEnd = controller.seek(1_001)
 
   // Assert
-  await assert.rejects(beforeStart, /outside the verified Node history range/)
-  await assert.rejects(afterEnd, /outside the verified Node history range/)
+  await assert.rejects(
+    beforeStart,
+    /outside the verified range of this test replay/,
+  )
+  await assert.rejects(
+    afterEnd,
+    /outside the verified range of this test replay/,
+  )
   assert.deepEqual(presented, [])
   assert.equal(controller.state().sequence, 7)
   assert.equal(controller.state().positionMs, 1_000)

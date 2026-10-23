@@ -120,7 +120,7 @@ test('the Study pane carries, for a window without a Trash, notes and reasons th
   // Assert: the options the pane's script reads, as the page states them.
   assert.equal(
     readerHtml.includes(
-      '"studyRemovalRefusalsWithoutTrash":{"nothingChosen":"This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.","nodeHistory":"Codebook cannot list the files of a Node test history for removal by hand yet.","runNotStopped":"Stop the run before removing its study\'s files by hand.","recordingOpen":"Choose Overview or Live to leave Recording before removing this study\'s files by hand.","studyOpening":"Wait for the chosen saved study to open.","unavailable":"Study archive is unavailable.","newerFormat":"This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand."}',
+      '"studyRemovalRefusalsWithoutTrash":{"nothingChosen":"This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.","nodeHistory":"Codebook cannot list the files of a test replay for removal by hand yet.","runNotStopped":"Stop the run before removing its study\'s files by hand.","recordingOpen":"Choose Overview or Live to leave Recording before removing this study\'s files by hand.","studyOpening":"Wait for the chosen saved study to open.","unavailable":"Study archive is unavailable.","newerFormat":"This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand."}',
     ),
     true,
   )

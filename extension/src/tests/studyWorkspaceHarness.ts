@@ -1146,7 +1146,8 @@ export async function workspaceHarness(
     asynchronousLayoutReads = false
   const postedMessages: StudyViewMessage[] = []
   // What the Application pane's test replay document received in place, in order (EN3): one view per later moment.
-  const applicationOutputs: NodeTestOutputUpdate[] = []
+  /** Each view the Application pane's test replay document received in place, with the kind of the panel that received it. */
+  const applicationOutputs: (NodeTestOutputUpdate & { panel: string })[] = []
   // What a webview receives besides Study messages: the reader's replies to a pane's open requests, with the webview that got each.
   const openRequestReplies: {
     /** The pane that was answered: `context` for the Study pane's panel, `summary` and `moments` for the two views, and the panel's own view type for any other panel, so a reply to a wrong panel is told apart. */
@@ -2680,7 +2681,7 @@ export async function workspaceHarness(
               },
         ) => {
           if (message.type === 'node-history-output') {
-            applicationOutputs.push(message)
+            applicationOutputs.push({ ...message, panel: kind })
             return true
           }
           if (message.type === 'open-request-settled') {
@@ -5078,6 +5079,9 @@ export async function workspaceHarness(
     articleReturns,
     receiveContext: (message: unknown): void =>
       receivers.get('codebook.studyContext')!(message),
+    /** Delivers a message to the host as the Application pane's webview posts it (its test replay document's reports). @example harness.receiveApplication({ type: 'node-history-output-ready', history, generation: 1, follow: true }) */
+    receiveApplication: (message: unknown): void =>
+      receivers.get('codebook.scopedBrowser')!(message),
     receive: (message: unknown): void => {
       if (reader.inspect().view?.contentTab === 'recording') {
         for (const listener of summaryListeners) listener(message)
@@ -5150,7 +5154,7 @@ export async function workspaceHarness(
     changeOutlineCheckbox: (itemId: string, checked: boolean): void =>
       outlineCheckbox({ items: [[itemId, checked ? 1 : 0]] }),
     postedMessages: () => postedMessages,
-    /** Lists the views the Application pane's test replay document received in place, oldest first, so a test reads the recorded output the learner sees at the selected moment. @example harness.applicationOutputs().at(-1)?.view.lines */
+    /** Lists the views a test replay document received in place, oldest first, each with the kind of the panel that received it (`panel`), so a test reads the recorded output the learner sees at the selected moment and which pane it reached. @example harness.applicationOutputs().at(-1)?.view.lines */
     applicationOutputs: () => [...applicationOutputs],
     /** Lists the reader's replies to open requests in the order the webviews received them, so a test can assert which pane was answered and when. @example harness.openRequestReplies() // => [{ webview: 'context', openRequest: 3 }] */
     openRequestReplies: () => openRequestReplies.map((reply) => ({ ...reply })),

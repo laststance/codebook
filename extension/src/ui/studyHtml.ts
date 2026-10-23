@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto'
 import type {
   NodeTestHistoryIndex,
   NodeTestHistoryLearningDecision,
-  NodeTestLearningMaterial,
 } from '../nodeTestHistorySchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { PlaybackState, PlaybackBundle } from '../playbackController'
@@ -118,7 +117,6 @@ export interface StudyViewMessage {
   nodeHistoryPageCount?: number
   nodeHistoryEventCount?: number
   nodeHistoryLearningDecision?: NodeTestHistoryLearningDecision
-  nodeHistoryLearningMaterial?: NodeTestLearningMaterial
   /** Sequences of the shown Node stops whose captured source failed the extension's verification (path, line or text hash); they get no Inspect. */
   nodeHistoryUnverifiedStops?: number[]
   nodeHistoryPlayback?: {
@@ -131,10 +129,7 @@ export interface StudyViewMessage {
   }
   nodeHistoryPosition?: {
     sequence: number
-    type: 'output' | 'stop' | 'result'
-    index?: number
     eventIndex: number
-    elapsedMs: number
     /** The stop's captured source is verified and matches it; unlike {@link debuggerAvailable}, ending the session never clears it. */
     sourceAvailable?: boolean
     /** The owned native session shows this stop now. */
@@ -210,7 +205,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled><div id="node-history-coverage" class="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="node-history-coverage-label" class="history-coverage-label muted"></span></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
+<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><p id="node-history-capture-reason" class="muted"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled><div id="node-history-coverage" class="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="node-history-coverage-label" class="history-coverage-label muted"></span></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
 <section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
@@ -547,21 +542,34 @@ function studyClient(
       revealInTransport(playbackDiagnostics)
   })
   const strip = document.querySelector<HTMLElement>('.live-strip')
+  const replayTransportBar = document.getElementById('node-history-transport')
+  // The sticky bars this page has, top first: the live strip, then the test replay's transport.
+  const stickyBars = [strip, replayTransportBar].filter(
+    (bar): bar is HTMLElement => bar !== null,
+  )
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
+  // The live strip sticks at the top and the test replay's transport sticks right below it, so the sticky bars never cover each other; a bar taller than the fraction of the pane flows with the page instead, and the focus scroll room counts the bars that stay.
   const adaptStrip = (): void => {
-    if (!strip) return
-    const height = strip.getBoundingClientRect().height
-    strip.classList.toggle(
-      'flowing',
-      height > window.innerHeight * options.maxStickyFraction,
-    )
-    // Native focus scrolling must leave room for the visible sticky strip and its outline.
+    let stickyHeight = 0
+    for (const bar of stickyBars) {
+      const height = bar.getBoundingClientRect().height
+      bar.classList.toggle(
+        'flowing',
+        height > window.innerHeight * options.maxStickyFraction,
+      )
+      // The transport sticks below the strip: its offset is the height of the bar above it.
+      if (bar === replayTransportBar) bar.style.top = `${stickyHeight}px`
+      if (getComputedStyle(bar).position === 'sticky') stickyHeight += height
+    }
+    // Native focus scrolling must leave room for the visible sticky bars and their outline.
     document.documentElement.style.setProperty(
       '--codebook-sticky-height',
-      `${getComputedStyle(strip).position === 'sticky' ? height : 0}px`,
+      `${stickyHeight}px`,
     )
   }
-  if (strip) new ResizeObserver(adaptStrip).observe(strip)
+  // One observer measures every bar again when any of them changes size.
+  const stickyBarObserver = new ResizeObserver(adaptStrip)
+  for (const bar of stickyBars) stickyBarObserver.observe(bar)
   window.addEventListener('resize', adaptStrip)
   document.addEventListener('click', (event) => {
     const target =
@@ -579,7 +587,8 @@ function studyClient(
     if (target.dataset.nodeHistorySequence && current?.nodeHistory) {
       // A summary step's action selects its event and that step (DS21); an Inspect selects the stop in the native debugger.
       send(
-        target.dataset.inspectNodeHistoryStop
+        target.dataset.inspectNodeHistoryStop ||
+          target.id === 'node-history-inspect'
           ? {
               type: 'node-history-stop',
               studyId: current.nodeHistory.header.studyId,
@@ -1229,7 +1238,6 @@ function studyClient(
     study: SavedStudyEntry,
     profiles: StudyViewMessage['profiles'],
   ): string => {
-    if (study.format === 'node-test-history') return 'Node test history'
     if (study.profile === 'repository-browser')
       return 'Repository browser study'
     return (
@@ -1256,7 +1264,7 @@ function studyClient(
     message.removalWithoutTrash
       ? options.studyRemovalRefusalsWithoutTrash
       : options.studyRemovalRefusals
-  /** Says why the chosen entry cannot be removed, first match wins, in the words of this window ({@link removalRefusals}); empty when it can. @example chosenStudyRefusal(message, nodeEntry) // => 'Node test histories cannot be deleted here yet.' */
+  /** Says why the chosen entry cannot be removed, first match wins, in the words of this window ({@link removalRefusals}); empty when it can. @example chosenStudyRefusal(message, nodeEntry) // => 'Test replays cannot be deleted here yet.' */
   const chosenStudyRefusal = (
     message: StudyViewMessage,
     chosen: SavedStudyEntry,
@@ -1806,16 +1814,10 @@ function studyClient(
       ...Array.from(element(owed.section).querySelectorAll('button,input')),
     ].find(
       (control): control is HTMLElement =>
-        (control instanceof HTMLButtonElement ||
-          control instanceof HTMLInputElement ||
-          (control instanceof HTMLElement &&
-            control.localName === 'summary')) &&
+        control instanceof HTMLElement &&
+        control.matches('button,input,summary') &&
         control !== owed.leaving &&
-        !(
-          (control instanceof HTMLButtonElement ||
-            control instanceof HTMLInputElement) &&
-          control.disabled
-        ) &&
+        !control.matches(':disabled') &&
         // Shown: a control inside a closed disclosure still has boxes, and cannot take the focus.
         control.checkVisibility(),
     )
@@ -2042,7 +2044,132 @@ function studyClient(
     generalName: string,
   ): string => message.liveTitle ?? profileTitle ?? generalName
   /**
-   * Draws a saved learning sequence, a browser replay's and a test replay's alike (Design 5): the participants' lifelines, one numbered arrow per step, then the numbered steps with their evidence, explanation and action. Participant names and explanations are text nodes; agent-authored markup never becomes executable content.
+   * Splits a name or label into the pieces a sequence diagram may break between: a run of letters without a space is one piece, and every Japanese, Chinese or Korean character or full-width form is a piece of its own (such text has no spaces), with a closing mark such as `、` or `。` kept on the character before it; called by {@link wrapSequenceText} and {@link sequenceView}.
+   * @param value - The text to split.
+   * @returns The pieces, each with whether a space came before it.
+   * @example sequencePieces('Ask 取得。') // => [{ text: 'Ask', spaceBefore: false }, { text: '取', spaceBefore: true }, { text: '得。', spaceBefore: false }]
+   */
+  const sequencePieces = (
+    value: string,
+  ): { text: string; spaceBefore: boolean }[] => {
+    const pieces: { text: string; spaceBefore: boolean }[] = []
+    let spaceBefore = false
+    for (const match of value.matchAll(
+      /(\s+)|(\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\u3000-\u303F\uFF00-\uFFEF])|([^\s]+?(?=\s|\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\u3000-\u303F\uFF00-\uFFEF]|$))/gu,
+    )) {
+      if (match[1] !== undefined) {
+        spaceBefore = true
+        continue
+      }
+      const text = match[0],
+        previous = pieces[pieces.length - 1]
+      // A closing mark never starts a line: it stays with the character before it.
+      if (
+        previous &&
+        !spaceBefore &&
+        /^[、。，．）」』】！？：；]$/u.test(text)
+      )
+        previous.text += text
+      else pieces.push({ text, spaceBefore })
+      spaceBefore = false
+    }
+    return pieces
+  }
+  /**
+   * Measures text in the diagram's font, so a Japanese, Chinese or upper-case label is sized as it is drawn (F293); called by {@link wrapSequenceText} and {@link sequenceView}.
+   * The width comes from a canvas set to the diagram's font; where no canvas is available (a test document), it is estimated from the kind of each character: a Japanese, Chinese or Korean glyph and a full-width form is about one em wide, an upper-case Latin letter wider than a lower-case one.
+   * @param value - The text to measure.
+   * @returns The width in pixels.
+   * @example sequenceTextWidthPx('取得') // => 24
+   */
+  const sequenceTextWidthPx = (value: string): number => {
+    const layout = options.sequence
+    const measured = sequenceFontContext()?.measureText(value).width
+    if (measured) return measured
+    let width = 0
+    for (const character of value)
+      width +=
+        /[\u1100-\u11FF\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}]/u.test(
+          character,
+        )
+          ? layout.wideCharWidthPx
+          : /\p{Lu}/u.test(character)
+            ? layout.upperCharWidthPx
+            : layout.charWidthPx
+    return width
+  }
+  let sequenceMeasure: CanvasRenderingContext2D | null | undefined
+  /**
+   * Returns the canvas context that measures the diagram's text (its font size and the page's font family), made once; called by {@link sequenceTextWidthPx}.
+   * @returns The context, or `null` where the document has no canvas.
+   * @example sequenceFontContext()?.measureText('Source').width
+   */
+  const sequenceFontContext = (): CanvasRenderingContext2D | null => {
+    if (sequenceMeasure === undefined) {
+      try {
+        sequenceMeasure = document.createElement('canvas').getContext('2d')
+      } catch {
+        // A document without canvas support falls back to the estimate.
+        sequenceMeasure = null
+      }
+      if (sequenceMeasure)
+        sequenceMeasure.font = `${options.sequence.fontSizePx}px ${getComputedStyle(document.body).fontFamily}`
+    }
+    return sequenceMeasure
+  }
+  /**
+   * Breaks a name or label into lines no wider than `maxPx` between words, and between the characters of text without spaces (Japanese, Chinese), so a sequence diagram never cuts a Latin word or ends a label with an ellipsis (F206, F293); called by {@link sequenceView}.
+   * A piece wider than the limit keeps a line of its own: the caller widens its column for the widest piece.
+   * @param value - The text to break.
+   * @param maxPx - The most pixels a line holds.
+   * @returns The lines, one empty line for empty text.
+   * @example wrapSequenceText('fetch filtered invoices', 80) // => ['fetch', 'filtered', 'invoices']
+   */
+  const wrapSequenceText = (value: string, maxPx: number): string[] => {
+    const lines: string[] = []
+    for (const piece of sequencePieces(value)) {
+      const last = lines.length - 1,
+        joined = `${lines[last] ?? ''}${piece.spaceBefore ? ' ' : ''}${piece.text}`
+      if (last >= 0 && sequenceTextWidthPx(joined) <= maxPx)
+        lines[last] = joined
+      else lines.push(piece.text)
+    }
+    return lines.length ? lines : ['']
+  }
+  /**
+   * Writes the lines of a sequence name or label into an SVG text element; called by {@link sequenceView}.
+   * @param text - The SVG text element.
+   * @param x - The lines' horizontal anchor.
+   * @param lines - The wrapped lines.
+   * @param asTspans - Whether a single line is also written as a tspan (a participant's name is).
+   * @example writeSequenceLines(name, 80, ['Source', 'handler'], true)
+   */
+  const writeSequenceLines = (
+    text: SVGTextElement,
+    x: number,
+    lines: string[],
+    asTspans: boolean,
+  ): void => {
+    if (!asTspans && lines.length <= 1) {
+      text.textContent = lines[0] ?? ''
+      return
+    }
+    lines.forEach((value, index) => {
+      const span = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'tspan',
+      )
+      span.setAttribute('x', String(x))
+      span.setAttribute(
+        'dy',
+        String(index ? options.sequence.nameLineHeightPx : 0),
+      )
+      span.textContent = value
+      text.append(span)
+    })
+  }
+  /**
+   * Draws a saved learning sequence, a browser replay's and a test replay's alike (Design 5): the participants' lifelines, one numbered arrow per step, then the numbered steps with their evidence, explanation and action. Participant names, labels and explanations are text nodes; agent-authored markup never becomes executable content. Names and labels wrap at word boundaries inside their boxes and the diagram grows taller; a longer word widens its column, and a diagram wider than the pane scrolls inside its own region (F206).
    * The browser replay passes its seek link as the action, a test replay its event selection; called for the Learning summary and the test replay section.
    * @param content - The material's participants and steps.
    * @param label - The diagram's accessible name.
@@ -2069,55 +2196,84 @@ function studyClient(
   ): [visual: HTMLDivElement, steps: HTMLOListElement] => {
     const namespace = 'http://www.w3.org/2000/svg',
       diagram = document.createElementNS(namespace, 'svg')
-    const layout = options.sequence,
-      width = Math.max(
-        layout.minWidthPx,
-        content.participants.length * layout.columnWidthPx,
+    const layout = options.sequence
+    const stepLabels = content.steps.map(
+      (step, index) => `${index + 1}. ${step.label}`,
+    )
+    // A column is wide enough for the longest word of any name or label, so no word is ever broken inside its box (F206).
+    const widestPiecePx = Math.max(
+      0,
+      ...[...content.participants.map((value) => value.label), ...stepLabels]
+        .flatMap((value) => sequencePieces(value))
+        .map((piece) => sequenceTextWidthPx(piece.text)),
+    )
+    const columnWidth = Math.max(
+      layout.columnWidthPx,
+      Math.ceil(widestPiecePx + layout.columnPaddingPx),
+    )
+    const textWithin = (spanPx: number): number =>
+      spanPx - layout.columnPaddingPx
+    const width = Math.max(
+      layout.minWidthPx,
+      content.participants.length * columnWidth,
+    )
+    const column = (id: string) =>
+      columnWidth / 2 +
+      content.participants.findIndex((value) => value.id === id) * columnWidth
+    const nameLines = content.participants.map((participant) =>
+      wrapSequenceText(participant.label, textWithin(columnWidth)),
+    )
+    // The diagram grows taller for every extra line of a name or a label.
+    const namesExtraPx =
+      (Math.max(1, ...nameLines.map((lines) => lines.length)) - 1) *
+      layout.nameLineHeightPx
+    const stepLines = content.steps.map((step, index) =>
+      wrapSequenceText(
+        stepLabels[index] ?? '',
+        textWithin(
+          Math.max(columnWidth, Math.abs(column(step.to) - column(step.from))),
+        ),
       ),
-      height = layout.topPaddingPx + content.steps.length * layout.rowHeightPx
+    )
+    const rowOffsetsPx: number[] = []
+    let rowsHeightPx = 0
+    for (const lines of stepLines) {
+      rowOffsetsPx.push(rowsHeightPx)
+      rowsHeightPx +=
+        layout.rowHeightPx + (lines.length - 1) * layout.nameLineHeightPx
+    }
+    const height = layout.topPaddingPx + namesExtraPx + rowsHeightPx
     diagram.setAttribute('viewBox', `0 0 ${width} ${height}`)
     diagram.setAttribute('width', String(width))
     diagram.setAttribute('height', String(height))
     diagram.setAttribute('role', 'img')
     diagram.setAttribute('aria-label', label)
-    const column = (id: string) =>
-      layout.columnWidthPx / 2 +
-      content.participants.findIndex((value) => value.id === id) *
-        layout.columnWidthPx
-    for (const participant of content.participants) {
+    content.participants.forEach((participant, index) => {
       const x = column(participant.id),
         name = document.createElementNS(namespace, 'text'),
         line = document.createElementNS(namespace, 'line')
       name.setAttribute('x', String(x))
       name.setAttribute('y', String(layout.nameYpx))
       name.setAttribute('text-anchor', 'middle')
-      for (
-        let offset = 0;
-        offset < participant.label.length;
-        offset += layout.nameChunkChars
-      ) {
-        const span = document.createElementNS(namespace, 'tspan')
-        span.setAttribute('x', String(x))
-        span.setAttribute('dy', String(offset ? layout.nameLineHeightPx : 0))
-        span.textContent = participant.label.slice(
-          offset,
-          offset + layout.nameChunkChars,
-        )
-        name.append(span)
-      }
+      writeSequenceLines(name, x, nameLines[index] ?? [], true)
       line.setAttribute('x1', String(x))
       line.setAttribute('x2', String(x))
-      line.setAttribute('y1', String(layout.lifelineYpx))
+      line.setAttribute('y1', String(layout.lifelineYpx + namesExtraPx))
       line.setAttribute('y2', String(height))
       line.setAttribute('class', 'sequence-lifeline')
       diagram.append(name, line)
-    }
+    })
     const list = document.createElement('ol')
     list.className = 'sequence-steps'
     content.steps.forEach((step, index) => {
-      const x1 = column(step.from),
+      const lines = stepLines[index] ?? [],
+        x1 = column(step.from),
         x2 = column(step.to),
-        y = layout.firstArrowYpx + index * layout.rowHeightPx,
+        y =
+          layout.firstArrowYpx +
+          namesExtraPx +
+          (rowOffsetsPx[index] ?? 0) +
+          (lines.length - 1) * layout.nameLineHeightPx,
         arrow = document.createElementNS(namespace, 'path'),
         number = document.createElementNS(namespace, 'text')
       const direction = x2 >= x1 ? 1 : -1
@@ -2128,13 +2284,17 @@ function studyClient(
           : `M ${x1} ${y} H ${x2} m ${-layout.arrowWidthPx * direction} ${-layout.arrowHeightPx} l ${layout.arrowWidthPx * direction} ${layout.arrowHeightPx} l ${-layout.arrowWidthPx * direction} ${layout.arrowHeightPx}`,
       )
       arrow.setAttribute('class', `sequence-arrow ${step.evidence}`)
+      // The label is centered over its arrow (a loop's over its lifeline), so a last participant's label stays inside the diagram; its lines stack upward from the arrow.
+      const labelX = (x1 + x2) / 2
+      number.setAttribute('x', String(labelX))
       number.setAttribute(
-        'x',
-        String((x1 + x2) / 2 + (x1 === x2 ? layout.loopHeightPx : 0)),
+        'y',
+        String(
+          y - layout.numberGapPx - (lines.length - 1) * layout.nameLineHeightPx,
+        ),
       )
-      number.setAttribute('y', String(y - layout.numberGapPx))
       number.setAttribute('text-anchor', 'middle')
-      number.textContent = `${index + 1}. ${step.label.slice(0, layout.nameChunkChars)}${step.label.length > layout.nameChunkChars ? '…' : ''}`
+      writeSequenceLines(number, labelX, lines, false)
       diagram.append(arrow, number)
       const row = document.createElement('li'),
         heading = document.createElement('strong'),
@@ -2170,9 +2330,9 @@ function studyClient(
   ): void => {
     const suppressed = isReplayInBottomPanel(message)
     const section = suppressed ? undefined : message.nodeHistorySection
-    renderTestReplayMoment(message, section, suppressed)
+    renderTestReplayMoment(message, section, suppressed, replaying)
     renderTestReplayTransport(message, section, replaying, suppressed)
-    renderTestReplayLearning(message, section, replaying)
+    renderTestReplayLearning(message, section, replaying, suppressed)
     renderTestReplayUnderstanding(message, replaying)
     renderTestReplayEvents(message, section, replaying)
   }
@@ -2187,6 +2347,7 @@ function studyClient(
     message: StudyViewMessage,
     section: StudyViewMessage['nodeHistorySection'],
     suppressed: boolean,
+    replaying: boolean,
   ): void => {
     const idle = suppressed
       ? ''
@@ -2205,6 +2366,49 @@ function studyClient(
       options.nodeTransportFocus,
       'node-history',
     )
+    // The row's Inspect is wanted while the stop's values are not loaded (beside Show Variables) and whenever the debugger does not show the selected stop: after the learner ended its session, or when it could not start, the press starts it again (F348).
+    const inspectWanted =
+      !suppressed &&
+      (uninspected || !message.nodeHistoryPosition?.debuggerAvailable)
+    renderTestReplayInspect(message, inspectWanted, replaying)
+  }
+  /**
+   * Offers Inspect in native debugger beside the values hint and Show Variables (DS6) for the selected stop, so the learner finds it without opening the event list: pressed ("Debugger stop selected") while the debugger shows the stop and its values are not loaded, and a press that starts the debugger again once it does not show the stop (F348); called by {@link renderTestReplayMoment} for every Study message.
+   * The stop is read from the selected moment's position, which the host sends whatever page the event list shows, so paging the list away from the stop keeps the control (F353).
+   * @param message - The current Study message.
+   * @param wanted - Whether the row wants the control: the selected stop's values are not loaded, or the debugger does not show the stop.
+   * @param replaying - Whether a browser recording is shown, which disables the control.
+   * @example renderTestReplayInspect(message, true, false)
+   */
+  const renderTestReplayInspect = (
+    message: StudyViewMessage,
+    wanted: boolean,
+    replaying: boolean,
+  ): void => {
+    const inspect = element('node-history-inspect')
+    const position = message.nodeHistoryPosition
+    // Only a selected stop has `sourceAvailable`, true when the extension verified its captured source.
+    const offered =
+      wanted &&
+      inspect instanceof HTMLButtonElement &&
+      position?.sourceAvailable === true
+    // Hidden through the rule Show Variables follows: a keyboard learner on it is handed to the transport, not to the page (F292).
+    offerShowVariables(
+      'node-history-inspect',
+      offered,
+      options.nodeTransportFocus,
+      'node-history',
+    )
+    if (!offered) return
+    const shown = Boolean(position.debuggerAvailable)
+    inspect.dataset.nodeHistorySequence = String(position.sequence)
+    inspect.textContent = shown
+      ? 'Debugger stop selected'
+      : 'Inspect in native debugger'
+    // As the event list's control: the pressed Inspect stays focusable and sends nothing.
+    inspect.disabled = replaying
+    inspect.setAttribute('aria-disabled', String(shown))
+    inspect.setAttribute('aria-pressed', String(shown))
   }
   /**
    * Places the section's worded lines: status, locator, explanation, the not-recorded and unavailable-source lines, the output pointer and the closed pane's action; called by {@link renderTestReplayMoment}.
@@ -2222,6 +2426,14 @@ function studyClient(
       text(id, value)
     element('node-history-closed').hidden = !section?.applicationClosed
   }
+  /** The section's lines that show one of its fields as it is, by element id, each empty when the field is absent. */
+  const testReplayFieldLines = [
+    ['node-history-capture-reason', 'captureReason'],
+    ['node-history-explanation', 'explanation'],
+    ['node-history-not-recorded', 'notRecorded'],
+    ['node-history-unverified', 'unverified'],
+    ['node-history-pointer', 'pointer'],
+  ] as const
   /**
    * Gives the text of each of the section's worded lines by its element id; called by {@link renderTestReplayLines}.
    * @param section - The section's worded view, absent while suppressed or without a test replay.
@@ -2233,24 +2445,24 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     idle: string,
   ): Record<string, string> =>
-    section
-      ? {
-          'node-history-status': section.status,
-          'node-history-position':
-            section.position ?? options.testReplay.noSelection,
-          'node-history-explanation': section.explanation ?? '',
-          'node-history-not-recorded': section.notRecorded ?? '',
-          'node-history-unverified': section.unverified ?? '',
-          'node-history-pointer': section.pointer ?? '',
-        }
-      : {
-          'node-history-status': idle,
-          'node-history-position': '',
-          'node-history-explanation': '',
-          'node-history-not-recorded': '',
-          'node-history-unverified': '',
-          'node-history-pointer': '',
-        }
+    // Without a section every line is empty and the status line says `idle`.
+    ({
+      'node-history-status': section?.status ?? idle,
+      'node-history-position': testReplayPositionText(section),
+      ...Object.fromEntries(
+        testReplayFieldLines.map(([id, field]) => [id, section?.[field] ?? '']),
+      ),
+    })
+  /**
+   * Gives the selected moment's locator line; called by {@link testReplayLineTexts}.
+   * @param section - The section's worded view, absent while suppressed or without a test replay.
+   * @returns The section's position, the line that no moment is selected, or nothing without a section.
+   * @example testReplayPositionText(undefined) // => ''
+   */
+  const testReplayPositionText = (
+    section: StudyViewMessage['nodeHistorySection'],
+  ): string =>
+    section ? (section.position ?? options.testReplay.noSelection) : ''
   /**
    * Enables or disables a control of the section by its id; called by the transport's renderers.
    * @param id - The control's id.
@@ -2460,17 +2672,20 @@ function studyClient(
    * @param message - The current Study message.
    * @param section - The section's worded view.
    * @param replaying - Whether a browser recording is shown.
-   * @example renderTestReplayLearning(message, message.nodeHistorySection, false)
+   * @param suppressed - Whether a browser replay holds the bottom panel, which hides the block.
+   * @example renderTestReplayLearning(message, message.nodeHistorySection, false, false)
    */
   const renderTestReplayLearning = (
     message: StudyViewMessage,
     section: StudyViewMessage['nodeHistorySection'],
     replaying: boolean,
+    suppressed: boolean,
   ): void => {
-    const learning = message.nodeHistoryLearningSummary
+    // While a browser replay holds the bottom panel the block is not drawn: its steps would all read `No recorded event is linked to this step.` (F153).
+    const learning = suppressed ? undefined : message.nodeHistoryLearningSummary
     element('node-history-learning').hidden = !learning
     element('node-history-no-material').hidden =
-      !message.nodeHistory || Boolean(learning)
+      suppressed || !message.nodeHistory || Boolean(learning)
     if (!learning) {
       // A message without material keeps no earlier replay's diagram or steps in the page, hidden or not.
       renderKeys.delete('node-learning-sequence')
@@ -2494,6 +2709,18 @@ function studyClient(
       element('node-learning-sequence').replaceChildren(visual)
       element('node-learning-steps').replaceChildren(list)
     }
+    markTestReplaySteps(section, replaying)
+  }
+  /**
+   * Marks the test replay's numbered steps for the selected moment (DS21): the selected step `aria-current`, the selected event's other steps `Same recorded moment`, and every step's control disabled while a browser recording is shown; called by {@link renderTestReplayLearning} for every Study message, also when the steps were drawn before.
+   * @param section - The section's worded view, which names the selected step and the steps of the same moment.
+   * @param replaying - Whether a browser recording is shown.
+   * @example markTestReplaySteps(message.nodeHistorySection, false)
+   */
+  const markTestReplaySteps = (
+    section: StudyViewMessage['nodeHistorySection'],
+    replaying: boolean,
+  ): void => {
     for (const control of Array.from(
       element('node-learning-steps').querySelectorAll<HTMLButtonElement>(
         'button[data-node-step]',
@@ -2762,31 +2989,7 @@ function studyClient(
     }
   }
   /**
-   * Says whether a stop's first recorded frame names the stop's own source, hash, line and column, so the native debugger can show it at its captured source; called by {@link testReplayInspectControl}.
-   * @param entry - The stop.
-   * @returns `true` when the frame, the stop's frame and its source agree.
-   * @example stopFrameNamesItsSource(stop) // => true
-   */
-  const stopFrameNamesItsSource = (
-    entry: Extract<
-      NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
-      { type: 'stop' }
-    >,
-  ): boolean => {
-    const frame = entry.debuggerSnapshot.frames[0]
-    if (!frame?.source) return false
-    return (
-      frame.source.name === entry.source.path &&
-      frame.source.hash === entry.source.hash &&
-      frame.source.line === entry.source.line &&
-      entry.frame.line === entry.source.line &&
-      entry.frame.column === entry.source.column &&
-      frame.line === entry.frame.line &&
-      frame.column === entry.frame.column
-    )
-  }
-  /**
-   * Says whether a stop can be inspected in the native debugger: its first recorded frame names its own source ({@link stopFrameNamesItsSource}), the extension verified its captured text, and a selected stop's source is available; called by {@link testReplayInspectControl}.
+   * Says whether a stop can be inspected in the native debugger: the extension verified its captured source (the host names every shown stop that failed in `nodeHistoryUnverifiedStops`), and a selected stop's source is available; called by {@link testReplayInspectControl}.
    * @param entry - The stop.
    * @param message - The current Study message.
    * @param isSelected - Whether the stop is the selected event.
@@ -2801,13 +3004,12 @@ function studyClient(
     message: StudyViewMessage,
     isSelected: boolean,
   ): boolean =>
-    stopFrameNamesItsSource(entry) &&
-    // The extension hashed every shown stop's captured text; a mismatch there cannot be inspected either.
+    // The extension verified every shown stop's captured source (path, line, column and text hash); one that failed cannot be inspected.
     !(message.nodeHistoryUnverifiedStops ?? []).includes(entry.sequence) &&
     !(isSelected && message.nodeHistoryPosition?.sourceAvailable === false)
   /**
    * Builds a stop row's Inspect in native debugger, or the line that its captured source cannot be inspected; called by {@link testReplayEventRow}.
-   * A stop is inspectable when its first recorded frame names the stop's own source, hash, line and column and the extension verified its captured text.
+   * A stop is inspectable when the extension verified its captured source.
    * @param entry - The stop.
    * @param message - The current Study message.
    * @param isSelected - Whether the stop is the selected event.
@@ -2913,7 +3115,11 @@ function studyClient(
    * @example offerClampedTitles()
    */
   const offerClampedTitles = (): void => {
-    for (const heading of [element('title'), element('learning-title')]) {
+    for (const heading of [
+      element('title'),
+      element('learning-title'),
+      element('node-learning-title'),
+    ]) {
       if (document.activeElement === heading) continue
       if (heading.scrollHeight > heading.clientHeight) heading.tabIndex = 0
       else heading.removeAttribute('tabindex')

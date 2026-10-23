@@ -753,7 +753,7 @@ test('an unknown entry, a Node test history and the study of a run that has not 
     assert.deepEqual(structuredClone(node), {
       status: 'refused',
       studyId: nodeHistory.studyId,
-      text: 'Node test histories cannot be deleted here yet.',
+      text: 'Test replays cannot be deleted here yet.',
     })
     assert.deepEqual(structuredClone(live.studyRemoval), {
       status: 'refused',
@@ -838,7 +838,7 @@ test('a refused delete request’s line stays when the learner changes between O
     assert.deepEqual(structuredClone(view.studyRemoval), {
       status: 'refused',
       studyId: nodeHistory.studyId,
-      text: 'Node test histories cannot be deleted here yet.',
+      text: 'Test replays cannot be deleted here yet.',
     })
   } finally {
     await harness.close()
@@ -2684,7 +2684,7 @@ test('a Node test history chosen during Recording is refused with its sentence a
     assert.equal(view.nodeHistory, undefined)
     assert.equal(
       view.errors.includes(
-        'Error: Close browser replay before opening a separate Node test history.',
+        'Error: Close browser replay before opening a test replay.',
       ),
       true,
     )
@@ -2718,8 +2718,7 @@ test('the browser-replay refusal of a Node test history disappears once that his
       'the reply to the refused open request',
       1_000,
     )
-    const refusal =
-      'Error: Close browser replay before opening a separate Node test history.'
+    const refusal = 'Error: Close browser replay before opening a test replay.'
     const refusedErrors = [...harness.reader.inspect().view!.errors]
     await readerSeams(harness).receive(
       {
@@ -2771,8 +2770,7 @@ test('the browser-replay refusal of a Node test history offers no Retry storage 
       'the reply to the refused open request',
       1_000,
     )
-    const refusal =
-      'Error: Close browser replay before opening a separate Node test history.'
+    const refusal = 'Error: Close browser replay before opening a test replay.'
     const refused = structuredClone(harness.reader.inspect().view!)
 
     // Act: the learner chooses a tab in the pane.
@@ -6782,7 +6780,7 @@ test('in a window without a Trash the reader answers a request for a study’s f
       answer: {
         status: 'refused',
         studyId: nodeHistory.studyId,
-        text: 'Codebook cannot list the files of a Node test history for removal by hand yet.',
+        text: 'Codebook cannot list the files of a test replay for removal by hand yet.',
         request: 1,
       },
     })
@@ -7025,7 +7023,7 @@ test('in a window without a Trash, a request for the files of a Node test histor
     assert.deepEqual(node, {
       status: 'refused',
       studyId: nodeHistory.studyId,
-      text: 'Codebook cannot list the files of a Node test history for removal by hand yet.',
+      text: 'Codebook cannot list the files of a test replay for removal by hand yet.',
     })
     assert.deepEqual(live, {
       status: 'refused',

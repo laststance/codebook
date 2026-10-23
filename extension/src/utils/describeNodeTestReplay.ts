@@ -48,22 +48,12 @@ export const NODE_TEST_REPLAY_TEXT = {
 
 /** What a test replay shows the learner outside its Save, keyed by surface and value (the String catalog of plan version 7). */
 export type NodeTestReplayMessage =
-  | {
-      kind: 'saved-row'
-      summary: Pick<
-        NodeTestHistorySummary,
-        | 'status'
-        | 'verification'
-        | 'verdict'
-        | 'stopCount'
-        | 'explainedStopCount'
-      >
-    }
+  | { kind: 'saved-row'; summary: NodeTestReplayMessageSummary }
   | {
       kind: 'study-status'
       summary: Omit<NodeTestReplayMessageSummary, 'verification'>
     }
-  | { kind: 'application-time'; elapsedMs: number }
+  | { kind: 'application-time'; elapsedMs?: number }
   | { kind: 'application-test'; test: NodeTestReplayTestName }
   | {
       kind: 'application-name'
@@ -87,6 +77,11 @@ export type NodeTestReplayMessage =
       elapsedMs: number
     }
   | { kind: 'events'; count: number }
+  | {
+      kind: 'capture-reason'
+      status: 'partial' | 'interrupted'
+      reason: string
+    }
 
 /** The parts of a history's summary its Study status line names. */
 type NodeTestReplayMessageSummary = Pick<
@@ -131,6 +126,8 @@ export function describeNodeTestReplay(message: NodeTestReplayMessage): string {
         : `Inspect ${message.event.type} · ${formatEventSeconds(message.elapsedMs)} s`
     case 'events':
       return `Events (${message.count})`
+    case 'capture-reason':
+      return `Capture ${message.status}: ${message.reason}`
     default:
       return applicationWords(message)
   }
@@ -141,13 +138,17 @@ export function describeNodeTestReplay(message: NodeTestReplayMessage): string {
  * @param message - An Application pane surface and its value.
  * @returns The words.
  * @example applicationWords({ kind: 'application-time', elapsedMs: 420 }) // => 'Recorded test output · 0.42 s'
+ * applicationWords({ kind: 'application-time' }) // => 'Recorded test output'
  */
 function applicationWords(
   message: Extract<NodeTestReplayMessage, { kind: `application-${string}` }>,
 ): string {
   switch (message.kind) {
     case 'application-time':
-      return `Recorded test output · ${formatEventSeconds(message.elapsedMs)} s`
+      // Without a selected event (loading, no entries) the header names the surface and no time (E2, AC5).
+      return message.elapsedMs === undefined
+        ? 'Recorded test output'
+        : `Recorded test output · ${formatEventSeconds(message.elapsedMs)} s`
     case 'application-test':
       return testName(message.test)
     case 'application-name':
@@ -157,9 +158,9 @@ function applicationWords(
     case 'application-region':
       return `Recorded test output up to ${formatEventSeconds(message.elapsedMs)} s`
     case 'application-cut':
-      return `… ${message.characters} earlier characters not shown${message.startsMidLine ? '; the first line below is cut' : ''}`
+      return `… ${message.characters} earlier ${message.characters === 1 ? 'character' : 'characters'} not shown${message.startsMidLine ? '; the first line below is cut' : ''}`
     case 'application-inspector':
-      return `${message.lines} Node inspector lines hidden`
+      return `${message.lines} Node inspector ${message.lines === 1 ? 'line' : 'lines'} hidden`
   }
 }
 

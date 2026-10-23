@@ -222,3 +222,29 @@ test('the slot’s placeholder and loading text parse without a syntax error as 
   // Assert
   assert.deepEqual(errors, [])
 })
+
+// Value: protects=the recorded-source slot's label, tab title and the replay debugger's thread name show a recorded path in its logical order: a right-to-left override in a file name does not reorder the text around it; fails_when=a name is built from the raw path, so the label, the title and the thread keep U+202E; why_new=F286: the Study section showed the stripped path while the slot and the debugger used the raw one; seam=none; no_claim=the slot's URI hash, which keeps the real path
+test('a bidirectional control in a recorded path is left out of the slot label, the tab title and the debugger thread', () => {
+  // Arrange
+  const path = 'src/\u202Egnp.ts'
+
+  // Act
+  const label = describeNodeRecordedSource({
+    kind: 'label',
+    path,
+    line: 3,
+    elapsedMs: 1234,
+  })
+  const thread = describeNodeRecordedSource({
+    kind: 'thread',
+    stop: 2,
+    path,
+    line: 3,
+  })
+  const title = describeNodeRecordedSource({ kind: 'tab-title', path })
+
+  // Assert
+  assert.equal(label, 'Recorded: src/gnp.ts:3 · 1.23 s')
+  assert.equal(thread, 'Recorded test stop 2 · src/gnp.ts:3')
+  assert.equal(title, 'Captured-gnp.ts')
+})

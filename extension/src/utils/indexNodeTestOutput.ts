@@ -1,7 +1,9 @@
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
+import { countCodePoints } from './countCodePoints'
+import { isSurrogatePairAt } from './isSurrogatePairAt'
 import { nodeTestOutputLineCost } from './nodeTestOutputLineCost'
-import { stripTerminalControls } from './stripTerminalControls'
+import { stripTerminalControlsAcross } from './stripTerminalControls'
 
 /** One line of a test's recorded output, as the Application pane shows it: the channel that wrote it and its text without a line end. */
 export type NodeTestOutputLine = {
@@ -10,13 +12,13 @@ export type NodeTestOutputLine = {
 }
 
 /**
- * A line the output left unfinished at one entry, as its chunks so far: `chunks` is shared with the later entries that continue the line, and this entry's part of it is its first `chunkCount` chunks, so the index keeps one copy of the line however many entries continue it.
- * `codePoints` counts the code points of those chunks.
+ * A line the output left unfinished at one entry, as the span of the index's `body` it holds so far: `body.slice(start, end)`; `codePoints` counts the code points of that span.
+ * The later entries that continue the line extend the same span, and the index keeps no copy of its text.
  */
 export type NodeTestOutputPendingLine = {
   channel: NodeTestOutputLine['channel']
-  chunks: readonly string[]
-  chunkCount: number
+  start: number
+  end: number
   codePoints: number
 }
 
@@ -29,11 +31,15 @@ export type NodeTestOutputAfterEntry = {
 
 /**
  * A test replay's recorded output read once into lines, so that showing the output up to any event costs a lookup and its tail ({@link accumulateNodeTestOutput}).
- * `lineTotals[i]` is how many code points `lines[0..i)` take as shown (the `[stderr] ` mark and a line feed included); it has one more element than `lines`.
+ * The lines are numbers, not objects (F149): `body` is the shown text of every output entry in order, and complete line `i` is `body.slice(lineStarts[i], lineEnds[i])`, written by `lineChannels[i]`; line objects are made only for the kept tail.
+ * `lineTotals[i]` is how many code points lines `0..i-1` take as shown (the `[stderr] ` mark and a line feed included); it has one more element than there are lines.
  */
 export type NodeTestOutputIndex = {
   sequences: number[]
-  lines: NodeTestOutputLine[]
+  body: string
+  lineStarts: number[]
+  lineEnds: number[]
+  lineChannels: NodeTestOutputLine['channel'][]
   lineTotals: number[]
   after: NodeTestOutputAfterEntry[]
 }
@@ -50,92 +56,124 @@ const INSPECTOR_LINES = [
 
 /**
  * Reads a test replay's output entries once into lines, so the Application pane can show the output up to any selected event without reading every entry again (S1-2); called by the Study workspace once per opened test replay.
- * A line-state machine joins the entries: a chunk of the same channel continues an unfinished line, a chunk of the other channel ends it first, terminal controls are removed ({@link stripTerminalControls}) and the Node inspector's own standard-error lines are counted instead of shown.
- * @param entries - The history's events in sequence order; only output entries are read.
- * @returns The index: the output entries' sequences, the complete lines, their running totals and what each output entry leaves behind.
+ * A line-state machine joins the entries: a chunk of the same channel continues an unfinished line, a chunk of the other channel ends it first, and the Node inspector's own standard-error lines are counted instead of shown; the entries' terminal controls were removed before, across the entries of each channel ({@link stripOutputEntries}). Each line is kept as the offsets of its text in one shared body (F149).
+ * @param entries - The shown history's events in sequence order ({@link sanitizeNodeTestHistory} removed their terminal controls, once); only output entries are read.
+ * @returns The index: the output entries' sequences, the shown text, the complete lines' offsets and channels, their running totals and what each output entry leaves behind.
  * @example
  * indexNodeTestOutput([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: 'RUN\nok' }]).after[0]
- * // => { lineCount: 1, pending: { channel: 'stdout', chunks: ['ok'], chunkCount: 1, codePoints: 2 }, inspectorLines: 0 }
+ * // => { lineCount: 1, pending: { channel: 'stdout', start: 4, end: 6, codePoints: 2 }, inspectorLines: 0 }
  */
 export function indexNodeTestOutput(
   entries: readonly NodeTestHistoryIndex['entries'][number][],
 ): NodeTestOutputIndex {
+  const outputEntries = entries.filter((entry) => entry.type === 'output')
+  // The output is shown text already: stripping it again would pass over the whole output for nothing (F315, F339).
+  const body = outputEntries.map((entry) => entry.text).join('')
   const index: NodeTestOutputIndex = {
     sequences: [],
-    lines: [],
+    body,
+    lineStarts: [],
+    lineEnds: [],
+    lineChannels: [],
     lineTotals: [0],
     after: [],
   }
-  /** The unfinished line: its chunks (shared with every entry's record of it) and their code points. */
-  let pending:
-      | {
-          channel: NodeTestOutputLine['channel']
-          chunks: string[]
-          codePoints: number
-        }
-      | undefined,
+  /** The unfinished line: the span of the body it holds so far. */
+  let pending: NodeTestOutputPendingLine | undefined,
     inspectorLines = 0
-  const complete = (line: NodeTestOutputLine): void => {
+  const complete = (line: NodeTestOutputPendingLine): void => {
     if (
       line.channel === 'stderr' &&
-      INSPECTOR_LINES.some((pattern) => pattern.test(line.text))
+      INSPECTOR_LINES.some((pattern) =>
+        pattern.test(body.slice(line.start, line.end)),
+      )
     ) {
       inspectorLines++
       return
     }
-    index.lines.push(line)
+    index.lineStarts.push(line.start)
+    index.lineEnds.push(line.end)
+    index.lineChannels.push(line.channel)
     index.lineTotals.push(
-      index.lineTotals.at(-1)! + nodeTestOutputLineCost(line, true),
+      index.lineTotals.at(-1)! +
+        nodeTestOutputLineCost(line.channel, line.codePoints, true),
     )
   }
-  /** Ends the unfinished line: its chunks are joined once, when the line is complete. */
+  /** Ends the unfinished line. */
   const completePending = (): void => {
-    if (pending)
-      complete({ channel: pending.channel, text: pending.chunks.join('') })
+    if (pending) complete(pending)
     pending = undefined
   }
-  /** Adds a part to the unfinished line of a channel, starting the line when there is none. */
+  /** Adds the span `from..to` of the body to the unfinished line of a channel, starting the line when there is none. */
   const continuePending = (
     channel: NodeTestOutputLine['channel'],
-    part: string,
+    from: number,
+    to: number,
   ): void => {
-    pending ??= { channel, chunks: [], codePoints: 0 }
+    const isContinuing = pending !== undefined
+    pending ??= { channel, start: from, end: from, codePoints: 0 }
     // An empty part continues nothing: a chunk that ends with a line feed leaves no unfinished line.
-    if (!part) return
-    pending.chunks.push(part)
-    pending.codePoints += Array.from(part).length
+    if (to <= from) return
+    // A surrogate pair split across two entries is one code point, not two (F291).
+    const joinsPair =
+      isContinuing && pending.end === from && isSurrogatePairAt(body, from - 1)
+    pending.end = to
+    pending.codePoints += countCodePoints(body, from, to) - (joinsPair ? 1 : 0)
   }
-  /** Joins one output chunk to the lines: a chunk of the other channel ends the unfinished line first, so no line mixes the two channels; the first part continues the unfinished line and each later part starts a new one after a line feed. */
-  const read = (channel: NodeTestOutputLine['channel'], text: string): void => {
+  /** Joins one output chunk (the span `from..to` of the body) to the lines: a chunk of the other channel ends the unfinished line first, so no line mixes the two channels; the first part continues the unfinished line and each later part starts a new one after a line feed. */
+  const read = (
+    channel: NodeTestOutputLine['channel'],
+    from: number,
+    to: number,
+  ): void => {
     if (pending && pending.channel !== channel) completePending()
-    const parts = text.split('\n')
-    continuePending(channel, parts[0]!)
-    for (const part of parts.slice(1)) {
+    const text = body.slice(from, to)
+    let cursor = 0
+    for (;;) {
+      const feed = text.indexOf('\n', cursor)
+      continuePending(channel, from + cursor, feed === -1 ? to : from + feed)
+      if (feed === -1) break
       completePending()
-      continuePending(channel, part)
+      cursor = feed + 1
     }
-    if (pending && !pending.chunks.length) pending = undefined
+    if (pending && pending.end === pending.start) pending = undefined
   }
-  for (const entry of entries) {
-    if (entry.type !== 'output') continue
-    const text = stripTerminalControls(entry.text)
+  let offset = 0
+  for (const entry of outputEntries) {
+    const from = offset
+    offset += entry.text.length
     // A chunk that held only controls changes no line, not even the channel of an unfinished one.
-    if (text) read(entry.channel, text)
+    if (offset > from) read(entry.channel, from, offset)
     index.sequences.push(entry.sequence)
     index.after.push({
-      lineCount: index.lines.length,
-      ...(pending
-        ? {
-            pending: {
-              channel: pending.channel,
-              chunks: pending.chunks,
-              chunkCount: pending.chunks.length,
-              codePoints: pending.codePoints,
-            },
-          }
-        : {}),
+      lineCount: index.lineStarts.length,
+      ...(pending ? { pending: { ...pending } } : {}),
       inspectorLines,
     })
   }
   return index
+}
+
+/**
+ * Removes the terminal controls of every output entry, reading each channel's entries as one stream so a control string split across entries goes whole (F109, F148); called by {@link sanitizeNodeTestHistory} once per opened test replay, before {@link indexNodeTestOutput} reads the shown text.
+ * @param entries - The history's events in sequence order; only output entries are read.
+ * @returns Each output entry's shown text, by the entry's sequence.
+ * @example stripOutputEntries([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: '\u001b[3' }, { type: 'output', sequence: 2, elapsedMs: 6, channel: 'stdout', text: '2mok' }]) // => Map { 1 => '', 2 => 'ok' }
+ */
+export function stripOutputEntries(
+  entries: readonly NodeTestHistoryIndex['entries'][number][],
+): Map<number, string> {
+  const shown = new Map<number, string>()
+  for (const channel of ['stdout', 'stderr'] as const) {
+    const stream = entries.filter(
+      (entry) => entry.type === 'output' && entry.channel === channel,
+    )
+    const stripped = stripTerminalControlsAcross(
+      stream.map((entry) => (entry.type === 'output' ? entry.text : '')),
+    )
+    stream.forEach((entry, position) =>
+      shown.set(entry.sequence, stripped[position]!),
+    )
+  }
+  return shown
 }

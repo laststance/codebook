@@ -9,7 +9,8 @@ export interface NodeHistoryPlaybackEvent {
 }
 
 export interface NodeHistoryPlaybackDependencies {
-  present(sequence: number): Promise<void>
+  /** `isCurrent` says whether the request is still the controller's newest, so a presentation that ends after a newer seek can commit nothing. */
+  present(sequence: number, isCurrent: () => boolean): Promise<void>
   changed(): void
   /** Receives an autoplay presentation failure; manual seeks reject to their own caller instead. */
   failed?(error: unknown): void
@@ -135,7 +136,9 @@ export class NodeHistoryPlaybackController {
       positionMs < first.elapsedMs ||
       positionMs > last.elapsedMs
     ) {
-      throw new Error('Seek lies outside the verified Node history range.')
+      throw new Error(
+        'Seek lies outside the verified range of this test replay.',
+      )
     }
     this.mode = 'paused'
     this.generation++
@@ -216,7 +219,10 @@ export class NodeHistoryPlaybackController {
   private async present(index: number, generation: number): Promise<void> {
     const event = this.events[index]
     if (!event) return
-    const operation = this.dependencies.present(event.sequence)
+    const operation = this.dependencies.present(
+      event.sequence,
+      () => generation === this.generation,
+    )
     this.pending = operation
     try {
       await operation

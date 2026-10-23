@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.36'
+export const EXTENSION_VERSION = '0.2.37'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -216,7 +216,7 @@ export const UNSAVED_STUDY_HANDED_OVER_REASON =
 // Why a saved study cannot be removed right now; the Study pane shows them beside its button and the host repeats them when it refuses.
 export const STUDY_REMOVAL_REFUSALS = {
   nothingChosen: 'Choose a saved study to delete.',
-  nodeHistory: 'Node test histories cannot be deleted here yet.',
+  nodeHistory: 'Test replays cannot be deleted here yet.',
   runNotStopped: 'Stop the run before deleting its study.',
   recordingOpen:
     'Choose Overview or Live to leave Recording before deleting this study.',
@@ -233,7 +233,7 @@ export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
   nothingChosen:
     'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.',
   nodeHistory:
-    'Codebook cannot list the files of a Node test history for removal by hand yet.',
+    'Codebook cannot list the files of a test replay for removal by hand yet.',
   runNotStopped: "Stop the run before removing its study's files by hand.",
   recordingOpen:
     "Choose Overview or Live to leave Recording before removing this study's files by hand.",
@@ -704,6 +704,15 @@ export const MAX_RECORDING_PENDING_BYTES = 8_388_608
 export const MAX_RECORDING_JOURNAL_BYTES = 8_388_608
 export const RECORDING_TERMINAL_RESERVE_BYTES = 16_384
 export const RECORDING_REASON_LIMIT_CHARS = 1_024
+// How many characters of an interrupted or partial test replay's reason the Study section shows on its one line.
+export const NODE_CAPTURE_REASON_LIMIT_CHARS = 240
+
+/** The UTF-16 code units of a surrogate pair's first (high) half; a high unit followed by a low one is one code point ({@link isSurrogatePairAt}). */
+export const HIGH_SURROGATE_FIRST_UNIT = 0xd800
+export const HIGH_SURROGATE_LAST_UNIT = 0xdbff
+/** The UTF-16 code units of a surrogate pair's second (low) half. */
+export const LOW_SURROGATE_FIRST_UNIT = 0xdc00
+export const LOW_SURROGATE_LAST_UNIT = 0xdfff
 export const MAX_RECORDING_CONTEXT_BYTES = 8_388_608
 export const MAX_RECORDING_HEADER_BYTES = 65_536
 export const MAX_RECORDING_TOTAL_BYTES = 570_425_344
@@ -991,6 +1000,12 @@ export const VITEST_PACKAGE_PATH = 'node_modules/vitest/package.json'
 export const VITEST_PROGRAM_PATH = 'node_modules/vitest/vitest.mjs'
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
+/** The file of a test history's folder that names the editor process writing it, removed when the writer seals or is abandoned ({@link writeNodeTestWriterRecord}, {@link judgeNodeTestWriter}). */
+export const NODE_TEST_HISTORY_WRITER_FILE = 'writer.json'
+/** How long a window keeps the verdict "its writer is live" for a test history another window records, in milliseconds: judging the writer reads its process start, which starts a process (`ps`, PowerShell), and the Study workspace refreshes every 250 ms. A crashed writer is therefore told within this time, without a process query at every refresh; a "gone" verdict is final for that record ({@link NodeTestHistoryStore}). */
+export const NODE_TEST_WRITER_RECHECK_MS = 5_000
+/** The largest writer record of a test history Codebook writes or reads. */
+export const NODE_TEST_HISTORY_WRITER_LIMIT_BYTES = 4_096
 /** The largest seal file of a test history Codebook writes or reads ({@link NodeTestHistoryWriter.finish}, {@link isSealedEmptyHistory}). */
 export const NODE_TEST_HISTORY_SEAL_LIMIT_BYTES = 16_384
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
@@ -1007,10 +1022,12 @@ export const TRANSIENT_FILE_ERROR_CODES: readonly string[] = [
 export const NODE_HISTORY_SUMMARY_READ_CONCURRENCY = 4
 /** How much of a test replay's recorded output, counted in code points of the shown text (the `[stderr] ` marks and line feeds included), the Application pane keeps up to the selected event: its end, where the selected moment is. */
 export const NODE_TEST_OUTPUT_TAIL_CHARS = 65_536
+/** How many code points after its introducer a terminal control string (CSI, OSC, DCS, SOS, PM, APC) may run to its terminator in recorded test output; an introducer with no terminator within them is a stray, and only its own code points are removed (F109, F148). */
+export const TERMINAL_CONTROL_STRING_LOOKAHEAD_CODE_POINTS = 4_096
 /** How close to its end, in CSS pixels, a test replay's output region counts as at its end, so the Application pane follows the latest output (DS20); subpixel scroll positions never land exactly on it. */
 export const TEST_OUTPUT_END_TOLERANCE_PX = 2
-/** At most how often a test replay's Application document writes its follow choice and latest moment into the webview's state: Play posts up to twenty moments a second, and each write copies the whole shown output, so the writes in between are joined into one (the last moment is also written when the document is left). */
-export const TEST_OUTPUT_STATE_WRITE_INTERVAL_MS = 500
+/** At most how often a test replay's Application document reports the learner's scroll anchor to the host: scrolling produces events faster than the host needs them, so the reports in between are joined into one (the joined anchor is also reported when the document is left). */
+export const TEST_OUTPUT_STATE_REPORT_INTERVAL_MS = 500
 /** Longest debugger type name a saved Node fact keeps; the type is supplementary, so a longer one is omitted rather than failing the run. */
 export const NODE_TEST_FACT_TYPE_LIMIT_CHARS = 256
 /** Oldest Vitest major whose file listing, exclusion, name matching and JSON report were verified for exact node-test selection (4.1.11 and 5.0.2). */

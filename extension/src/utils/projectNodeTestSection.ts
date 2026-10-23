@@ -11,6 +11,7 @@ import {
 import { projectNodeHistoryTimeline } from './projectNodeHistoryTimeline'
 import type { NodeHistoryTimeline } from './projectNodeHistoryTimeline'
 import type { NodeLearningSummaryProjection } from './projectNodeLearningSummary'
+import { wordNodeCaptureReason } from './wordNodeCaptureReason'
 
 /**
  * What the Study pane's test replay section shows beside the selected event (Designs 5 and 6, DS3, DS21): every line already worded, so the pane's client code only places them.
@@ -25,6 +26,8 @@ export type NodeTestSectionView = {
   notRecorded?: string
   /** The line for a selected stop whose recorded source does not verify. */
   unverified?: string
+  /** Why the capture is interrupted or partial, worded without "Node" (DS14); absent for a complete capture or one without a stored reason. */
+  captureReason?: string
   /** Where the output up to the selected moment is, or that its pane is closed. */
   pointer: string
   applicationClosed: boolean
@@ -47,7 +50,7 @@ export type NodeTestSectionView = {
 
 /** The inputs of the section's view. */
 export type NodeTestSectionInput = {
-  history: Pick<NodeTestHistoryIndex, 'entries' | 'status'>
+  history: Pick<NodeTestHistoryIndex, 'entries' | 'status' | 'reason'>
   selected?: NodeTestHistoryIndex['entries'][number]
   /** Whether the selected event is a stop whose recorded source verifies. */
   selectedStopVerified: boolean
@@ -80,6 +83,7 @@ export function projectNodeTestSection(
   const marks = timeline ? { timeline } : {}
   return {
     status: sectionStatus(history, stops, verdict, learning),
+    ...captureReasonLine(history),
     ...(selected ? { position: positionLine(selected, stops.length) } : {}),
     ...(explanation === undefined ? {} : { explanation }),
     // The 4A line stands at an output, the result and a stop whose source does not verify.
@@ -108,6 +112,30 @@ export function projectNodeTestSection(
       (stop) => selected === undefined || stop.sequence > selected.sequence,
     ),
     ...marks,
+  }
+}
+
+/**
+ * Words why an interrupted or partial capture ended, beside the status; called by {@link projectNodeTestSection}.
+ * @param history - The test replay.
+ * @returns `{ captureReason }` for an interrupted or partial capture with a stored reason; nothing otherwise.
+ * @example captureReasonLine({ status: 'interrupted', reason: 'Interrupted Node history after its verified prefix: EIO' }) // => { captureReason: 'Capture interrupted: Interrupted test replay after its verified prefix: EIO' }
+ */
+function captureReasonLine(
+  history: Pick<NodeTestHistoryIndex, 'status' | 'reason'>,
+): { captureReason?: string } {
+  const reason = wordNodeCaptureReason(history.reason)
+  if (
+    !reason ||
+    (history.status !== 'partial' && history.status !== 'interrupted')
+  )
+    return {}
+  return {
+    captureReason: describeNodeTestReplay({
+      kind: 'capture-reason',
+      status: history.status,
+      reason,
+    }),
   }
 }
 
