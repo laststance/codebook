@@ -19,6 +19,7 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 
 /** The last view the reader posted to its panes. */
 function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
@@ -1111,6 +1112,59 @@ test('a first open whose replay debugger cannot start lands on its moment, tells
     assert.notEqual(
       harness.historicalDebugPresentations.at(-1)?.snapshot,
       undefined,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a first open whose replay debugger failed to start while another moment is selected before the failed owner is disposed: the old open reports nothing and selects and saves nothing, so only the newer selection shows its moment, its position and no replay-debugger row; fails_when=the old open still reports its failure row and commits its moment after the disposal, over the newer selection; why_new=the failure path awaited the disposal without checking that its request was still current (F237); seam=the harness's held presentation (rejected) and held debugger disposal; no_claim=the real debug session
+test('a failed first debugger start overtaken by a newer selection while the owner is disposed reports nothing', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    // The reader left the replay on its result, a moment without a recorded stop.
+    await store.saveReaderPosition(history.studyId, 3)
+    await harness.reader.action('retry')
+    const heldPresentation = harness.holdHistoricalDebugPresentation()
+    const heldDisposal = harness.holdHistoricalDebugDisposal()
+    const opening = harness.reader.openLearningReplay(history.studyId)
+    await heldPresentation.started
+    heldPresentation.reject(new Error('Workspace trust was declined.'))
+    await heldDisposal.started
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    heldDisposal.release()
+    await opening
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the newer selection is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    await waitUntil(
+      async () => (await store.readReaderPosition(history.studyId)) === 2,
+      'the newer position is saved',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    const linesEverSent = harness
+      .postedMessages()
+      .flatMap((message) => message.errors)
+    assert.equal(
+      linesEverSent.some((line) => line.includes('could not start')),
+      false,
     )
     assert.equal(lastView(harness)?.errors.length, 0)
   } finally {

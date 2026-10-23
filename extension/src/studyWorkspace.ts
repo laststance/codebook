@@ -23410,6 +23410,8 @@ export class StudyWorkspace {
       // The owner that failed to start is retired and waited for, so the next presentation (Retry) creates a new one and starts it instead of finding this object, invalidating it and reporting success.
       if (this.replayDebugger)
         await this.retireReplayDebugger(this.replayDebugger)
+      // A newer selection (another event, Retry) or a close took over while the owner was disposed: only the current selection reports the failure and commits.
+      if (request !== this.selectedNodeHistoryRequest) return false
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
       this.reportTestReplayFailure(
