@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 // Value: protects=two quick moves of a test replay add up: while the first move's debugger presentation is still loading, the second move is computed from the moment the first one is going to, not from the moment still shown; fails_when=the second press targets from the shown moment, so Next stop then Next event lands on the output after the first stop (sequence 3) instead of the result after the second stop (sequence 5); why_new=F129: both presses computed their target from selectedNodeHistorySequence, which changes only after the presentation and the position write; seam=the workspace harness's held historical debug presentation; no_claim=Play's own pacing
@@ -21,7 +22,7 @@ test('Next stop then Next event pressed while the first move loads moves on from
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const held = harness.holdHistoricalDebugPresentation(true)
     harness.receiveContext({
@@ -44,7 +45,7 @@ test('Next stop then Next event pressed while the first move loads moves on from
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
       'the second press lands on the result after the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     held.reject(new Error('Historical debugger presentation was superseded.'))
 
@@ -71,7 +72,7 @@ test('a Next stop whose presentation failed leaves the next Next stop to move fr
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const held = harness.holdHistoricalDebugPresentation(true)
     harness.receiveContext({
@@ -86,7 +87,7 @@ test('a Next stop whose presentation failed leaves the next Next stop to move fr
     await waitUntil(
       () => (lastView(harness)?.errors.length ?? 0) > 0,
       'the failed presentation is reported',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act
@@ -100,7 +101,7 @@ test('a Next stop whose presentation failed leaves the next Next stop to move fr
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
       'the second Next stop reaches the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
