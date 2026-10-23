@@ -1,5 +1,7 @@
 import { basename } from 'node:path'
 
+import { CAPTURED_SOURCE_NAME_PREFIX } from '../constants'
+
 import { formatEventSeconds } from './formatEventSeconds'
 import { stripTerminalControls } from './stripTerminalControls'
 
@@ -37,13 +39,18 @@ export type NodeRecordedSourceMessage =
       cause: string
     }
   | {
+      /** The Study row of a slot that shows its moment but could not close the tab of the slot it replaced. */
+      kind: 'close-failed'
+      cause: string
+    }
+  | {
       /** The slot's tab title, named after the stop's source file. */
       kind: 'tab-title'
       path: string
     }
 
 /**
- * Words one recorded-source message of a test replay; {@link StudyWorkspace} calls it for the slot's label and tab, the replay debugger's thread and the slot's open failure.
+ * Words one recorded-source message of a test replay; {@link StudyWorkspace} calls it for the slot's label and tab, the replay debugger's thread, the slot's open failure and the failure to close an earlier slot tab.
  * A recorded path is shown without terminal and bidirectional controls ({@link stripTerminalControls}), so a control in a file name never reorders the label, the tab title or the thread name around it; the real path stays with the caller for the slot's URI hash and the source identity (F286).
  * @param message - The surface and its values; `stop` is 1-based.
  * @returns The catalog's sentence with the values filled in.
@@ -51,6 +58,7 @@ export type NodeRecordedSourceMessage =
  * describeNodeRecordedSource({ kind: 'label', path: 'src/jobs.ts', line: 12, elapsedMs: 1234 }) // => 'Recorded: src/jobs.ts:12 · 1.23 s'
  * describeNodeRecordedSource({ kind: 'thread', stop: 2, path: 'src/jobs.ts', line: 12 }) // => 'Recorded test stop 2 · src/jobs.ts:12'
  * describeNodeRecordedSource({ kind: 'tab-title', path: 'src/jobs.ts' }) // => 'Captured-jobs.ts'
+ * describeNodeRecordedSource({ kind: 'close-failed', cause: 'The editor kept a tab' }) // => 'Codebook could not close an earlier recorded-source tab: The editor kept a tab.'
  */
 export function describeNodeRecordedSource(
   message: NodeRecordedSourceMessage,
@@ -64,7 +72,9 @@ export function describeNodeRecordedSource(
       return message.stop === undefined
         ? `Codebook could not open the recorded source: ${message.cause}. Details: Output › Codebook.`
         : `Codebook could not open the recorded source of stop ${message.stop}: ${message.cause}. Details: Output › Codebook.`
+    case 'close-failed':
+      return `Codebook could not close an earlier recorded-source tab: ${message.cause.replace(/\.$/, '')}.`
     case 'tab-title':
-      return `Captured-${basename(stripTerminalControls(message.path))}`
+      return `${CAPTURED_SOURCE_NAME_PREFIX}${basename(stripTerminalControls(message.path))}`
   }
 }

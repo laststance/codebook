@@ -159,3 +159,46 @@ test('Next stop in a test replay reopened after a browser recording cut off a sl
     await harness.close()
   }
 })
+
+// Value: protects=a browser recording that replaces a selected test replay also ends the replay's recorded-source slot: its tab closes and its document reads the placeholder, not the last stop; fails_when=the load keeps the slot while the browser replay owns the surfaces, so a pinned or restored slot tab keeps the last stop's bytes; why_new=F184 (nothing tested that a browser recording ends the slot); seam=none; no_claim=the browser replay's own panes
+test('a browser recording opened over a selected test replay ends its recorded-source slot', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      2_000,
+    )
+    const slotTabs = () =>
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .flatMap((tab) => {
+          const uri = (tab.input as { uri?: { toString(): string } }).uri
+          return uri?.toString().includes('/node-history-slot/')
+            ? [uri.toString()]
+            : []
+        })
+    const slot = slotTabs()[0]!
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(slotTabs(), [])
+    assert.match(
+      await harness.readCapturedSource(slot),
+      /^\/\/ Recorded source · Not recorded at this moment\n/,
+    )
+  } finally {
+    await harness.close()
+  }
+})

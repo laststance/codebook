@@ -658,8 +658,12 @@ export const UI_CAUSE_MAX_CHARS = 300
 export const STUDY_SOURCE_SCHEME = 'codebook-source'
 /** The first path segment of a test replay's recorded-source slot ({@link nodeSourceSlotPath}): one Codebook-owned source document per opened test replay, whose text follows the selected moment (DS5). */
 export const NODE_SOURCE_SLOT_PATH_ROOT = 'node-history-slot'
-/** Longest wait for a test replay's recorded-source slot to show a selected moment's bytes before the selection reports that the slot could not open; the slot keeps its loading text meanwhile, never the earlier moment (EN8). */
+/** How many hex characters of the source file's folder hash {@link nodeSourceSlotPath} puts between the study id and the tab title, so two files of the same name in different folders get different slots (F200). */
+export const NODE_SOURCE_SLOT_DIRECTORY_HASH_CHARS = 12
+/** How long a test replay's recorded-source slot may take to show a selected moment's bytes before it is asked to read them again; the slot keeps its loading text meanwhile, never the earlier moment, and the selection is not failed by this bound alone ({@link NODE_HISTORY_SLOT_DEADLINE_MS} fails it) (EN8). */
 export const NODE_HISTORY_TRANSITION_BOUND_MS = 1_000
+/** One deadline over a test replay's whole recorded-source show: the document's open, its show, the wait for its bytes and the close of the earlier slot tab. When it passes first, the moment reports its `history-source` row and releases Play's pending selection (closure rule 7 of #118). */
+export const NODE_HISTORY_SLOT_DEADLINE_MS = 5_000
 /** Registered view types of the editor panes Codebook creates: Application, Study and Repository Wiki. */
 export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
   'codebook.scopedBrowser',

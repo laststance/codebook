@@ -639,7 +639,6 @@ test('Close while Live return waits for a Node preview leaves the closed reader 
       'the selected Node history is ready',
       1_000,
     )
-    harness.addNodeHistoryPreview(history.studyId, 2)
     const preview = harness.holdNextTabCloseResponse(),
       state = harness.reader.presentationState()
     releasePreview = preview.release
