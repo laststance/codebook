@@ -3184,6 +3184,71 @@ async function check(page, options, collected) {
           afterAnswer.firstLine === 12 &&
           afterAnswer.offsetPx === 4,
       })
+      // Value: protects=the host's reading, delivered with the answer to `ready`, survives another view posted in the same animation frame (Play posts up to twenty a second), so the learner's place is still taken; fails_when=the newer queued view replaces the answer whole and the document stays following at the end of the output; why_new=F290: a queued update replaced the queued one with its reading; seam=none; no_claim=the host's decision to answer, which the workspace tests pin
+      // Act: the answer (a result view with a reading not following at line 12 and 4 px) and a newer view without a reading arrive in the same task.
+      const queuedReadingPage = await openApplication(options.html.application)
+      await queuedReadingPage.evaluate((result) => {
+        const post = (data) =>
+          window.dispatchEvent(new MessageEvent('message', { data }))
+        post({
+          type: 'node-history-output',
+          generation: 2,
+          view: { ...result, generation: 2 },
+          reading: { follow: false, anchor: { line: 12, offsetPx: 4 } },
+        })
+        post({
+          type: 'node-history-output',
+          generation: 3,
+          view: {
+            ...result,
+            generation: 3,
+            time: 'Recorded test output · newer',
+          },
+        })
+      }, resultView)
+      await settleFrames(queuedReadingPage)
+      const afterQueuedReading = await readDocument(queuedReadingPage)
+      await queuedReadingPage.close()
+      // Assert
+      cases.push({
+        name: 'the host’s reading in an answer survives a newer view posted in the same frame (F290)',
+        actual: { afterQueuedReading },
+        passed:
+          afterQueuedReading.time === 'Recorded test output · newer' &&
+          !afterQueuedReading.atEnd &&
+          afterQueuedReading.jumpShown &&
+          afterQueuedReading.firstLine === 12 &&
+          afterQueuedReading.offsetPx === 4,
+      })
+      // Value: protects=an answer to `ready` that the host built before the learner scrolled does not pull the learner back: the scroll after `ready` is fresher than the reading the answer carries; fails_when=the answer's follow choice scrolls the output to its end under the learner; why_new=F290: the answer overrode a scroll made after `ready`; seam=none; no_claim=a reading the host files after the scroll's report, which agrees with the scroll
+      // Act: the document at the result follows the end; the learner scrolls up; then the answer built before that scroll (following) arrives with a newer view.
+      const staleAnswerPage = await openApplication(
+        options.html.applicationAtResult,
+      )
+      await learnerScrolledTo(staleAnswerPage, 250)
+      await settleFrames(staleAnswerPage)
+      const afterLearnerScroll = await readDocument(staleAnswerPage)
+      await postToDocument(staleAnswerPage, {
+        type: 'node-history-output',
+        generation: 5,
+        view: { ...resultView, generation: 5 },
+        reading: { follow: true },
+      })
+      await settleFrames(staleAnswerPage)
+      const afterStaleAnswer = await readDocument(staleAnswerPage)
+      await staleAnswerPage.close()
+      // Assert
+      cases.push({
+        name: 'an answer built before the learner’s scroll does not override that scroll (F290)',
+        actual: { afterLearnerScroll, afterStaleAnswer },
+        passed:
+          afterLearnerScroll.jumpShown &&
+          !afterLearnerScroll.atEnd &&
+          !afterStaleAnswer.atEnd &&
+          afterStaleAnswer.jumpShown &&
+          afterStaleAnswer.firstLine === afterLearnerScroll.firstLine &&
+          afterStaleAnswer.lastReport?.follow === false,
+      })
       // Value: protects=following is decided by the scroll position alone: a scroll to the end that moves nothing (a view of the same height) leaves no mark that swallows the learner's next scroll up, so Jump to latest shows, following is reported off and the next moment does not pull the output back to its end; fails_when=the document's scroll that moved nothing is remembered, the learner's scroll up is read as the document's own, and the next moment scrolls to the end (DS20); why_new=F106: `scrolledByDocument` stayed set when the scroll to the end caused no scroll event; seam=none; no_claim=a clamp to a shorter output, which the in-place case below pins
       // Act: the result's output followed to its end; a view of the same height arrives (no scroll to make); the learner scrolls up; another view arrives.
       const sameHeightPage = await openApplication(

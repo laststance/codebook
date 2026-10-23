@@ -51,7 +51,7 @@ export type NodeTestOutputReport =
 
 /**
  * Draws the Application pane's one document for a test replay and applies each later event to it in place (EN3), so moving through the replay never reloads the page: unchanged lines keep their nodes, so the learner's text selection, the scroll position and the keyboard focus survive, and an update older than the one shown is ignored. It follows the latest output until the learner scrolls up, and `Jump to latest` follows again (DS20); called by the document {@link testOutputHtml} writes, serialized with `toString()`, so it imports nothing.
- * The first view is drawn by the same code as every later one. The learner's follow choice and scroll anchor belong to the host, which files them under the replay and passes them in the options of each document it writes, so a document that replaces another of the same replay (a presentation change, a Retry, a reload) opens where the learner was (D22). The document reports a change of its follow choice at once and its scroll anchor at most once per interval, and tells the host when it is ready, so a document that VS Code reloads in place is brought to the host's current view (F141). Views posted in a burst are drawn once per animation frame, the newest only (F140). Following is decided by the scroll position alone: a scroll that leaves the position the document itself set is the learner's (F106).
+ * The first view is drawn by the same code as every later one. The learner's follow choice and scroll anchor belong to the host, which files them under the replay and passes them in the options of each document it writes, so a document that replaces another of the same replay (a presentation change, a Retry, a reload) opens where the learner was (D22). The document reports a change of its follow choice at once and its scroll anchor at most once per interval, and tells the host when it is ready, so a document that VS Code reloads in place is brought to the host's current view (F141). Views posted in a burst are drawn once per animation frame, the newest only (F140), and the host's reading in a replaced view is carried to the newest, so it is not lost (F290); a reading that arrives after the learner scrolled or pressed Jump to latest is ignored, because the learner's own place is newer (F290). Following is decided by the scroll position alone: a scroll that leaves the position the document itself set is the learner's (F106).
  * @param api - The webview's API.
  * @param options - The stderr mark, the shown replay, the end tolerance, the report interval, the first view and the host's reading.
  * @example installNodeTestOutput(acquireVsCodeApi(), { stderrMark: '[stderr] ', history: 'study_1', endTolerancePx: 2, stateReportIntervalMs: 500, view, reading: { follow: true } })
@@ -74,6 +74,8 @@ export function installNodeTestOutput(
     // The scroll position the document itself left; a scroll event that ends elsewhere is the learner's.
     expectedTop = 0,
     queued: NodeTestOutputUpdate | undefined,
+    // Whether the learner scrolled or pressed Jump to latest in this document: a reading the host built before that is older than the learner's own place (F290).
+    learnerActed = false,
     frame: number | undefined,
     reportTimer: ReturnType<typeof setTimeout> | undefined,
     reportDue = false
@@ -243,12 +245,14 @@ export function installNodeTestOutput(
     if (!update) return
     shown = update.generation
     apply(update.view)
-    if (update.reading) takeReading(update.reading)
+    // The host's reading is the answer to `ready`, built before anything the learner did since; it never overrides the learner's own place (F290).
+    if (update.reading && !learnerActed) takeReading(update.reading)
   }
   output.addEventListener('scroll', () => {
     // A scroll that ends where the document left the position (its own scroll to the end, or a clamp to a shorter output, or none at all) is no choice of the learner's.
     if (output.scrollTop === expectedTop) return
     expectedTop = output.scrollTop
+    learnerActed = true
     const following = atEnd()
     if (following === follow) {
       reportSoon()
@@ -260,6 +264,7 @@ export function installNodeTestOutput(
     reportState()
   })
   jump.addEventListener('click', () => {
+    learnerActed = true
     follow = true
     toEnd()
     jump.hidden = true
@@ -279,11 +284,13 @@ export function installNodeTestOutput(
         return
       // An update older than the one shown or waiting came late: the newer selection stands.
       if (data.generation < Math.max(shown, queued?.generation ?? 0)) return
+      // The newest view is drawn, but the host's reading waiting in the replaced update is kept unless this one brings its own (F290).
+      const reading = data.reading ?? queued?.reading
       queued = {
         type: 'node-history-output',
         generation: data.generation,
         view: data.view,
-        ...(data.reading ? { reading: data.reading } : {}),
+        ...(reading ? { reading } : {}),
       }
       // Views that arrive faster than frames (Play posts up to twenty a second) are drawn once, the newest.
       frame ??= requestAnimationFrame(drawQueued)
