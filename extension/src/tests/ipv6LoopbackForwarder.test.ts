@@ -160,8 +160,10 @@ async function startUpstream(
 }
 
 /** Opens a connection to `[::1]:port` that tolerates a half-close and collects everything it receives until it closes. */
-function connectIpv6(port: number) {
+function connectIpv6(context: TestContext, port: number) {
   const socket = createConnection({ host: '::1', port, allowHalfOpen: true })
+  // A client left open would keep the test process alive after a failure.
+  context.after(() => socket.destroy())
   const chunks: Buffer[] = []
   socket.on('data', (chunk: Buffer) => chunks.push(chunk))
   // A half-open client must end its own side once the peer has ended, or it never closes.
@@ -187,7 +189,7 @@ test('a client that half-closes after sending still gets the reply through [::1]
   const forwarder = await startIpv6LoopbackForwarder(port)
   if (!forwarder) return context.skip('[::1] is not available on this host')
   context.after(() => forwarder.close())
-  const client = connectIpv6(port)
+  const client = connectIpv6(context, port)
 
   // Act
   await client.connected
@@ -199,10 +201,10 @@ test('a client that half-closes after sending still gets the reply through [::1]
   assert.equal(Buffer.concat(client.chunks).toString(), 'reply:hi')
 })
 
-/** The size of the reply that the large-reply test sends; far more than the socket buffers hold. */
-const LARGE_REPLY_BYTES = 4_194_304
+/** The size of the reply that the large-reply test sends; far more than the loopback socket buffers hold. */
+const LARGE_REPLY_BYTES = 67_108_864
 
-// Value: protects=a large reply that the upstream sends and then closes arrives whole at a slow client (F448: a socket's close destroyed the other and dropped the buffered tail); fails_when=the client receives fewer bytes than the upstream wrote; why_new=OCR medium of the review of 944a4d25..6bc9eab2; seam=a real forwarder, an upstream that writes 4 MiB and ends, and a client that pauses reading for 200 ms; no_claim=a real browser
+// Value: protects=a large reply that the upstream sends and then closes arrives whole at a slow client (F448: a socket's close destroyed the other and dropped the buffered tail); fails_when=the client receives fewer bytes than the upstream wrote; why_new=OCR medium of the review of 944a4d25..6bc9eab2; seam=a real forwarder, an upstream that writes 64 MiB and ends, and a client that pauses reading for 300 ms; no_claim=a real browser
 test('a large reply that the upstream closes right after sending arrives whole through [::1]', async (context) => {
   // Arrange
   const port = await startUpstream(context, (socket) =>
@@ -211,12 +213,12 @@ test('a large reply that the upstream closes right after sending arrives whole t
   const forwarder = await startIpv6LoopbackForwarder(port)
   if (!forwarder) return context.skip('[::1] is not available on this host')
   context.after(() => forwarder.close())
-  const client = connectIpv6(port)
+  const client = connectIpv6(context, port)
   client.socket.pause()
 
   // Act
   await client.connected
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  await new Promise((resolve) => setTimeout(resolve, 300))
   client.socket.resume()
   const outcome = await withinTimeout(client.closed)
 
@@ -234,7 +236,7 @@ test('closing the forwarder while a connection is open ends that connection', as
   const forwarder = await startIpv6LoopbackForwarder(port)
   if (!forwarder) return context.skip('[::1] is not available on this host')
   context.after(() => forwarder.close())
-  const client = connectIpv6(port)
+  const client = connectIpv6(context, port)
   await client.connected
   client.socket.write('ping')
   await new Promise((resolve) => client.socket.once('data', resolve))
@@ -255,7 +257,7 @@ test('a refused upstream connection closes the client connection', async (contex
   const forwarder = await startIpv6LoopbackForwarder(port)
   if (!forwarder) return context.skip('[::1] is not available on this host')
   context.after(() => forwarder.close())
-  const client = connectIpv6(port)
+  const client = connectIpv6(context, port)
 
   // Act
   const outcome = await withinTimeout(client.closed)
