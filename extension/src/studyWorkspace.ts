@@ -1319,7 +1319,9 @@ export class StudyWorkspace {
       (this.liveComposition || this.summaryComposition
         ? !panes.context
         : panes.contextColumn === descriptor.contextColumn)
-    const currentSourceReady = this.sourceReady()
+    // A selected or opening test replay does no article source work (D32, F390): its recorded-source slot is its own source, so the article's captured source is no condition of its layout.
+    const currentSourceReady =
+      this.sourceReady() || this.testReplayHoldsComposition()
     const matchingLayoutReceipt = Boolean(
       this.layoutReceipt?.mode === 'study' &&
       this.sameStudyPanePositions(this.layoutReceipt.panes),
@@ -2427,11 +2429,17 @@ export class StudyWorkspace {
    */
   private confirmCompositionByReceipt(): void {
     this.presentationConfirmed = Boolean(this.layoutReceipt)
-    if (this.presentationConfirmed) {
-      this.presentationReason = undefined
-      this.errors.delete('layout')
-      this.errors.delete('presentation')
-    }
+    if (this.presentationConfirmed) this.retireRefusalLines()
+  }
+
+  /**
+   * Drops the reason and the layout and presentation lines an earlier refused request left; called by {@link confirmCompositionByReceipt} and by {@link open} once its entry holds a layout receipt.
+   * @example this.retireRefusalLines() // the Study pane no longer shows the refusal of an agent's earlier request
+   */
+  private retireRefusalLines(): void {
+    this.presentationReason = undefined
+    this.errors.delete('layout')
+    this.errors.delete('presentation')
   }
 
   /**
@@ -8321,6 +8329,13 @@ export class StudyWorkspace {
       // An enlarged pane needs explicit Restore; a later Open must not certify its retained grid receipt.
       if (!this.presentationTransition && !this.enlargedLayoutReceipt)
         this.presentationConfirmed = Boolean(this.layoutReceipt)
+      // An entry that arranged the panes retires the lines of an earlier refused request (F389: an agent's refusal stayed in the Study pane after the learner's Open replay arranged it).
+      if (
+        this.presentationConfirmed &&
+        !this.presentationTransition &&
+        !this.presentationReason?.includes(FIRST_REPLAY_POSITION_WARNING)
+      )
+        this.retireRefusalLines()
       if (
         !this.liveComposition &&
         firstOpen &&
@@ -19769,6 +19784,27 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Says that the editor holds exactly two groups, the main editor's one group with no learner's editor (empty, or only Codebook panes) and one group of another part that holds only a chat, so that a layout read of either part counts one group and the main editor's grid is known without a focus report (F389).
+   * Cursor reports no keyboard focus for an empty group or a Codebook pane beside its Agent chat part, so the wait of {@link readMainEditorGrid} could never end for an empty main editor. With one group on each side the count a read answers is the main editor's whichever part answered, which is the proof the focus report gives elsewhere. Any other shape (a learner's tab in the first group, more groups, a second part with editors) still needs the report.
+   * @param count - The group count the layout read answered.
+   * @returns `true` for that shape; `false` otherwise.
+   * @example this.isSoleMainGroupBesideChat(1) // => true with an empty first group and Cursor's Agent chat in the second
+   */
+  private isSoleMainGroupBesideChat(count: number): boolean {
+    const groups = vscode.window.tabGroups.all
+    if (count !== 1 || groups.length !== 2) return false
+    const [first, other] = groups
+    return Boolean(
+      first &&
+      other &&
+      first.viewColumn === vscode.ViewColumn.One &&
+      first.tabs.every((tab) => this.isCodebookPaneInput(tab.input)) &&
+      other.tabs.length > 0 &&
+      !holdsEditorTab(other, editorTabInputKinds(vscode)),
+    )
+  }
+
   /** Measures the main editor part before {@link arrange} or presentation placement; global chat/floating groups remain protected outside its leaves. @example const grid = await this.readMainEditorGrid(signal, assertCurrent) */
   private async readMainEditorGrid(
     signal: AbortSignal | undefined,
@@ -19953,6 +19989,7 @@ export class StudyWorkspace {
         sourceEditorReported() &&
         namedColumn !== sourceBorrow?.viewColumn &&
         vscode.window.tabGroups.activeTabGroup.viewColumn === namedColumn
+      const groupsBeforeFocus = this.refusalGroupViews()
       const emptyFirstGroup = vscode.window.tabGroups.all.some(
         (group) =>
           group.viewColumn === vscode.ViewColumn.One && !group.tabs.length,
@@ -20034,6 +20071,7 @@ export class StudyWorkspace {
       }
       // What the borrow left in front of the first group, for a refused change's give-back (row 728).
       this.firstGroupFrontAtBorrow = this.frontTabOfFirstGroup()
+      const focusArmed = { atMs: performance.now(), before: groupsBeforeFocus }
       await waitUntil(
         () => {
           const currentInput = vscode.window.tabGroups.all.find(
@@ -20055,7 +20093,10 @@ export class StudyWorkspace {
             )
           }
           return (
-            firstFocused() || primaryEditorReported() || sourceEditorReported()
+            firstFocused() ||
+            primaryEditorReported() ||
+            sourceEditorReported() ||
+            this.isSoleMainGroupBesideChat(count ?? 0)
           )
         },
         'identifiable primary editor focus',
@@ -20082,9 +20123,7 @@ export class StudyWorkspace {
                 this.editorTabName(foreignPreview.tab),
                 foreignPreview.group.viewColumn,
               )
-            : unreportedEditorFocusObstacle(
-                PRESENTATION_READY_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
-              ),
+            : this.tellUnreportedEditorFocus(focusArmed),
         )
       })
       assertCurrent()
@@ -21629,6 +21668,33 @@ export class StudyWorkspace {
         label: sanitizeCause(tab.label, roots),
       })),
     }))
+  }
+
+  /**
+   * Writes one Output › Codebook entry for a main editor that reported no keyboard focus, and returns the refusal sentence the entry throws; called by {@link readMainEditorGrid} when its wait ends (F389).
+   * The entry names the groups and tabs before the first group was focused and now, so the next native take tells what the first group held while the editor reported nothing.
+   * @param armed - The time the wait began and the groups before the focus command.
+   * @returns The sentence {@link unreportedEditorFocusObstacle} words.
+   * @example throw new StudyError('PRESENTATION_UNAVAILABLE', this.tellUnreportedEditorFocus(armed))
+   */
+  private tellUnreportedEditorFocus(armed: {
+    atMs: number
+    before: RefusalGroupView[]
+  }): string {
+    this.diagnostics?.log({
+      surface: 'presentation:focus-unreported',
+      cause: describePlacementRefusal({
+        guard: 'main editor focus report',
+        armedAtMs: armed.atMs,
+        nowMs: performance.now(),
+        before: this.sanitizeRefusalGroups(armed.before),
+        after: this.sanitizeRefusalGroups(this.refusalGroupViews()),
+        events: this.placementEvents.since(armed.atMs),
+      }),
+    })
+    return unreportedEditorFocusObstacle(
+      PRESENTATION_READY_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
+    )
   }
 
   /**

@@ -8486,6 +8486,100 @@ test('Restore beside a kept image tab leaves the enlarged Study pane and names t
   }
 })
 
+// Value: protects=the next native take of an unreported main editor focus naming what the first group held; fails_when=the refusal is told only to the caller and Output › Codebook gets no entry with the groups and tabs at the refusal; why_new=Cycle 0050 F389 (the Cursor main editor's contents when the keyboard report never came were not recorded)
+test('Open Study Workspace refused for an unreported main editor focus writes one Output entry naming the first group and its tab', async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+
+    // Act
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, opening, 6_000)
+    await opening
+    resetFakeClock(context)
+
+    // Assert
+    const entries = logged.filter(
+      (entry) => entry.surface === 'presentation:focus-unreported',
+    )
+    assert.equal(entries.length, 1)
+    assert.match(entries[0]!.cause, /Guard: main editor focus report/)
+    assert.match(entries[0]!.cause, /1\*? \[Cursor Settings \(/)
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+for (const entry of [
+  "an agent's Study workspace request",
+  'Open Study Workspace',
+] as const) {
+  // Value: protects=a Study workspace request made while Cursor's Agent works and the main editor holds no editor at all (only its empty-editor watermark): the panes are arranged without the learner's click and the Agent keeps the keyboard; fails_when=the entry waits five seconds for a keyboard focus report that Cursor never gives an empty group or a Codebook pane beside the chat, and refuses with "The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …"; why_new=Cycle 0050 F389 (Cursor 3.26.16, frames of the X3 take: no tab in any group, the Agent working, two refused codebook_presentation study-workspace requests); seam=the workspace harness with one empty main group, Cursor's chat part and unreported pane focus
+  test(`${entry} made beside Cursor's Agent while the main editor holds no editor arranges the three panes and leaves the keyboard in the chat`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 1, groups: [{}] })
+    harness.leaveEmptyGroup(1)
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    try {
+      chat.focusTab()
+      const state = harness.reader.presentationState()
+
+      // Act
+      const request =
+        entry === 'Open Study Workspace'
+          ? harness.reader.open()
+          : harness.reader.changePresentation(
+              {
+                presentationId: state.presentationId,
+                expectedRevision: state.presentationControlRevision,
+                mode: 'study-workspace',
+                action: 'select',
+              },
+              'agent',
+            )
+      const outcome = request.then(
+        () => 'arranged',
+        (error: unknown) => String(error),
+      )
+      enableFakeClock(context)
+      await advanceClockUntilSettled(context, outcome, 6_000)
+      const result = await outcome
+      resetFakeClock(context)
+
+      // Assert
+      assert.equal(result, 'arranged')
+      assert.equal(harness.groups.length, 4)
+      assert.equal(harness.groups.at(-1)?.tabs[0]?.label, 'New Agent')
+      assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+      assert.equal(chat.focused(), true)
+    } finally {
+      resetFakeClock(context)
+      await harness.close()
+    }
+  })
+}
+
 for (const entry of ['Open replay', 'Open Study Workspace'] as const) {
   // Value: protects=an entry that is refused because the main editor never reports the keyboard focus the measurement gave it leaving the window as it found it; fails_when=the entry creates the Application pane first, the refusal leaves that pane open with the keyboard, and the chat does not get the keyboard back because the editor still names its group; why_new=Cycle 0045 finding S1-F3 (the rule a select and a restore follow since cause 12 (b) did not hold for Open replay and Open Study Workspace; natively item 2's first try of the owed checks left the Application pane open with the keyboard after `codebook_playback open`); seam=the recorded reader harness with a separate editor part whose group the editor names as active, the fake editor's unreported pane focus beside the chat, and the fake clock for the five seconds of the wait
   test(`${entry} refused while Cursor's chat holds the keyboard opens no pane and leaves the keyboard focus where it was`, async (context) => {
