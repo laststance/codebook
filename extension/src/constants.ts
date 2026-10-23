@@ -216,7 +216,7 @@ export const UNSAVED_STUDY_HANDED_OVER_REASON =
 // Why a saved study cannot be removed right now; the Study pane shows them beside its button and the host repeats them when it refuses.
 export const STUDY_REMOVAL_REFUSALS = {
   nothingChosen: 'Choose a saved study to delete.',
-  nodeHistory: 'Node test histories cannot be deleted here yet.',
+  nodeHistory: 'Test replays cannot be deleted here yet.',
   runNotStopped: 'Stop the run before deleting its study.',
   recordingOpen:
     'Choose Overview or Live to leave Recording before deleting this study.',
@@ -233,7 +233,7 @@ export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
   nothingChosen:
     'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.',
   nodeHistory:
-    'Codebook cannot list the files of a Node test history for removal by hand yet.',
+    'Codebook cannot list the files of a test replay for removal by hand yet.',
   runNotStopped: "Stop the run before removing its study's files by hand.",
   recordingOpen:
     "Choose Overview or Live to leave Recording before removing this study's files by hand.",
@@ -704,6 +704,8 @@ export const MAX_RECORDING_PENDING_BYTES = 8_388_608
 export const MAX_RECORDING_JOURNAL_BYTES = 8_388_608
 export const RECORDING_TERMINAL_RESERVE_BYTES = 16_384
 export const RECORDING_REASON_LIMIT_CHARS = 1_024
+// How many characters of an interrupted or partial test replay's reason the Study section shows on its one line.
+export const NODE_CAPTURE_REASON_LIMIT_CHARS = 240
 export const MAX_RECORDING_CONTEXT_BYTES = 8_388_608
 export const MAX_RECORDING_HEADER_BYTES = 65_536
 export const MAX_RECORDING_TOTAL_BYTES = 570_425_344

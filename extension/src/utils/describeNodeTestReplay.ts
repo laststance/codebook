@@ -48,17 +48,7 @@ export const NODE_TEST_REPLAY_TEXT = {
 
 /** What a test replay shows the learner outside its Save, keyed by surface and value (the String catalog of plan version 7). */
 export type NodeTestReplayMessage =
-  | {
-      kind: 'saved-row'
-      summary: Pick<
-        NodeTestHistorySummary,
-        | 'status'
-        | 'verification'
-        | 'verdict'
-        | 'stopCount'
-        | 'explainedStopCount'
-      >
-    }
+  | { kind: 'saved-row'; summary: NodeTestReplayMessageSummary }
   | {
       kind: 'study-status'
       summary: Omit<NodeTestReplayMessageSummary, 'verification'>
@@ -87,6 +77,11 @@ export type NodeTestReplayMessage =
       elapsedMs: number
     }
   | { kind: 'events'; count: number }
+  | {
+      kind: 'capture-reason'
+      status: 'partial' | 'interrupted'
+      reason: string
+    }
 
 /** The parts of a history's summary its Study status line names. */
 type NodeTestReplayMessageSummary = Pick<
@@ -131,6 +126,8 @@ export function describeNodeTestReplay(message: NodeTestReplayMessage): string {
         : `Inspect ${message.event.type} · ${formatEventSeconds(message.elapsedMs)} s`
     case 'events':
       return `Events (${message.count})`
+    case 'capture-reason':
+      return `Capture ${message.status}: ${message.reason}`
     default:
       return applicationWords(message)
   }

@@ -3,10 +3,9 @@ import type {
   NodeTestLearningMaterial,
 } from '../nodeTestHistorySchemas'
 
-/** Where a step of a test replay's learning material leads: the event its reference names, by sequence, with that event's time. */
+/** Where a step of a test replay's learning material leads: the event its reference names, by sequence. */
 export type NodeLearningStepPosition = {
   stepId: string
-  elapsedMs: number
   sequence: number
 }
 
@@ -21,9 +20,9 @@ export type NodeLearningSummaryProjection = {
  * A position names its event by sequence, so a step finds its own event even when several events share a time.
  * @param material - The saved learning material, absent when none was saved.
  * @param history - The selected history, all its entries.
- * @returns The material's content and, for each step whose reference names an event of the history, that event's sequence and time; `undefined` without material.
+ * @returns The material's content and, for each step whose reference names an event of the history, that event's sequence; `undefined` without material.
  * @example
- * projectNodeLearningSummary(material, history)?.positions // => [{ stepId: 'stop-1', elapsedMs: 420, sequence: 3 }]
+ * projectNodeLearningSummary(material, history)?.positions // => [{ stepId: 'stop-1', sequence: 3 }]
  */
 export function projectNodeLearningSummary(
   material: NodeTestLearningMaterial | undefined,
@@ -40,7 +39,6 @@ export function projectNodeLearningSummary(
     if (event)
       positions.push({
         stepId: step.id,
-        elapsedMs: event.elapsedMs,
         sequence: event.sequence,
       })
   }

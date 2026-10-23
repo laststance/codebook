@@ -753,7 +753,7 @@ test('an unknown entry, a Node test history and the study of a run that has not 
     assert.deepEqual(structuredClone(node), {
       status: 'refused',
       studyId: nodeHistory.studyId,
-      text: 'Node test histories cannot be deleted here yet.',
+      text: 'Test replays cannot be deleted here yet.',
     })
     assert.deepEqual(structuredClone(live.studyRemoval), {
       status: 'refused',
@@ -838,7 +838,7 @@ test('a refused delete request’s line stays when the learner changes between O
     assert.deepEqual(structuredClone(view.studyRemoval), {
       status: 'refused',
       studyId: nodeHistory.studyId,
-      text: 'Node test histories cannot be deleted here yet.',
+      text: 'Test replays cannot be deleted here yet.',
     })
   } finally {
     await harness.close()
@@ -6782,7 +6782,7 @@ test('in a window without a Trash the reader answers a request for a study’s f
       answer: {
         status: 'refused',
         studyId: nodeHistory.studyId,
-        text: 'Codebook cannot list the files of a Node test history for removal by hand yet.',
+        text: 'Codebook cannot list the files of a test replay for removal by hand yet.',
         request: 1,
       },
     })
@@ -7025,7 +7025,7 @@ test('in a window without a Trash, a request for the files of a Node test histor
     assert.deepEqual(node, {
       status: 'refused',
       studyId: nodeHistory.studyId,
-      text: 'Codebook cannot list the files of a Node test history for removal by hand yet.',
+      text: 'Codebook cannot list the files of a test replay for removal by hand yet.',
     })
     assert.deepEqual(live, {
       status: 'refused',

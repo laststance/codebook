@@ -1280,6 +1280,15 @@ export class NodeTestHistoryStore {
     })
   }
 
+  /**
+   * Waits until the reader-position writes now in flight have ended, whether they succeeded or failed; called by the Study workspace's close so a window that closes (or a test that removes its storage) never has a position file created under it (F234).
+   * @returns Once every write that was running when this was called has settled; a write that starts later is not awaited.
+   * @example await store.settleReaderPositionWrites()
+   */
+  async settleReaderPositionWrites(): Promise<void> {
+    await Promise.allSettled([...this.readerPositionWrites.values()])
+  }
+
   private path(studyId: string): string {
     if (!HISTORY_IDENTITY.test(studyId))
       throw new Error('Invalid Node history identity.')

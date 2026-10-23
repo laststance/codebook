@@ -446,7 +446,10 @@ test('a slow reader position write does not hold the selected moment back', asyn
     )
 
     // Assert
-    assert.equal(lastView(harness)?.nodeHistoryPosition?.type, 'result')
+    assert.match(
+      lastView(harness)?.nodeHistorySection?.position ?? '',
+      /^Result /,
+    )
   } finally {
     releaseWrite()
     await Promise.allSettled(heldWrites)
