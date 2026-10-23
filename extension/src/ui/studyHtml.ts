@@ -203,11 +203,11 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 
 <div ${markupOnlyIn(kind, 'moments', 'hidden')}>
 <section id="learning-material" hidden><h2 id="learning-title"></h2><p id="learning-question" class="muted"></p><p id="learning-summary"></p><p class="muted">Saved path · links inspect recorded stops. Source-derived and unknown steps do not establish execution.</p><div id="learning-sequence"></div></section><p id="learning-unavailable" class="muted" hidden>No processing summary or sequence was saved with this recording.</p>
-<div role="tablist" aria-label="Study content"><button id="overview-tab" role="tab" data-tab="overview" aria-controls="overview" aria-selected="true">Overview</button><button id="live-tab" role="tab" data-tab="live" aria-controls="live-content" aria-selected="false" tabindex="-1">Live</button><button id="recording-tab" role="tab" data-tab="recording" aria-controls="live-content" aria-selected="false" tabindex="-1">Recording</button></div>
+<div id="content-tabs" role="tablist" aria-label="Study content"><button id="overview-tab" role="tab" data-tab="overview" aria-controls="overview" aria-selected="true">Overview</button><button id="live-tab" role="tab" data-tab="live" aria-controls="live-content" aria-selected="false" tabindex="-1">Live</button><button id="recording-tab" role="tab" data-tab="recording" aria-controls="live-content" aria-selected="false" tabindex="-1">Recording</button></div>
 <div id="loading" class="status" hidden>Loading the selected observation…</div><div id="selected"><div class="status" id="observation"></div><div id="overview" role="tabpanel" aria-labelledby="overview-tab"><h2>Source-derived overview</h2><p id="overview-text"></p><button class="link" data-action="source">Read the linked source</button></div><div id="live-content" role="tabpanel" aria-labelledby="live-tab"><section><h2>Agent interpretation</h2><div id="interpretations" role="region" aria-label="Agent interpretation" tabindex="0"></div></section></div>
 <details id="later-annotations" hidden><summary>Later annotations — not available at this recorded time</summary><p class="muted">These explanations were added later. They do not change what was observed in the recording.</p><div id="later-interpretations"></div></details>
 <section><div class="row"><button class="link" data-action="source">Captured / source-derived document</button><button class="link" data-action="current-file">Open current file</button></div><p id="source-version" class="muted"></p><p id="source-drift" class="error"></p><label><input id="understood" type="checkbox" aria-describedby="understanding-description"><span><span id="understanding-label">I understand this source revision</span><span id="save-state" class="muted"></span></span></label><p id="understanding-description" class="muted" hidden>Applies to this article and every captured citation shown here.</p><p id="progress" class="muted"></p></section></div>
-<section><h2>Source-linked flow</h2><div id="flow"></div><p id="correspondence" class="muted"></p></section>
+<section id="source-flow"><h2>Source-linked flow</h2><div id="flow"></div><p id="correspondence" class="muted"></p></section>
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
@@ -2029,6 +2029,20 @@ function studyClient(
       ? ''
       : 'Layout not confirmed. Restore it or focus a pane below.')
   /**
+   * Hides the Repository article's tabs, observation, current-source block and flow while a test replay is selected, so its own section is the first thing under the controls and no source warning that is not about the replay is shown (D32, F390); called by the Study render after it set the article block's visibility.
+   * @param message - The current Study message; a test replay is selected when it carries its index.
+   * @example hideArticleForTestReplay(message) // the "Current source unavailable" lines are hidden
+   */
+  const hideArticleForTestReplay = (message: StudyViewMessage): void => {
+    const replay = Boolean(message.nodeHistory)
+    element('content-tabs').hidden = replay
+    element('source-flow').hidden = replay
+    // The loading line and the selected block were just set from the article's own state; a shown test replay only hides them.
+    if (!replay) return
+    element('loading').hidden = true
+    element('selected').hidden = true
+  }
+  /**
    * Gives what the status line under "Study view and pane controls" says about the presentation; read on every Study message that carries a presentation.
    * The host sends such a message when a tab or a tab group of the editor changes while the reader is not changing tabs itself, so the line says that the layout is not confirmed as soon as the learner closes a pane's tab or the captured source's tab by hand. A change that no tab event tells (a sash the learner drags) reaches the line only with the next message after the host read the layout, at an agent's status read or at Restore.
    * The line stands outside that disclosure, so it is rendered while the Recording tab keeps the disclosure closed, and its first text changes a status region that exists. The bottom panel's pane has no pane controls: its line stays empty, as it never showed one, and the Study pane alone announces the status.
@@ -3612,6 +3626,7 @@ function studyClient(
           : 'Loading the selected observation…',
     )
     element('selected').hidden = message.loading
+    hideArticleForTestReplay(message)
     for (const tab of Array.from(
       document.querySelectorAll<HTMLButtonElement>('[data-tab]'),
     )) {

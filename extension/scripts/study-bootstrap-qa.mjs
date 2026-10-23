@@ -1429,6 +1429,38 @@ async function check(page, options, collected) {
           inspectAfterSessionEnd.label === 'Inspect in native debugger' &&
           inspectAfterSessionEnd.disabled === false,
       })
+      // Value: protects=the learner reading a selected test replay without the Repository article's current-source block above it (D32); fails_when=the article's tabs, observation, "Current source unavailable" lines or source-linked flow stay visible above the test replay section while a test replay is selected, or stay hidden after the replay is left; why_new=F390 (Cycle 0050 X3: a red "Current source unavailable" line that is not about the replay); seam=none; no_claim=the host's own source work (studyWorkspace tests) (stand-ins: the Study messages the host posts)
+      // Arrange
+      const articleBlockShown = () =>
+        page.evaluate(() =>
+          ['content-tabs', 'observation', 'source-version', 'source-flow'].map(
+            (id) => document.getElementById(id).checkVisibility(),
+          ),
+        )
+      // Act: a test replay is selected with no current source, then the learner leaves it.
+      await publish({
+        ...nodeReader,
+        currentSourceAvailable: false,
+        model: { ...nodeReader.model, currentSourceAvailable: false },
+      })
+      const articleWhileReplaySelected = {
+        blockShown: await articleBlockShown(),
+        replayShown: await page.locator('#node-history').isVisible(),
+      }
+      await publish({ ...options.message, revision: revisionAt(6) })
+      const articleAfterReplayLeft = await articleBlockShown()
+      cases.push({
+        name: 'a selected test replay hides the article’s tabs, observation, source warning and flow, and leaving it shows them again',
+        actual: { articleWhileReplaySelected, articleAfterReplayLeft },
+        passed:
+          JSON.stringify(articleWhileReplaySelected) ===
+            JSON.stringify({
+              blockShown: [false, false, false, false],
+              replayShown: true,
+            }) &&
+          JSON.stringify(articleAfterReplayLeft) ===
+            JSON.stringify([true, true, true, true]),
+      })
       // Value: protects=a selected stop whose values are not loaded offers Inspect in native debugger beside the hint and Show Variables (DS6), not only in the collapsed event list, and a press asks the host to select that stop; the control leaves with the hint once values load and is not offered for a stop whose captured source does not match; fails_when=the row has no Inspect once the session ended, it shows an action while the debugger already shows the stop, it stays after the values load or for a source mismatch, or its press sends another stop or nothing; why_new=F121: Inspect lived in the collapsed event list only; why_changed=F348 (PR-2 /ship Step 11 Codex adversarial): the case published a state the host never sends (no debugger with values not loaded); the host's two states are now checked: the debugger showing the stop with values not loaded (pressed), and the session ended (offered); seam=none; no_claim=the host's selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
       // Arrange
       const rowInspect = page.locator('#node-history-inspect')
