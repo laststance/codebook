@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
 import {
   configuredWorkspaceHarness,
@@ -920,6 +921,97 @@ test("in VS Code, a group the learner adds while an agent's Return Current waits
     assert.equal(
       await answer,
       'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Output › Codebook entry a refused placement guard writes (F382): the entry names the guard that refused, the editor groups before and after, and the group change the editor reported while the guard waited, so the next native occurrence names its own cause; fails_when=a refusal writes no entry, names no guard, or lists no group event or no group after the change; why_new=Cycle 0050 F382 (the refusal sentence alone named no change); seam=applicationGroupMarkers, leaveEmptyLockedGroup, closeEmptyGroupsAfterPanelMove with removeGroupLeftByPanelMoveLater, the reader's agent select and returnToCurrent, the fake editor's workbench.action.newGroupAbove run as the learner, the diagnostics log; no_claim=the wording of the refusal sentence the learner reads
+test('a refused placement guard writes one Output entry that names the guard, the groups before and after and the group change it saw', async () => {
+  // Arrange: as in the learner-adds-a-group round below; the agent selected the Study cold, which put the Application into the unproven leftover.
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    const selected = harness.reader.presentationState()
+    const answer = harness.reader
+      .returnToCurrent(
+        {
+          presentationId: selected.presentationId,
+          expectedRevision: selected.reader.contentRevision,
+        },
+        'agent',
+      )
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.scopedBrowser') === 1 &&
+        harness.groups.includes(leftover) &&
+        leftover.tabs.length === 0,
+      "the Application's move out of the leftover",
+    )
+
+    // Act: the learner runs New Group Above before the editor removes the emptied leftover.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    await answer
+
+    // Assert
+    const refusals = logged.filter(
+      (entry) => entry.surface === 'presentation:placement-refused',
+    )
+    assert.equal(refusals.length, 1)
+    const lines = refusals[0]!.cause.split('\n')
+    assert.equal(lines[0], 'Guard: followRemovalOfGroupLeftByApplication')
+    assert.match(
+      lines[2]!,
+      /^Groups before: 1\* \[codebook · Application \(webview codebook\.scopedBrowser\)\] \| 2 \[\] \|/,
+    )
+    assert.match(
+      lines[3]!,
+      /^Groups after: 1\* \[\] \| 2 \[codebook · Application \(webview codebook\.scopedBrowser\)\] \|/,
+    )
+    assert.match(
+      refusals[0]!.cause,
+      /\+\d+ ms groups opened \[\] closed \[3\] changed \[1,2,3,4\]/,
     )
   } finally {
     await harness.close()
