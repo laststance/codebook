@@ -37,6 +37,7 @@ import {
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
+  NODE_HISTORY_LEAVE_SETTLE_MS,
   NODE_HISTORY_POSITION_DRAIN_MS,
   NODE_HISTORY_SLOT_DEADLINE_MS,
   NODE_HISTORY_TRANSITION_BOUND_MS,
@@ -768,6 +769,8 @@ export class StudyWorkspace {
   private requestedNodeHistorySequence?: number
   /** The moment whose selection has left the shown one but not committed yet ({@link leaveNodeHistoryMoment}): while it equals {@link requestedNodeHistorySequence}, the Study position names that moment with no step or explanation and the Application header reads as loading (D29, F203). */
   private nodeHistoryLeftFor?: number
+  /** The wait after a selection left a stop (D29, F385, F387): the slot keeps the earlier stop's bytes until it ends, so the Call Stack and the CodeLens that still draw that stop never sit beside another moment's bytes. Started by {@link leaveNodeHistoryMoment}, awaited by {@link selectNodeHistoryEvent} and {@link returnToCommittedNodeMoment}. */
+  private nodeLeaveSettle?: { done: Promise<void>; cancel: () => void }
   private selectedNodeHistoryDebugAvailable = false
   /** The selected Node stop reached native Run and Debug without its values loading; the reader shows how to load them. */
   private selectedNodeHistoryValuesUninspected = false
@@ -12387,6 +12390,8 @@ export class StudyWorkspace {
   private async retireNodeSourceSlot(): Promise<void> {
     const slot = this.nodeSourceSlot
     this.nodeSourceSlotRetirements++
+    // The retired replay's wait for the native views ends with it.
+    this.nodeLeaveSettle?.cancel()
     // A close failure that no commit answered belongs to the retired replay and is never told at another one (F365).
     this.nodeSourceSlotCloseFailure = undefined
     this.nodeSourceSlot = undefined
@@ -12967,7 +12972,14 @@ export class StudyWorkspace {
           (entry) => entry.type === 'stop' && !nodeStopSourceMatches(entry),
         )
         .map((entry) => entry.sequence),
-      nodeHistoryPlayback: this.nodeHistoryPlaybackController?.state(),
+      // The time readout and the slider follow the moment being selected, as the Study position does, until the commit (F386).
+      nodeHistoryPlayback: this.nodeHistoryPlaybackController && {
+        ...this.nodeHistoryPlaybackController.state(),
+        ...(pendingNodeHistoryEvent && {
+          sequence: pendingNodeHistoryEvent.sequence,
+          positionMs: pendingNodeHistoryEvent.elapsedMs,
+        }),
+      },
       nodeHistoryPosition: pendingNodeHistoryEvent
         ? // The row of the moment being selected is the selected one, loading, with no control that acts on the stop being left (D29, F203).
           {
@@ -24073,6 +24085,9 @@ export class StudyWorkspace {
     // A step action or Inspect on the moment the surfaces show keeps every surface; another moment, or the committed one after a failed or overtaken selection took the surfaces off it, leaves at once (F191).
     if (entry.sequence !== this.nodeSurfacesSequence)
       this.leaveNodeHistoryMoment(entry.sequence)
+    // The slot's bytes change once the native views have redrawn the stop that was left (F385, F387); a newer selection that took over meanwhile owns the surfaces.
+    await this.nodeLeaveSettle?.done
+    if (request !== this.selectedNodeHistoryRequest) return
     const slot = await this.showNodeSourceSlot(history, verifiedStop, request)
     if (!slot) return
     // A slot that could not open leaves the debugger on no stop; the moment still commits beside the slot's Study row (S2-1), and Play stops here instead of failing the same slot at every later event (F185).
@@ -24222,6 +24237,8 @@ export class StudyWorkspace {
       committed?.type === 'stop' && nodeStopSourceMatches(committed)
         ? committed
         : undefined
+    await this.nodeLeaveSettle?.done
+    if (request !== this.selectedNodeHistoryRequest) return
     const slot = await this.showNodeSourceSlot(history, stop, request)
     // A newer selection took over, or the slot could not open and told so itself.
     if (!slot || slot === 'failed' || !this.nodeSourceSlot) return
@@ -24339,8 +24356,34 @@ export class StudyWorkspace {
     if (slot?.stop) {
       this.nodeSourceSlot = { ...slot, stop: undefined }
       this.decorateNodeSourceSlot()
+      this.startNodeLeaveSettle()
     }
     if (leavesShownMoment) this.publish()
+  }
+
+  /**
+   * Starts the wait that keeps the slot's earlier bytes in place while the native views redraw the stop that was left, unless one runs; called by {@link leaveNodeHistoryMoment} when the slot showed a stop.
+   * The wait is {@link NODE_HISTORY_LEAVE_SETTLE_MS}; {@link retireNodeSourceSlot} ends it early.
+   * @example this.startNodeLeaveSettle()
+   */
+  private startNodeLeaveSettle(): void {
+    if (this.nodeLeaveSettle) return
+    let cancelTimer = (): void => {}
+    let finish = (): void => {}
+    const done = new Promise<void>((resolve) => {
+      finish = (): void => {
+        this.nodeLeaveSettle = undefined
+        resolve()
+      }
+      cancelTimer = this.slotTimers.set(finish, NODE_HISTORY_LEAVE_SETTLE_MS)
+    })
+    this.nodeLeaveSettle = {
+      done,
+      cancel: (): void => {
+        cancelTimer()
+        finish()
+      },
+    }
   }
 
   /**
