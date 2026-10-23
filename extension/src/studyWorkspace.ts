@@ -14294,9 +14294,12 @@ export class StudyWorkspace {
     const reading = this.nodeOutputReadings.get(report.history) ?? {
       follow: true,
     }
+    // A current document that follows as the host's reading does needs nothing; one that reads away from the end gets the host's anchor too, as VS Code may have reloaded it from an earlier write whose anchor the learner has scrolled away from since (F343).
     if (
       !view ||
-      (report.generation >= view.generation && report.follow === reading.follow)
+      (report.generation >= view.generation &&
+        report.follow === reading.follow &&
+        (reading.follow || !reading.anchor))
     )
       return
     this.shownNodeHistoryApplicationGeneration = view.generation

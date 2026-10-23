@@ -3,6 +3,8 @@ import type {
   NodeTestLearningMaterial,
 } from '../nodeTestHistorySchemas'
 
+import { stripTerminalControls } from './stripTerminalControls'
+
 /** Where a step of a test replay's learning material leads: the event its reference names, by sequence. */
 export type NodeLearningStepPosition = {
   stepId: string
@@ -42,5 +44,31 @@ export function projectNodeLearningSummary(
         sequence: event.sequence,
       })
   }
-  return { content: material.content, positions }
+  return { content: shownLearningContent(material.content), positions }
+}
+
+/**
+ * Removes terminal and bidirectional controls from every text of a test replay's learning material that the summary, its sequence and the Study section print, as {@link sanitizeNodeTestHistory} does for the recorded texts: the editor agent writes the material from output a test can shape, so a U+202E in it could otherwise reorder what the learner reads (F131, F341); called by {@link projectNodeLearningSummary}.
+ * @param content - The material's content as saved.
+ * @returns The content with its question, title, summary, participant labels, step labels and explanations free of controls; ids, evidence and references unchanged.
+ * @example shownLearningContent(content).title // => 'Theme switch' for a saved 'Theme\u202E switch'
+ */
+function shownLearningContent(
+  content: NodeTestLearningMaterial['content'],
+): NodeTestLearningMaterial['content'] {
+  return {
+    ...content,
+    question: stripTerminalControls(content.question),
+    title: stripTerminalControls(content.title),
+    summary: stripTerminalControls(content.summary),
+    participants: content.participants.map((participant) => ({
+      ...participant,
+      label: stripTerminalControls(participant.label),
+    })),
+    steps: content.steps.map((step) => ({
+      ...step,
+      label: stripTerminalControls(step.label),
+      explanation: stripTerminalControls(step.explanation),
+    })),
+  }
 }

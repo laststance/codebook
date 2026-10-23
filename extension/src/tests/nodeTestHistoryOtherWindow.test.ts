@@ -7,9 +7,14 @@ import { test, type TestContext } from 'node:test'
 import {
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_WRITER_FILE,
+  NODE_TEST_WRITER_RECHECK_MS,
 } from '../constants'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import {
+  judgeNodeTestWriter,
+  type NodeTestWriterVerdict,
+} from '../utils/judgeNodeTestWriter'
 import { writeNodeTestWriterRecord } from '../utils/writeNodeTestWriterRecord'
 
 import { markNodeTestWriterGone } from './utils/markNodeTestWriterGone'
@@ -184,7 +189,10 @@ test('fifty refreshes of a history another window records read at most twice its
 async function windowWithCountedJudge(context: TestContext) {
   const { writing, directory, workspaceKey } = await twoWindows(context)
   const clock = { nowMs: 1_000_000 }
-  const judge = { queries: 0, live: true }
+  const judge: { queries: number; verdict: NodeTestWriterVerdict } = {
+    queries: 0,
+    verdict: 'live',
+  }
   const reading = new NodeTestHistoryStore(
     directory,
     workspaceKey,
@@ -192,9 +200,9 @@ async function windowWithCountedJudge(context: TestContext) {
     async () => 0,
     {
       now: () => clock.nowMs,
-      isLive: async () => {
+      judge: async () => {
         judge.queries += 1
-        return judge.live
+        return judge.verdict
       },
     },
   )
@@ -226,7 +234,7 @@ test('a writer that becomes gone is listed interrupted at the first refresh afte
     await windowWithCountedJudge(context)
   await writing.start(nodeTestHistoryHeader(workspaceKey))
   const [whileLive] = await reading.list()
-  judge.live = false
+  judge.verdict = 'gone'
   clock.nowMs += 4_999
   const [insideInterval] = await reading.list()
 
@@ -247,7 +255,7 @@ test('a writer that becomes gone is listed interrupted at the next refresh after
     await windowWithCountedJudge(context)
   await writing.start(nodeTestHistoryHeader(workspaceKey))
   const [whileLive] = await reading.list()
-  judge.live = false
+  judge.verdict = 'gone'
   clock.nowMs -= 3_600_000
 
   // Act
@@ -421,4 +429,52 @@ test('a test history another live window records opens as recording in a second 
     afterCrash.reason,
     'Node test history has no verified final seal.',
   )
+})
+
+// Value: protects=a writer record that a transient I/O error (EMFILE, EBUSY) keeps from being read does not make another window's live recording read as interrupted for good: the record is judged again once the recheck interval passes, and the history lists as recording again; fails_when=the unreadable record's verdict is kept as final like a crashed writer's, so the history reads interrupted until its record file changes, which never happens while it records; why_new=F347 (PR-2 /ship Step 11, both Codex passes): the judge said "not live" for a record it could not read, and the store kept that as "gone"; seam=injected clock and judge; no_claim=which I/O errors are transient
+test('a writer record that could not be read once is judged again after the recheck interval, so a live recording lists as recording again', async (context) => {
+  // Arrange
+  const { writing, reading, clock, judge, workspaceKey } =
+    await windowWithCountedJudge(context)
+  await writing.start(nodeTestHistoryHeader(workspaceKey))
+  judge.verdict = 'unread'
+  const [whileUnread] = await reading.list()
+
+  // Act
+  judge.verdict = 'live'
+  clock.nowMs += NODE_TEST_WRITER_RECHECK_MS
+  const [afterRecheck] = await reading.list()
+
+  // Assert
+  assert.equal(whileUnread?.status, 'interrupted')
+  assert.equal(afterRecheck?.status, 'recording')
+})
+
+// Value: protects=the judge tells a writer known to have ended from a record it could not read: a record naming a process that ended is gone, one that cannot be parsed or read is unread, one naming this live process is live; fails_when=an unreadable record is judged gone (kept for good by the store), or a live writer is not live; why_new=F347 (PR-2 /ship Step 11): the judge had one answer, false, for both; seam=none; no_claim=a writer of another machine, which this computer cannot probe
+test('the writer judge tells a gone writer from a record it could not read', async (context) => {
+  // Arrange
+  const { directory, writing, workspaceKey } = await twoWindows(context)
+  const live = nodeTestHistoryHeader(workspaceKey)
+  const ended = nodeTestHistoryHeader(workspaceKey)
+  const garbled = nodeTestHistoryHeader(workspaceKey)
+  await writing.start(live)
+  await writing.start(ended)
+  await writing.start(garbled)
+  await markNodeTestWriterGone(directory, ended.studyId)
+  const folder = (studyId: string) =>
+    join(directory, NODE_TEST_HISTORY_DIRECTORY, studyId)
+  await writeFile(
+    join(folder(garbled.studyId), NODE_TEST_HISTORY_WRITER_FILE),
+    'not json',
+  )
+
+  // Act
+  const verdicts = await Promise.all(
+    [live, ended, garbled].map((header) =>
+      judgeNodeTestWriter(folder(header.studyId)),
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(verdicts, ['live', 'gone', 'unread'])
 })

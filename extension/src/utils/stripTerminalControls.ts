@@ -164,7 +164,7 @@ export function stripTerminalControlsAcross(
 }
 
 /**
- * Removes what a terminal would interpret instead of show from a recorded text, so the replay's surfaces show the text and nothing in it can recolor, move or reorder what the learner reads; called by {@link sanitizeNodeTestHistory} for each recorded text a replay surface prints, by {@link stripNodeHistorySummaryTexts} for Saved studies' test names, by {@link wordNodeCaptureReason} for a capture reason and by {@link describeNodeRecordedSource} for a recorded path.
+ * Removes what a terminal would interpret instead of show from a recorded text, so the replay's surfaces show the text and nothing in it can recolor, move or reorder what the learner reads; called by {@link sanitizeNodeTestHistory} for each recorded text a replay surface prints, by {@link stripNodeHistorySummaryTexts} for Saved studies' test names, by {@link projectNodeLearningSummary} for the learning material's texts, by {@link wordNodeCaptureReason} for a capture reason and by {@link describeNodeRecordedSource} for a recorded path.
  * Tabs and line feeds stay; a carriage return goes, so a `\r\n` line end reads as one line feed.
  * @param text - One recorded text.
  * @returns The text without ANSI escape sequences, C0 controls other than tab and line feed, DEL, C1 controls and bidirectional controls.

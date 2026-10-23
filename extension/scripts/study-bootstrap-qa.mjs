@@ -1422,7 +1422,7 @@ async function check(page, options, collected) {
           inspectAfterSessionEnd.label === 'Inspect in native debugger' &&
           inspectAfterSessionEnd.disabled === false,
       })
-      // Value: protects=a selected stop whose values are not loaded offers Inspect in native debugger beside the hint and Show Variables (DS6), not only in the collapsed event list, and a press asks the host to select that stop; the control leaves with the hint once values load and is not offered for a stop whose captured source does not match; fails_when=the row has no Inspect, it stays after the values load or for a source mismatch, or its press sends another stop or nothing; why_new=F121: Inspect lived in the collapsed event list only; seam=none; no_claim=the host's selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
+      // Value: protects=a selected stop whose values are not loaded offers Inspect in native debugger beside the hint and Show Variables (DS6), not only in the collapsed event list, and a press asks the host to select that stop; the control leaves with the hint once values load and is not offered for a stop whose captured source does not match; fails_when=the row has no Inspect once the session ended, it shows an action while the debugger already shows the stop, it stays after the values load or for a source mismatch, or its press sends another stop or nothing; why_new=F121: Inspect lived in the collapsed event list only; why_changed=F348 (PR-2 /ship Step 11 Codex adversarial): the case published a state the host never sends (no debugger with values not loaded); the host's two states are now checked: the debugger showing the stop with values not loaded (pressed), and the session ended (offered); seam=none; no_claim=the host's selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
       // Arrange
       const rowInspect = page.locator('#node-history-inspect')
       const rowInspectState = async () => ({
@@ -1433,13 +1433,25 @@ async function check(page, options, collected) {
             button.previousElementSibling?.id === 'node-history-show-variables',
         ),
       })
-      // Act
+      // Act: the debugger shows the stop and its values are not loaded; then the learner ends the native session.
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          debuggerAvailable: true,
+          nativeValuesUninspected: true,
+        },
+      })
+      const rowInspectWhileShown = {
+        ...(await rowInspectState()),
+        pressed: await rowInspect.getAttribute('aria-pressed'),
+      }
       await publish({
         ...nodeReader,
         nodeHistoryPosition: {
           ...nodeStop,
           debuggerAvailable: false,
-          nativeValuesUninspected: true,
+          nativeValuesUninspected: false,
         },
       })
       const rowInspectOffered = await rowInspectState()
@@ -1452,7 +1464,11 @@ async function check(page, options, collected) {
       )
       await publish({
         ...nodeReader,
-        nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: false },
+        nodeHistoryPosition: {
+          ...nodeStop,
+          debuggerAvailable: true,
+          nativeValuesUninspected: false,
+        },
       })
       const rowInspectAfterValues = await rowInspectState()
       await publish({
@@ -1468,14 +1484,18 @@ async function check(page, options, collected) {
       const rowInspectForMismatch = await rowInspectState()
       // Assert
       cases.push({
-        name: 'a selected Node stop whose values are not loaded offers Inspect in native debugger beside Show Variables, and a press selects that stop',
+        name: 'a selected Node stop shows the debugger state beside Show Variables while its values are not loaded, and offers Inspect in native debugger once the session ended, whose press selects that stop (F348)',
         actual: {
+          rowInspectWhileShown,
           rowInspectOffered,
           rowInspectRequests,
           rowInspectAfterValues,
           rowInspectForMismatch,
         },
         passed:
+          rowInspectWhileShown.visible &&
+          rowInspectWhileShown.label === 'Debugger stop selected' &&
+          rowInspectWhileShown.pressed === 'true' &&
           rowInspectOffered.visible &&
           rowInspectOffered.label === 'Inspect in native debugger' &&
           rowInspectOffered.followsShowVariables &&

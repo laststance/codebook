@@ -60,9 +60,12 @@ import {
   type NodeTestVerdict,
 } from './utils/describeNodeTestResult'
 import { holdsLearnerFiles } from './utils/holdsLearnerFiles'
-import { isNodeTestWriterLive } from './utils/isNodeTestWriterLive'
 import { isSealedEmptyHistory } from './utils/isSealedEmptyHistory'
 import { isTransientFileError } from './utils/isTransientFileError'
+import {
+  judgeNodeTestWriter,
+  type NodeTestWriterVerdict,
+} from './utils/judgeNodeTestWriter'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import {
   listMissingNodeExplanations,
@@ -320,10 +323,10 @@ function emptySummary(header: NodeTestHistoryHeader): NodeTestHistorySummary {
 export class NodeTestHistoryStore {
   private readonly directory: string
   private readonly active = new Set<string>()
-  /** The last verdict on the writer of each history another window records, with the writer record's file signal and the time it was judged: "gone" is final for that record, "live" is kept until the record changes or {@link NODE_TEST_WRITER_RECHECK_MS} passes (F260). */
+  /** The last verdict on the writer of each history another window records, with the writer record's file signal and the time it was judged: "gone" is final for that record, "live" and "unread" are kept until the record changes or {@link NODE_TEST_WRITER_RECHECK_MS} passes (F260, F347). */
   private readonly writerVerdicts = new Map<
     string,
-    { signal: string; live: boolean; judgedAtMs: number }
+    { signal: string; verdict: NodeTestWriterVerdict; judgedAtMs: number }
   >()
   /** The histories this window ever started: a writer record of one of them never makes it a history another window writes, whatever a failed removal left ({@link writtenElsewhere}). */
   private readonly startedHere = new Set<string>()
@@ -372,8 +375,8 @@ export class NodeTestHistoryStore {
     /** The clock and the judge of another window's writer; a test names its own to count the queries. */
     private readonly writerJudge: {
       now: () => number
-      isLive: (historyDirectory: string) => Promise<boolean>
-    } = { now: Date.now, isLive: isNodeTestWriterLive },
+      judge: (historyDirectory: string) => Promise<NodeTestWriterVerdict>
+    } = { now: Date.now, judge: judgeNodeTestWriter },
   ) {
     this.directory = join(learningDirectory, NODE_TEST_HISTORY_DIRECTORY)
   }
@@ -787,7 +790,7 @@ export class NodeTestHistoryStore {
   }
 
   /**
-   * Says whether another live editor window writes a history: this window does not write it, never did, and the writer record in its folder names a process that is not gone ({@link isNodeTestWriterLive}); called by {@link fileSignals} and {@link read} for a history without a seal, so that it lists as recording, with its journal read by appended bytes, instead of interrupted (F260).
+   * Says whether another live editor window writes a history: this window does not write it, never did, and the writer record in its folder names a process that is not gone ({@link judgeNodeTestWriter}); called by {@link fileSignals} and {@link read} for a history without a seal, so that it lists as recording, with its journal read by appended bytes, instead of interrupted (F260).
    * @param studyId - The history's study id.
    * @returns `true` while another window may be writing the history; `false` for a history of this window, one without a record, and one whose writer is gone (a crashed window reads as interrupted).
    * @example if (await this.writtenElsewhere(studyId)) …
@@ -808,17 +811,17 @@ export class NodeTestHistoryStore {
     }
     const now = this.writerJudge.now()
     const kept = this.writerVerdicts.get(studyId)
-    // A verdict is reused for the same record: "gone" for good, "live" until the recheck interval passes (the judge starts a process). A clock stepped backwards gives a negative difference and no reuse, so a crashed writer is not listed as recording for the length of the step (F284).
+    // A verdict is reused for the same record: "gone" for good, "live" until the recheck interval passes (the judge starts a process), and "unread" too, as a record that a transient I/O error kept from being read may read the next time (F347). A clock stepped backwards gives a negative difference and no reuse, so a crashed writer is not listed as recording for the length of the step (F284).
     const sinceJudgedMs = kept ? now - kept.judgedAtMs : 0
     if (
       kept?.signal === signal &&
-      (!kept.live ||
+      (kept.verdict === 'gone' ||
         (sinceJudgedMs >= 0 && sinceJudgedMs < NODE_TEST_WRITER_RECHECK_MS))
     )
-      return kept.live
-    const live = await this.writerJudge.isLive(directory)
-    this.writerVerdicts.set(studyId, { signal, live, judgedAtMs: now })
-    return live
+      return kept.verdict === 'live'
+    const verdict = await this.writerJudge.judge(directory)
+    this.writerVerdicts.set(studyId, { signal, verdict, judgedAtMs: now })
+    return verdict === 'live'
   }
 
   /**

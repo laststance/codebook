@@ -1477,3 +1477,51 @@ test('opening a test replay strips its recorded output once, not again for its o
     await harness.close()
   }
 })
+
+// Value: protects=a reloaded Application document that reads away from the end gets the learner's latest place back even when its view is current: the host answers its ready message with the reading that holds the newest anchor; fails_when=the host answers only a document whose view is older or whose follow choice differs, so a document VS Code reloaded from an earlier write opens at that write's anchor, not where the learner scrolled since; why_new=F343 (PR-2 /ship Step 11: Claude adversarial, Codex adversarial and Codex structured review): the ready check compared the generation and the follow choice, never the anchor; seam=none; no_claim=a document that follows, which takes no anchor
+test('a ready Application document that reads away from the end is sent the host’s newest anchor, also when its view is current', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    const current = harness.reader['message']().nodeHistoryApplication!
+    // The learner scrolled away from the end, to line 9, after the document was written.
+    harness.receiveApplication({
+      type: 'node-history-output-state',
+      history: history.studyId,
+      follow: false,
+      anchor: { line: 9, offsetPx: 3 },
+    })
+    const posted = harness.applicationOutputs().length
+
+    // Act: the reloaded document reports the current view and not following.
+    harness.receiveApplication({
+      type: 'node-history-output-ready',
+      history: history.studyId,
+      generation: current.generation,
+      follow: false,
+    })
+
+    // Assert
+    const answer = harness.applicationOutputs().at(-1)
+    assert.equal(harness.applicationOutputs().length, posted + 1)
+    assert.equal(answer?.generation, current.generation)
+    assert.equal(
+      JSON.stringify(answer?.reading),
+      '{"follow":false,"anchor":{"line":9,"offsetPx":3}}',
+    )
+  } finally {
+    await harness.close()
+  }
+})

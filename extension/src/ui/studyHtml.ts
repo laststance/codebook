@@ -2366,18 +2366,22 @@ function studyClient(
       options.nodeTransportFocus,
       'node-history',
     )
-    renderTestReplayInspect(message, uninspected, replaying)
+    // The row's Inspect is wanted while the stop's values are not loaded (beside Show Variables) and whenever the debugger does not show the selected stop: after the learner ended its session, or when it could not start, the press starts it again (F348).
+    const inspectWanted =
+      !suppressed &&
+      (uninspected || !message.nodeHistoryPosition?.debuggerAvailable)
+    renderTestReplayInspect(message, inspectWanted, replaying)
   }
   /**
-   * Offers Inspect in native debugger beside the values hint and Show Variables (DS6) for the selected stop whose values are not loaded, so the learner finds it without opening the event list; called by {@link renderTestReplayMoment} for every Study message.
+   * Offers Inspect in native debugger beside the values hint and Show Variables (DS6) for the selected stop, so the learner finds it without opening the event list: pressed ("Debugger stop selected") while the debugger shows the stop and its values are not loaded, and a press that starts the debugger again once it does not show the stop (F348); called by {@link renderTestReplayMoment} for every Study message.
    * @param message - The current Study message.
-   * @param uninspected - Whether the selected stop's values are not loaded, so the hint is shown.
+   * @param wanted - Whether the row wants the control: the selected stop's values are not loaded, or the debugger does not show the stop.
    * @param replaying - Whether a browser recording is shown, which disables the control.
    * @example renderTestReplayInspect(message, true, false)
    */
   const renderTestReplayInspect = (
     message: StudyViewMessage,
-    uninspected: boolean,
+    wanted: boolean,
     replaying: boolean,
   ): void => {
     const inspect = element('node-history-inspect')
@@ -2387,7 +2391,7 @@ function studyClient(
         entry.sequence === message.nodeHistoryPosition?.sequence,
     )
     const offered =
-      uninspected &&
+      wanted &&
       inspect instanceof HTMLButtonElement &&
       stop?.type === 'stop' &&
       testReplayStopInspectable(stop, message, true)
