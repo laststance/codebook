@@ -272,28 +272,37 @@ export function installNodeTestOutput(
     // The button leaves the page, so the keyboard stays in the output it led to.
     output.focus()
   })
+  /** Tells a view the host posted from any other message the webview receives: it has a generation and a view. */
+  const isOutputUpdate = (
+    data: Partial<NodeTestOutputUpdate> | null,
+  ): data is NodeTestOutputUpdate =>
+    data?.type === 'node-history-output' &&
+    typeof data.generation === 'number' &&
+    Boolean(data.view)
+  /** Whether an update is older than the one shown or waiting: it came late, and the newer selection stands. */
+  const isLate = (generation: number): boolean =>
+    generation < Math.max(shown, queued?.generation ?? 0)
+  /** Draws the queued view at the next frame: views that arrive faster than frames (Play posts up to twenty a second) are drawn once, the newest. */
+  const drawSoon = (): void => {
+    frame ??= requestAnimationFrame(drawQueued)
+  }
+  /** Queues the newest view, keeping the host's reading that waited in the update it replaces unless this one brings its own (F290). */
+  const queue = (update: NodeTestOutputUpdate): void => {
+    const reading = update.reading ?? queued?.reading
+    queued = {
+      type: 'node-history-output',
+      generation: update.generation,
+      view: update.view,
+      ...(reading ? { reading } : {}),
+    }
+    drawSoon()
+  }
   window.addEventListener(
     'message',
     (event: MessageEvent<Partial<NodeTestOutputUpdate> | null>) => {
       const data = event.data
-      if (
-        data?.type !== 'node-history-output' ||
-        typeof data.generation !== 'number' ||
-        !data.view
-      )
-        return
-      // An update older than the one shown or waiting came late: the newer selection stands.
-      if (data.generation < Math.max(shown, queued?.generation ?? 0)) return
-      // The newest view is drawn, but the host's reading waiting in the replaced update is kept unless this one brings its own (F290).
-      const reading = data.reading ?? queued?.reading
-      queued = {
-        type: 'node-history-output',
-        generation: data.generation,
-        view: data.view,
-        ...(reading ? { reading } : {}),
-      }
-      // Views that arrive faster than frames (Play posts up to twenty a second) are drawn once, the newest.
-      frame ??= requestAnimationFrame(drawQueued)
+      if (!isOutputUpdate(data) || isLate(data.generation)) return
+      queue(data)
     },
   )
   apply(options.view)
