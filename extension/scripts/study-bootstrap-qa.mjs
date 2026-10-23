@@ -1571,6 +1571,54 @@ async function check(page, options, collected) {
           committedRow.busy === null &&
           committedRow.rowInspect,
       })
+      // Value: protects=a pending selection hiding the transport's Inspect, Show Variables and the values hint by the pane's own rule, not because the pending position happens to omit their fields; fails_when=the pane offers the three beside a pending position that still carries the earlier stop's sourceAvailable and nativeValuesUninspected (F370); why_new=F370, the case above sends a pending position without those fields, and its hint check read an empty paragraph that is always hidden; seam=none; no_claim=the host's pending positions (studyWorkspace tests) (stand-ins: the Study messages the host posts)
+      // Arrange
+      const stopControlsVisible = async () => ({
+        inspect: await page.locator('#node-history-inspect').isVisible(),
+        hint: await page.locator('#node-history-hint').isVisible(),
+        showVariables: await page
+          .locator('#node-history-show-variables')
+          .isVisible(),
+      })
+      const uninspectedStop = {
+        ...nodeStop,
+        sourceAvailable: true,
+        debuggerAvailable: false,
+        nativeValuesUninspected: true,
+      }
+      await publish({ ...nodeReader, nodeHistoryPosition: uninspectedStop })
+      const committedStopControls = await stopControlsVisible()
+      // Act
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...uninspectedStop, pending: true },
+      })
+      const pendingStopControls = await stopControlsVisible()
+      await publish({ ...nodeReader, nodeHistoryPosition: uninspectedStop })
+      const settledStopControls = await stopControlsVisible()
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      // Assert
+      cases.push({
+        name: 'a pending selection hides the transport Inspect, Show Variables and the values hint even when the position still carries the earlier stop’s fields, and the committed stop shows them again',
+        actual: {
+          committedStopControls,
+          pendingStopControls,
+          settledStopControls,
+        },
+        passed:
+          committedStopControls.inspect &&
+          committedStopControls.hint &&
+          committedStopControls.showVariables &&
+          !pendingStopControls.inspect &&
+          !pendingStopControls.hint &&
+          !pendingStopControls.showVariables &&
+          settledStopControls.inspect &&
+          settledStopControls.hint &&
+          settledStopControls.showVariables,
+      })
       // Value: protects=the row's Inspect in native debugger follows the selected stop, not the page of the event list: once the learner pages the list away from the stop, the row still offers Inspect for that stop and a press selects it; fails_when=the row looks for the selected stop among the shown page's events, so it hides the control while another page of events shows; why_new=F353 (hosted CodeRabbit on #120); seam=none; no_claim=the host's paging and its selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
       // Arrange: the selected stop is event 1 of 26; the event list shows the second page, which holds outputs only.
       const laterPage = {
