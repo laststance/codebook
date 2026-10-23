@@ -268,7 +268,7 @@ export class OwnedRepositoryBreakpoint {
    * Tells whether an adapter reply names a position this owner accepts; called by {@link onResponse} for the owned breakpoint's entry.
    * A reply may leave a position out while it is pending; a verified one must name the requested line, at any column, because the stop is committed at the position the debugger bound. A verified reply on a line the owner's rule accepts is taken too.
    * @param binding - The owned breakpoint's entry of the setBreakpoints reply.
-   * @returns `false` when the reply names another line that the owner's rule does not accept, .
+   * @returns `false` when the reply names another line that the owner's rule does not accept.
    * @example
    * this.acknowledgesPosition({ verified: true, line: 20, column: 12 }) // => true for an owner requested at 20:5
    */

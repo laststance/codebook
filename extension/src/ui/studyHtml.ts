@@ -2351,6 +2351,17 @@ function studyClient(
     renderTestReplayEvents(message, section, replaying)
   }
   /**
+   * Says whether the section shows a committed stop whose controls may be offered, so the values hint, Show Variables and Inspect never ride on a selection that has left the committed moment and not committed the new one (D29, F370); called by {@link renderTestReplayMoment}.
+   * @param message - The current Study message.
+   * @param suppressed - Whether a browser replay holds the bottom panel.
+   * @returns `false` while suppressed or while the position is pending, even when a host sent the earlier stop's fields with `pending: true`.
+   * @example isTestReplayStopSettled(message, false) // => false for a position { pending: true, sourceAvailable: true, nativeValuesUninspected: true }
+   */
+  const isTestReplayStopSettled = (
+    message: StudyViewMessage,
+    suppressed: boolean,
+  ): boolean => !suppressed && !message.nodeHistoryPosition?.pending
+  /**
    * Writes the section's status, the selected moment's locator and explanation (one polite live region), the not-recorded lines, where the output is, and the values hint; called by {@link renderTestReplay}.
    * @param message - The current Study message.
    * @param section - The section's worded view, absent while suppressed or without a test replay.
@@ -2369,10 +2380,11 @@ function studyClient(
         ? options.testReplay.chooseReplay
         : options.testReplay.noReplay
     renderTestReplayLines(section, idle)
+    // While a selection is pending the earlier stop's fields may still ride on the position: no stop control is offered then (D29, F370).
+    const settled = isTestReplayStopSettled(message, suppressed)
     // A saved stop committed without native values keeps the same muted guidance row as replay, separate from the position facts.
     const uninspected =
-      !suppressed &&
-      Boolean(message.nodeHistoryPosition?.nativeValuesUninspected)
+      settled && Boolean(message.nodeHistoryPosition?.nativeValuesUninspected)
     text('node-history-hint', uninspected ? options.nativeValuesHint : '')
     offerShowVariables(
       'node-history-show-variables',
@@ -2382,7 +2394,7 @@ function studyClient(
     )
     // The row's Inspect is wanted while the stop's values are not loaded (beside Show Variables) and whenever the debugger does not show the selected stop: after the learner ended its session, or when it could not start, the press starts it again (F348).
     const inspectWanted =
-      !suppressed &&
+      settled &&
       (uninspected || !message.nodeHistoryPosition?.debuggerAvailable)
     renderTestReplayInspect(message, inspectWanted, replaying)
   }
@@ -3192,8 +3204,18 @@ function studyClient(
   }
   window.addEventListener('resize', offerClampedTitles)
   /**
+   * Says whether the test replay section is in the page for a message, so an open's scroll token is spent only on a section that can be scrolled to (F371); called by {@link revealNodeHistoryOnOpen}.
+   * @param message - The current Study message.
+   * @returns `false` while the message loads, names no section, or shows a browser replay in the bottom panel (which holds the section back).
+   * @example isNodeHistoryRevealable(message) // => false for a message whose nodeHistorySection is absent
+   */
+  const isNodeHistoryRevealable = (message: StudyViewMessage): boolean =>
+    !message.loading &&
+    Boolean(message.nodeHistorySection) &&
+    !isReplayInBottomPanel(message)
+  /**
    * Puts the test replay section in view once per open, so the Study's article above it does not push the transport out of sight (F156, D32); called after every Study message.
-   * A message without a new scroll token, or one that still loads, leaves the learner's scroll alone.
+   * A message without a new scroll token leaves the learner's scroll alone; the token is kept, not spent, until the section shows (F371).
    * @param message - The current Study message.
    * @example revealNodeHistoryOnOpen(message) // the section scrolled to the top once for token 7
    */
@@ -3202,7 +3224,7 @@ function studyClient(
     if (
       token === undefined ||
       token === scrolledNodeHistoryToken ||
-      message.loading
+      !isNodeHistoryRevealable(message)
     )
       return
     scrolledNodeHistoryToken = token

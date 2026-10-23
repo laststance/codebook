@@ -71,6 +71,8 @@ export class PlaybackController {
   /** `true` while an explicit move waits for its frame: the work of the shown moment is retired but its pixels and native state stay until the frame is read ({@link leaveShownMoment}). */
   private leaveOwed = false
   private leaveTimer?: ReturnType<typeof setTimeout>
+  /** The clock reading at which the current {@link leaveOwed} began; a burst of superseding moves keeps it, so the bound counts from the first of them. */
+  private leaveOwedSinceMs = 0
   private boundaries: number[] = []
   private mode: 'paused' | 'playing' = 'paused'
   private readiness: 'idle' | 'loading' | 'ready' | 'failed' = 'idle'
@@ -425,6 +427,8 @@ export class PlaybackController {
       this.presentationRevision++
       this.abort?.abort(new Error('Playback presentation superseded'))
       this.cleared = true
+      // The bound counts from when the leave became owed; a superseding move while it is owed does not restart it (F377).
+      if (!this.leaveOwed) this.leaveOwedSinceMs = this.clock()
       this.leaveOwed = true
     } else if (clear) this.invalidate(keepPixels)
     else {
@@ -636,13 +640,19 @@ export class PlaybackController {
     this.dependencies.changed()
   }
 
-  /** Starts the bound after which a frame read that is still pending blanks the pane; {@link pump} arms it for each read of an owed leave. @example this.armLeaveBound() */
+  /** Starts the bound after which a frame read that is still pending blanks the pane; {@link pump} arms it for each read of an owed leave, for the time that remains since the leave became owed. @example this.armLeaveBound() */
   private armLeaveBound(): void {
     if (!this.leaveOwed) return
     clearTimeout(this.leaveTimer)
+    const boundMs =
+      this.dependencies.frameReadBoundMs ?? PLAYBACK_FRAME_READ_BOUND_MS
+    const remainingMs = Math.max(
+      0,
+      boundMs - (this.clock() - this.leaveOwedSinceMs),
+    )
     this.leaveTimer = setTimeout(() => {
       if (this.leaveOwed) this.leaveShownMoment()
-    }, this.dependencies.frameReadBoundMs ?? PLAYBACK_FRAME_READ_BOUND_MS)
+    }, remainingMs)
     this.leaveTimer.unref()
   }
 
