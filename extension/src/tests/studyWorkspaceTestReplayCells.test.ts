@@ -217,6 +217,18 @@ for (const move of MOVES_FROM_THE_FIRST_STOP) {
         const held = harness.holdHistoricalDebugPresentation(
           move.recordedStopOnly,
         )
+        // The move's own selection is kept so the test can wait for its end, whatever the product awaits after the presentation.
+        const reader = harness.reader as unknown as {
+          selectNodeHistoryEvent: (...args: unknown[]) => Promise<void>
+        }
+        const selectNodeHistoryEvent =
+          reader.selectNodeHistoryEvent.bind(reader)
+        const selections: Promise<void>[] = []
+        reader.selectNodeHistoryEvent = (...args): Promise<void> => {
+          const selection = selectNodeHistoryEvent(...args)
+          selections.push(selection)
+          return selection
+        }
         harness.receiveContext(
           move.message(history, lastView(harness)!.revision),
         )
@@ -238,8 +250,8 @@ for (const move of MOVES_FROM_THE_FIRST_STOP) {
           new Error('Historical debugger presentation was superseded.'),
         )
         await seeking
-        // The overtaken move ends a few promise turns after its presentation is rejected, which can be after the seek has ended: let those turns run before reading what was shown.
-        await new Promise<void>((resolve) => setImmediate(resolve))
+        // The overtaken move can end after the seek has: wait for its own selection to end before reading what was shown.
+        await selections[0]
 
         // Assert
         // The overtaken move must not show its own moment even for an instant: every view posted from the release on stands at the moment the learner was at.
