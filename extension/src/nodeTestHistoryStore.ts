@@ -746,8 +746,12 @@ export class NodeTestHistoryStore {
   /**
    * Reads the signals {@link summarize} compares: the size, modification time and identity of a history's files.
    * @param studyId - The history's study id.
-   * @returns The history signal (journal, seal, whether this window writes it) and the material signal.
-   * @example await this.fileSignals(studyId) // => ['812:1792590603000:44|none|active', '1203:1792590700000:45']
+   * @returns
+   * - `history`: the header, journal and seal signals and who writes the history: `active` (this window), `elsewhere` (another live window, by its writer record, F260) or `closed`
+   * - `material`: the learning material's signal
+   * - `header`: the header's own signal
+   * - `recording`: whether this or another live window still writes the history
+   * @example await this.fileSignals(studyId) // => { history: '310:1792590600000:43|812:1792590603000:44|missing:ENOENT|active', material: '1203:1792590700000:45', header: '310:1792590600000:43', recording: true }
    */
   private async fileSignals(studyId: string): Promise<{
     history: string

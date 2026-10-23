@@ -2409,8 +2409,14 @@ async function check(page, options, collected) {
         }
       })
       await outputPage.keyboard.press('PageDown')
-      // The browser scrolls a key press smoothly.
-      await outputPage.waitForTimeout(400)
+      // The browser scrolls a key press smoothly: wait for the scroll itself, bounded, never a fixed time (F312); the case reads the outcome either way.
+      await outputPage
+        .waitForFunction(
+          () => document.getElementById('test-output').scrollTop > 0,
+          undefined,
+          { timeout: 5_000 },
+        )
+        .catch(() => undefined)
       const outputScrolledByKey = await outputPage.evaluate(
         () => document.getElementById('test-output').scrollTop > 0,
       )
@@ -3315,6 +3321,122 @@ async function check(page, options, collected) {
           afterStaleAnswer.firstLine === afterLearnerScroll.firstLine &&
           afterStaleAnswer.lastReport?.follow === false,
       })
+      // Value: protects=a reading whose anchor line the view no longer holds (the kept output moved past it) opens the output at its start with Jump to latest, not where the document stood; fails_when=a missing anchor line leaves the region at the end the document followed, or follows again; why_new=F307 (PR-2 coverage audit): restoreAnchor's missing-line branch had no case; seam=none; no_claim=how the host chooses the anchor
+      // Act: the document at the result follows its end; the host's answer carries a reading not following, anchored at a line the view does not hold.
+      const missingAnchorPage = await openApplication(
+        options.html.applicationAtResult,
+      )
+      const beforeMissingAnchor = await readDocument(missingAnchorPage)
+      await postToDocument(missingAnchorPage, {
+        type: 'node-history-output',
+        generation: 4,
+        view: { ...resultView, generation: 4 },
+        reading: { follow: false, anchor: { line: 999_999, offsetPx: 7 } },
+      })
+      await settleFrames(missingAnchorPage)
+      const afterMissingAnchor = await readDocument(missingAnchorPage)
+      await missingAnchorPage.close()
+      // Assert
+      cases.push({
+        name: 'a reading anchored at a line the view no longer holds opens the output at its start, not where the document followed (F307)',
+        actual: { beforeMissingAnchor, afterMissingAnchor },
+        passed:
+          beforeMissingAnchor.atEnd &&
+          beforeMissingAnchor.scrollTop > 0 &&
+          afterMissingAnchor.scrollTop === 0 &&
+          !afterMissingAnchor.atEnd &&
+          afterMissingAnchor.jumpShown,
+      })
+      // Value: protects=the document draws only the host's output updates: a message of another kind, or an update without a numeric generation or a view, changes nothing, and a later valid update still draws; fails_when=a malformed update is drawn (a string generation compares as a number and replaces the shown moment) or throws so that later updates stop; why_new=F308 (PR-2 coverage audit): the message filter (F304's isOutputUpdate) had no case; seam=none; no_claim=the host's own filter of the document's reports (readNodeTestOutputReport's unit test)
+      // Act: foreign and malformed messages, then a valid newer update.
+      const malformedPage = await openApplication(options.html.application)
+      const beforeMalformed = await readDocument(malformedPage)
+      for (const data of [
+        null,
+        { type: 'node-history-output-state', follow: true },
+        { type: 'node-history-output', view: resultView },
+        {
+          type: 'node-history-output',
+          generation: '9',
+          view: { ...resultView, time: 'Recorded test output · forged' },
+        },
+        { type: 'node-history-output', generation: 9, view: null },
+      ])
+        await postToDocument(malformedPage, data)
+      await settleFrames(malformedPage)
+      const afterMalformed = await readDocument(malformedPage)
+      await postToDocument(malformedPage, {
+        type: 'node-history-output',
+        generation: 2,
+        view: { ...resultView, generation: 2 },
+      })
+      await settleFrames(malformedPage)
+      const afterValid = await readDocument(malformedPage)
+      await malformedPage.close()
+      // Assert
+      cases.push({
+        name: 'messages that are not the host’s output update leave the Application document as it is, and a valid update after them is drawn (F308)',
+        actual: { beforeMalformed, afterMalformed, afterValid },
+        passed:
+          beforeMalformed.time === 'Recorded test output · 0.10 s' &&
+          afterMalformed.time === 'Recorded test output · 0.10 s' &&
+          afterValid.time === 'Recorded test output · 0.90 s',
+      })
+      // Value: protects=the cost of drawing a moment in the Application document: an update compares each kept line with the line the document drew, with no document query per line, and an unchanged line keeps its node; fails_when=each frame queries every kept line's text node (a `querySelector` per line, the cost F314 removed) or draws an unchanged line again; why_new=F314 (PR-2 /ship Step 9 performance): every frame walked the output and queried each line's text; seam=the page's Element.prototype.querySelector and querySelectorAll, counted while the update draws; no_claim=wall-clock time
+      // Act: the result's document with its first line's node marked; a newer view that changes only its last line, drawn while the document's queries are counted.
+      const queryCountPage = await openApplication(
+        options.html.applicationAtResult,
+      )
+      await queryCountPage.evaluate(() => {
+        document.getElementById(
+          'test-output',
+        ).firstElementChild.dataset.marked = 'kept'
+        window.queries = 0
+        for (const method of ['querySelector', 'querySelectorAll']) {
+          const before = Element.prototype[method]
+          Element.prototype[method] = function (...input) {
+            window.queries++
+            return Reflect.apply(before, this, input)
+          }
+        }
+      })
+      const lastLineNumber = resultView.lines.at(-1).number
+      await postToDocument(queryCountPage, {
+        type: 'node-history-output',
+        generation: 6,
+        view: {
+          ...resultView,
+          generation: 6,
+          lines: resultView.lines.map((line) =>
+            line.number === lastLineNumber
+              ? { ...line, text: `${line.text} changed` }
+              : line,
+          ),
+        },
+      })
+      await settleFrames(queryCountPage)
+      const drawnWithoutQueries = await queryCountPage.evaluate(() => {
+        // The count is read before anything else here can query.
+        const queries = window.queries
+        const output = document.getElementById('test-output')
+        return {
+          queries,
+          firstLineKept: output.firstElementChild.dataset.marked === 'kept',
+          lastLine: output.lastElementChild.textContent,
+          lines: output.children.length,
+        }
+      })
+      await queryCountPage.close()
+      // Assert
+      cases.push({
+        name: 'a newer moment is drawn in the Application document without a query per kept line, keeping the unchanged lines’ nodes (F314)',
+        actual: { drawnWithoutQueries, lines: resultView.lines.length },
+        passed:
+          drawnWithoutQueries.queries === 0 &&
+          drawnWithoutQueries.firstLineKept &&
+          drawnWithoutQueries.lastLine.endsWith(' changed\n') &&
+          drawnWithoutQueries.lines === resultView.lines.length,
+      })
       // Value: protects=following is decided by the scroll position alone: a scroll to the end that moves nothing (a view of the same height) leaves no mark that swallows the learner's next scroll up, so Jump to latest shows, following is reported off and the next moment does not pull the output back to its end; fails_when=the document's scroll that moved nothing is remembered, the learner's scroll up is read as the document's own, and the next moment scrolls to the end (DS20); why_new=F106: `scrolledByDocument` stayed set when the scroll to the end caused no scroll event; seam=none; no_claim=a clamp to a shorter output, which the in-place case below pins
       // Act: the result's output followed to its end; a view of the same height arrives (no scroll to make); the learner scrolls up; another view arrives.
       const sameHeightPage = await openApplication(
@@ -4131,7 +4253,19 @@ async function check(page, options, collected) {
       await page.locator('.sequence-diagram').focus()
       for (let index = 0; index < 40; index++)
         await page.keyboard.press('ArrowRight')
-      await page.waitForTimeout(400)
+      // The key presses scroll smoothly: wait until the diagram reaches its end, bounded, never a fixed time (F312); the case reads the outcome either way.
+      await page
+        .waitForFunction(
+          () => {
+            const region = document.querySelector('.sequence-diagram')
+            return (
+              region.scrollLeft + region.clientWidth >= region.scrollWidth - 1
+            )
+          },
+          undefined,
+          { timeout: 5_000 },
+        )
+        .catch(() => undefined)
       const scrolledDiagram = await page
         .locator('.sequence-diagram')
         .evaluate((element) => ({
@@ -4312,7 +4446,21 @@ async function check(page, options, collected) {
       await page.locator('#learning-sequence .sequence-diagram').focus()
       for (let index = 0; index < 40; index++)
         await page.keyboard.press('ArrowRight')
-      await page.waitForTimeout(400)
+      // The key presses scroll smoothly: wait until the diagram reaches its end, bounded, never a fixed time (F312); the case reads the outcome either way.
+      await page
+        .waitForFunction(
+          () => {
+            const region = document.querySelector(
+              '#learning-sequence .sequence-diagram',
+            )
+            return (
+              region.scrollLeft + region.clientWidth >= region.scrollWidth - 1
+            )
+          },
+          undefined,
+          { timeout: 5_000 },
+        )
+        .catch(() => undefined)
       const namedDiagramScrolled = await page
         .locator('#learning-sequence .sequence-diagram')
         .evaluate((region) => ({

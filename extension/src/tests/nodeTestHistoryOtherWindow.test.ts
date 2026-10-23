@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import fsPromises, { mkdtemp, rm, stat } from 'node:fs/promises'
+import fsPromises, { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -9,6 +9,8 @@ import {
   NODE_TEST_HISTORY_WRITER_FILE,
 } from '../constants'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { writeNodeTestWriterRecord } from '../utils/writeNodeTestWriterRecord'
 
 import { markNodeTestWriterGone } from './utils/markNodeTestWriterGone'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
@@ -109,7 +111,7 @@ test('a test history another window recorded is listed with its sealed status af
   assert.equal(record, 'ENOENT')
 })
 
-// Value: protects=the cost of watching a history another window records: fifty refreshes read at most twice the final journal; fails_when=the second window reads the whole growing journal at every refresh; why_new=the incremental scan knew only a history of this window (F260, as F64); seam=the bytes read through the file system are counted; no_claim=wall-clock time
+// Value: protects=the cost of watching a history another window records: fifty refreshes read at most twice the final journal; fails_when=the second window reads the whole growing journal at every refresh; why_new=the incremental scan knew only a history of this window (F260, as F64); why_changed=F311: the count had no lower bound, so a store that read through a binding the counters miss read 0 bytes and passed; every appended byte is read at least once; seam=the bytes read through the file system are counted; no_claim=wall-clock time
 test('fifty refreshes of a history another window records read at most twice its final journal size', async (context) => {
   // Arrange
   const { directory, writing, reading, workspaceKey } =
@@ -167,6 +169,10 @@ test('fifty refreshes of a history another window records read at most twice its
 
   // Assert
   assert.ok(journalBytes > 45_000, `journal is ${journalBytes} bytes`)
+  assert.ok(
+    bytesRead >= journalBytes,
+    `read ${bytesRead} bytes, less than the journal of ${journalBytes}: the counters miss the store's reads`,
+  )
   assert.ok(
     bytesRead <= 2 * journalBytes,
     `read ${bytesRead} bytes for a journal of ${journalBytes}`,
@@ -250,4 +256,141 @@ test('a writer that becomes gone is listed interrupted at the next refresh after
   // Assert
   assert.equal(whileLive?.status, 'recording')
   assert.equal(afterStep?.status, 'interrupted')
+})
+
+/** The path of a history's writer record in a learning folder. */
+function writerRecordPath(directory: string, studyId: string): string {
+  return join(
+    directory,
+    NODE_TEST_HISTORY_DIRECTORY,
+    studyId,
+    NODE_TEST_HISTORY_WRITER_FILE,
+  )
+}
+
+// Value: protects=a run the writing window gives up reads as interrupted in another window at once, although the giving-up window is still alive; fails_when=abandon() leaves the writer record, so the live window keeps the history listed as recording; why_new=the seal removes the record (tested) but abandon() is a separate path (F260); seam=none; no_claim=a record whose removal fails
+test('a test history whose writer gave it up is listed interrupted in another window while the giving-up window lives', async (context) => {
+  // Arrange
+  const { directory, writing, reading, workspaceKey } =
+    await twoWindows(context)
+  const header = nodeTestHistoryHeader(workspaceKey)
+  const writer = await writing.start(header)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 2,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  const [whileWriting] = await reading.list()
+
+  // Act
+  writer.abandon()
+  await waitUntil(
+    async () =>
+      (await stat(writerRecordPath(directory, header.studyId)).catch(
+        () => undefined,
+      )) === undefined,
+    'the writer record is removed',
+    5_000,
+  )
+  const [afterAbandon] = await reading.list()
+
+  // Assert
+  assert.equal(whileWriting?.status, 'recording')
+  assert.equal(afterAbandon?.status, 'interrupted')
+})
+
+// Value: protects=a history this window started never reads as recorded by another window because a writer record of this live process stands after the history closed; fails_when=startedHere is dropped, so a record left behind by a failed removal lists this window's own abandoned history as recording; why_new=only the other window's view was tested (F260); seam=none; no_claim=how the removal failed
+test('a record left behind after a window gave up its own test history does not list it as recording in that window, only in another', async (context) => {
+  // Arrange
+  const { directory, writing, reading, workspaceKey } =
+    await twoWindows(context)
+  const header = nodeTestHistoryHeader(workspaceKey)
+  const writer = await writing.start(header)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 2,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  writer.abandon()
+  await waitUntil(
+    async () =>
+      (await stat(writerRecordPath(directory, header.studyId)).catch(
+        () => undefined,
+      )) === undefined,
+    'the writer record is removed',
+    5_000,
+  )
+
+  // Act
+  await writeNodeTestWriterRecord(
+    join(directory, NODE_TEST_HISTORY_DIRECTORY, header.studyId),
+  )
+  const [inStartingWindow] = await writing.list()
+  const [inOtherWindow] = await reading.list()
+
+  // Assert
+  assert.equal(inStartingWindow?.status, 'interrupted')
+  assert.equal(inOtherWindow?.status, 'recording')
+})
+
+// Value: protects=a history with no writer record or one that cannot be read, such as a history of an earlier build or a damaged record, reads as interrupted in another window instead of recording for good; fails_when=a missing or unreadable record counts as a live writer; why_new=only a record naming a gone process was tested (F260); seam=none; no_claim=a record of another machine
+test('a test history with a missing or an unreadable writer record is listed interrupted in another window', async (context) => {
+  // Arrange
+  const { directory, writing, reading, workspaceKey } =
+    await twoWindows(context)
+  const header = nodeTestHistoryHeader(workspaceKey)
+  const writer = await writing.start(header)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 2,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  const [whileLive] = await reading.list()
+
+  // Act
+  await writeFile(writerRecordPath(directory, header.studyId), '{ not json')
+  const [withUnreadableRecord] = await reading.list()
+  await rm(writerRecordPath(directory, header.studyId))
+  const [withoutRecord] = await reading.list()
+
+  // Assert
+  assert.equal(whileLive?.status, 'recording')
+  assert.equal(withUnreadableRecord?.status, 'interrupted')
+  assert.equal(withoutRecord?.status, 'interrupted')
+})
+
+// Value: protects=the writer record is a help, not a part of the history: a record the file system refuses leaves the start and the recording working, and another window reads the history as interrupted, as before the record existed; fails_when=the record's write failure escapes start, so a learner's test run fails because a help file could not be written; why_new=F309 (PR-2 coverage audit): only records that were written were tested (F260); seam=the file system's rename refuses the record's path; no_claim=which error a real file system gives
+test('a writer record the file system refuses leaves the start recording here and the history interrupted in another window', async (context) => {
+  // Arrange
+  const { writing, reading, workspaceKey } = await twoWindows(context)
+  const renameBefore = fsPromises.rename
+  context.mock.method(
+    fsPromises,
+    'rename',
+    async (...input: Parameters<typeof renameBefore>) => {
+      if (String(input[1]).endsWith(NODE_TEST_HISTORY_WRITER_FILE))
+        throw Object.assign(new Error('EACCES: permission denied'), {
+          code: 'EACCES',
+        })
+      return renameBefore(...input)
+    },
+  )
+
+  // Act
+  const writer = await writing.start(nodeTestHistoryHeader(workspaceKey))
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 2,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  const [seenHere] = await writing.list()
+  const [seenElsewhere] = await reading.list()
+
+  // Assert
+  assert.equal(seenHere?.status, 'recording')
+  assert.equal(seenElsewhere?.status, 'interrupted')
 })

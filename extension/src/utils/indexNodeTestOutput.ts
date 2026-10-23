@@ -57,6 +57,7 @@ const INSPECTOR_LINES = [
  * Reads a test replay's output entries once into lines, so the Application pane can show the output up to any selected event without reading every entry again (S1-2); called by the Study workspace once per opened test replay.
  * A line-state machine joins the entries: a chunk of the same channel continues an unfinished line, a chunk of the other channel ends it first, terminal controls are removed across the entries of each channel ({@link stripTerminalControlsAcross}) and the Node inspector's own standard-error lines are counted instead of shown. Each line is kept as the offsets of its text in one shared body (F149).
  * @param entries - The history's events in sequence order; only output entries are read.
+ * @param options - `alreadyShown` for entries whose text is already the shown text, as a history {@link sanitizeNodeTestHistory} made holds: they are not stripped again.
  * @returns The index: the output entries' sequences, the shown text, the complete lines' offsets and channels, their running totals and what each output entry leaves behind.
  * @example
  * indexNodeTestOutput([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: 'RUN\nok' }]).after[0]
@@ -64,9 +65,13 @@ const INSPECTOR_LINES = [
  */
 export function indexNodeTestOutput(
   entries: readonly NodeTestHistoryIndex['entries'][number][],
+  options: { alreadyShown?: boolean } = {},
 ): NodeTestOutputIndex {
-  const shownText = stripOutputEntries(entries)
   const outputEntries = entries.filter((entry) => entry.type === 'output')
+  // A sanitized history's output is shown text already: a second strip would pass over the whole output again for nothing (F315).
+  const shownText = options.alreadyShown
+    ? new Map(outputEntries.map((entry) => [entry.sequence, entry.text]))
+    : stripOutputEntries(entries)
   const body = outputEntries
     .map((entry) => shownText.get(entry.sequence)!)
     .join('')
@@ -171,7 +176,7 @@ function endsInSplitPair(text: string, offset: number): boolean {
 }
 
 /**
- * Removes the terminal controls of every output entry, reading each channel's entries as one stream so a control string split across entries goes whole (F109, F148); called by {@link indexNodeTestOutput}.
+ * Removes the terminal controls of every output entry, reading each channel's entries as one stream so a control string split across entries goes whole (F109, F148); called by {@link sanitizeNodeTestHistory} once per opened test replay, and by {@link indexNodeTestOutput} for entries not yet shown.
  * @param entries - The history's events in sequence order; only output entries are read.
  * @returns Each output entry's shown text, by the entry's sequence.
  * @example stripOutputEntries([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: '\u001b[3' }, { type: 'output', sequence: 2, elapsedMs: 6, channel: 'stdout', text: '2mok' }]) // => Map { 1 => '', 2 => 'ok' }

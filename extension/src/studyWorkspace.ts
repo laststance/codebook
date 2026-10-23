@@ -725,6 +725,8 @@ export class StudyWorkspace {
   private selectedNodeHistoryShown?: {
     history: NodeTestHistoryIndex
     shown: NodeTestHistoryIndex
+    /** The shown history's events by their sequence, so a message finds the selected event without a scan of the history (F315). */
+    entryBySequence: Map<number, NodeTestHistoryIndex['entries'][number]>
   }
   /** The count of the Application pane's test replay views, and what the last one showed, so its generation changes only when the shown moment does. */
   private nodeHistoryApplicationGeneration = 0
@@ -12292,12 +12294,14 @@ export class StudyWorkspace {
     const shown = this.shownNodeHistory(history)
     // A stop verifies against the recorded source path, which the shown history may have stripped (F287).
     const selectedAsRecorded = selected
-    selected = selected && shown.entries[history.entries.indexOf(selected)]
+    selected =
+      selected &&
+      this.selectedNodeHistoryShown?.entryBySequence.get(selected.sequence)
     history = shown
     if (this.selectedNodeHistoryOutputIndex?.history !== history)
       this.selectedNodeHistoryOutputIndex = {
         history,
-        index: indexNodeTestOutput(history.entries),
+        index: indexNodeTestOutput(history.entries, { alreadyShown: true }),
       }
     // Only a test replay that is opening reads as loading, by its own marker: a background render's loading state, which may end in the middle of the open, never does.
     // The marker belongs to the replay being opened: while another replay is read, the one still shown keeps its output, scroll position and selection, and its name never stands under the loading line (F143, F150).
@@ -12349,7 +12353,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Gives the selected test replay as its surfaces print it: every recorded text without terminal and bidirectional controls, made once per opened history (F131).
+   * Gives the selected test replay as its surfaces print it: every recorded text without terminal and bidirectional controls, made once per opened history with its events by sequence (F131, F315).
    * @param history - The selected test replay as the store read it.
    * @returns The history {@link sanitizeNodeTestHistory} made of it.
    * @example this.shownNodeHistory(history).entries[0] // => the first event with its text free of controls
@@ -12357,11 +12361,16 @@ export class StudyWorkspace {
   private shownNodeHistory(
     history: NodeTestHistoryIndex,
   ): NodeTestHistoryIndex {
-    if (this.selectedNodeHistoryShown?.history !== history)
+    if (this.selectedNodeHistoryShown?.history !== history) {
+      const shown = sanitizeNodeTestHistory(history)
       this.selectedNodeHistoryShown = {
         history,
-        shown: sanitizeNodeTestHistory(history),
+        shown,
+        entryBySequence: new Map(
+          shown.entries.map((entry) => [entry.sequence, entry]),
+        ),
       }
+    }
     return this.selectedNodeHistoryShown.shown
   }
 

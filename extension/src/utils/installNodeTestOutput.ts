@@ -164,46 +164,48 @@ export function installNodeTestOutput(
     output.scrollTop = output.scrollHeight
     settle()
   }
-  /** Removes the lines a view no longer holds and lists the kept ones by their number, so each line is found without searching the whole output. */
-  const keptLines = (
-    lines: NodeTestApplicationView['lines'],
-  ): Map<number, HTMLElement> => {
-    const wanted = new Set(lines.map((value) => value.number)),
-      kept = new Map<number, HTMLElement>()
-    for (const node of Array.from(output.children))
-      if (node instanceof HTMLElement && wanted.has(Number(node.dataset.line)))
-        kept.set(Number(node.dataset.line), node)
-      else node.remove()
-    return kept
+  /** Every drawn line by its number, with the line it shows: a frame compares a line with what it drew, never by querying the document, and the lines a view leaves are found without walking the output (F314). */
+  const drawn = new Map<
+    number,
+    { node: HTMLElement; shows: NodeTestApplicationView['lines'][number] }
+  >()
+  /** Removes the drawn lines a view no longer holds. */
+  const dropLeftLines = (lines: NodeTestApplicationView['lines']): void => {
+    const wanted = new Set(lines.map((value) => value.number))
+    for (const [number, line] of drawn)
+      if (!wanted.has(number)) {
+        line.node.remove()
+        drawn.delete(number)
+      }
   }
   /** Places one line after the line before it: lines are matched by their number, so an unchanged line keeps its node and a selection or focus inside it survives; a changed line is replaced and a new one inserted. */
   const placeLine = (
     value: NodeTestApplicationView['lines'][number],
-    node: HTMLElement | undefined,
     previous: Element | undefined,
   ): Element => {
+    const kept = drawn.get(value.number)
     const unchanged =
-      node?.dataset.channel === value.channel &&
-      (node.dataset.cut === 'true') === Boolean(value.cut) &&
-      node.querySelector('.output-text')?.textContent === value.text
-    if (unchanged && node) return node
+      kept?.shows.channel === value.channel &&
+      Boolean(kept.shows.cut) === Boolean(value.cut) &&
+      kept.shows.text === value.text
+    if (unchanged && kept) return kept.node
     const placed = lineNode(value)
-    if (node) node.replaceWith(placed)
+    if (kept) kept.node.replaceWith(placed)
     else if (previous) previous.after(placed)
     else output.prepend(placed)
+    drawn.set(value.number, { node: placed, shows: value })
     return placed
   }
   /** Brings the output region's lines to a view's in place, in time linear in the lines. */
   const placeLines = (lines: NodeTestApplicationView['lines']): void => {
-    const kept = keptLines(lines)
+    dropLeftLines(lines)
     let previous: Element | undefined
-    for (const value of lines)
-      previous = placeLine(value, kept.get(value.number), previous)
+    for (const value of lines) previous = placeLine(value, previous)
   }
   /** Scrolls so that the anchor's line stands where it stood; an anchor whose line the view no longer holds leaves the region at its start. */
   const restoreAnchor = (anchor: NodeTestOutputAnchor): void => {
-    const target = output.querySelector(`[data-line="${anchor.line}"]`)
-    if (target instanceof HTMLElement)
+    const target = drawn.get(anchor.line)?.node
+    if (target)
       output.scrollTop +=
         target.getBoundingClientRect().top -
         output.getBoundingClientRect().top +

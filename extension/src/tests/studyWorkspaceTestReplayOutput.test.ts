@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { studyHtml } from '../ui/studyHtml'
+import * as terminalControls from '../utils/stripTerminalControls'
 
 import {
   recordedReaderHarness,
@@ -1437,6 +1438,37 @@ test('opening another test replay starts on its own first step, not the step cho
     assert.deepEqual(lastView(harness)?.nodeHistorySection?.sameMomentStepIds, [
       'keep',
     ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the cost of opening a test replay: its recorded output is stripped of terminal controls once, for the history its surfaces print, and the output index reads that shown text without stripping it again; fails_when=the index strips the already-shown output a second time, a pass over up to 8 MiB of output on the extension host at every open; why_new=F315 (PR-2 /ship Step 9 performance): the Study workspace indexed the sanitized history with the index's own strip; seam=the stripping module's cross-entry export, counted; no_claim=the strip's own result (stripTerminalControls' tests)
+test('opening a test replay strips its recorded output once, not again for its output index', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const strip = context.mock.method(
+      terminalControls,
+      'stripTerminalControlsAcross',
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert: one pass, one stream per channel (standard output and standard error).
+    assert.equal(strip.mock.callCount(), 2)
   } finally {
     await harness.close()
   }

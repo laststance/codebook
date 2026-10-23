@@ -17,10 +17,7 @@ export function wordNodeCaptureReason(
   const words = stripTerminalControls(reason ?? '')
     // ANSI sequences, C1 and bidirectional controls are gone (F288); the line breaks and tabs left become a blank.
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .replace(/\bNode test histor(y|ies)\b/gi, (_match, ending: string) =>
-      ending === 'y' ? 'test replay' : 'test replays',
-    )
-    .replace(/\bNode histor(y|ies)\b/gi, (_match, ending: string) =>
+    .replace(/\bNode (?:test )?histor(y|ies)\b/gi, (_match, ending: string) =>
       ending === 'y' ? 'test replay' : 'test replays',
     )
     .replace(/\s+/g, ' ')
