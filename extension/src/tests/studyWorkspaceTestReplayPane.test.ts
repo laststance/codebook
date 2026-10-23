@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 // Value: protects=Show recorded output puts a rebuilt Application pane where the Study arrangement puts it: once the three Study panes exist the arrangement runs again with its receipt cleared, so the pane does not come back as a second tab before the source stop when the editor closed the emptied group; fails_when=the rebuilt pane is left at the fixed Application column (the arrangement's re-entry returns at once because its receipt already says `study`), so no arrangement runs after the pane is rebuilt; why_new=F137 (D21): the closed pane's group is gone under workbench.editor.closeEmptyGroups and open() alone did not place the new pane; seam=the reader's private arrange, observed by a wrapper; no_claim=the native placement itself, which the driving agent checks in VS Code and Cursor (stand-ins: the workspace harness's closeTabByHand, its native panel list and the recorded arrange calls)
@@ -21,7 +22,7 @@ test('Show recorded output runs the Study arrangement again, with its receipt cl
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const closedPane = harness
       .nativePanels()
@@ -30,7 +31,7 @@ test('Show recorded output runs the Study arrangement again, with its receipt cl
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.applicationClosed === true,
       'the section says the Application pane is closed',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const reader = harness.reader as unknown as {
       arrange: (
@@ -68,13 +69,13 @@ test('Show recorded output runs the Study arrangement again, with its receipt cl
     await waitUntil(
       () => lastView(harness)?.nodeHistorySection?.applicationClosed === false,
       'the section says the Application pane is back',
-      3_000,
+      READER_RESULT_BOUND_MS,
     )
 
     await waitUntil(
       () => arrangements.some((value) => value.ownedOnly === false),
       'the Study arrangement runs again for the rebuilt pane',
-      3_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -106,7 +107,7 @@ test('a U+202E in a recorded test title does not reach the Saved studies catalog
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const entry = lastView(harness)?.nodeHistoryCatalog?.[0]
 

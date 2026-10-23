@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { recordedReaderHarness } from './studyWorkspaceHarness'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 // Value: protects=a browser recording that loads while a test replay is selected retires the test replay (D20): the Application pane shows the recording's own pages, not the test replay's output, and the Study message carries no test replay; fails_when=loadPlayback leaves the test replay selected, so capturedAppHtml gives it the pane (the recording's loading page or "Recorded playback unavailable" never shows) and the section stays drawn beside the recording; why_new=F132 and F146: only Saved studies' choice of a browser study retired the test replay, and the recordingActive arm of Focus application's guard decided no tested outcome; seam=none; no_claim=the native placement of the pane (stand-ins: the workspace harness's recorded panels, posted messages and closeTabByHand)
@@ -21,7 +22,7 @@ test('a browser recording opened over a selected test replay retires the test re
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const outputBefore = harness
       .nativePanels()
@@ -62,7 +63,7 @@ test('Focus application after a browser recording replaced a test replay leaves 
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
@@ -76,7 +77,7 @@ test('Focus application after a browser recording replaced a test replay leaves 
           .nativePanels()
           .some((panel) => panel.kind === 'codebook.scopedBrowser'),
       'the Application pane is closed',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act

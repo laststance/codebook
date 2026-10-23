@@ -2040,20 +2040,95 @@ function studyClient(
     generalName: string,
   ): string => message.liveTitle ?? profileTitle ?? generalName
   /**
-   * Breaks a name or label into lines of at most `maxChars` characters at word boundaries, so a sequence diagram never cuts a word or ends a label with an ellipsis (F206); called by {@link sequenceView}.
-   * A word longer than the limit keeps a line of its own: the caller widens its column for the longest word.
-   * @param value - The text to break.
-   * @param maxChars - The most characters a line holds.
-   * @returns The lines, one empty line for empty text.
-   * @example wrapWords('fetch filtered invoices', 10) // => ['fetch', 'filtered', 'invoices']
+   * Splits a name or label into the pieces a sequence diagram may break between: a run of letters without a space is one piece, and every Japanese, Chinese or Korean character or full-width form is a piece of its own (such text has no spaces), with a closing mark such as `、` or `。` kept on the character before it; called by {@link wrapSequenceText} and {@link sequenceView}.
+   * @param value - The text to split.
+   * @returns The pieces, each with whether a space came before it.
+   * @example sequencePieces('Ask 取得。') // => [{ text: 'Ask', spaceBefore: false }, { text: '取', spaceBefore: true }, { text: '得。', spaceBefore: false }]
    */
-  const wrapWords = (value: string, maxChars: number): string[] => {
+  const sequencePieces = (
+    value: string,
+  ): { text: string; spaceBefore: boolean }[] => {
+    const pieces: { text: string; spaceBefore: boolean }[] = []
+    let spaceBefore = false
+    for (const match of value.matchAll(
+      /(\s+)|(\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\u3000-\u303F\uFF00-\uFFEF])|([^\s]+?(?=\s|\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\u3000-\u303F\uFF00-\uFFEF]|$))/gu,
+    )) {
+      if (match[1] !== undefined) {
+        spaceBefore = true
+        continue
+      }
+      const text = match[0],
+        previous = pieces[pieces.length - 1]
+      // A closing mark never starts a line: it stays with the character before it.
+      if (
+        previous &&
+        !spaceBefore &&
+        /^[、。，．）」』】！？：；]$/u.test(text)
+      )
+        previous.text += text
+      else pieces.push({ text, spaceBefore })
+      spaceBefore = false
+    }
+    return pieces
+  }
+  /**
+   * Measures text in the diagram's font, so a Japanese, Chinese or upper-case label is sized as it is drawn (F293); called by {@link wrapSequenceText} and {@link sequenceView}.
+   * The width comes from a canvas set to the diagram's font; where no canvas is available (a test document), it is estimated from the kind of each character: a Japanese, Chinese or Korean glyph and a full-width form is about one em wide, an upper-case Latin letter wider than a lower-case one.
+   * @param value - The text to measure.
+   * @returns The width in pixels.
+   * @example sequenceTextWidthPx('取得') // => 24
+   */
+  const sequenceTextWidthPx = (value: string): number => {
+    const layout = options.sequence
+    const measured = sequenceFontContext()?.measureText(value).width
+    if (measured) return measured
+    let width = 0
+    for (const character of value)
+      width +=
+        /[\u1100-\u11FF\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}]/u.test(
+          character,
+        )
+          ? layout.wideCharWidthPx
+          : /\p{Lu}/u.test(character)
+            ? layout.upperCharWidthPx
+            : layout.charWidthPx
+    return width
+  }
+  let sequenceMeasure: CanvasRenderingContext2D | null | undefined
+  /**
+   * Returns the canvas context that measures the diagram's text (its font size and the page's font family), made once; called by {@link sequenceTextWidthPx}.
+   * @returns The context, or `null` where the document has no canvas.
+   * @example sequenceFontContext()?.measureText('Source').width
+   */
+  const sequenceFontContext = (): CanvasRenderingContext2D | null => {
+    if (sequenceMeasure === undefined) {
+      try {
+        sequenceMeasure = document.createElement('canvas').getContext('2d')
+      } catch {
+        // A document without canvas support falls back to the estimate.
+        sequenceMeasure = null
+      }
+      if (sequenceMeasure)
+        sequenceMeasure.font = `${options.sequence.fontSizePx}px ${getComputedStyle(document.body).fontFamily}`
+    }
+    return sequenceMeasure
+  }
+  /**
+   * Breaks a name or label into lines no wider than `maxPx` between words, and between the characters of text without spaces (Japanese, Chinese), so a sequence diagram never cuts a Latin word or ends a label with an ellipsis (F206, F293); called by {@link sequenceView}.
+   * A piece wider than the limit keeps a line of its own: the caller widens its column for the widest piece.
+   * @param value - The text to break.
+   * @param maxPx - The most pixels a line holds.
+   * @returns The lines, one empty line for empty text.
+   * @example wrapSequenceText('fetch filtered invoices', 80) // => ['fetch', 'filtered', 'invoices']
+   */
+  const wrapSequenceText = (value: string, maxPx: number): string[] => {
     const lines: string[] = []
-    for (const word of value.split(/\s+/).filter(Boolean)) {
-      const last = lines.length - 1
-      if (last >= 0 && (lines[last]?.length ?? 0) + 1 + word.length <= maxChars)
-        lines[last] += ` ${word}`
-      else lines.push(word)
+    for (const piece of sequencePieces(value)) {
+      const last = lines.length - 1,
+        joined = `${lines[last] ?? ''}${piece.spaceBefore ? ' ' : ''}${piece.text}`
+      if (last >= 0 && sequenceTextWidthPx(joined) <= maxPx)
+        lines[last] = joined
+      else lines.push(piece.text)
     }
     return lines.length ? lines : ['']
   }
@@ -2122,21 +2197,18 @@ function studyClient(
       (step, index) => `${index + 1}. ${step.label}`,
     )
     // A column is wide enough for the longest word of any name or label, so no word is ever broken inside its box (F206).
-    const longestWordChars = Math.max(
+    const widestPiecePx = Math.max(
       0,
       ...[...content.participants.map((value) => value.label), ...stepLabels]
-        .flatMap((value) => value.split(/\s+/))
-        .map((word) => word.length),
+        .flatMap((value) => sequencePieces(value))
+        .map((piece) => sequenceTextWidthPx(piece.text)),
     )
     const columnWidth = Math.max(
       layout.columnWidthPx,
-      Math.ceil(longestWordChars * layout.charWidthPx + layout.columnPaddingPx),
+      Math.ceil(widestPiecePx + layout.columnPaddingPx),
     )
-    const charsWithin = (spanPx: number): number =>
-      Math.max(
-        1,
-        Math.floor((spanPx - layout.columnPaddingPx) / layout.charWidthPx),
-      )
+    const textWithin = (spanPx: number): number =>
+      spanPx - layout.columnPaddingPx
     const width = Math.max(
       layout.minWidthPx,
       content.participants.length * columnWidth,
@@ -2145,16 +2217,16 @@ function studyClient(
       columnWidth / 2 +
       content.participants.findIndex((value) => value.id === id) * columnWidth
     const nameLines = content.participants.map((participant) =>
-      wrapWords(participant.label, charsWithin(columnWidth)),
+      wrapSequenceText(participant.label, textWithin(columnWidth)),
     )
     // The diagram grows taller for every extra line of a name or a label.
     const namesExtraPx =
       (Math.max(1, ...nameLines.map((lines) => lines.length)) - 1) *
       layout.nameLineHeightPx
     const stepLines = content.steps.map((step, index) =>
-      wrapWords(
+      wrapSequenceText(
         stepLabels[index] ?? '',
-        charsWithin(
+        textWithin(
           Math.max(columnWidth, Math.abs(column(step.to) - column(step.from))),
         ),
       ),
@@ -2315,7 +2387,13 @@ function studyClient(
       inspect instanceof HTMLButtonElement &&
       stop?.type === 'stop' &&
       testReplayStopInspectable(stop, message, true)
-    inspect.hidden = !offered
+    // Hidden through the rule Show Variables follows: a keyboard learner on it is handed to the transport, not to the page (F292).
+    offerShowVariables(
+      'node-history-inspect',
+      offered,
+      options.nodeTransportFocus,
+      'node-history',
+    )
     if (!offered) return
     const shown = Boolean(message.nodeHistoryPosition?.debuggerAvailable)
     inspect.dataset.nodeHistorySequence = String(stop.sequence)
