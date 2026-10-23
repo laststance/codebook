@@ -822,6 +822,8 @@ export class StudyWorkspace {
   private readonly nodeSourceSlotCloses = new Map<string, Promise<unknown>>()
   /** The newest selection request whose slot show reached its sweep: a slower show of an older request that finds a newer one done closes its own tab itself ({@link settleOvertakenSlotShow}). */
   private nodeSourceSlotShownRequest = 0
+  /** How many times the recorded-source slot was retired ({@link retireNodeSourceSlot}); a show that began before a retirement is closed when it completes ({@link settleLateSlotShow}, F364). */
+  private nodeSourceSlotRetirements = 0
   private playback?: PlaybackController
   private replayDebugger?: ReplayDebugger
   /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
@@ -12376,6 +12378,7 @@ export class StudyWorkspace {
    */
   private async retireNodeSourceSlot(): Promise<void> {
     const slot = this.nodeSourceSlot
+    this.nodeSourceSlotRetirements++
     this.nodeSourceSlot = undefined
     this.nodeSourceSlotHeld = undefined
     // A slot that could not open belonged to the retired replay: its row and Retry go with it.
@@ -24408,6 +24411,7 @@ export class StudyWorkspace {
   ): Promise<vscode.Uri | 'failed' | undefined> {
     const studyId = history.header.studyId
     const earlier = this.nodeSourceSlot
+    const retirementsAtStart = this.nodeSourceSlotRetirements
     let uri: vscode.Uri | undefined
     let shown: Promise<'shown' | 'overtaken'> | undefined
     // A slot that is slow past the transition bound is asked once more for its bytes, in case the editor missed the change that announced them.
@@ -24441,13 +24445,13 @@ export class StudyWorkspace {
       )
       // Only the selection that is still current closes the slots it replaced: an overtaken one would close a tab before the newer selection chose its column (F189).
       if ((await deadline.within(shown)) === 'overtaken') {
-        this.settleLateSlotShow(shown, uri, request)
+        this.settleLateSlotShow(shown, uri, request, retirementsAtStart)
         return undefined
       }
       return request === this.selectedNodeHistoryRequest ? uri : undefined
     } catch (error) {
       if (shown && uri && deadline.expired())
-        this.settleLateSlotShow(shown, uri, request)
+        this.settleLateSlotShow(shown, uri, request, retirementsAtStart)
       if (request !== this.selectedNodeHistoryRequest) return undefined
       this.reportNodeSourceSlotFailure(studyId, verifiedStop, error)
       return 'failed'
@@ -24536,23 +24540,26 @@ export class StudyWorkspace {
   }
 
   /**
-   * Cleans up after a slot show that ended after the selection stopped waiting for it: its deadline passed, or a newer selection took over while it was in the editor. The tab it opened is closed when no one will show it: always for the selection that is still current (its moment is failed), and for an overtaken one only once a newer selection has finished its own show, so the newer selection's column choice and sweep come first (F189, F198).
+   * Cleans up after a slot show that ended after the selection stopped waiting for it: its deadline passed, or a newer selection took over while it was in the editor. The tab it opened is closed when no one will show it: always for the selection that is still current (its moment is failed), and for an overtaken one only once a newer selection has finished its own show, so the newer selection's column choice and sweep come first (F189, F198). A slot retired since the show began (the reader closed, the replay left) has no moment to keep it, so the tab is closed unless a newer replay's slot shows it (F364).
    * @param shown - The show that may still be running.
    * @param uri - The slot address the show opens.
    * @param request - The show's selection request token.
-   * @example this.settleLateSlotShow(shown, uri, request)
+   * @param retirementsAtStart - {@link nodeSourceSlotRetirements} when the show began; a slot retired since has no moment left to show the tab.
+   * @example this.settleLateSlotShow(shown, uri, request, retirementsAtStart)
    */
   private settleLateSlotShow(
     shown: Promise<unknown>,
     uri: vscode.Uri,
     request: number,
+    retirementsAtStart: number,
   ): void {
     const closeTab = (): void => {
       const isCurrentRequest = request === this.selectedNodeHistoryRequest
       const newerShowDone = this.nodeSourceSlotShownRequest > request
       const isShownByNewer =
         this.nodeSourceSlot?.uri.toString() === uri.toString()
-      if (isCurrentRequest || (newerShowDone && !isShownByNewer))
+      const isRetired = this.nodeSourceSlotRetirements > retirementsAtStart
+      if (isCurrentRequest || ((newerShowDone || isRetired) && !isShownByNewer))
         void this.closeNodeSourceSlotTabs(undefined, uri).catch(() => undefined)
     }
     void shown.then(closeTab, closeTab)

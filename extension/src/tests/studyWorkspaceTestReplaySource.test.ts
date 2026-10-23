@@ -2207,6 +2207,46 @@ test('a slot show that completes after the deadline is closed, not shown', async
   }
 })
 
+// Value: protects=a slot show still in the editor when the reader closes or the replay is retired (Return to Live) leaves no recorded-source tab when it completes, so a closed reader or a retired replay keeps no tab of bytes no moment owns; fails_when=a show that completes after the retire or the close is neither current nor overtaken by a newer show, so its tab stays open; why_new=F364 (F184's case: the late-show cleanup knew only the deadline and a newer show, not the retirement); seam=the workspace harness's held text document show (no slot clock elapsed: the show is still inside its deadline); no_claim=a slot tab the learner pinned
+for (const ending of ['the reader closes', 'the replay is retired'] as const)
+  test(`a slot show that completes after ${ending} leaves no recorded-source tab`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    let stalled: ReturnType<Harness['holdNextTextDocumentShow']> | undefined
+    try {
+      const history = await saveTwoFileNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      stalled = harness.holdNextTextDocumentShow({ uri: nextFileSlot(harness) })
+      startMomentSelection(harness, history.studyId, 4)
+      await stalled.started
+      if (ending === 'the reader closes') await harness.reader.close()
+      else await harness.reader.action('return-current')
+      assert.deepEqual(slotTabs(harness), [])
+
+      // Act
+      stalled.release()
+      await waitUntil(
+        () =>
+          harness
+            .tabCloseRequests()
+            .flat()
+            .some((tab) =>
+              JSON.stringify(tab.input).includes('Captured-theme-next.ts'),
+            ),
+        'the late tab is closed',
+        2_000,
+      )
+
+      // Assert
+      assert.deepEqual(slotTabs(harness), [])
+    } finally {
+      stalled?.release()
+      await harness.close()
+    }
+  })
+
 // Value: protects=Play pauses at the first slot that cannot be shown and does not retry the same failure at every later event; fails_when=Play goes on after a failed slot, so each later event adds a row and an Output entry; why_new=F185 (a failing slot failed again at every later event); seam=the workspace harness's held text document show and its hand-driven slot clock; no_claim=Play's pacing
 test('Play pauses at the first slot that cannot open', async () => {
   // Arrange
