@@ -5,7 +5,7 @@ import { stripTerminalControls } from './stripTerminalControls'
  * The entry's identity and every other field are untouched.
  * @param summary - A catalog entry as the history store lists it.
  * @returns The entry with its test file and titles free of controls; the input is not changed.
- * @example stripNodeHistorySummaryTexts({ testFile: 'a.test.ts', testTitles: ['x‮y'] }).testTitles // => ['xy']
+ * @example stripNodeHistorySummaryTexts({ testFile: 'a.test.ts', testTitles: ['x\u202Ey'] }).testTitles // => ['xy']
  */
 export function stripNodeHistorySummaryTexts<
   Summary extends { testFile: string; testTitles?: string[] },

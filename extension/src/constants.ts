@@ -706,6 +706,13 @@ export const RECORDING_TERMINAL_RESERVE_BYTES = 16_384
 export const RECORDING_REASON_LIMIT_CHARS = 1_024
 // How many characters of an interrupted or partial test replay's reason the Study section shows on its one line.
 export const NODE_CAPTURE_REASON_LIMIT_CHARS = 240
+
+/** The UTF-16 code units of a surrogate pair's first (high) half; a high unit followed by a low one is one code point ({@link isSurrogatePairAt}). */
+export const HIGH_SURROGATE_FIRST_UNIT = 0xd800
+export const HIGH_SURROGATE_LAST_UNIT = 0xdbff
+/** The UTF-16 code units of a surrogate pair's second (low) half. */
+export const LOW_SURROGATE_FIRST_UNIT = 0xdc00
+export const LOW_SURROGATE_LAST_UNIT = 0xdfff
 export const MAX_RECORDING_CONTEXT_BYTES = 8_388_608
 export const MAX_RECORDING_HEADER_BYTES = 65_536
 export const MAX_RECORDING_TOTAL_BYTES = 570_425_344

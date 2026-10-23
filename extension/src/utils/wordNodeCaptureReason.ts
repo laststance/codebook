@@ -1,5 +1,6 @@
 import { NODE_CAPTURE_REASON_LIMIT_CHARS } from '../constants'
 
+import { isSurrogatePairAt } from './isSurrogatePairAt'
 import { stripTerminalControls } from './stripTerminalControls'
 
 /**
@@ -25,9 +26,8 @@ export function wordNodeCaptureReason(
   if (!words) return undefined
   const sentence = `${words.charAt(0).toUpperCase()}${words.slice(1)}`
   if (sentence.length <= NODE_CAPTURE_REASON_LIMIT_CHARS) return sentence
-  // The cut falls between characters: a high surrogate left at its end goes (F288).
+  // The cut falls between characters: a pair it would split goes whole (F288).
   let cut = NODE_CAPTURE_REASON_LIMIT_CHARS - 1
-  const lastUnit = sentence.charCodeAt(cut - 1)
-  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) cut--
+  if (isSurrogatePairAt(sentence, cut - 1)) cut--
   return `${sentence.slice(0, cut)}…`
 }

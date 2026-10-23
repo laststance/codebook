@@ -1,6 +1,7 @@
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
 import { countCodePoints } from './countCodePoints'
+import { isSurrogatePairAt } from './isSurrogatePairAt'
 import { nodeTestOutputLineCost } from './nodeTestOutputLineCost'
 import { stripTerminalControlsAcross } from './stripTerminalControls'
 
@@ -122,7 +123,7 @@ export function indexNodeTestOutput(
     if (to <= from) return
     // A surrogate pair split across two entries is one code point, not two (F291).
     const joinsPair =
-      isContinuing && pending.end === from && endsInSplitPair(body, from)
+      isContinuing && pending.end === from && isSurrogatePairAt(body, from - 1)
     pending.end = to
     pending.codePoints += countCodePoints(body, from, to) - (joinsPair ? 1 : 0)
   }
@@ -158,21 +159,6 @@ export function indexNodeTestOutput(
     })
   }
   return index
-}
-
-/**
- * Tells whether a text offset falls inside a surrogate pair, so the code points of the parts on both sides of it add up to one too many; called by the line reader of {@link indexNodeTestOutput}.
- * @param text - The shown text.
- * @param offset - The offset where one part ends and the next begins.
- * @returns Whether a high surrogate stands just before the offset and a low one at it.
- * @example endsInSplitPair('\ud83d\ude00', 1) // => true
- */
-function endsInSplitPair(text: string, offset: number): boolean {
-  const before = text.charCodeAt(offset - 1)
-  const after = text.charCodeAt(offset)
-  return (
-    before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff
-  )
 }
 
 /**

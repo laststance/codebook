@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import * as summaryTexts from '../utils/stripNodeHistorySummaryTexts'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
@@ -161,6 +162,45 @@ test('a U+202E in a recorded test title does not reach the Saved studies catalog
     // Assert
     assert.equal(entry?.testFile, 'src/theme.test.ts')
     assert.deepEqual(entry?.testTitles, ['theme', 'applies dark mode'])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the cost of each Study message: the Saved studies catalog's test files and titles are stripped once when the catalog is listed, not again for every Study message (built at each publish, four a second while a replay plays or the reader refreshes); fails_when=each Study message strips every saved replay's test file and titles again; why_new=F326 (PR-2 /ship Step 9 pass 2 performance): message() mapped the whole catalog through the strip at every call; seam=the strip module's export, counted; no_claim=the strip's own result (the test above)
+test('building the Study message again does not strip the Saved studies catalog again', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+      ['theme', 'applies dark mode'],
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    const strip = context.mock.method(
+      summaryTexts,
+      'stripNodeHistorySummaryTexts',
+    )
+
+    // Act: five Study messages, as five publishes build them.
+    const messages = Array.from({ length: 5 }, () =>
+      harness.reader['message'](),
+    )
+
+    // Assert
+    assert.equal(strip.mock.callCount(), 0)
+    assert.deepEqual(messages.at(-1)?.nodeHistoryCatalog?.[0]?.testTitles, [
+      'theme',
+      'applies dark mode',
+    ])
   } finally {
     await harness.close()
   }

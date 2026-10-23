@@ -21,7 +21,7 @@ function forgedHistory(): NodeTestHistoryIndex {
       elapsedMs: 10,
       outputSequence: 1,
       channel: 'stdout',
-      text: 'pass‮ed \u001b[3',
+      text: 'pass\u202Eed \u001b[3',
     },
     {
       type: 'output',
@@ -39,7 +39,7 @@ function forgedHistory(): NodeTestHistoryIndex {
       source: { path: 'src/a.ts', hash: 'a'.repeat(64), line: 1, column: 1 },
       frame: { name: 'run', line: 1, column: 1 },
       facts: [
-        { path: 'name', mode: 'value', display: 'ev‮il', type: 'string' },
+        { path: 'name', mode: 'value', display: 'ev\u202Eil', type: 'string' },
       ],
       debuggerSnapshot: {
         version: 1,
@@ -54,7 +54,7 @@ function forgedHistory(): NodeTestHistoryIndex {
       elapsedMs: 40,
       exitCode: 0,
       signal: null,
-      outputTail: 'tail ‮reversed\u001b[0m',
+      outputTail: 'tail \u202Ereversed\u001b[0m',
     },
   ]
   return {
@@ -63,7 +63,7 @@ function forgedHistory(): NodeTestHistoryIndex {
       ...baseHeader,
       configuration: {
         ...baseHeader.configuration,
-        testTitles: ['suite ‮title', 'works'],
+        testTitles: ['suite \u202Etitle', 'works'],
       },
     },
     entries,
@@ -106,7 +106,7 @@ test('a replay’s recorded texts come without bidirectional and terminal contro
   const first = history.entries[0]
   assert.equal(
     first?.type === 'output' ? first.text : undefined,
-    'pass‮ed \u001b[3',
+    'pass\u202Eed \u001b[3',
   )
 })
 
@@ -122,15 +122,16 @@ function historyWithStop(
           ...entry,
           source: {
             ...entry.source,
-            path: field === 'source.path' ? 'src/‮a.ts' : entry.source.path,
+            path:
+              field === 'source.path' ? 'src/\u202Ea.ts' : entry.source.path,
           },
           frame: {
             ...entry.frame,
-            name: field === 'frame.name' ? 'ru‮n' : entry.frame.name,
+            name: field === 'frame.name' ? 'ru\u202En' : entry.frame.name,
           },
           facts: entry.facts.map((fact) => ({
             ...fact,
-            path: field === 'fact.path' ? 'na‮me' : fact.path,
+            path: field === 'fact.path' ? 'na\u202Eme' : fact.path,
           })),
         },
   )
@@ -174,7 +175,7 @@ test('a replay’s cited test file comes without controls, and a configuration w
       ...cited.header,
       configuration: {
         ...baseHeader.configuration,
-        testFile: 'src/th‮eme\u001b[31m.test.ts',
+        testFile: 'src/th\u202Eeme\u001b[31m.test.ts',
       },
     },
   }

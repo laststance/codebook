@@ -25,7 +25,7 @@ test('a capture reason becomes one capitalized sentence without Node words, line
 // Value: protects=the capture-reason line shows no terminal tail, C1 or bidirectional control; fails_when=the `[31m` tail of a color sequence, a U+0085 or a U+202E reaches the line; why_new=F288 (only C0 and DEL were replaced); seam=none; no_claim=the sentence's wording
 test('a capture reason loses color sequences, C1 controls and bidirectional controls', () => {
   // Arrange
-  const reason = 'Interrupted \u001b[31mby\u001b[0m disk\u0085 error‮ EIO'
+  const reason = 'Interrupted \u001b[31mby\u001b[0m disk\u0085 error\u202E EIO'
 
   // Act
   const words = wordNodeCaptureReason(reason)

@@ -25,7 +25,8 @@ test('recorded test output keeps its text, tabs and line feeds and loses termina
 // Value: protects=recorded output cannot reorder or hide what the learner reads: bidirectional controls and C0 controls other than tab and line feed are removed; fails_when=a bidirectional override or a bell, backspace or form feed reaches the pane; why_new=test output is untrusted text from the learner's repository (EN10, S3-1); seam=none; no_claim=Unicode text without controls, which stays as printed
 test('recorded test output loses bidirectional and other invisible controls', () => {
   // Arrange
-  const printed = '\u0007bell ‮evil‬ done ⁦x⁩\n\u0008back\u000Cfeed؜‎‏ ok\n'
+  const printed =
+    '\u0007bell \u202Eevil\u202C done \u2066x\u2069\n\u0008back\u000Cfeed\u061C\u200E\u200F ok\n'
 
   // Act
   const shown = stripTerminalControls(printed)

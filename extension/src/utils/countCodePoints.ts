@@ -1,3 +1,5 @@
+import { isSurrogatePairAt } from './isSurrogatePairAt'
+
 /**
  * Counts the code points of a part of a text without copying it, so the output index can size a line of a long recording without making an array of its characters; called by {@link indexNodeTestOutput} for each part of a line.
  * A lone surrogate counts as one code point, as `Array.from` counts it.
@@ -14,12 +16,8 @@ export function countCodePoints(
 ): number {
   let count = 0
   for (let position = from; position < to; position++) {
-    const unit = text.charCodeAt(position)
-    // A high surrogate followed by a low one is one code point, so the low one is skipped.
-    if (unit >= 0xd800 && unit <= 0xdbff && position + 1 < to) {
-      const next = text.charCodeAt(position + 1)
-      if (next >= 0xdc00 && next <= 0xdfff) position++
-    }
+    // A high surrogate followed by a low one inside the part is one code point, so the low one is skipped.
+    if (position + 1 < to && isSurrogatePairAt(text, position)) position++
     count++
   }
   return count

@@ -700,6 +700,7 @@ export class StudyWorkspace {
   private library?: LearningLibrary
   private recordings?: RecordingStore
   private nodeHistoryStore?: NodeTestHistoryStore
+  /** The saved test replays Saved studies lists, with their test files and titles already free of controls ({@link stripNodeHistorySummaryTexts}), stripped once per listing (F131, F326). */
   private nodeHistoryCatalog: Awaited<
     ReturnType<NodeTestHistoryStore['list']>
   > = []
@@ -725,8 +726,11 @@ export class StudyWorkspace {
   private selectedNodeHistoryShown?: {
     history: NodeTestHistoryIndex
     shown: NodeTestHistoryIndex
-    /** The shown history's events by their sequence, so a message finds the selected event without a scan of the history (F315). */
-    entryBySequence: Map<number, NodeTestHistoryIndex['entries'][number]>
+  }
+  /** Where each event of the selected test replay stands in its entries, by sequence, made once per history ({@link nodeHistoryEventPosition}), so a Study message or a selection finds an event without a scan of the history (F315, F327). */
+  private nodeHistoryPositions?: {
+    history: NodeTestHistoryIndex
+    bySequence: Map<number, number>
   }
   /** The count of the Application pane's test replay views, and what the last one showed, so its generation changes only when the shown moment does. */
   private nodeHistoryApplicationGeneration = 0
@@ -10255,12 +10259,10 @@ export class StudyWorkspace {
       // What the reader before this one could not save waits for Retry storage / refresh here.
       this.queueHandedOverArchives()
       // An unreadable Node history store stays visible without blocking browser studies, progress or playback.
-      this.nodeHistoryCatalog = await this.nodeHistoryStore
-        .list()
-        .catch((error) => {
-          this.report('archive', error)
-          return []
-        })
+      this.nodeHistoryCatalog = await this.listNodeHistoryCatalog(
+        this.nodeHistoryStore,
+        [],
+      )
       this.playback = new PlaybackController({
         load: (studyId, signal) => this.loadPlayback(studyId, signal),
         frame: async (studyId, hash, signal) => {
@@ -10476,12 +10478,10 @@ export class StudyWorkspace {
       // A run that started after a removal ended retires that removal's outcome line.
       this.retireRemovalOutcomeOfEarlierRun(record?.id)
       if (this.nodeHistoryStore)
-        this.nodeHistoryCatalog = await this.nodeHistoryStore
-          .list()
-          .catch((error) => {
-            this.report('archive', error)
-            return this.nodeHistoryCatalog
-          })
+        this.nodeHistoryCatalog = await this.listNodeHistoryCatalog(
+          this.nodeHistoryStore,
+          this.nodeHistoryCatalog,
+        )
       // Refresh every retained projection without letting an older run replace current runtime ownership.
       if (this.service)
         for (const retained of this.service.records.values()) {
@@ -11236,9 +11236,9 @@ export class StudyWorkspace {
       cause,
       ...(stack ? { stack } : {}),
     })
-    const summary = this.nodeHistoryCatalog
-      .filter((history) => history.studyId === studyId)
-      .map(stripNodeHistorySummaryTexts)[0]
+    const summary = this.nodeHistoryCatalog.find(
+      (history) => history.studyId === studyId,
+    )
     const failure = describeNodeLearningSave({
       kind: 'open-failed',
       title: summary
@@ -12092,6 +12092,7 @@ export class StudyWorkspace {
     // The retired replay's output index goes with it, so its entries leave the extension host's memory.
     this.selectedNodeHistoryOutputIndex = undefined
     this.selectedNodeHistoryShown = undefined
+    this.nodeHistoryPositions = undefined
     this.nodeOutputReadings.clear()
     this.selectedNodeHistorySequence = undefined
     this.requestedNodeHistorySequence = undefined
@@ -12294,9 +12295,9 @@ export class StudyWorkspace {
     const shown = this.shownNodeHistory(history)
     // A stop verifies against the recorded source path, which the shown history may have stripped (F287).
     const selectedAsRecorded = selected
-    selected =
-      selected &&
-      this.selectedNodeHistoryShown?.entryBySequence.get(selected.sequence)
+    const position =
+      selected && this.nodeHistoryEventPosition(history, selected.sequence)
+    selected = position === undefined ? undefined : shown.entries[position]
     history = shown
     if (this.selectedNodeHistoryOutputIndex?.history !== history)
       this.selectedNodeHistoryOutputIndex = {
@@ -12353,7 +12354,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Gives the selected test replay as its surfaces print it: every recorded text without terminal and bidirectional controls, made once per opened history with its events by sequence (F131, F315).
+   * Gives the selected test replay as its surfaces print it: every recorded text without terminal and bidirectional controls, made once per opened history (F131).
    * @param history - The selected test replay as the store read it.
    * @returns The history {@link sanitizeNodeTestHistory} made of it.
    * @example this.shownNodeHistory(history).entries[0] // => the first event with its text free of controls
@@ -12361,17 +12362,53 @@ export class StudyWorkspace {
   private shownNodeHistory(
     history: NodeTestHistoryIndex,
   ): NodeTestHistoryIndex {
-    if (this.selectedNodeHistoryShown?.history !== history) {
-      const shown = sanitizeNodeTestHistory(history)
+    if (this.selectedNodeHistoryShown?.history !== history)
       this.selectedNodeHistoryShown = {
         history,
-        shown,
-        entryBySequence: new Map(
-          shown.entries.map((entry) => [entry.sequence, entry]),
+        shown: sanitizeNodeTestHistory(history),
+      }
+    return this.selectedNodeHistoryShown.shown
+  }
+
+  /**
+   * Finds where an event stands in a test replay's entries by its sequence, from a map made once per history, so the Study message, the shown history and a selection find the event without a scan of the history at every publish or Play step (F315, F327); called by {@link message}, {@link nodeHistoryViews} and {@link selectNodeHistoryEvent}.
+   * @param history - The test replay as the store read it; its sanitized copy has the same entries in the same order.
+   * @param sequence - The event's sequence.
+   * @returns The event's index in `history.entries`; `undefined` for a sequence the history lacks.
+   * @example this.nodeHistoryEventPosition(history, 4) // => 3 for output 1, stop 2, output 3, stop 4
+   */
+  private nodeHistoryEventPosition(
+    history: NodeTestHistoryIndex,
+    sequence: number,
+  ): number | undefined {
+    if (this.nodeHistoryPositions?.history !== history)
+      this.nodeHistoryPositions = {
+        history,
+        bySequence: new Map(
+          history.entries.map((entry, position) => [entry.sequence, position]),
         ),
       }
-    }
-    return this.selectedNodeHistoryShown.shown
+    return this.nodeHistoryPositions.bySequence.get(sequence)
+  }
+
+  /**
+   * Lists the saved test replays for Saved studies with their test files and titles already free of controls, so every Study message reuses one stripped catalog instead of stripping it again (F131, F326); called when the reader starts and at each refresh of its library.
+   * @param store - The workspace's history store.
+   * @param fallback - The catalog kept when the store cannot be listed; the failure goes to the `archive` row.
+   * @returns The stripped catalog, or the fallback.
+   * @example this.nodeHistoryCatalog = await this.listNodeHistoryCatalog(store, [])
+   */
+  private async listNodeHistoryCatalog(
+    store: NodeTestHistoryStore,
+    fallback: StudyWorkspace['nodeHistoryCatalog'],
+  ): Promise<StudyWorkspace['nodeHistoryCatalog']> {
+    return store.list().then(
+      (catalog) => catalog.map(stripNodeHistorySummaryTexts),
+      (error: unknown) => {
+        this.report('archive', error)
+        return fallback
+      },
+    )
   }
 
   /** Joins compact live state with the selected archive; event logs never enter webview messages. @example this.message().model */
@@ -12477,9 +12514,17 @@ export class StudyWorkspace {
       citationSources: this.citationSources,
     }
     const selectedNodeHistory = this.selectedNodeHistory
-    const selectedNodeHistoryEvent = selectedNodeHistory?.entries.find(
-      (entry) => entry.sequence === this.selectedNodeHistorySequence,
-    )
+    const selectedNodeHistoryPosition =
+      selectedNodeHistory && this.selectedNodeHistorySequence !== undefined
+        ? this.nodeHistoryEventPosition(
+            selectedNodeHistory,
+            this.selectedNodeHistorySequence,
+          )
+        : undefined
+    const selectedNodeHistoryEvent =
+      selectedNodeHistoryPosition === undefined
+        ? undefined
+        : selectedNodeHistory?.entries[selectedNodeHistoryPosition]
     const selectedNodeHistoryStop =
       selectedNodeHistoryEvent?.type === 'stop'
         ? selectedNodeHistoryEvent
@@ -12532,10 +12577,8 @@ export class StudyWorkspace {
           bundle.projection.debugger === this.replayUninspectedSnapshot,
         applicationCovered: this.replayApplicationCovered,
       },
-      // The recorded test names come without terminal and bidirectional controls (F131).
-      nodeHistoryCatalog: this.nodeHistoryCatalog.map(
-        stripNodeHistorySummaryTexts,
-      ),
+      // The recorded test names come without terminal and bidirectional controls, stripped when the catalog was listed (F131, F326).
+      nodeHistoryCatalog: this.nodeHistoryCatalog,
       nodeHistory: selectedNodeHistory && {
         ...this.shownNodeHistory(selectedNodeHistory),
         entries: this.shownNodeHistory(selectedNodeHistory).entries.slice(
@@ -12557,10 +12600,7 @@ export class StudyWorkspace {
       nodeHistoryPlayback: this.nodeHistoryPlaybackController?.state(),
       nodeHistoryPosition: selectedNodeHistoryEvent && {
         sequence: selectedNodeHistoryEvent.sequence,
-        eventIndex:
-          selectedNodeHistory?.entries.findIndex(
-            (entry) => entry.sequence === selectedNodeHistoryEvent.sequence,
-          ) ?? -1,
+        eventIndex: selectedNodeHistoryPosition ?? -1,
         ...(selectedNodeHistoryStop
           ? {
               // A verified source match stays true after the session ends; only debuggerAvailable tracks the native session.
@@ -23545,8 +23585,9 @@ export class StudyWorkspace {
   ): Promise<void> {
     const request = ++this.selectedNodeHistoryRequest
     if (publish) this.nodeHistoryPlaybackController?.pause()
-    const entry = history.entries.find((value) => value.sequence === sequence)
-    if (!entry)
+    const position = this.nodeHistoryEventPosition(history, sequence)
+    const entry = position === undefined ? undefined : history.entries[position]
+    if (!entry || position === undefined)
       throw new Error('The requested Node history event is unavailable.')
     const verifiedStop =
       entry.type === 'stop' && nodeStopSourceMatches(entry) ? entry : undefined
@@ -23595,8 +23636,7 @@ export class StudyWorkspace {
     )
     this.selectedNodeHistorySequence = entry.sequence
     this.selectedNodeHistoryPage = Math.floor(
-      history.entries.findIndex((value) => value.sequence === entry.sequence) /
-        NODE_HISTORY_READER_PAGE_SIZE,
+      position / NODE_HISTORY_READER_PAGE_SIZE,
     )
     if (alignPlayback)
       this.nodeHistoryPlaybackController?.select(entry.sequence)

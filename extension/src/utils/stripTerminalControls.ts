@@ -1,5 +1,7 @@
 import { TERMINAL_CONTROL_STRING_LOOKAHEAD_CODE_POINTS } from '../constants'
 
+import { isSurrogatePairAt } from './isSurrogatePairAt'
+
 const LOOKAHEAD = TERMINAL_CONTROL_STRING_LOOKAHEAD_CODE_POINTS
 
 /**
@@ -76,11 +78,7 @@ function countSurrogatePairsBefore(text: string): Int32Array | undefined {
   if (!/[\ud800-\udbff][\udc00-\udfff]/.test(text)) return undefined
   const table = new Int32Array(text.length + 1)
   for (let index = 0; index < text.length; index++) {
-    const unit = text.charCodeAt(index)
-    const next = text.charCodeAt(index + 1)
-    const isPair =
-      unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff
-    table[index + 1] = table[index]! + (isPair ? 1 : 0)
+    table[index + 1] = table[index]! + (isSurrogatePairAt(text, index) ? 1 : 0)
   }
   return table
 }
@@ -123,7 +121,7 @@ function findAnsiRanges(joined: string): { from: number; to: number }[] {
 
 /** C0 controls other than tab and line feed, DEL and the C1 controls, and the bidirectional controls that can reorder what a reader sees (the set {@link sanitizeCause} removes, with tab and line feed kept). */
 const UNREADABLE_CONTROLS =
-  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F؜‎‏‪-‮⁦-⁩]/g
+  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g
 
 /**
  * Removes what a terminal would interpret instead of show from the pieces of one recorded stream, so a control string split across pieces (the launcher ends an output entry at 4,096 characters) is removed whole and its tail never shows as text (F109, F148); called by {@link indexNodeTestOutput} for each channel's output entries and by {@link stripTerminalControls} for one text.

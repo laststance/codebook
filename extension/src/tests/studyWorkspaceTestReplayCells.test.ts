@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { type TestContext, test } from 'node:test'
 
+import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { workspaceHarness } from './studyWorkspaceHarness'
@@ -599,6 +600,262 @@ test('a Select event, a seek and an Inspect that the replay refuses change nothi
     assert.equal(refusals.length, 3)
     assert.deepEqual(shownMoment(harness), before)
     assert.equal(harness.applicationOutputs().length, outputsBefore)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Makes the second stop (sequence 4) of the replays the workspace's store reads unverified: its captured text no longer hashes to its sealed hash, as after an edit of the captured file; the first stop stays verified.
+ * @param context - The test's context, which restores the store's read.
+ * @param harness - The workspace harness.
+ * @example unverifySecondStop(context, harness)
+ */
+function unverifySecondStop(context: TestContext, harness: Harness): void {
+  const store = harness.service.nodeHistoryStore!
+  const read = NodeTestHistoryStore.prototype.read
+  context.mock.method(
+    store,
+    'read',
+    async function (this: NodeTestHistoryStore, studyId: string) {
+      const index = await read.call(this, studyId)
+      return {
+        ...index,
+        entries: index.entries.map((entry) =>
+          entry.type === 'stop' && entry.sequence === 4
+            ? {
+                ...entry,
+                debuggerSnapshot: {
+                  ...entry.debuggerSnapshot,
+                  frames: entry.debuggerSnapshot.frames.map((frame) => ({
+                    ...frame,
+                    source: frame.source && {
+                      ...frame.source,
+                      text: 'const nextTheme = "light";\n',
+                    },
+                  })),
+                },
+              }
+            : entry,
+        ),
+      }
+    },
+  )
+}
+
+// Value: protects=Next stop onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable, presents no recorded values in the debugger and tells no error; fails_when=the move is refused or stays on the first stop, or the debugger presents another moment's values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × step move had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the placeholder slot's text (the source slot tests)
+test('Next stop onto a stop whose source does not verify shows it without recorded values and tells no error', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    unverifySecondStop(context, harness)
+    const history = await openWithChosenStep(harness)
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'stop',
+    })
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.loading,
+      'Next stop lands on the unverified stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sourceAvailable, false)
+    assert.equal(
+      harness.historicalDebugPresentations
+        .slice(presentationsBefore)
+        .some((presentation) => presentation.snapshot !== undefined),
+      false,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a seek onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable and presents no recorded values; fails_when=the seek is refused, lands elsewhere, or the debugger presents recorded values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × seek had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the playhead's drawing (the Reader DOM check)
+test('a seek onto a stop whose source does not verify shows it without recorded values and tells no error', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    unverifySecondStop(context, harness)
+    const history = await openWithChosenStep(harness)
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act: the second stop was recorded at 300 ms.
+    harness.receiveContext({
+      type: 'node-history-playback',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      action: 'seek',
+      positionMs: 300,
+    })
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.loading,
+      'the seek lands on the unverified stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sourceAvailable, false)
+    assert.equal(
+      harness.historicalDebugPresentations
+        .slice(presentationsBefore)
+        .some((presentation) => presentation.snapshot !== undefined),
+      false,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Play across a stop whose captured source does not verify shows that moment without recorded values and keeps playing; fails_when=Play pauses or reports an error at the unverified stop, or the debugger presents recorded values there; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × Play step had no cell; seam=the store's read, whose second stop's captured text was edited, and the playback clock, moved by hand; no_claim=Play's pacing
+test('Play across a stop whose source does not verify shows it without recorded values and keeps playing', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    unverifySecondStop(context, harness)
+    const history = await openWithChosenStep(harness)
+    await standAt(harness, history, 3)
+    const presentationsBefore = harness.historicalDebugPresentations.length
+    const advance = playbackClock(harness)
+    const controller = advance(0)
+
+    // Act: Play from the output at 250 ms reaches the second stop at 300 ms.
+    controller.play()
+    advance(60)
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      'Play reaches the unverified stop',
+      READER_RESULT_BOUND_MS,
+    )
+    const modeAtTheStop = controller.state().mode
+    controller.pause()
+
+    // Assert
+    assert.equal(modeAtTheStop, 'playing')
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sourceAvailable, false)
+    assert.equal(
+      harness.historicalDebugPresentations
+        .slice(presentationsBefore)
+        .some((presentation) => presentation.snapshot !== undefined),
+      false,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Inspect in native debugger on the result is refused by name and changes nothing: the moment and the step the learner chose stay; fails_when=the result is selected, the chosen step is lost, or the refusal says nothing; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): result × Inspect had no cell (only an output was refused); seam=none; no_claim=the Inspect control's visibility at the result (the Reader DOM check)
+test('Inspect on the result is refused as no debugger stop and changes nothing', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openWithChosenStep(harness)
+    const before = shownMoment(harness)
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 5,
+    })
+    await waitUntil(
+      () => /not a debugger stop/.test(lastView(harness)?.errors.at(-1) ?? ''),
+      'the refusal is told',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(shownMoment(harness), before)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=after the learner stopped the replay debugger, an explicit Next stop is the learner's choice to see the next stop's values: it starts the debugger again there and commits the stop; fails_when=Next stop is refused like a seek, or commits the stop without recorded values; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): a stopped debugger × step move had no cell (only a seek's refusal was tested); seam=the harness's fake historical debugger, marked stopped; no_claim=the native Run and Debug view
+test('Next stop after the learner stopped the replay debugger starts it again at the next stop', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openWithChosenStep(harness)
+    harness.historicalDebuggers.at(-1)!.available = false
+    const debuggersBefore = harness.historicalDebuggers.length
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'stop',
+    })
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.loading,
+      'Next stop lands on the second stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(harness.historicalDebuggers.length, debuggersBefore + 1)
+    assert.equal(
+      harness.historicalDebugPresentations
+        .slice(presentationsBefore)
+        .some((presentation) => presentation.snapshot !== undefined),
+      true,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Play never restarts a replay debugger the learner stopped: at the next stop it pauses, says why and changes nothing; fails_when=Play starts a new debugger, commits the stop, or keeps playing past it silently; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): a stopped debugger × Play step had no cell (only a seek's refusal was tested); seam=the harness's fake historical debugger, marked stopped, and the playback clock, moved by hand; no_claim=Play's pacing
+test('Play after the learner stopped the replay debugger pauses at the next stop and says why', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openWithChosenStep(harness)
+    await standAt(harness, history, 3)
+    harness.historicalDebuggers.at(-1)!.available = false
+    const debuggersBefore = harness.historicalDebuggers.length
+    const before = shownMoment(harness)
+    const advance = playbackClock(harness)
+    const controller = advance(0)
+
+    // Act: Play from the output at 250 ms reaches the second stop at 300 ms.
+    controller.play()
+    advance(60)
+    await waitUntil(
+      () =>
+        /historical Node debugger was stopped/.test(
+          lastView(harness)?.errors.at(-1) ?? '',
+        ),
+      'Play tells why it stopped',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(controller.state().mode, 'paused')
+    assert.deepEqual(shownMoment(harness), before)
+    assert.equal(harness.historicalDebuggers.length, debuggersBefore)
   } finally {
     await harness.close()
   }
