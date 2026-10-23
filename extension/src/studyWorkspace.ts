@@ -843,8 +843,8 @@ export class StudyWorkspace {
   /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
   private replayDebuggerRetirement?: Promise<void>
   private recordingActive = false
-  /** The exact addresses of the captured-source tabs of the browser replay that were open when it was last left, until a test replay's first slot show closes those tabs once, or a browser replay starts. A tab of another study, or one opened after the replay was left, is not in it (F466, F474). */
-  private retiredBrowserReplayTabs?: ReadonlySet<string>
+  /** The captured-source tabs of the browser replay that were open when it was last left, with the address each had, held as the editor's own tab objects (F485): kept until a test replay's first slot show gets the editor to close them (a refused close keeps them for the next show, F484), or until a browser replay starts, the test replay's slot ends or the reader closes (F482). A tab the learner closes by hand leaves it ({@link forgetClosedRetiredBrowserReplayTabs}), so one the learner opens after the replay was left, even at a recorded address, is a different tab and is not in it; an editor that rebuilds its tab objects (Cursor, at a removed group) leaves entries no tab object matches, and those match by their address (F466, F474). */
+  private retiredBrowserReplayTabs?: ReadonlyMap<vscode.Tab, string>
   private replayViewport?: BrowserViewport
   private replayNeedsReveal = false
   /** Why the latest {@link rememberLayout} read failed, so the layout line the learner reads names the cause; `undefined` when it settled. */
@@ -3938,9 +3938,10 @@ export class StudyWorkspace {
   private watchKeyboardOutsideEditors(): void {
     const sample = (): void => this.sampleKeyboardOutsideEditors()
     this.disposables.push(
-      vscode.window.tabGroups.onDidChangeTabs(() => {
+      vscode.window.tabGroups.onDidChangeTabs((event) => {
         sample()
         this.noteLearnersSignAtFrame(this.keptPreviewTabOfFrame())
+        this.forgetClosedRetiredBrowserReplayTabs(event.closed)
       }),
       vscode.window.tabGroups.onDidChangeTabGroups(sample),
       vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -9535,6 +9536,8 @@ export class StudyWorkspace {
       await this.closeOwnedEditorTabs()
       // The slot of a closed reader holds no moment: a pinned or restored slot tab reads the placeholder, not the last stop (F184).
       await this.retireNodeSourceSlot()
+      // A closed reader ends the record of the browser replay's tabs a test replay was to close (F482).
+      this.retiredBrowserReplayTabs = undefined
       this.opened = false
       // A closed reader has no live or replay arrangement: the next selection opens it instead of arranging panes that no longer exist.
       this.liveComposition = false
@@ -12566,7 +12569,7 @@ export class StudyWorkspace {
     this.repositoryRecordingOpen = undefined
     if (!this.recordingActive) return
     // The captured-source tabs it has now are closed once, when a test replay's slot first shows over them; tabs opened later are not (F466, F474).
-    this.retiredBrowserReplayTabs = this.browserReplaySourceTabAddresses(
+    this.retiredBrowserReplayTabs = this.browserReplaySourceTabs(
       this.playback?.state().studyId ?? this.sourceView?.studyId,
       this.sourceView?.uri.toString(),
     )
@@ -12593,6 +12596,8 @@ export class StudyWorkspace {
    * ```
    */
   private async retireNodeHistorySelection(): Promise<void> {
+    // A test replay that ends (Return to Live, an open that did not finish) ends the record of the browser replay's tabs it was to close; a record taken before any test replay was selected stays for the first one (F482).
+    if (this.selectedNodeHistory) this.retiredBrowserReplayTabs = undefined
     this.selectedNodeHistoryRequest++
     this.nodeHistoryPlaybackController?.dispose()
     this.nodeHistoryPlaybackController = undefined
@@ -25513,31 +25518,58 @@ export class StudyWorkspace {
 
   /**
    * Closes the captured-source tabs of the browser replay a test replay took the surfaces from, once, when the test replay's slot first shows (F459, F466, F474); called by {@link closeEarlierNodeSourceSlots}.
-   * Only the tabs that were open at the address recorded when the browser replay was left go ({@link retiredBrowserReplayTabs}), unpinned and unchanged. A captured-source tab of another study, a learner's file, and any captured-source tab the learner opens after leaving the replay (also one of the same study) are never in the record, because it is taken and forgotten here, so later moves close nothing more.
+   * Only the tabs that were open when the browser replay was left go ({@link retiredBrowserReplayTabs}), unpinned and unchanged. A captured-source tab of another study, a learner's file, and any captured-source tab the learner opens after leaving the replay (also one of the same study, also at a recorded address) are never in the record. The record is forgotten once the editor closed its tabs, so later moves close nothing more; when the editor keeps a tab, the record stays for the next slot show (F484).
    * @throws When the editor keeps a tab it was asked to close.
    * @example await this.closeRetiredBrowserReplaySourceTabs()
    */
   private async closeRetiredBrowserReplaySourceTabs(): Promise<void> {
     const retired = this.retiredBrowserReplayTabs
     if (!retired) return
-    this.retiredBrowserReplayTabs = undefined
-    await this.closeCapturedSourceTabs(
-      (uri) => !isNodeSourceSlotPath(uri.path) && retired.has(uri.toString()),
+    const live = new Set(
+      vscode.window.tabGroups.all.flatMap((group) => group.tabs),
     )
+    // A tab object the editor replaced is no longer live; its address stands for it, unless the learner closed that tab (its entry is gone then).
+    const replacedAddresses = new Set(
+      [...retired]
+        .filter(([tab]) => !live.has(tab))
+        .map(([, address]) => address),
+    )
+    await this.closeCapturedSourceTabs(
+      (uri, tab) =>
+        !isNodeSourceSlotPath(uri.path) &&
+        (retired.has(tab) || replacedAddresses.has(uri.toString())),
+    )
+    // Only a close the editor accepted ends the record; a refused one throws above and the record stays for the next slot show (F484). The tabs' own close events may have shortened it meanwhile.
+    this.retiredBrowserReplayTabs = undefined
   }
 
   /**
-   * Lists the addresses of the captured-source tabs a browser replay has open now: the tab of its source view and the tabs named after its study, not the test replay's slot tabs; called by {@link leavePlayback}.
+   * Removes tabs the editor closed from the record of the retired browser replay's tabs, so a tab opened later at the same address is not taken for one of them (F485); called by the tab listener of {@link watchKeyboardOutsideEditors}.
+   * @param closed - The tabs the editor reports closed.
+   * @example this.forgetClosedRetiredBrowserReplayTabs(event.closed)
+   */
+  private forgetClosedRetiredBrowserReplayTabs(
+    closed: readonly vscode.Tab[],
+  ): void {
+    const retired = this.retiredBrowserReplayTabs
+    if (!retired || !closed.some((tab) => retired.has(tab))) return
+    const kept = new Map(retired)
+    for (const tab of closed) kept.delete(tab)
+    this.retiredBrowserReplayTabs = kept
+  }
+
+  /**
+   * Lists the captured-source tabs a browser replay has open now: the tab of its source view and the tabs named after its study, not the test replay's slot tabs; called by {@link leavePlayback}.
    * @param studyId - The study the browser replay shows.
    * @param viewUri - The address of the replay's source view.
-   * @returns The exact addresses, so a tab opened at another address later is not among them.
-   * @example this.browserReplaySourceTabAddresses('study-1', undefined) // Set { 'codebook-source://…/study-1/…/Captured-actions.ts' }
+   * @returns The tab objects themselves, so a tab opened later, even at the same address, is not among them (F485).
+   * @example this.browserReplaySourceTabs('study-1', undefined) // Set { Tab }
    */
-  private browserReplaySourceTabAddresses(
+  private browserReplaySourceTabs(
     studyId: string | undefined,
     viewUri: string | undefined,
-  ): ReadonlySet<string> {
-    return new Set(
+  ): ReadonlyMap<vscode.Tab, string> {
+    return new Map(
       vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
         .flatMap((tab) => {
@@ -25552,7 +25584,7 @@ export class StudyWorkspace {
             (studyId !== undefined &&
               uri.path.split('/').filter(Boolean)[0] === studyId)
           return !isNodeSourceSlotPath(uri.path) && isReplayTab
-            ? [uri.toString()]
+            ? [[tab, uri.toString()] as const]
             : []
         }),
     )
@@ -25560,12 +25592,12 @@ export class StudyWorkspace {
 
   /**
    * Closes the unpinned, unchanged captured-source tabs of this workspace that a predicate picks, and registers the close by each tab's address until the editor answers, so a show of that address waits for it ({@link openNodeSourceSlot}); the one closing path of {@link closeNodeSourceSlotTabs} and {@link closeRetiredBrowserReplaySourceTabs}.
-   * @param picks - Tells whether a captured-source tab of this workspace, by its URI, is to close.
+   * @param picks - Tells whether a captured-source tab of this workspace, by its URI and the tab itself, is to close.
    * @throws When the editor keeps a tab it was asked to close.
    * @example await this.closeCapturedSourceTabs((uri) => isNodeSourceSlotPath(uri.path))
    */
   private async closeCapturedSourceTabs(
-    picks: (uri: vscode.Uri) => boolean,
+    picks: (uri: vscode.Uri, tab: vscode.Tab) => boolean,
   ): Promise<void> {
     const closing = vscode.window.tabGroups.all
       .flatMap((group) => group.tabs)
@@ -25574,7 +25606,7 @@ export class StudyWorkspace {
         !tab.isPinned &&
         this.ownsCapturedSourceTab(tab) &&
         tab.input instanceof vscode.TabInputText &&
-        picks(tab.input.uri)
+        picks(tab.input.uri, tab)
           ? [{ tab, address: tab.input.uri.toString() }]
           : [],
       )

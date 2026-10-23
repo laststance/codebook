@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import type { Socket } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { promisify } from 'node:util'
 
 import { StudyError } from '../errors'
 import {
@@ -350,21 +352,21 @@ for (const [name, scripts, expected] of [
 
 // Value: protects=a dev script segment the reader cannot interpret is told in the port source instead of silently taking 3000 (D68); fails_when=the source says only "Next's default port" for a subshell, an unknown wrapper or an unresolvable variable, or quotes a secret value; why_new=F451; seam=temporary project folders; no_claim=that the learner's script runs on 3000
 for (const [name, scripts, segment] of [
-  ['a subshell', { dev: '(cd app && next dev -p 4000)' }, '( cd app'],
+  ['a subshell', { dev: '(cd app && next dev -p 4000)' }, '( cd …'],
   [
     'an unknown wrapper',
     { dev: 'turbo-run next dev -p 4000' },
-    'turbo-run next dev -p 4000',
+    'turbo-run next dev -p …',
   ],
   [
     'a port flag with a variable it cannot resolve',
     { dev: 'next dev -p $APP_PORT' },
-    'next dev -p $APP_PORT',
+    'next dev -p …',
   ],
   [
     'a PORT assignment with a variable it cannot resolve',
     { dev: 'PORT=$APP_PORT next dev' },
-    'PORT=$APP_PORT next dev',
+    'PORT=… next dev',
   ],
   [
     'a secret assignment before an unknown wrapper',
@@ -394,7 +396,7 @@ for (const [name, scripts, segment] of [
   [
     'a terminal control sequence in the segment',
     { dev: 'turbo-run \u001b[31m next dev -p 4000' },
-    'turbo-run  next dev -p 4000',
+    'turbo-run … next dev -p …',
   ],
 ] as const)
   test(`${name} makes the port source say Next's default was taken for a form Codebook does not read`, async () => {
@@ -412,7 +414,7 @@ test('a long unread segment is cut to 120 characters in the port source', async 
   // Arrange
   const files = {
     'package.json': packageScripts({
-      dev: `turbo-run next dev ${'x'.repeat(300)}`,
+      dev: `turbo-run next dev ${Array.from({ length: 40 }, (_, index) => `--flag-number-${index}`).join(' ')}`,
     }),
   }
 
@@ -1028,7 +1030,7 @@ for (const [name, script, expected] of [
   [
     'setx, which does not set the current shell',
     'setx PORT 4504 && next dev',
-    { port: 3000, source: UNREAD_SOURCE('setx PORT 4504') },
+    { port: 3000, source: UNREAD_SOURCE('setx … …') },
   ],
 ] as const)
   test(`${name} is read as Windows reads it`, async () => {
@@ -1177,59 +1179,152 @@ test('a PORT exported with a variable the reader cannot resolve is told as unrea
   // Assert
   assert.deepEqual(declared, {
     port: 3000,
-    source: UNREAD_SOURCE('export PORT=$APP_PORT'),
+    source: UNREAD_SOURCE('export PORT=…'),
   })
 })
 
-// Value: protects=the quoted unread segment shows no secret and no private path (F464); fails_when=a token flag value, an =value, URL credentials, a multi-line assignment, the home directory or the workspace root reaches applicationPortSource (the run resource and MCP); why_new=OCR low security of the review of 6bc9eab2..ef03b741, reproduced; seam=temporary project folders; no_claim=masking of secrets the script does not write in these forms
-for (const [name, script, segment] of [
+// Value: protects=the quoted unread segment shows the program and flag names only, so no value reaches applicationPortSource (the run resource and MCP): not one of the leaks F464, F469 and F481 found (a token, key, password, passphrase, signature or sso flag value, an =value, an attached -pSECRET or -Hname:value, a header line, a Bearer or Basic token as its own word, user:pass@host with or without a scheme, a multi-line assignment) and not one the lists of secret-looking names would have missed (D71 rule 2); fails_when=any value word of an unread form is quoted; why_new=D71 rule 2 replaces the masking by name of F464 and F469 with a structure-only display, and F481 found leaks the lists missed; seam=temporary project folders; no_claim=that a program or flag name holds no secret
+for (const [name, script, segment, secret] of [
   [
     'a value after a token flag',
     'turbo-run --token abc123 next dev',
     'turbo-run --token … next dev',
+    'abc123',
   ],
   [
     'a value after an api-key flag',
     'turbo-run --api-key abc123 next dev',
     'turbo-run --api-key … next dev',
+    'abc123',
   ],
   [
     'an api-key value joined with =',
     'turbo-run --api-key=abc123 next dev',
     'turbo-run --api-key=… next dev',
+    'abc123',
   ],
   [
-    'a password flag',
-    'turbo-run --password hunter2 next dev',
-    'turbo-run --password … next dev',
+    'a passphrase flag value',
+    'turbo-run --passphrase abc123 next dev',
+    'turbo-run --passphrase … next dev',
+    'abc123',
   ],
   [
-    'the port flag, which is no secret',
-    'turbo-run next dev -p $APP_PORT',
-    'turbo-run next dev -p $APP_PORT',
+    'a signature flag value',
+    'turbo-run --signature abc123 next dev',
+    'turbo-run --signature … next dev',
+    'abc123',
+  ],
+  [
+    'an sso flag value',
+    'turbo-run --sso abc123 next dev',
+    'turbo-run --sso … next dev',
+    'abc123',
+  ],
+  [
+    'a value attached to a short flag',
+    'turbo-run -pSECRET123 next dev',
+    'turbo-run -p… next dev',
+    'SECRET123',
+  ],
+  [
+    'a Bearer token as its own word',
+    'turbo-run Bearer abc123 next dev',
+    'turbo-run … … next dev',
+    'abc123',
+  ],
+  [
+    'a Basic token after an Authorization header word',
+    'turbo-run Authorization: Basic abc123 next dev',
+    'turbo-run … … … next dev',
+    'abc123',
+  ],
+  [
+    'user and password in a URL without a scheme',
+    'turbo-run ada:pw123@example.com next dev',
+    'turbo-run … next dev',
+    'pw123',
   ],
   [
     'URL credentials',
     'turbo-run https://ada:pw123@example.com/x next dev',
-    'turbo-run https://…@example.com/x next dev',
+    'turbo-run … next dev',
+    'pw123',
+  ],
+  [
+    'a -H header value',
+    'turbo-run -H "Authorization: Basic abc123" next dev',
+    'turbo-run -H … next dev',
+    'abc123',
+  ],
+  [
+    'a header value attached to -H',
+    'turbo-run -HX-Api-Key:abc123 next dev',
+    'turbo-run -H… next dev',
+    'abc123',
+  ],
+  [
+    'a -u user and password',
+    'turbo-run -u ada:pw123 next dev',
+    'turbo-run -u … next dev',
+    'pw123',
+  ],
+  [
+    'a --data-raw body',
+    'turbo-run --data-raw body123 next dev',
+    'turbo-run --data-raw … next dev',
+    'body123',
   ],
   [
     'an assignment name with a dash and a dot',
     'my-key.x=abc123 turbo-run next dev',
     'my-key.x=… turbo-run next dev',
+    'abc123',
   ],
   [
-    'a multi-line assignment',
-    'turbo-run "KEY=first\nsecond-line" next dev',
-    'turbo-run KEY=… next dev',
+    'a secret assignment name',
+    'API_KEY=abc123 turbo-run next dev',
+    'API_KEY=… turbo-run next dev',
+    'abc123',
   ],
   [
-    'the home directory',
+    'a multi-line quoted word',
+    'turbo-run "first line\nAuthorization: Basic abc123\nlast line" next dev',
+    'turbo-run … next dev',
+    'abc123',
+  ],
+  [
+    'a flag that only contains the letters of pass',
+    'turbo-run --bypass abc123 next dev',
+    'turbo-run --bypass … next dev',
+    'abc123',
+  ],
+  [
+    'a host and port word',
+    'turbo-run localhost:3000 next dev',
+    'turbo-run … next dev',
+    'localhost',
+  ],
+  [
+    'the port flag with a variable',
+    'turbo-run next dev -p $APP_PORT',
+    'turbo-run next dev -p …',
+    'APP_PORT',
+  ],
+  [
+    'the home directory in an operand',
     `turbo-run ${homedir()}/.nvm/bin/tool next dev`,
-    'turbo-run ~/.nvm/bin/tool next dev',
+    'turbo-run … next dev',
+    homedir(),
+  ],
+  [
+    'the home directory in the program',
+    `${homedir()}/bin/turbo-run next dev`,
+    '~/bin/turbo-run next dev',
+    homedir(),
   ],
 ] as const)
-  test(`${name} is masked in the port source`, async () => {
+  test(`${name} is not quoted in the port source`, async () => {
     // Arrange
     const files = { 'package.json': devScript(script) }
 
@@ -1238,6 +1333,7 @@ for (const [name, script, segment] of [
 
     // Assert
     assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE(segment) })
+    assert.equal(declared.source.includes(secret), false)
   })
 
 test('the workspace root is replaced in the quoted unread segment', async () => {
@@ -1246,7 +1342,7 @@ test('the workspace root is replaced in the quoted unread segment', async () => 
   try {
     await writeFile(
       join(root, 'package.json'),
-      devScript(`turbo-run --config ${root}/turbo.json next dev`),
+      devScript(`${root}/node_modules/.bin/turbo-run next dev`),
     )
 
     // Act
@@ -1255,9 +1351,7 @@ test('the workspace root is replaced in the quoted unread segment', async () => 
     // Assert
     assert.deepEqual(declared, {
       port: 3000,
-      source: UNREAD_SOURCE(
-        'turbo-run --config <workspace>/turbo.json next dev',
-      ),
+      source: UNREAD_SOURCE('<workspace>/node_modules/.bin/turbo-run next dev'),
     })
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -1306,121 +1400,12 @@ test('the splitter keeps escaped separators and quotes inside their word and lea
   ])
 })
 
-// Value: protects=the quoted unread segment shows no credential in a header-shaped word, a header/user/body flag value, or a flag named for a secret (F469); fails_when=an Authorization or X-Api-Key header, a -u user:password, a --data body, a --pass/--pwd/--sig/--jwt/--dsn/--private value, or a header line inside a multi-line quoted word reaches applicationPortSource (the run resource and MCP); why_new=OCR medium security of the review of ef03b741..ccfe301d, reproduced; seam=temporary project folders; no_claim=masking of secrets the script writes in forms outside this list
-for (const [name, script, segment] of [
-  [
-    'a -H header value',
-    'turbo-run -H "Authorization: Basic abc123" next dev',
-    'turbo-run -H … next dev',
-  ],
-  [
-    'a --header header value',
-    'turbo-run --header "X-Api-Key: abc123" next dev',
-    'turbo-run --header … next dev',
-  ],
-  [
-    'a header-shaped word without a header flag',
-    'turbo-run "X-Api-Key: abc123" next dev',
-    'turbo-run X-Api-Key: … next dev',
-  ],
-  [
-    'a header without a blank after the colon',
-    'turbo-run Authorization:Bearer-abc123 next dev',
-    'turbo-run Authorization: … next dev',
-  ],
-  [
-    'an Authorization header inside a multi-line quoted word',
-    'turbo-run "first line\nAuthorization: Basic abc123\nlast line" next dev',
-    'turbo-run first line Authorization: … last line next dev',
-  ],
-  [
-    'a -u user and password',
-    'turbo-run -u ada:pw123 next dev',
-    'turbo-run -u … next dev',
-  ],
-  [
-    'a --user user and password',
-    'turbo-run --user ada:pw123 next dev',
-    'turbo-run --user … next dev',
-  ],
-  [
-    'a -u user and password attached to the flag',
-    'turbo-run -uada:pw123 next dev',
-    'turbo-run -u… next dev',
-  ],
-  [
-    'a --data body',
-    'turbo-run --data body123 next dev',
-    'turbo-run --data … next dev',
-  ],
-  [
-    'a --data-raw body',
-    'turbo-run --data-raw body123 next dev',
-    'turbo-run --data-raw … next dev',
-  ],
-  [
-    'a --pass value',
-    'turbo-run --pass abc123 next dev',
-    'turbo-run --pass … next dev',
-  ],
-  [
-    'a --pwd value',
-    'turbo-run --pwd abc123 next dev',
-    'turbo-run --pwd … next dev',
-  ],
-  [
-    'a --pw value',
-    'turbo-run --pw abc123 next dev',
-    'turbo-run --pw … next dev',
-  ],
-  [
-    'a --db-sig value',
-    'turbo-run --db-sig abc123 next dev',
-    'turbo-run --db-sig … next dev',
-  ],
-  [
-    'a --jwt value',
-    'turbo-run --jwt abc123 next dev',
-    'turbo-run --jwt … next dev',
-  ],
-  [
-    'a --dsn value',
-    'turbo-run --dsn abc123 next dev',
-    'turbo-run --dsn … next dev',
-  ],
-  [
-    'a --private value',
-    'turbo-run --private abc123 next dev',
-    'turbo-run --private … next dev',
-  ],
-  [
-    'a flag that only contains the letters of pass, which stays visible',
-    'turbo-run --bypass abc123 next dev',
-    'turbo-run --bypass abc123 next dev',
-  ],
-  [
-    'a host and port word, which is no header',
-    'turbo-run localhost:3000 next dev',
-    'turbo-run localhost:3000 next dev',
-  ],
-] as const)
-  test(`${name} is masked in the port source`, async () => {
-    // Arrange
-    const files = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE(segment) })
-  })
-
 // Value: protects=the last PORT assignment replaces both the value and its resolved state, unset and empty values reset it, and a bare PORT=N feeds a later ${PORT:-N} without reaching next unless exported (F470); fails_when=PORT=4000 PORT=$APP_PORT is reported as 4000, an unset or empty PORT keeps its old value, or a shell-local PORT is passed to next or ignored by ${PORT:-N}; why_new=OCR low and CodeRabbit CLI minor of the review of ef03b741..ccfe301d, reproduced; seam=temporary project folders; no_claim=that the shell runs the script
 for (const [name, script, expected] of [
   [
     'a later unresolved assignment after a known one',
     'PORT=4000 PORT=$APP_PORT next dev',
-    { port: 3000, source: UNREAD_SOURCE('PORT=4000 PORT=$APP_PORT next dev') },
+    { port: 3000, source: UNREAD_SOURCE('PORT=… PORT=… next dev') },
   ],
   [
     'a later known assignment after an unresolved one',
@@ -1501,7 +1486,7 @@ test('a ${PORT:-N} default inside cmd /c text is told as unread, not expanded', 
   // Assert
   assert.deepEqual(declared, {
     port: 3000,
-    source: UNREAD_SOURCE('next dev -p ${PORT:-4000}'),
+    source: UNREAD_SOURCE('next dev -p …'),
   })
 })
 
@@ -1535,12 +1520,12 @@ for (const [name, script, files] of [
   [
     'a credential in a URL file name',
     'dotenv -e https://ada:pw123@example.com/.env -- next dev',
-    '"https://…@example.com/.env"',
+    '".env"',
   ],
   [
     'the home directory in a file name',
     `dotenv -e ${homedir()}/.env -- next dev`,
-    '"~/.env"',
+    '".env"',
   ],
 ] as const)
   test(`${name} is masked and cut in the env-file list of the port source`, async () => {
@@ -1553,3 +1538,208 @@ for (const [name, script, files] of [
     // Assert
     assert.deepEqual(declared, { port: 3000, source: ENV_FILE_SOURCE(files) })
   })
+
+/** A `next` that prints the port it would start on (the last `-p`/`--port`, else `PORT`, else 3000), in a folder of its own. */
+const FAKE_NEXT = `#!/bin/sh
+port="\${PORT:-3000}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in -p|--port) port="$2"; shift ;; esac
+  shift
+done
+echo "$port"
+`
+
+/** Runs a dev script in the real `/bin/sh` with the fake `next` first on the path and no inherited `PORT`; `undefined` when the shell prints no port (a form this shell refuses). */
+async function portOfRealShell(
+  script: string,
+  folder: string,
+): Promise<number | undefined> {
+  const run = promisify(execFile)
+  const nextPath = join(folder, 'next')
+  const result = await run(
+    '/bin/sh',
+    ['-c', script.replaceAll('%NEXT%', nextPath)],
+    {
+      env: { PATH: `${folder}:${process.env.PATH ?? ''}` },
+      timeout: 10_000,
+    },
+  ).catch((error: { stdout?: string }) => ({ stdout: error.stdout ?? '' }))
+  const last = String(result.stdout).trim().split('\n').pop() ?? ''
+  return /^\d+$/.test(last) ? Number(last) : undefined
+}
+
+// Value: protects=the reader asserts a port only when it understood every step that could change PORT, and otherwise reports Next's default 3000 with the unread note, never a port the shell would not start (D71 rule 1; F478, F479, F480): statement keywords with words it does not model (unset -v, unset X PORT, export -n, export X PORT=4000, declare, typeset, command export, builtin export), an assignment or export that is backgrounded, piped, grouped or conditional, and env -i, env -, --ignore-environment, env -u PORT; fails_when=one of them keeps or drops a PORT the shell treats the other way and the run starts on a port its own origin does not name; why_new=F478-F480 (local review of ccfe301d..c9664ea3, each confirmed against real sh); seam=temporary project folders and, where the host's /bin/sh runs the form, a real /bin/sh with a fake next that prints its port; no_claim=forms outside the list, and a shell value for forms that the host's /bin/sh refuses (it is then not asserted)
+for (const [name, script, port, unread, shellPort] of [
+  ['unset -v', 'export PORT=4000; unset -v PORT; next dev', 3000, true, 3000],
+  [
+    'unset of two names',
+    'export PORT=4000; unset X PORT; next dev',
+    3000,
+    true,
+    3000,
+  ],
+  [
+    'export -n',
+    'export PORT=4000; export -n PORT; next dev',
+    3000,
+    true,
+    undefined,
+  ],
+  ['export of an extra name', 'export X PORT=4000; next dev', 3000, true, 4000],
+  ['declare -x', 'declare -x PORT=4000; next dev', 3000, true, undefined],
+  ['typeset -x', 'typeset -x PORT=4000; next dev', 3000, true, undefined],
+  ['command export', 'command export PORT=4000; next dev', 3000, true, 4000],
+  [
+    'builtin export',
+    'builtin export PORT=4000; next dev',
+    3000,
+    true,
+    undefined,
+  ],
+  [
+    'a backgrounded assignment',
+    'PORT=4000 & next dev -p ${PORT:-5000}',
+    3000,
+    true,
+    5000,
+  ],
+  ['a piped export', 'export PORT=4000 | next dev', 3000, true, 3000],
+  [
+    'an export in a group',
+    '{ export PORT=4000; }; next dev -p ${PORT:-5000}',
+    3000,
+    true,
+    4000,
+  ],
+  [
+    'an export in the middle of a group',
+    '{ echo a; export PORT=4000; }; next dev',
+    3000,
+    true,
+    4000,
+  ],
+  [
+    'an export in a subshell',
+    '( export PORT=4000 ); next dev -p ${PORT:-5000}',
+    3000,
+    true,
+    5000,
+  ],
+  [
+    'an export after &&',
+    'true && export PORT=4000; next dev',
+    3000,
+    true,
+    4000,
+  ],
+  [
+    'an export after ||',
+    'false || export PORT=4000; next dev',
+    3000,
+    true,
+    4000,
+  ],
+  ['env -i', 'export PORT=4000; env -i %NEXT% dev', 3000, true, 3000],
+  ['env -', 'export PORT=4000; env - %NEXT% dev', 3000, true, 3000],
+  [
+    'env --ignore-environment',
+    'export PORT=4000; env --ignore-environment %NEXT% dev',
+    3000,
+    true,
+    undefined,
+  ],
+  ['env -u PORT', 'export PORT=4000; env -u PORT next dev', 3000, true, 3000],
+  [
+    'env --unset PORT',
+    'export PORT=4000; env --unset PORT next dev',
+    3000,
+    true,
+    undefined,
+  ],
+  [
+    'env --unset=PORT',
+    'export PORT=4000; env --unset=PORT next dev',
+    3000,
+    true,
+    undefined,
+  ],
+  [
+    'an assignment after env -i',
+    'env -i PORT=4000 %NEXT% dev',
+    4000,
+    false,
+    4000,
+  ],
+  [
+    'an export with two assignments',
+    'export A=1 PORT=4000; next dev',
+    4000,
+    false,
+    4000,
+  ],
+  [
+    'an export after an unmodeled set',
+    'set -e; export PORT=4000; next dev -p ${PORT:-5000}',
+    4000,
+    false,
+    4000,
+  ],
+  [
+    'an export after an unset -v',
+    'unset -v PORT; export PORT=4000; next dev',
+    4000,
+    false,
+    4000,
+  ],
+  [
+    'an export chained with &&',
+    'export PORT=4000 && next dev',
+    4000,
+    false,
+    4000,
+  ],
+] as const)
+  test(`${name} never reports a port the shell would not start`, async (context) => {
+    // Arrange
+    if (process.platform === 'win32') return context.skip('needs /bin/sh')
+    const folder = await mkdtemp(join(tmpdir(), 'codebook-shell-'))
+    try {
+      await writeFile(join(folder, 'next'), FAKE_NEXT)
+      await chmod(join(folder, 'next'), 0o755)
+
+      // Act
+      const declared = await declaredPortOf({
+        'package.json': devScript(script.replaceAll('%NEXT%', 'next')),
+      })
+      const shellRan = await portOfRealShell(script, folder)
+
+      // Assert
+      assert.equal(declared.port, port)
+      assert.equal(declared.source.includes('Codebook does not read'), unread)
+      if (shellPort !== undefined) assert.equal(shellRan, shellPort)
+      // Whatever this host's shell printed, a port without the unread note must be the one it printed.
+      if (!unread && shellRan !== undefined)
+        assert.equal(declared.port, shellRan)
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=a very long word in the dev script is read in linear time (F486); fails_when=a value-masking expression that retries at every position makes the reader quadratic on the extension host; why_new=F486 (CodeRabbit CLI minor of the review of ccfe301d..c9664ea3: CREDENTIAL_HEADER_LINE); seam=temporary project folders and the clock; no_claim=the absolute time on a slow machine (the bound is generous)
+test('a dev script word of 100000 characters is read in well under a second', async () => {
+  // Arrange
+  const files = {
+    'package.json': devScript(`turbo-run ${'a'.repeat(100_000)} next dev`),
+  }
+  const started = Date.now()
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, {
+    port: 3000,
+    source: UNREAD_SOURCE('turbo-run … next dev'),
+  })
+  assert.ok(Date.now() - started < 1000)
+})

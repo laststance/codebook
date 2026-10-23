@@ -2866,15 +2866,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.ScriptParsedEvent,
   ): Promise<void> {
     if (!this.participants[name].cdp || !this.isRunOpen()) return
-    const order = ++this.scriptAnnouncementCount
-    this.scriptAnnouncements.set(`${name}:${event.scriptId}`, order)
+    const order = this.announceScript(name, event.scriptId)
     // A newer script of the same address replaces the older one that is still being read or was refused, unless a pause is held or captured in the older one (F460).
     this.forgetSupersededScripts(
       stop.unusableInstances.entries(),
       name,
       event.url,
       order,
-      (scriptId) => stop.unusableInstances.delete(scriptId),
+      (scriptId) => {
+        stop.unusableInstances.delete(scriptId)
+        this.releaseScriptAnnouncement(name, scriptId)
+      },
       (other) => other.url,
     )
     stop.unusableInstances.set(event.scriptId, {
@@ -2920,7 +2922,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       name,
       event.url,
       order,
-      (scriptId) => stop.instances.delete(scriptId),
+      (scriptId) => {
+        stop.instances.delete(scriptId)
+        this.releaseScriptAnnouncement(name, scriptId)
+      },
       (other) => other.script.url,
     )
     stop.instances.set(event.scriptId, instance)
@@ -2929,6 +2934,37 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       hashes: instance.verifier.hashes,
     })
     this.readmitHeldPause(stop, name, event.scriptId)
+  }
+
+  /**
+   * Gives a script its announcement order once: the stops of one module share the script id, so a later stop's announcement of the same script keeps the order the first one got (F483); called by {@link adoptInstance}.
+   * @param name - The participant whose runtime announced the script.
+   * @param scriptId - The announced script's id.
+   * @returns The script's order among the announced scripts.
+   * @example this.announceScript('server', '1904') // 1 for the first script announced
+   */
+  private announceScript(name: Participant, scriptId: string): number {
+    const key = `${name}:${scriptId}`
+    const known = this.scriptAnnouncements.get(key)
+    if (known !== undefined) return known
+    const order = ++this.scriptAnnouncementCount
+    this.scriptAnnouncements.set(key, order)
+    return order
+  }
+
+  /**
+   * Drops a script's announcement order once no stop keeps an instance or an unusable entry of it, so scripts of per-rebuild addresses do not pile up for the run (F483); called when {@link forgetSupersededScripts} removes an entry.
+   * @param name - The participant whose runtime announced the script.
+   * @param scriptId - The script's id.
+   * @example this.releaseScriptAnnouncement('server', '1904')
+   */
+  private releaseScriptAnnouncement(name: Participant, scriptId: string): void {
+    const kept = this.stops.some(
+      (stop) =>
+        stop.participant === name &&
+        (stop.instances.has(scriptId) || stop.unusableInstances.has(scriptId)),
+    )
+    if (!kept) this.scriptAnnouncements.delete(`${name}:${scriptId}`)
   }
 
   /**
@@ -2961,7 +2997,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.holdsPauseInScript(name, scriptId)
       )
         continue
-      this.scriptAnnouncements.delete(key)
       forget(scriptId)
     }
   }
@@ -6381,6 +6416,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     this.evidence.record('cleanup.started')
     this.forgetCausalSessions()
+    this.scriptAnnouncements.clear()
     if (this.transientBrowserPause) {
       clearTimeout(this.transientBrowserPause.timer)
       this.transientBrowserPause = undefined

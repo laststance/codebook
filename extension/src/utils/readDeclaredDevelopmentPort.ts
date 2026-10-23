@@ -13,9 +13,11 @@ import { causeRootsFor } from './causeRootsFor'
 import { cutTextToFit } from './cutTextToFit'
 import { sanitizeCause, type CauseRoots } from './sanitizeCause'
 import {
-  splitShellWords,
+  splitShellStatements,
   type ShellDialect,
+  type ShellStatement,
   type ShellWord,
+  type StatementEnd,
 } from './splitShellCommandLine'
 import { stripTerminalControls } from './stripTerminalControls'
 
@@ -130,78 +132,15 @@ function programName(word: string): string {
     .toLowerCase()
 }
 
-/** A flag whose next word is a secret: `--token abc`, `--api-key abc`, `--password abc`, `--secret abc`, `--auth abc`, `--credentials abc`, `--cookie abc`, `--bearer abc` (any name that contains one of those words). `-p` is the port, not a password, and stays visible. */
-const SECRET_FLAG =
-  /^--?[\w.-]*(?:token|key|password|passwd|secret|credential|auth|cookie|bearer)[\w.-]*$/i
-/** The words of a flag name (`--dbPassword`, `--private_key`, `--db-sig`) that mark its value as a secret, though they are too short to match as a part of any name (`pass` would hide `--bypass`): F469. */
-const SECRET_FLAG_WORDS = new Set([
-  'pass',
-  'pwd',
-  'pw',
-  'sig',
-  'jwt',
-  'dsn',
-  'private',
-])
-/** The flags whose next word is a header, a user and password, or a request body (`curl -H`, `-u`, `-d`, `--data-raw`, `--form`): F469. */
-const SECRET_VALUE_FLAG =
-  /^(?:-[HuUdF]|--(?:header|user|proxy-user|data(?:-[\w]+)?|form(?:-string)?|json|url-query))$/
-/** A short flag with its value attached (`-Hname:value`, `-uuser:pw`, `-dbody`). */
-const ATTACHED_VALUE_FLAG = /^(-[HuUdF])[^\s=-].*$/s
-/** A header-shaped line, `Name: value`, at the start of a word or after a line break; the value may hold anything up to the line's end. */
-const HEADER_LINE = /(^|\n)([A-Za-z][\w-]*):[ \t][^\n]*/g
-/** A header without a blank after the colon, `Authorization:Basic x`, only for names that carry credentials; other `name:value` words (`npm:dev`, `localhost:3000`) stay. */
-const CREDENTIAL_HEADER_LINE =
-  /(^|\n)((?:proxy-)?authorization|(?:set-)?cookie|x-[\w-]+|[\w-]*(?:token|key|secret|auth|pass)[\w-]*):(?![/\\])[^\n]*/gi
-/** The names whose assignment is kept as written when its value is a port or a port variable. */
-const PORT_ASSIGNMENT_NAMES = new Set(['PORT', '-p', '--port'])
-/** A port, or a variable that can only stand for one (`$APP_PORT`, `${PORT:-4000}`). */
-const PORT_LIKE_VALUE = /^(?:\d{1,5}|\$\{?\w+(?::-\d+)?\}?)$/
-/** The user and password of a URL (`https://user:pw@host`). */
-const URL_CREDENTIALS = /([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi
-
-/** Whether a flag's next word is a secret: a flag named for one (`--token`, `--dbPassword`, `--sig`), or one that carries a header, a user or a body. `-p` is the port and stays visible. */
-function takesSecretValue(flag: string): boolean {
-  if (!flag.startsWith('-') || flag.includes('=')) return false
-  if (SECRET_FLAG.test(flag) || SECRET_VALUE_FLAG.test(flag)) return true
-  const words = flag
-    .replace(/^-+/, '')
-    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
-    .toLowerCase()
-    .split(/[^a-z\d]+/)
-  return words.some((part) => SECRET_FLAG_WORDS.has(part))
-}
-
-/** Masks one word for the quoted segment: header-shaped lines (`Authorization: Basic …` keeps its name only), a short flag's attached value (`-uuser:pw`), URL credentials, and every value after an `=` (also across line breaks) unless it is a port; `API_KEY=x` reads `API_KEY=…`. */
-function maskWord(word: string): string {
-  const withoutCredentials = word
-    .replace(HEADER_LINE, '$1$2: …')
-    .replace(CREDENTIAL_HEADER_LINE, '$1$2: …')
-    .replace(ATTACHED_VALUE_FLAG, '$1…')
-    .replace(URL_CREDENTIALS, '$1…@')
-  const equals = withoutCredentials.indexOf('=')
-  if (equals < 0) return withoutCredentials
-  const name = withoutCredentials.slice(0, equals)
-  const value = withoutCredentials.slice(equals + 1)
-  return PORT_ASSIGNMENT_NAMES.has(name) && PORT_LIKE_VALUE.test(value)
-    ? withoutCredentials
-    : `${name}=…`
-}
-
 /** Words a text of the script for the run resource, as a cause is worded: terminal controls stripped, the home directory and the workspace root replaced ({@link sanitizeCause}). */
 function showText(reader: Reader, text: string): string {
   return sanitizeCause(stripTerminalControls(text), reader.roots)
 }
 
-/** Remembers the first command the reader could not interpret, for the source text: secrets are masked (every `=` value, URL credentials, the value after a secret-looking flag), private paths replaced, control characters stripped, and the text cut (F464). */
+/** Remembers the first command the reader could not interpret, for the source text: only its structure is kept, the program and flag names (D71 rule 2); see {@link showStructure}. */
 function noteUnread(reader: Reader, words: string[]): void {
   if (reader.unread !== undefined) return
-  const shown = words.map((word, index) => {
-    const previous = words[index - 1]
-    const secret = previous !== undefined && takesSecretValue(previous)
-    return secret ? '…' : showMasked(reader, word)
-  })
-  reader.unread = cutForSource(shown.join(' '))
+  reader.unread = cutForSource(showStructure(reader, words))
 }
 
 /**
@@ -262,6 +201,85 @@ const NODE_FLAGS_WITH_VALUE = new Set([
   '--conditions',
   '-C',
 ])
+/** The programs and subcommands the reader models; with a script's own names, the only words besides the first program, the flags and the assignment names that the quoted segment shows. */
+const SHOWN_WORDS = new Set([
+  ...COMMAND_WRAPPERS,
+  ...PACKAGE_MANAGERS,
+  ...DOTENV_RUNNERS,
+  ...SHELLS,
+  'cross-env-shell',
+  'cmd',
+  'concurrently',
+  'node',
+  'next',
+  'dev',
+  'run',
+  'run-script',
+  'exec',
+  'export',
+  'unset',
+  'set',
+  'setx',
+])
+/** Words that open or close a group or a subshell. */
+const GROUP_WORDS = new Set(['(', ')', '{', '}'])
+/** A word made only of characters that cannot carry a credential: a program name or path (not `name:secret@host`, not `a b`, not `x=y`). */
+const PLAIN_WORD = /^@?[\w.\\/+~-]+$/
+/** A `npm:dev:web`-style reference to a script. */
+const SCRIPT_REFERENCE = /^(?:npm|pnpm|yarn|bun):[\w:.*-]+$/
+/** The words of a flag name: `--api-key`, `--port`. */
+const LONG_FLAG_NAME = /^--[\w.-]*/
+
+/**
+ * Shows a flag as its name only: `--port=4000` is `--port=…`, `-pSECRET` is `-p…`, `-Hname:value` is `-H…`; a bare `-p` or `--token` stays (D71 rule 2).
+ * @param word - A word that starts with `-`.
+ * @returns The flag with everything after its name replaced by `…`.
+ */
+function showFlag(word: string): string {
+  if (word === '-' || word === '--') return word
+  if (!word.startsWith('--'))
+    return word.length === 2 ? word : `${word.slice(0, 2)}…`
+  const name = LONG_FLAG_NAME.exec(word)![0]
+  if (word.length === name.length) return name
+  return `${name}${word[name.length] === '=' ? '=' : ''}…`
+}
+
+/**
+ * Shows one word of an unread segment: flag names, assignment names (`API_KEY=…`), the first program, the modeled programs and the script names stay; every other word (a value, an operand, a token, a URL with credentials) is `…` (D71 rule 2).
+ * @param isProgram - Whether the word is the first program of the segment, shown when it is a plain name or path.
+ */
+function showStructureWord(
+  reader: Reader,
+  word: string,
+  isProgram: boolean,
+): string {
+  const assignment = /^([\w.-]+)=/.exec(word)
+  if (assignment) return `${assignment[1]}=…`
+  if (word.startsWith('-')) return showFlag(word)
+  if (/^\/[a-z]$/i.test(word) || GROUP_WORDS.has(word)) return word
+  const known =
+    (PLAIN_WORD.test(word) &&
+      (isProgram || SHOWN_WORDS.has(programName(word)))) ||
+    SCRIPT_REFERENCE.test(word) ||
+    Object.hasOwn(reader.scripts ?? {}, word)
+  return known ? showText(reader, word) : '…'
+}
+
+/** Shows the words of an unread segment by their structure only (D71 rule 2): the program and flag names, never a value; see {@link showStructureWord}. */
+function showStructure(reader: Reader, words: string[]): string {
+  const first = words.findIndex(
+    (word) => !/^[\w.-]+=/.test(word) && !GROUP_WORDS.has(word),
+  )
+  return words
+    .map((word, index) => showStructureWord(reader, word, index === first))
+    .join(' ')
+}
+
+/** Shows an env file by its sanitized base name only: no folder, no credentials of a URL. */
+function showFileName(reader: Reader, file: string): string {
+  const base = file.split(/[\\/]/).pop() ?? ''
+  return showText(reader, base.slice(base.lastIndexOf('@') + 1))
+}
 
 /** What a `dotenv`-style wrapper's options give: a `PORT` set with `-v PORT=N`, whether that value is a variable the reader cannot resolve, and the env files it loads (`.env` when none is named). */
 type DotenvOptions = { port?: number; unresolved: boolean; envFiles: string[] }
@@ -271,6 +289,16 @@ type WrapperStep = {
   next: number
   wrapper: string | undefined
   dotenv?: DotenvOptions
+  /** Whether the step is an `env` option that leaves the program without the inherited `PORT` (D71). */
+  scrubsPort?: boolean
+}
+
+/** Whether an `env` option removes the inherited environment or `PORT`: `-i`, `-` (also inside a cluster such as `-iS`), `--ignore-environment`, `-u PORT`, `-uPORT`, `--unset PORT`, `--unset=PORT`. */
+function scrubsInheritedPort(word: string, following: string | undefined) {
+  if (word === '-' || word === '--ignore-environment') return true
+  if (/^-[A-Za-z]*i[A-Za-z]*$/.test(word)) return true
+  if (word === '-u' || word === '--unset') return following === 'PORT'
+  return word === '-uPORT' || word === '--unset=PORT'
 }
 
 /**
@@ -331,7 +359,11 @@ function readWrapperStep(
   // A flag of a wrapper (`npx -y`, `env -u X`, `npm exec --`) is not the program; some take a value.
   if (wrapper !== undefined && word.startsWith('-')) {
     const skipsValue = wrapper === 'env' && ENV_FLAGS_WITH_VALUE.has(word)
-    return { next: index + (skipsValue ? 2 : 1), wrapper }
+    return {
+      next: index + (skipsValue ? 2 : 1),
+      wrapper,
+      scrubsPort: wrapper === 'env' && scrubsInheritedPort(word, following),
+    }
   }
   if (COMMAND_WRAPPERS.has(name)) return { next: index + 1, wrapper: name }
   if (PACKAGE_MANAGERS.has(name) && following === 'exec')
@@ -407,6 +439,27 @@ function isStatementKeyword(word: string): boolean {
   return word === 'export' || word === 'unset' || word.toLowerCase() === 'set'
 }
 
+/**
+ * Folds the words after `export`, `unset` or `set` into what was found, when every one is understood: `NAME=value` words (`export` and `set`), a sole bare name (`export PORT`, `unset PORT`; another sole name touches nothing). Any other form, a flag (`unset -v`, `export -n`, `set -a`), an extra name (`unset X PORT`, `export X PORT=4000`) or an assignment to `unset`, makes `PORT` unknown (D71 rule 1).
+ */
+function absorbStatement(
+  prefix: CommandPrefix,
+  keyword: string,
+  args: string[],
+  expansion: Expansion,
+): void {
+  prefix.exported = true
+  if (args.length === 0) return
+  const isAssignment = (word: string): boolean => /^\w+=/.test(word)
+  if (args.every(isAssignment) && keyword.toLowerCase() !== 'unset') {
+    for (const word of args) absorbAssignment(prefix, word, expansion)
+  } else if (args.length === 1 && /^\w+$/.test(args[0]!)) {
+    if (args[0] === 'PORT') absorbBarePort(prefix, keyword)
+  } else {
+    assignPort(prefix, 'unknown')
+  }
+}
+
 /** Folds a bare `PORT` after a statement keyword: `unset PORT` removes the variable from the shell and its environment; a bare `export PORT` exports the shell's own value (F470). */
 function absorbBarePort(prefix: CommandPrefix, keyword: string): void {
   if (keyword === 'unset') assignPort(prefix, undefined)
@@ -434,17 +487,12 @@ function splitCommandPrefix(
   }
   let wrapper: string | undefined
   let index = 0
-  let keyword: string | undefined
   while (index < words.length) {
     const word = words[index]!
     if (isStatementKeyword(word)) {
-      prefix.exported = true
-      keyword = word
-      wrapper = undefined
-      index += 1
-    } else if (keyword !== undefined && word === 'PORT') {
-      absorbBarePort(prefix, keyword)
-      index += 1
+      // The rest of the words belong to the statement; any it does not model makes `PORT` unknown (D71).
+      absorbStatement(prefix, word, words.slice(index + 1), expansion)
+      index = words.length
     } else if (/^\w+=/.test(word)) {
       absorbAssignment(prefix, word, expansion)
       index += 1
@@ -452,6 +500,7 @@ function splitCommandPrefix(
       const step = readWrapperStep(words, index, wrapper, scripts, expansion)
       if (!step) break
       if (step.dotenv) absorbDotenv(prefix, step.dotenv)
+      if (step.scrubsPort) assignPort(prefix, 'unknown')
       index = step.next
       wrapper = step.wrapper
     }
@@ -549,22 +598,96 @@ function readDelegation(
   return { name, args: program.slice(viaRun ? 3 : 2) }
 }
 
+/** The builtins and dot-commands that can set, export or unset a variable in ways the reader does not model (`declare -x PORT=…`, `eval`, `. ./env.sh`, `read PORT`): a statement that starts with one makes `PORT` unknown (D71 rule 1). */
+const PORT_TOUCHING_BUILTINS = new Set([
+  'declare',
+  'typeset',
+  'readonly',
+  'local',
+  'eval',
+  'source',
+  '.',
+  'read',
+  'let',
+  'getopts',
+  'mapfile',
+  'readarray',
+])
+
+/** Whether a word is a statement keyword or a builtin that can change a variable. */
+function isVariableBuiltin(word: string): boolean {
+  return isStatementKeyword(word) || PORT_TOUCHING_BUILTINS.has(word)
+}
+
+/** Whether the words could change the shell's `PORT` in a way the reader does not follow: a builtin or keyword, `command`/`builtin` in front of one, a word that names `PORT`, or a command substitution. */
+function couldTouchPort(words: string[]): boolean {
+  return words.some(
+    (word) =>
+      isVariableBuiltin(word) ||
+      word === 'command' ||
+      word === 'builtin' ||
+      word.includes('PORT') ||
+      word.includes('`') ||
+      word.includes('$('),
+  )
+}
+
+/** Where a statement stands in its line: not in the shell's own flow when it is backgrounded or piped, inside a group or subshell, or run only on some paths (`a || export PORT=1`). Such a statement cannot be followed for the `PORT` it sets (D71 rule 1). */
+type StatementContext = { uncertain: boolean }
+
 /**
- * Reads the prefix of one statement, or notes it as unread: `setx` writes the user's stored environment, not the current shell's, and a subshell, a group or a command substitution is never interpreted.
- * @returns The prefix, or `undefined` when the statement is not interpreted.
+ * Says whether the shell may not run a statement in its own flow, for the `PORT` it sets.
+ * @param previous - What ended the statement before.
+ * @param statement - The statement; its separator says whether it is backgrounded (`&` in a POSIX shell) or piped (`|`).
+ * @param depth - How many groups or subshells are open before the statement.
  */
+function contextOf(
+  previous: StatementEnd | undefined,
+  statement: ShellStatement,
+  depth: number,
+  dialect: ShellDialect,
+): StatementContext {
+  const end = statement.endedBy
+  const detached =
+    end === '|' || previous === '|' || (end === '&' && dialect === 'posix')
+  const conditional = previous === '||' || (previous === '&&' && end !== '&&')
+  const grouped =
+    depth > 0 || statement.words.some((word) => GROUP_WORDS.has(word.text))
+  return { uncertain: detached || conditional || grouped }
+}
+
+/** How many groups or subshells are open after the words. */
+function depthAfter(depth: number, words: string[]): number {
+  let open = depth
+  for (const word of words) {
+    if (word === '{' || word === '(') open += 1
+    else if (word === '}' || word === ')') open = Math.max(0, open - 1)
+  }
+  return open
+}
+
+/** Whether the statement is one the reader never interprets: `setx` writes the user's stored environment, not the current shell's, and a subshell, a group or a command substitution is not followed. */
+function isUnreadStatement(words: string[]): boolean {
+  return programName(words[0] ?? '') === 'setx' || hasUnreadableSyntax(words)
+}
+
+/** Reads the prefix of one statement; a `PORT` the reader cannot resolve is told as unread. */
 function readStatementPrefix(
   words: string[],
   reader: Reader,
   expansion: Expansion,
-): CommandPrefix | undefined {
-  if (programName(words[0] ?? '') === 'setx' || hasUnreadableSyntax(words)) {
-    noteUnread(reader, words)
-    return undefined
-  }
+): CommandPrefix {
   const prefix = splitCommandPrefix(words, reader.scripts, expansion)
   if (prefix.unresolved) noteUnread(reader, words)
   return prefix
+}
+
+/** Whether the program the statement runs changes shell variables in a way the reader does not model: a builtin such as `declare`, or `command export …` and `builtin export …`. */
+function runsVariableBuiltin(program: string[]): boolean {
+  const name = program[0] ?? ''
+  if (name === 'command' || name === 'builtin')
+    return program.slice(1).some(isVariableBuiltin)
+  return PORT_TOUCHING_BUILTINS.has(name)
 }
 
 /** The `PORT` a program runs with: the assignment in front of it (the last one, an empty one unsets), else the shell's exported one. */
@@ -580,7 +703,8 @@ function afterStatement(prefix: CommandPrefix, ports: ShellPorts): ShellPorts {
   if (prefix.exportsShellPort) return { ...ports, env: ports.shell }
   if (!prefix.portSet) return ports
   // A variable that is already in the environment stays exported when it is assigned again.
-  const toEnvironment = prefix.exported || ports.env !== undefined
+  const toEnvironment =
+    prefix.exported || (ports.env !== undefined && ports.env !== 'unknown')
   return {
     shell: prefix.portValue,
     env: toEnvironment ? prefix.portValue : ports.env,
@@ -593,9 +717,38 @@ function expansionOf(scope: LineScope, ports: ShellPorts): Expansion {
   return scope.frozenExpansion ? scope.frozenExpansion.env : ports.shell
 }
 
+/** What the reader knows of `PORT` after an unmodeled statement: nothing. */
+const UNKNOWN_PORTS: ShellPorts = { env: 'unknown', shell: 'unknown' }
+
+/** What the loop of {@link readCommandLine} carries from one statement to the next. */
+type LineState = {
+  ports: ShellPorts
+  previous: StatementEnd | undefined
+  depth: number
+}
+
+/**
+ * Applies a statement that starts no program to the `PORT` state; one the reader cannot follow makes it unknown and is told as unread (D71 rule 1).
+ * @returns The ports after the statement.
+ */
+function applyStatement(
+  prefix: CommandPrefix,
+  words: string[],
+  reader: Reader,
+  state: LineState,
+  context: StatementContext,
+): ShellPorts {
+  const changes = prefix.portSet || prefix.exportsShellPort
+  if (context.uncertain && changes) {
+    noteUnread(reader, words)
+    return UNKNOWN_PORTS
+  }
+  return afterStatement(prefix, state.ports)
+}
+
 /**
  * Finds the `next dev` command in one script and the port it would use, as the shell would run it.
- * The first command that is `next dev` (or delegates to a script that runs it) decides; a command the reader cannot interpret is remembered in the reader and skipped.
+ * The first command that is `next dev` (or delegates to a script that runs it) decides; a command the reader cannot interpret is remembered in the reader and skipped. A statement that could change `PORT` in a way the reader does not follow makes `PORT` unknown, so no later port is asserted from it (D71).
  * @param scope - The `PORT` the outer line gave this one (`PORT=4000 sh -c "next dev"`), its shell dialect, and the `PORT` an outer shell expanded a double-quoted line against.
  */
 function readCommandLine(
@@ -605,33 +758,72 @@ function readCommandLine(
   scope: LineScope,
 ): DevelopmentCommand | undefined {
   // The `PORT` the shell holds after the commands so far (an `export`, a `set`, a bare assignment, or an outer assignment).
-  let ports: ShellPorts = { env: scope.env, shell: scope.env }
-  for (const detailed of splitShellWords(line, scope.dialect)) {
-    const words = detailed.map((word) => word.text)
-    const expansion = expansionOf(scope, ports)
-    const prefix = readStatementPrefix(words, reader, expansion)
-    if (!prefix) continue
-    // A statement without a program only changes the shell's `PORT`.
-    if (prefix.exported || prefix.programStart >= words.length) {
-      ports = afterStatement(prefix, ports)
-      continue
-    }
-    const found = readProgram(
-      detailed.slice(prefix.programStart),
-      { assigned: assignedPortOf(prefix, ports.env), expansion },
-      reader,
-      depth,
-    )
-    if (found) {
-      // A wrapper that loads an env file may set the port the reader never sees (F462).
-      if (found.port === undefined && prefix.envFiles.length)
-        reader.envFiles ??= prefix.envFiles
-      return found
-    }
-    // `next` behind a wrapper the reader does not know is told, not skipped silently.
-    if (mentionsNext(words.slice(prefix.programStart)))
-      noteUnread(reader, words)
+  const state: LineState = {
+    ports: { env: scope.env, shell: scope.env },
+    previous: undefined,
+    depth: 0,
   }
+  for (const statement of splitShellStatements(line, scope.dialect)) {
+    const words = statement.words.map((word) => word.text)
+    const context = contextOf(
+      state.previous,
+      statement,
+      state.depth,
+      scope.dialect,
+    )
+    state.previous = statement.endedBy
+    state.depth = depthAfter(state.depth, words)
+    const found = readStatement(statement, words, context, reader, depth, {
+      scope,
+      state,
+    })
+    if (found) return found
+  }
+  return undefined
+}
+
+/** Reads one statement of a line: updates the `PORT` state, and returns the `next dev` command it is or delegates to. */
+function readStatement(
+  statement: ShellStatement,
+  words: string[],
+  context: StatementContext,
+  reader: Reader,
+  depth: number,
+  line: { scope: LineScope; state: LineState },
+): DevelopmentCommand | undefined {
+  const { scope, state } = line
+  const expansion = expansionOf(scope, state.ports)
+  if (isUnreadStatement(words)) {
+    noteUnread(reader, words)
+    if (couldTouchPort(words)) state.ports = UNKNOWN_PORTS
+    return undefined
+  }
+  const prefix = readStatementPrefix(words, reader, expansion)
+  // A statement without a program only changes the shell's `PORT`.
+  if (prefix.exported || prefix.programStart >= words.length) {
+    state.ports = applyStatement(prefix, words, reader, state, context)
+    return undefined
+  }
+  const program = words.slice(prefix.programStart)
+  if (runsVariableBuiltin(program)) {
+    noteUnread(reader, words)
+    state.ports = UNKNOWN_PORTS
+    return undefined
+  }
+  const found = readProgram(
+    statement.words.slice(prefix.programStart),
+    { assigned: assignedPortOf(prefix, state.ports.env), expansion },
+    reader,
+    depth,
+  )
+  if (found) {
+    // A wrapper that loads an env file may set the port the reader never sees (F462).
+    if (found.port === undefined && prefix.envFiles.length)
+      reader.envFiles ??= prefix.envFiles
+    return found
+  }
+  // `next` behind a wrapper the reader does not know is told, not skipped silently.
+  if (mentionsNext(program)) noteUnread(reader, words)
   return undefined
 }
 
@@ -778,11 +970,6 @@ function describeSource(found: DevelopmentCommand): string {
   return found.via === 'assignment' ? `a PORT assignment in ${where}` : where
 }
 
-/** The text of a word for the source: masked and sanitized as the unread segment is. */
-function showMasked(reader: Reader, word: string): string {
-  return showText(reader, maskWord(word))
-}
-
 /** Cuts a text for the source to {@link DEVELOPMENT_SCRIPT_UNREAD_SEGMENT_MAX_CHARS} characters. */
 function cutForSource(text: string): string {
   return cutTextToFit(
@@ -798,7 +985,7 @@ function describeDefault(reader: Reader): string {
   const reasons: string[] = []
   if (reader.envFiles !== undefined)
     reasons.push(
-      `the port may come from ${cutForSource(reader.envFiles.map((file) => `"${showMasked(reader, file)}"`).join(', '))}, which a dotenv wrapper in the dev script loads and Codebook does not read`,
+      `the port may come from ${cutForSource(reader.envFiles.map((file) => `"${showFileName(reader, file)}"`).join(', '))}, which a dotenv wrapper in the dev script loads and Codebook does not read`,
     )
   if (reader.unread !== undefined)
     reasons.push(
