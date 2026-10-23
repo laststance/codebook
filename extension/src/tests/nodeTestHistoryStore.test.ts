@@ -24,6 +24,7 @@ import { currentStorageOwner } from '../utils/currentStorageOwner'
 
 const createWorkspaceKey = () => sha256('node-history-test-workspace')
 import { idleChild } from './utils/idleChild'
+import { markNodeTestWriterGone } from './utils/markNodeTestWriterGone'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { realProcessStart } from './utils/realProcessStart'
 
@@ -101,6 +102,7 @@ test('Node history remains a readable interrupted prefix after extension restart
       channel: 'stdout',
       text: 'RUN src/theme.test.ts',
     })
+    await markNodeTestWriterGone(directory, header.studyId)
     const restarted = new NodeTestHistoryStore(directory, header.workspaceKey)
     const recovered = await restarted.read(header.studyId)
 
@@ -1285,6 +1287,7 @@ test("an interrupted history's broken journal line is read with a reason the sto
       ),
       '{"type":"output",broken}\n',
     )
+    await markNodeTestWriterGone(directory, header.studyId)
     const restarted = new NodeTestHistoryStore(directory, header.workspaceKey)
     restarted.describeCause = () => 'x'.repeat(5_000)
 

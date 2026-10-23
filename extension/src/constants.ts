@@ -993,6 +993,12 @@ export const VITEST_PACKAGE_PATH = 'node_modules/vitest/package.json'
 export const VITEST_PROGRAM_PATH = 'node_modules/vitest/vitest.mjs'
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
+/** The file of a test history's folder that names the editor process writing it, removed when the writer seals or is abandoned ({@link writeNodeTestWriterRecord}, {@link isNodeTestWriterLive}). */
+export const NODE_TEST_HISTORY_WRITER_FILE = 'writer.json'
+/** How long a window keeps the verdict "its writer is live" for a test history another window records, in milliseconds: judging the writer reads its process start, which starts a process (`ps`, PowerShell), and the Study workspace refreshes every 250 ms. A crashed writer is therefore told within this time, without a process query at every refresh; a "gone" verdict is final for that record ({@link NodeTestHistoryStore}). */
+export const NODE_TEST_WRITER_RECHECK_MS = 5_000
+/** The largest writer record of a test history Codebook writes or reads. */
+export const NODE_TEST_HISTORY_WRITER_LIMIT_BYTES = 4_096
 /** The largest seal file of a test history Codebook writes or reads ({@link NodeTestHistoryWriter.finish}, {@link isSealedEmptyHistory}). */
 export const NODE_TEST_HISTORY_SEAL_LIMIT_BYTES = 16_384
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000

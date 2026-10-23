@@ -14,6 +14,8 @@ import {
   NODE_HISTORY_CITABLE_MEMO_LIMIT,
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_DIRECTORY,
+  NODE_TEST_HISTORY_WRITER_FILE,
+  NODE_TEST_WRITER_RECHECK_MS,
   NODE_TEST_HISTORY_LIMIT_BYTES,
   NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
   NODE_TEST_HISTORY_MAX_ENTRIES,
@@ -58,6 +60,7 @@ import {
   type NodeTestVerdict,
 } from './utils/describeNodeTestResult'
 import { holdsLearnerFiles } from './utils/holdsLearnerFiles'
+import { isNodeTestWriterLive } from './utils/isNodeTestWriterLive'
 import { isSealedEmptyHistory } from './utils/isSealedEmptyHistory'
 import { isTransientFileError } from './utils/isTransientFileError'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
@@ -87,6 +90,7 @@ import {
 import { sanitizeCause } from './utils/sanitizeCause'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
+import { writeNodeTestWriterRecord } from './utils/writeNodeTestWriterRecord'
 type NodeTestHistoryEntryInput = NodeTestHistoryEntry extends infer Entry
   ? Entry extends NodeTestHistoryEntry
     ? Omit<Entry, 'sequence'>
@@ -316,6 +320,13 @@ function emptySummary(header: NodeTestHistoryHeader): NodeTestHistorySummary {
 export class NodeTestHistoryStore {
   private readonly directory: string
   private readonly active = new Set<string>()
+  /** The last verdict on the writer of each history another window records, with the writer record's file signal and the time it was judged: "gone" is final for that record, "live" is kept until the record changes or {@link NODE_TEST_WRITER_RECHECK_MS} passes (F260). */
+  private readonly writerVerdicts = new Map<
+    string,
+    { signal: string; live: boolean; judgedAtMs: number }
+  >()
+  /** The histories this window ever started: a writer record of one of them never makes it a history another window writes, whatever a failed removal left ({@link writtenElsewhere}). */
+  private readonly startedHere = new Set<string>()
   private readonly readerPositionWrites = new Map<string, Promise<void>>()
   private readonly learningMaterialWrites = new Map<
     string,
@@ -358,6 +369,11 @@ export class NodeTestHistoryStore {
     readonly workspaceKey: string,
     private readonly capacity: () => number = () => 64,
     private readonly savedArtifactCount: () => Promise<number> = async () => 0,
+    /** The clock and the judge of another window's writer; a test names its own to count the queries. */
+    private readonly writerJudge: {
+      now: () => number
+      isLive: (historyDirectory: string) => Promise<boolean>
+    } = { now: Date.now, isLive: isNodeTestWriterLive },
   ) {
     this.directory = join(learningDirectory, NODE_TEST_HISTORY_DIRECTORY)
   }
@@ -434,6 +450,9 @@ export class NodeTestHistoryStore {
     const runDirectory = this.path(header.studyId)
     await this.createHistoryFolder(runDirectory, headerBytes)
     this.active.add(header.studyId)
+    this.startedHere.add(header.studyId)
+    // Other windows tell this history from a crashed one by this record (F260).
+    await writeNodeTestWriterRecord(runDirectory)
     return new NodeTestHistoryWriter(runDirectory, header, () =>
       this.active.delete(header.studyId),
     )
@@ -721,6 +740,7 @@ export class NodeTestHistoryStore {
   private forgetSummary(studyId: string): void {
     this.summaries.delete(studyId)
     this.citableOrder.delete(studyId)
+    this.writerVerdicts.delete(studyId)
   }
 
   /**
@@ -729,9 +749,12 @@ export class NodeTestHistoryStore {
    * @returns The history signal (journal, seal, whether this window writes it) and the material signal.
    * @example await this.fileSignals(studyId) // => ['812:1792590603000:44|none|active', '1203:1792590700000:45']
    */
-  private async fileSignals(
-    studyId: string,
-  ): Promise<{ history: string; material: string; header: string }> {
+  private async fileSignals(studyId: string): Promise<{
+    history: string
+    material: string
+    header: string
+    recording: boolean
+  }> {
     const directory = this.path(studyId)
     const signal = (file: string): Promise<string> =>
       lstat(join(directory, file)).then(
@@ -744,12 +767,52 @@ export class NodeTestHistoryStore {
       signal(SEAL_FILE),
       signal(LEARNING_MATERIAL_FILE),
     ])
+    // A history another live window writes is told by its writer record; only an unsealed one is asked (F260).
+    const own = this.active.has(studyId)
+    const elsewhere =
+      !own &&
+      seal.startsWith('missing') &&
+      (await this.writtenElsewhere(studyId))
     return {
       // The header is part of the history signal: a corrupt or removed header makes a history that cannot open, and the memo must notice (F102).
-      history: `${header}|${journal}|${seal}|${this.active.has(studyId) ? 'active' : 'closed'}`,
+      history: `${header}|${journal}|${seal}|${own ? 'active' : elsewhere ? 'elsewhere' : 'closed'}`,
       material,
       header,
+      recording: own || elsewhere,
     }
+  }
+
+  /**
+   * Says whether another live editor window writes a history: this window does not write it, never did, and the writer record in its folder names a process that is not gone ({@link isNodeTestWriterLive}); called by {@link fileSignals} and {@link read} for a history without a seal, so that it lists as recording, with its journal read by appended bytes, instead of interrupted (F260).
+   * @param studyId - The history's study id.
+   * @returns `true` while another window may be writing the history; `false` for a history of this window, one without a record, and one whose writer is gone (a crashed window reads as interrupted).
+   * @example if (await this.writtenElsewhere(studyId)) …
+   */
+  private async writtenElsewhere(studyId: string): Promise<boolean> {
+    if (this.active.has(studyId) || this.startedHere.has(studyId)) return false
+    const directory = this.path(studyId)
+    const signal = await lstat(
+      join(directory, NODE_TEST_HISTORY_WRITER_FILE),
+    ).then(
+      (entry) => `${entry.size}:${entry.mtimeMs}:${entry.ino}`,
+      () => undefined,
+    )
+    // Without a record there is no writer to ask.
+    if (signal === undefined) {
+      this.writerVerdicts.delete(studyId)
+      return false
+    }
+    const now = this.writerJudge.now()
+    const kept = this.writerVerdicts.get(studyId)
+    // A verdict is reused for the same record: "gone" for good, "live" until the recheck interval passes (the judge starts a process).
+    if (
+      kept?.signal === signal &&
+      (!kept.live || now - kept.judgedAtMs < NODE_TEST_WRITER_RECHECK_MS)
+    )
+      return kept.live
+    const live = await this.writerJudge.isLive(directory)
+    this.writerVerdicts.set(studyId, { signal, live, judgedAtMs: now })
+    return live
   }
 
   /**
@@ -762,14 +825,24 @@ export class NodeTestHistoryStore {
    */
   private async readSummary(
     studyId: string,
-    signals: { history: string; material: string; header: string },
+    signals: {
+      history: string
+      material: string
+      header: string
+      recording: boolean
+    },
     previousScan: RecordingScan | undefined,
     previousSummary: NodeTestHistorySummary | undefined,
   ): Promise<SummaryMemo | undefined> {
     const { history: historySignal, material: materialSignal } = signals
     let loaded: LoadedHistory | undefined
     try {
-      loaded = await this.loadHistory(studyId, signals.header, previousScan)
+      loaded = await this.loadHistory(
+        studyId,
+        signals.header,
+        signals.recording,
+        previousScan,
+      )
     } catch (error) {
       return this.unavailableMemo(studyId, signals, error, previousSummary)
     }
@@ -815,9 +888,10 @@ export class NodeTestHistoryStore {
   }
 
   /**
-   * Loads the history a summary counts: a history this window still writes continues from the bytes its last refresh consumed, any other is verified whole; the first step of {@link readSummary}.
+   * Loads the history a summary counts: a history a live writer (this window or another one) still writes continues from the bytes its last refresh consumed, any other is verified whole; the first step of {@link readSummary}.
    * @param studyId - The history's study id.
    * @param headerSignal - The header file's signal as read now.
+   * @param recording - Whether a live writer, this window or another one, still writes the history.
    * @param previousScan - The scan of the last refresh, if any.
    * @returns The history, its citable events and, for a recording, its scan; `undefined` for a history sealed with no entry (D6, F85).
    * @throws What {@link read} or the recording scan throws for a history that does not verify.
@@ -826,9 +900,10 @@ export class NodeTestHistoryStore {
   private async loadHistory(
     studyId: string,
     headerSignal: string,
+    recording: boolean,
     previousScan: RecordingScan | undefined,
   ): Promise<LoadedHistory | undefined> {
-    if (this.active.has(studyId)) {
+    if (recording) {
       // The bytes appended since the last refresh are all it reads (F64).
       const scan = await this.scanRecording(studyId, headerSignal, previousScan)
       return {
@@ -1074,7 +1149,9 @@ export class NodeTestHistoryStore {
       throw new Error(
         'Sealed Node history does not contain its required passing result and ordered stops.',
       )
-    const isRecording = !seal && this.active.has(studyId)
+    const isRecording =
+      !seal &&
+      (this.active.has(studyId) || (await this.writtenElsewhere(studyId)))
     const status = seal?.status ?? (isRecording ? 'recording' : 'interrupted')
     return nodeTestHistoryIndexSchema.parse({
       header,
@@ -1512,6 +1589,8 @@ export class NodeTestHistoryWriter {
       )
       this.sealedHash = seal.journalHash
       this.closed = true
+      // The seal is published first: another window never finds neither the seal nor the record.
+      await this.removeWriterRecord()
       this.onClosed()
       return seal.journalHash
     })().catch((error: unknown) => {
@@ -1527,7 +1606,16 @@ export class NodeTestHistoryWriter {
   abandon(): void {
     this.closed = true
     this.closing = false
+    // Other windows read the history as interrupted once the record is gone (F260); the removal is awaited by nobody.
+    void this.removeWriterRecord()
     this.onClosed()
+  }
+
+  /** Removes the record of the editor process that writes this history ({@link writeNodeTestWriterRecord}); a record that stays is ignored once its process is gone, and by the seal. @example await this.removeWriterRecord() */
+  private removeWriterRecord(): Promise<void> {
+    return rm(join(this.directory, NODE_TEST_HISTORY_WRITER_FILE), {
+      force: true,
+    }).catch(() => undefined)
   }
 
   private append(input: NodeTestHistoryEntryInput): Promise<void> {
