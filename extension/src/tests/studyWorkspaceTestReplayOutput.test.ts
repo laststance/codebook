@@ -395,8 +395,8 @@ test('Show recorded output brings a closed Application pane back at the selected
   }
 })
 
-// Value: protects=leaving a test replay for Live releases the replay's output index with the rest of its selection, so a journal of up to 8 MiB (10,000 entries with their debugger snapshots) leaves the extension host's memory; fails_when=the index, which holds the whole history and a copy of its output lines, stays referenced after the selection is retired, until another test replay is opened; why_new=Step 9's performance review found the PR-B1 index cache outliving retireNodeHistorySelection; seam=none; no_claim=when the garbage collector frees it (stand-ins: the workspace's private cache field, read through a type that names it)
-test('returning to Live releases the test replay’s output index with its selection', async () => {
+// Value: protects=leaving a test replay for Live releases the replay's output index with the rest of its selection, so a journal of up to 8 MiB (10,000 entries with their debugger snapshots) leaves the extension host's memory; fails_when=the index, which holds the whole history and a copy of its output lines, stays referenced after the selection is retired, until another test replay is opened; why_new=Step 9's performance review found the PR-B1 index cache outliving retireNodeHistorySelection; why_changed=F332 (PR-2 /ship Step 7 re-entry): the position map of F327 holds the history too and is released with it; seam=none; no_claim=when the garbage collector frees it (stand-ins: the workspace's private cache field, read through a type that names it)
+test('returning to Live releases the test replay’s output index and event positions with its selection', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -414,8 +414,10 @@ test('returning to Live releases the test replay’s output index with its selec
     )
     const cache = harness.reader as unknown as {
       selectedNodeHistoryOutputIndex?: unknown
+      nodeHistoryPositions?: unknown
     }
     const indexWhileShown = cache.selectedNodeHistoryOutputIndex
+    const positionsWhileShown = cache.nodeHistoryPositions
 
     // Act
     await harness.reader.action('return-current')
@@ -428,6 +430,8 @@ test('returning to Live releases the test replay’s output index with its selec
     // Assert
     assert.notEqual(indexWhileShown, undefined)
     assert.equal(cache.selectedNodeHistoryOutputIndex, undefined)
+    assert.notEqual(positionsWhileShown, undefined)
+    assert.equal(cache.nodeHistoryPositions, undefined)
   } finally {
     await harness.close()
   }

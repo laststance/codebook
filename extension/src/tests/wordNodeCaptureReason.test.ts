@@ -61,3 +61,15 @@ test('a capture reason reads each spelling of Node history as test replay words 
     'Test replay ended; test replays, test replay and test replays kept',
   )
 })
+
+// Value: protects=the 240-character cut leaves no lone surrogate at the end of the line also when the reason itself holds a lone high surrogate there (a reason cut from a longer text); fails_when=the cut keeps a high surrogate that no low one follows, so the line ends in half a character before the ellipsis; why_new=F330 (PR-2 /ship Step 8 re-entry): F328's shared pair check made the cut drop a high surrogate only when its low one follows; seam=none; no_claim=lone surrogates elsewhere in the reason
+test('a capture reason cut after a lone high surrogate drops it before the ellipsis', () => {
+  // Arrange
+  const reason = `${'x'.repeat(238)}\uD83D${'y'.repeat(20)}`
+
+  // Act
+  const words = wordNodeCaptureReason(reason)
+
+  // Assert
+  assert.equal(words, `X${'x'.repeat(237)}…`)
+})

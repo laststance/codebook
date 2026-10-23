@@ -205,3 +205,46 @@ test('building the Study message again does not strip the Saved studies catalog 
     await harness.close()
   }
 })
+
+// Value: protects=Saved studies keeps the test replays it listed when a later refresh cannot list them, and the archive line says why; fails_when=a refresh whose listing fails empties the list, so every saved test replay's row goes until a later refresh succeeds, or the failure is silent; why_new=F331 (PR-2 /ship Step 7 re-entry): only a failure of the first listing was tested, and F326 moved both listings into one helper; seam=the reader's history store, whose listing the refresh is refused; no_claim=the archive line's wording
+test('a refresh that cannot list the test replays keeps the ones Saved studies showed and reports it', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    await harness.reader.action('retry')
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryCatalog?.some(
+          (entry) => entry.studyId === history.studyId,
+        ) === true,
+      'the test replay is listed',
+      READER_RESULT_BOUND_MS,
+    )
+    context.mock.method(harness.reader['nodeHistoryStore']!, 'list', () =>
+      Promise.reject(
+        Object.assign(new Error('EIO: i/o error, scandir'), { code: 'EIO' }),
+      ),
+    )
+
+    // Act
+    await harness.reader['refresh']()
+
+    // Assert
+    assert.deepEqual(
+      harness.reader['message']().nodeHistoryCatalog?.map(
+        (entry) => entry.studyId,
+      ),
+      [history.studyId],
+    )
+    assert.equal(
+      harness.reader.inspect().view?.errors.some((error) => /EIO/.test(error)),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
