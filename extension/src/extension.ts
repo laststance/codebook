@@ -2143,9 +2143,10 @@ export function activate(
       try {
         await workspace().saveLearningReplay(studyId)
       } catch (error) {
+        // The learner reads the notice: a storage failure names the folder, which it shows as <storage> (F264).
         void showNotice(
           'error',
-          `Codebook could not save learning: ${String(error)}`,
+          `Codebook could not save learning: ${workspace().describeFailure(error)}`,
         )
         throw error
       }

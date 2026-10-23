@@ -7,12 +7,11 @@ import {
   NODE_TEST_MINIMUM_VITEST_MAJOR,
   PRINTABLE_VITEST_VERSION,
   VITEST_PACKAGE_JSON_LIMIT_BYTES,
+  VITEST_PACKAGE_PATH,
 } from '../constants'
 
 import { isInsideFolder } from './isInsideFolder'
 import { resolveOwnedRepositoryFile } from './resolveOwnedRepositoryFile'
-
-const VITEST_PACKAGE_PATH = 'node_modules/vitest/package.json'
 
 const vitestPackageSchema = z.object({ version: z.string() })
 

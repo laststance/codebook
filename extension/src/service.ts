@@ -97,6 +97,7 @@ import {
 } from './schemas'
 import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
+import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredStops } from './utils/configuredStops'
 import { cutCauseForDisplay } from './utils/cutCauseForDisplay'
 import { cutTextToFit } from './utils/cutTextToFit'
@@ -132,7 +133,6 @@ import { nodeTestResultKind } from './utils/nodeTestResultKind'
 import { numberSourceLines } from './utils/numberSourceLines'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
-import { homeRootNames, privateRootNames } from './utils/privateRootNames'
 import {
   projectNodeTestOutcome,
   type NodeTestHistoryState,
@@ -405,18 +405,17 @@ export class StudyService {
    * @example sanitizeCause(error, service.causeRoots)
    */
   get causeRoots(): CauseRoots {
-    return {
-      storage: [
+    // Real paths too, so a symlinked repository or home stays hidden; an unreadable home is skipped (F58); each real path is read once (F262).
+    return causeRootsFor(
+      [
         this.storageRoot,
         ...(this.nodeHistoryStore
           ? [this.nodeHistoryStore.learningDirectory]
           : []),
         ...this.extraStorageRoots,
       ],
-      // Real paths too, so a symlinked repository or home stays hidden; an unreadable home is skipped (F58).
-      workspace: privateRootNames(this.environment.workspace),
-      home: homeRootNames(),
-    }
+      this.environment.workspace,
+    )
   }
 
   /**
@@ -446,7 +445,7 @@ export class StudyService {
   }
 
   /**
-   * Sanitizes the words of a test run's own error at its assignment, so the run resource and the `codebook_stop` answer never name a private path in the message or the cause (F49); called where {@link StudyService.prepare} and {@link StudyService.continueNodeTest} set `record.error`.
+   * Sanitizes the words of a domain error, so the run resource and every MCP answer never name a private path in the message or the cause (F49, F261); called where {@link StudyService.prepare} and {@link StudyService.continueNodeTest} set `record.error`, by {@link StudyService.sanitizedFailure} and by {@link StudyService.unexpectedFailure}.
    * @param error - The domain error of the failure.
    * @returns An error with the same code, whose message and cause are sanitized and bounded.
    * @example this.sanitizedError(new StudyError('RUNTIME_FAILED', "failed at /Users/ada/repo/a.ts")).message // => 'failed at <workspace>/a.ts'
@@ -461,7 +460,7 @@ export class StudyService {
 
   /**
    * Tells whether a test run's history sealed with no entry, so the store removed its folder at the seal (D6) and nothing is left to read; asked by the run resource, which then offers no `read-history` and names no `historyUri` (F253).
-   * A seal that failed leaves its folder, which may still be read, so only a sealed `complete` or `partial` history counts.
+   * A seal that failed leaves its folder, which may still be read, so only a sealed `complete` or `partial` history counts; so does a history with a learning material this window saved before its first entry, whose folder the seal keeps (F274).
    * @param record - The run.
    * @returns `true` for a sealed test history of no entry; `false` for any other run.
    * @example this.isRemovedEmptyNodeHistory(record) // => true after a stop before the first output
@@ -470,7 +469,9 @@ export class StudyService {
     return (
       (record.nodeHistoryStatus === 'complete' ||
         record.nodeHistoryStatus === 'partial') &&
-      record.nodeHistoryEntryCount === 0
+      record.nodeHistoryEntryCount === 0 &&
+      // A learning material saved before the first entry keeps the folder (F274).
+      record.nodeLearningMaterial === undefined
     )
   }
 
@@ -508,14 +509,14 @@ export class StudyService {
   }
 
   /**
-   * Gives a failed tool call or resource read its domain error for the agent: a {@link StudyError} as it is, any other failure (a file call, a parse) as `RUNTIME_FAILED` whose cause names no private path, since such a failure quotes the storage folder or the home directory (F243); called by the MCP protocol's tool and resource answers in place of {@link domainError}.
+   * Gives a failed tool call or resource read its domain error for the agent, with no private path in its words: a {@link StudyError} keeps its code with its message and cause sanitized ({@link StudyService.sanitizedError}), since many are made from a raw file or Git error (a captured file that cannot be opened, a stored book, the repository's index, a reveal that moved the pause); any other failure (a file call, a parse) becomes `RUNTIME_FAILED` with a sanitized cause (F243, F261). Called by the MCP protocol's tool and resource answers in place of {@link domainError}.
    * @param error - What the call threw.
    * @returns The domain error the answer describes.
    * @example service.unexpectedFailure(new Error("ENOENT: lstat '/Users/ada/…/node-tests.v1/x'")).causeDetail // => "ENOENT: lstat '<storage>/node-tests.v1/x'"
    */
   unexpectedFailure(error: unknown): StudyError {
     return error instanceof StudyError
-      ? error
+      ? this.sanitizedError(error)
       : new StudyError(
           'RUNTIME_FAILED',
           'The study operation failed.',

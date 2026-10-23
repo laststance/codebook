@@ -259,3 +259,31 @@ test('the repository registers only compaction restoration through a root-resolv
   )
   assert.equal(config.hooks.SessionStart[0].hooks[0].timeout, 5)
 })
+
+// Value: protects=the restored sections staying verbatim: a section line that ends in two spaces (a Markdown hard break) keeps them, while its heading still matches with trailing spaces (F268); fails_when=every line loses its trailing spaces, so the restored text differs from AGENTS.md; why_new=PR-1's /ship Claude adversarial review, cycle 3: the hook trimmed every line to match its headings; seam=none; no_claim=the wording of the sections
+test('a restored section keeps the trailing spaces of its lines', () => {
+  // Arrange
+  const withHardBreak = [
+    '# codebook agent instructions',
+    '',
+    '## Mandatory entry  ',
+    '',
+    'Read the goal,  ',
+    'then the image.',
+    '',
+    '## Owner directions in force',
+    '',
+    'Keep the owner scope.',
+    '',
+  ].join('\n')
+
+  // Act
+  const result = runHookBeside(withHardBreak)
+  const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext
+
+  // Assert
+  assert.equal(result.status, 0)
+  assert.ok(
+    context.includes('## Mandatory entry\n\nRead the goal,  \nthen the image.'),
+  )
+})

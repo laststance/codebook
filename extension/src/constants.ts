@@ -985,6 +985,10 @@ export const NODE_TEST_LEARNING_DECISION_LIMIT_BYTES = 4_096
 export const NODE_TEST_LEARNING_MATERIAL_VERSION = 1
 export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
   LEARNING_SUMMARY_LIMITS.bytes
+/** The root Vitest's package file a node-test run reads its version from, relative to the opened repository ({@link readVitestPrerequisite}). */
+export const VITEST_PACKAGE_PATH = 'node_modules/vitest/package.json'
+/** The root Vitest's program a node-test run starts, relative to the opened repository ({@link requireOwnedVitest}). */
+export const VITEST_PROGRAM_PATH = 'node_modules/vitest/vitest.mjs'
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
 /** The largest seal file of a test history Codebook writes or reads ({@link NodeTestHistoryWriter.finish}, {@link isSealedEmptyHistory}). */

@@ -905,3 +905,26 @@ test('a configured observation cannot be attached as another repository learning
   assert.equal((await books.list()).length, 0)
   assert.equal((await library.readCheckpoint(study.id)).status, 'saved')
 })
+
+// Value: protects=the catalog's reason for a stored book that cannot be read: it names the storage folder as <storage>, never its path, since the agent and the reader show it (F264); fails_when=the reason keeps the raw file error with the absolute path of the book file; why_new=PR-1's /ship Claude adversarial review, cycle 3: the catalog's reason was String(error); seam=the store's read of the book file throws a raw file error; no_claim=which reads throw raw errors today
+test('a stored book that cannot be read is listed unavailable with a reason that names no storage path', async (context) => {
+  // Arrange
+  const { books, intent, path } = await bookHarness(context)
+  await books.publish(intent)
+  context.mock.method(
+    books as unknown as { readStored: (bookId: string) => Promise<unknown> },
+    'readStored',
+    async () => {
+      throw new Error(`EACCES: permission denied, open '${path}'`)
+    },
+  )
+
+  // Act
+  const catalog = await books.list()
+
+  // Assert
+  const entry = catalog.find((book) => book.bookId === intent.bookId)
+  assert.equal(entry?.status, 'unavailable')
+  assert.equal(entry?.reason?.includes(path), false)
+  assert.match(entry?.reason ?? '', /<storage>/)
+})

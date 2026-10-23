@@ -125,11 +125,8 @@ export async function advanceRecordingScan(
   describeCause: (error: unknown) => string,
 ): Promise<RecordingScan> {
   const journal = await lstat(journalPath)
-  if (
-    !journal.isFile() ||
-    journal.isSymbolicLink() ||
-    journal.size > NODE_TEST_HISTORY_LIMIT_BYTES
-  )
+  // lstat follows no link, so a link is no file here.
+  if (!journal.isFile() || journal.size > NODE_TEST_HISTORY_LIMIT_BYTES)
     throw new Error('Node history file is not a bounded regular file.')
   const scan: RecordingScan =
     previous &&

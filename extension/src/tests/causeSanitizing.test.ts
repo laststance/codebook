@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 import { StudyError } from '../errors'
 import type { RecordingStore } from '../recordingStore'
+import { sanitizeCause } from '../utils/sanitizeCause'
 
 import { createHarness } from './helpers'
 
@@ -239,6 +240,82 @@ test('a cause longer than its bound is cut whole characters short with the cut m
     assert.equal(cause.length <= 8_192, true)
     assert.equal(cause.endsWith('… [cut]'), true)
     assert.equal(cause.startsWith('x'.repeat(8_185)), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=every MCP answer of a domain error: a StudyError built from a raw file or Git error keeps its code while its message and cause read <storage> where they named the storage folder (F261); fails_when=a StudyError passes the answer unchanged, so a stored book's read failure or a reveal's stale-pause cause names the private path; why_new=PR-1's /ship cycle 3 (Claude adversarial, red team, Codex): unexpectedFailure sanitized only errors of other classes; seam=none; no_claim=which call sites build StudyErrors from raw errors
+test('a domain error passed to an MCP answer keeps its code and names no storage path in its message or cause', async () => {
+  // Arrange
+  const harness = await createHarness()
+  const storage = harness.service.causeRoots.storage[0]!
+  const failure = new StudyError(
+    'BOOK_UNAVAILABLE',
+    `Stored book interface at ${storage}/books is unavailable.`,
+    `ENOENT: no such file or directory, open '${storage}/books/interface.book.v2.json'`,
+  )
+  try {
+    // Act
+    const answer = harness.service.unexpectedFailure(failure).describe()
+
+    // Assert
+    assert.deepEqual(
+      { code: answer.code, message: answer.message, cause: answer.cause },
+      {
+        code: 'BOOK_UNAVAILABLE',
+        message: 'Stored book interface at <storage>/books is unavailable.',
+        cause:
+          "ENOENT: no such file or directory, open '<storage>/books/interface.book.v2.json'",
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a long domain error worded for the agent: its message and cause lose their roots before they are joined and cut, so a cut that falls inside a root leaves no part of the private path, and no lone surrogate (F263); fails_when=the joined text is cut first and a root that straddles the cut keeps its first characters, which no root pattern then matches; why_new=PR-1's /ship Claude adversarial review: messageNamingCause cut before sanitizeCause replaced roots; seam=none; no_claim=the 300-character display cut
+test('a long domain error whose cause names a root across its cut keeps no part of that root', async () => {
+  // Arrange: the root starts 19 characters before the 8,192-character bound of the joined words, so a cut first keeps 12 of its characters beside the cut marker.
+  const harness = await createHarness()
+  const storage = harness.service.causeRoots.storage[0]!
+  const failure = new StudyError(
+    'EVIDENCE_UNAVAILABLE',
+    'x'.repeat(8_150),
+    `ENOSPC: write '${storage}/evidence/events.jsonl'`,
+  )
+  try {
+    // Act
+    const words = sanitizeCause(failure, harness.service.causeRoots)
+
+    // Assert
+    assert.equal(words.includes(storage.slice(0, 6)), false)
+    assert.equal(words.endsWith('… [cut]'), true)
+    assert.doesNotMatch(words, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=codebook_status when the environment reports a profile without prerequisites: the other sentences are still sanitized and the answer still comes (F273); fails_when=sanitizedPrerequisites reads the missing sentences of an absent profile and throws, so codebook_status fails; why_new=PR-1's /ship coverage audit, cycle 3: the absent-profile branch was untested; seam=the environment's prerequisites resolve with an absent profile entry; no_claim=which profiles the environment reports
+test('codebook_status answers when a profile of the prerequisites report is absent', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    { service } = harness
+  service.environment.prerequisites = async () => ({
+    ready: false,
+    missing: [`cannot read ${harness.directory}/package.json`],
+    profiles: { [PROFILE_ID]: undefined },
+  })
+  try {
+    // Act
+    const status = await service.status()
+
+    // Assert
+    assert.deepEqual(
+      [...status.prerequisites.missing],
+      ['cannot read <storage>/package.json'],
+    )
   } finally {
     await harness.close()
   }

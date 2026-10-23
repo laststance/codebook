@@ -1172,6 +1172,69 @@ test('a failed first debugger start overtaken by a newer selection while the own
   }
 })
 
+// Value: protects=a first open whose replay debugger failed to start, overtaken by a selection of the output (a moment without a recorded stop) while the failed owner is still being disposed: the output is shown once the disposal ends, with no error, because no second owner registers its adapter factory meanwhile (F275); fails_when=the output's selection makes a new owner at once, its factory registration is refused while the old one stays registered, and the selection fails with an error row; why_new=Codex's structured review of PR-1: only a stop's selection waited for the retirement; seam=the harness's held presentation (rejected), held debugger disposal and its one-registration rule; no_claim=the real debug session
+test('an output selected while a failed replay debugger is disposed is shown once the disposal ends, with no second registration', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    // The reader left the replay on its result, a moment without a recorded stop.
+    await store.saveReaderPosition(history.studyId, 3)
+    await harness.reader.action('retry')
+    const heldPresentation = harness.holdHistoricalDebugPresentation()
+    const heldDisposal = harness.holdHistoricalDebugDisposal()
+    const opening = harness.reader.openLearningReplay(history.studyId)
+    await heldPresentation.started
+    heldPresentation.reject(new Error('Workspace trust was declined.'))
+    await heldDisposal.started
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 1,
+    })
+    // The selection reaches its debugger while the disposal is held: an owner made then would be refused.
+    const refusedWhileHeld = await waitUntil(
+      () =>
+        harness
+          .postedMessages()
+          .some((message) =>
+            message.errors.some((line) => line.includes('registered once')),
+          ),
+      'a refused second registration',
+      500,
+    ).then(
+      () => true,
+      () => false,
+    )
+    heldDisposal.release()
+    await opening
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 1 &&
+        !lastView(harness)?.loading,
+      'the output is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(refusedWhileHeld, false)
+    const linesEverSent = harness
+      .postedMessages()
+      .flatMap((message) => message.errors)
+    assert.equal(
+      linesEverSent.some((line) => line.includes('registered once')),
+      false,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=Retry after a first open whose replay debugger failed to start on a moment without a recorded stop: a Retry whose start fails again keeps the replay-debugger row (with the new cause) and a Retry whose start succeeds removes it only after the debugger was started again; fails_when=Retry empties the failed debugger object, reports success without starting anything and drops the row; why_new=the retry found the failed debugger object, invalidated it and cleared the row (F226, D13); seam=the harness's historical debugger rejects the held presentations; no_claim=the real debug session start (native trials)
 test('Retry after a failed first start keeps the debugger row until the debugger starts again', async () => {
   // Arrange
@@ -1415,6 +1478,104 @@ test('a test run whose launch failed after its history began shows Preparing and
     assert.equal(harness.reader.inspect().opened, false)
   } finally {
     letLaunchFail()
+    await harness.close()
+  }
+})
+
+// Value: protects=the notice a learner reads when Save learning replay fails: its cause names the storage folder as <storage>, never its path (F264); fails_when=the notice shows the raw error with the absolute storage path; why_new=PR-1's /ship Claude adversarial review, cycle 3: the command's notice was String(error); seam=none; no_claim=the notice's display (the extension's showNotice)
+test('a failed save is worded for its notice without the storage path', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const storage = harness.service.causeRoots.storage[0]!
+
+    // Act
+    const words = harness.reader.describeFailure(
+      new Error(`ENOSPC: no space left on device, write '${storage}/a.json'`),
+    )
+
+    // Assert
+    assert.equal(
+      words,
+      "ENOSPC: no space left on device, write '<storage>/a.json'",
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the status item of a test run coming back after a refresh hid it: once the run records again the item shows its text again and is visible (F272); fails_when=the hidden state is not cleared, so an unchanged text is never assigned again and the item stays hidden or blank; why_new=PR-1's /ship state-machine review, cycle 3: the hidden-then-shown cell of the redraw-on-change item (F83) was untested; seam=the run's history exclusion, set and cleared by the test as the library's answer would; no_claim=the browser run's item
+test("a test run's status item that a refresh hid is shown again with its text", async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    const { record } = await startLiveTestRun(harness, 'hidden-then-shown-item')
+    await readerSeams(harness).refresh()
+    const first = {
+      text: harness.saveStatus.text,
+      visible: harness.saveStatus.visible,
+    }
+    record.historyExcluded = 'archive-removed'
+    await readerSeams(harness).refresh()
+    const whileExcluded = harness.saveStatus.visible
+
+    // Act
+    record.historyExcluded = undefined
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.equal(first.visible, true)
+    assert.notEqual(first.text, '')
+    assert.equal(whileExcluded, false)
+    assert.deepEqual(
+      { text: harness.saveStatus.text, visible: harness.saveStatus.visible },
+      first,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's Stop of the replay debugger: selecting the output (a moment without a recorded stop) afterwards empties nothing and starts no new debugger, so the session the learner ended stays ended (F275's rule kept); fails_when=a moment without a stop retires the stopped owner and starts a new one on the "Not recorded" thread; why_new=PR-1's /ship cycle 3: the retirement wait added for a failed start must not replace an owner the learner stopped; seam=the harness's owned session, ended as the learner's Stop ends it; no_claim=a stop moment, which Select this stop or Inspect restarts on purpose
+test('a replay debugger the learner stopped stays stopped when the output is selected', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      'the stop is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.endHistoricalDebugSession()
+    const presentationsAfterStop = harness.historicalDebugPresentations.length
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 1,
+    })
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 1 &&
+        !lastView(harness)?.loading,
+      'the output is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsAfterStop,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
     await harness.close()
   }
 })

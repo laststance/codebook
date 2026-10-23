@@ -4241,7 +4241,8 @@ test('a start on a stored book the store cannot read is refused in the answer of
     error.message,
     'Stored book interface is unavailable; no older revision was substituted.',
   )
-  assert.equal(error.cause.startsWith('SyntaxError: '), true)
+  // The parse failure's words, sanitized at the MCP answer, which drops the error's name (F261).
+  assert.match(error.cause, /in JSON at position 2/)
   assert.equal(service.records.size, 0)
   assert.equal(runtimes.length, 0)
 })

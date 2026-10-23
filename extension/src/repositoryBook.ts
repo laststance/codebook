@@ -30,8 +30,10 @@ import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { bookIdOfFileName } from './utils/bookIdOfFileName'
 import { bookIntentDigest } from './utils/bookIntentDigest'
 import { bookObservationHash } from './utils/bookObservationHash'
+import { causeRootsFor } from './utils/causeRootsFor'
 import { projectRecording } from './utils/projectRecording'
 import { readBoundedFile } from './utils/readBoundedFile'
+import { sanitizeCause } from './utils/sanitizeCause'
 import { validateRepositoryBook } from './utils/validateRepositoryBook'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -71,7 +73,15 @@ export class RepositoryBookStore {
           status: 'available',
         })
       } catch (error) {
-        result.push({ bookId, status: 'unavailable', reason: String(error) })
+        // The reason reaches the agent and the reader: a read failure names the storage folder or the repository, which it shows as <storage> and <workspace> (F264).
+        result.push({
+          bookId,
+          status: 'unavailable',
+          reason: sanitizeCause(
+            error,
+            causeRootsFor([this.library.directory], this.sources.workspace),
+          ),
+        })
       }
     }
     return result

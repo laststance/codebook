@@ -30,10 +30,10 @@ import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import { causeRootsFor } from './utils/causeRootsFor'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
-import { homeRootNames, privateRootNames } from './utils/privateRootNames'
 import { readVitestPrerequisite } from './utils/readVitestPrerequisite'
 import { requireOwnedVitest } from './utils/requireOwnedVitest'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
@@ -279,7 +279,7 @@ export async function createEnvironment(
           readVitestPrerequisite(workspace).catch((error: unknown) => ({
             ready: false as const,
             // The reason reaches the agent in codebook_status, so it names no private path (F10).
-            reason: `node-test could not read the repository's root Vitest: ${sanitizeCause(error, { storage: [], workspace: privateRootNames(workspace), home: homeRootNames() })}`,
+            reason: `node-test could not read the repository's root Vitest: ${sanitizeCause(error, causeRootsFor([], workspace))}`,
           })),
         ])
       // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.

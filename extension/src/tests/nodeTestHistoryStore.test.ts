@@ -1297,7 +1297,7 @@ test("an interrupted history's broken journal line is read with a reason the sto
     assert.equal(history.entries.length, 1)
     assert.equal(
       history.reason,
-      `${prefix}${'x'.repeat(1_024 - prefix.length)}`,
+      `${prefix}${'x'.repeat(1_024 - prefix.length - '… [cut]'.length)}… [cut]`,
     )
   } finally {
     await rm(directory, { recursive: true, force: true })
@@ -1339,8 +1339,52 @@ test("a recording history's broken journal line is listed with a reason cut to t
     assert.equal(listed?.status, 'recording')
     assert.equal(
       listed?.reason,
-      `${prefix}${'x'.repeat(1_024 - prefix.length)}`,
+      `${prefix}${'x'.repeat(1_024 - prefix.length - '… [cut]'.length)}… [cut]`,
     )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a history's reason cut to its 1,024-character bound between characters, never inside a surrogate pair, with the cut marker (F265); fails_when=the cut leaves a lone surrogate that a renderer shows as a replacement character; why_new=PR-1's /ship Claude adversarial review, cycle 3: the store's reasons were cut at UTF-16 code units; seam=the store's describer, which gives a long reason with an emoji across the bound; no_claim=the service's 8,192-character cut (causeSanitizing tests)
+test('a broken journal line read with a long reason is cut between characters with the cut marker', async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-reason-cut-'),
+  )
+  const header = nodeTestHistoryHeader(sha256('reason-cut-workspace'))
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey)
+  const writer = await store.start(header)
+  try {
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 4,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    await appendFile(
+      join(
+        directory,
+        NODE_TEST_HISTORY_DIRECTORY,
+        header.studyId,
+        'events.jsonl',
+      ),
+      '{"type":"output",broken}\n',
+    )
+    const restarted = new NodeTestHistoryStore(directory, header.workspaceKey)
+    const prefix = 'Interrupted Node history after its verified prefix: '
+    restarted.describeCause = () =>
+      `${'x'.repeat(1_024 - prefix.length - 1)}😀 and the rest`
+
+    // Act
+    const history = await restarted.read(header.studyId)
+
+    // Assert
+    assert.doesNotMatch(
+      history.reason ?? '',
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/,
+    )
+    assert.equal(history.reason?.endsWith('… [cut]'), true)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

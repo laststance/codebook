@@ -29,7 +29,7 @@ export function describeCitedStopMismatch(
   const cited = `anchorIndex ${anchorIndex} cites ${anchor.path} lines ${anchor.startLine} to ${anchor.endLine}`
   switch (mismatch) {
     case 'path':
-      return `${opening} cites ${position.path}, but anchorIndex ${anchorIndex} of the article node cites ${anchor.path} lines ${anchor.startLine} to ${anchor.endLine}. Send ${anchor.path}, or the anchorIndex of the citation of ${position.path}.`
+      return `${opening} cites ${position.path}, but ${cited}. Send ${anchor.path}, or the anchorIndex of the citation of ${position.path}.`
     case 'hash':
       return `${opening} sends SHA-256 ${position.hash} for ${position.path}, but ${cited} with SHA-256 ${anchor.hash}. Read the file with codebook_source and send its current hash; publish the article again if the file changed.`
     case 'line':

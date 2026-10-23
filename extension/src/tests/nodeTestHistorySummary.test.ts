@@ -441,6 +441,90 @@ test('a sealed history whose folder was removed answers no summary and leaves th
   assert.deepEqual(listed, [])
 })
 
+// Value: protects=a learning material saved for a history before its first entry: when the run ends with no entry, the seal keeps the folder with the material, and the history is listed and counted instead of being removed (F274); fails_when=the empty seal removes the folder and the saved material with it after its save was acknowledged; why_new=Codex's adversarial review of PR-1, cycle 3; seam=the material file is written by hand as a save leaves it; no_claim=the material's content
+test('a history that ends with no entry but holds a saved learning material keeps its folder and is listed', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 4)
+  const header = nodeTestHistoryHeader(workspaceKey)
+  const writer = await store.start(header)
+  const folder = join(directory, NODE_TEST_HISTORY_DIRECTORY, header.studyId)
+  await writeFile(join(folder, 'learning-material.json'), '{"revision":1}')
+
+  // Act
+  await writer.finish('partial', 'The learner stopped this run.')
+  const capacity = await store.admission()
+  const names = await readdir(folder)
+
+  // Assert
+  assert.equal(capacity.taken, 1)
+  assert.equal(names.includes('learning-material.json'), true)
+  assert.equal(names.includes('sealed.json'), true)
+})
+
+// Value: protects=the saved-study count against a history sealed with no entry whose header a removal at the seal took before it failed partway: such a folder is removed by the next count like any empty history (F266); fails_when=a headerless folder is never counted, listed or removed, so it stays on disk for good; why_new=PR-1's /ship Claude adversarial review, cycle 3: the count removed sealed-empty folders only when their header still read; seam=the folder is written by hand; no_claim=folders not named like a study id
+test('a headerless history sealed with no entry is removed by the next capacity check', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 2)
+  const studyId = nodeTestHistoryHeader(workspaceKey).studyId
+  const folder = join(directory, NODE_TEST_HISTORY_DIRECTORY, studyId)
+  await fsPromises.mkdir(folder, { recursive: true })
+  await writeFile(
+    join(folder, 'sealed.json'),
+    JSON.stringify({
+      version: 1,
+      studyId,
+      entryCount: 0,
+      journalBytes: 0,
+      journalHash: sha256(''),
+      status: 'partial',
+      endedAt: '2026-10-23T00:00:01.000Z',
+    }),
+  )
+
+  // Act
+  const capacity = await store.admission()
+  const names = await readdir(join(directory, NODE_TEST_HISTORY_DIRECTORY))
+
+  // Assert
+  assert.equal(capacity.taken, 0)
+  assert.equal(names.includes(studyId), false)
+})
+
+// Value: protects=the reasons a window shows once its service is attached: replacing the store's describer forgets the summaries the earlier one worded, so a reason made before the attach (which did not hide the repository) is worded again (F267); fails_when=the memo keeps the earlier reason until a file changes; why_new=PR-1's /ship Claude adversarial review, cycle 3: the Study workspace lists the histories before it attaches the service; seam=two describers that say which one worded the reason; no_claim=what the service's roots hide
+test("replacing the store's describer words an earlier summary's reason again", async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 4)
+  const header = nodeTestHistoryHeader(workspaceKey)
+  const writer = await store.start(header)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  writer.abandon()
+  await appendFile(
+    join(
+      directory,
+      NODE_TEST_HISTORY_DIRECTORY,
+      header.studyId,
+      'events.jsonl',
+    ),
+    '{"type":"output",broken}\n',
+  )
+  const restarted = new NodeTestHistoryStore(directory, workspaceKey, () => 4)
+  restarted.describeCause = () => 'worded before the attach'
+  const before = await restarted.summarize(header.studyId)
+
+  // Act
+  restarted.describeCause = () => 'worded by the attached service'
+  const after = await restarted.summarize(header.studyId)
+
+  // Assert
+  assert.match(before?.reason ?? '', /worded before the attach$/)
+  assert.match(after?.reason ?? '', /worded by the attached service$/)
+})
+
 // Value: protects=a recording read by two summaries at once (the 250 ms refresh and a history resource read); fails_when=both continue the shared scan from one offset, so the second applies the same entries again and the recording reads interrupted; why_new=advanceRecordingScan mutated the shared scan across awaits with no serialization per study (F216); seam=the first journal read is held until the second summary was asked for; no_claim=reads of different histories
 test('two overlapping summaries of a growing recording leave it recording with no interrupted reason', async (context) => {
   // Arrange

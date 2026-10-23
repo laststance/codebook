@@ -206,6 +206,7 @@ import {
 } from './utils/capturedSourceNotShownReason'
 import { capturedSourceUriPath } from './utils/capturedSourceUriPath'
 import { captureStudy } from './utils/captureStudy'
+import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
 import { createRecordingObserver } from './utils/createRecordingObserver'
@@ -10840,6 +10841,16 @@ export class StudyWorkspace {
     return this.service && [...this.service.records.values()].at(-1)
   }
 
+  /**
+   * Words a failure for a notice the learner reads, without the private paths it can carry: the service's roots once it is attached, else the home directory alone (F264); called by the extension's Save Learning Replay command when the save fails.
+   * @param error - What the command threw.
+   * @returns The sanitized cause.
+   * @example workspace.describeFailure(new Error("ENOSPC: write '/Users/ada/Library/…/globalStorage/x/a.json'")) // => "ENOSPC: write '<storage>/a.json'"
+   */
+  describeFailure(error: unknown): string {
+    return sanitizeCause(error, this.service?.causeRoots ?? causeRootsFor([]))
+  }
+
   /** Finishes the explicitly selected capture and verifies matching durable learning; called by the status-bar command. @example await workspace.saveLearningReplay(studyId) */
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
@@ -11592,6 +11603,20 @@ export class StudyWorkspace {
     })
     this.replayDebuggerRetirement = retirement
     return retirement
+  }
+
+  /**
+   * Waits for a historical debugger still being disposed before a moment without a recorded stop presents the debugger, and tells whether the selection is still current: the disposed owner's descriptor factory stays registered until its disposal ends, so an owner made meanwhile would register the same debug type twice (F275). Only a retirement in progress is waited for; an owner the learner stopped is not replaced, so it stays stopped. Called by {@link presentNodeHistoryDebugger}.
+   * @param request - The selection's request token.
+   * @returns `true` when no retirement runs or the selection is still current after it; `false` when a newer selection took over meanwhile.
+   * @example if (!(await this.isCurrentAfterReplayDebuggerRetirement(request))) return false
+   */
+  private async isCurrentAfterReplayDebuggerRetirement(
+    request: number,
+  ): Promise<boolean> {
+    if (!this.replayDebuggerRetirement) return true
+    await this.replayDebuggerRetired()
+    return request === this.selectedNodeHistoryRequest
   }
 
   /**
@@ -23568,6 +23593,8 @@ export class StudyWorkspace {
     request: number,
   ): Promise<boolean> {
     if (!verifiedStop) {
+      if (!(await this.isCurrentAfterReplayDebuggerRetirement(request)))
+        return false
       // A debugger that has not started yet starts on the "Not recorded" thread; a running one is emptied even when this moment is the committed one, since a newer selection may have presented its stop meanwhile (4A); one the learner stopped stays stopped.
       if (!this.replayDebugger)
         await this.presentReplayDebuggerFor(request, async (debuggerView) => {
