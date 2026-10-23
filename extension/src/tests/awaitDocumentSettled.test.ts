@@ -25,34 +25,36 @@ function fakeDocumentChanges() {
   }
 }
 
-// Value: protects=a wait on one document ends at that document's own change and not at another document's change; fails_when=the wait drops the uri comparison and settles on any document's edit, or never re-checks at a change; why_new=the util's contract had only indirect cover through the workspace's two callers; seam=none; no_claim=the bounded poll
-test('a wait for one document settles at that document’s change and ignores another document’s change', async () => {
+// Value: protects=a wait on one document ends at that document's own change and not at another document's change; fails_when=the wait drops the uri comparison and checks at any document's edit, or never re-checks at a change; why_new=F172: the earlier form let the bounded poll settle the wait between its steps, so its pass depended on timing; seam=none; no_claim=the bounded poll
+test('a wait for one document is checked at that document’s change and not at another document’s change', async () => {
   // Arrange
   const documents = fakeDocumentChanges()
-  let text = 'old'
+  let checks = 0
+  let bytesLanded = false
   const wait = awaitDocumentSettled(
     documents.event,
     'file:///a.ts',
     () => {
-      return text === 'new'
+      checks++
+      return bytesLanded
     },
     'the new bytes',
     2_000,
   )
-  let resolved = false
-  void wait.then(() => (resolved = true))
+  // The wait checks once when it starts; the count is read in the same turn as each change, where no poll can run.
+  const checksBefore = checks
 
   // Act
-  text = 'new'
   documents.change('file:///other.ts')
-  await new Promise((resolve) => setImmediate(resolve))
-  const resolvedAfterOtherDocument = resolved
+  const checksAfterOtherDocument = checks
+  bytesLanded = true
   documents.change('file:///a.ts')
+  const checksAfterOwnDocument = checks
   await wait
 
   // Assert
-  assert.equal(resolvedAfterOtherDocument, false)
-  assert.equal(resolved, true)
+  assert.equal(checksAfterOtherDocument, checksBefore)
+  assert.equal(checksAfterOwnDocument, checksBefore + 1)
   assert.equal(documents.liveListeners(), 0)
 })
 
@@ -126,6 +128,32 @@ test('a document that never shows the bytes fails the wait at its bound and rele
   // Assert
   await assert.rejects(wait, {
     message: 'Timed out waiting for the recorded source of this moment',
+  })
+  assert.equal(documents.liveListeners(), 0)
+})
+
+// Value: protects=an afterSubscribe that throws ends the wait with that error and releases the change listener, like every other exit; fails_when=the throw rejects the wait but leaves the subscription (and the bounded poll) running until the timeout; why_new=F171 (the throw skipped the cleanup); seam=none; no_claim=the poll's own end, which the same cleanup call performs
+test('an afterSubscribe that throws ends the wait with that error and releases the listener', async () => {
+  // Arrange
+  const documents = fakeDocumentChanges()
+
+  // Act
+  const wait = awaitDocumentSettled(
+    documents.event,
+    'file:///a.ts',
+    () => false,
+    'the bytes',
+    2_000,
+    {
+      afterSubscribe: () => {
+        throw new Error('The provider refused the notification')
+      },
+    },
+  )
+
+  // Assert
+  await assert.rejects(wait, {
+    message: 'The provider refused the notification',
   })
   assert.equal(documents.liveListeners(), 0)
 })
