@@ -45,3 +45,19 @@ test('a capture reason cut inside an emoji drops the whole emoji before the elli
   // Assert
   assert.equal(words, `X${'x'.repeat(237)}…`)
 })
+
+// Value: protects=each of the four stored spellings of a history reaches the learner as test replay words, in its number: "Node test history", "Node test histories", "Node history" and "Node histories"; fails_when=one spelling keeps "Node" (the expression loses its optional "test " or its plural), or a plural reads as one test replay; why_new=F319 (PR-2 /ship Step 7 re-entry): F316 joined the two expressions, and only "node history" and "Node test histories" were asserted; seam=none; no_claim=the rest of the sentence
+test('a capture reason reads each spelling of Node history as test replay words in its number', () => {
+  // Arrange
+  const reason =
+    'Node test history ended; Node test histories, Node history and Node histories kept'
+
+  // Act
+  const words = wordNodeCaptureReason(reason)
+
+  // Assert
+  assert.equal(
+    words,
+    'Test replay ended; test replays, test replay and test replays kept',
+  )
+})

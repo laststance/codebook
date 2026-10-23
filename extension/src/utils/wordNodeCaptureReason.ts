@@ -6,7 +6,7 @@ import { stripTerminalControls } from './stripTerminalControls'
  * Words why a test replay's capture is interrupted or partial for the Study section, so the learner reads the reason in the String catalog's words (DS14) on one line; called by {@link projectNodeTestSection} for each Study message of such a replay.
  * The stored reason comes from the store or from an error, so it may hold line breaks, control characters and the word "Node"; this keeps one short line without them.
  * @param reason - The history's stored reason, absent for a complete capture.
- * @returns The reason on one line (terminal, C1 and bidirectional controls removed, line breaks and runs of blanks collapsed, cut at {@link NODE_CAPTURE_REASON_LIMIT_CHARS} characters with an ellipsis), with "Node test history" and "Node history" read as "test replay" and the first letter capitalized; `undefined` for no reason or an empty one.
+ * @returns The reason on one line (terminal, C1 and bidirectional controls removed, line breaks and runs of blanks collapsed, cut at {@link NODE_CAPTURE_REASON_LIMIT_CHARS} characters with an ellipsis), with "Node test history" and "Node history" read as "test replay" (their plurals as "test replays") and the first letter capitalized; `undefined` for no reason or an empty one.
  * @example
  * wordNodeCaptureReason('Interrupted Node history after its verified prefix: Error: EIO') // => 'Interrupted test replay after its verified prefix: Error: EIO'
  * wordNodeCaptureReason(undefined) // => undefined

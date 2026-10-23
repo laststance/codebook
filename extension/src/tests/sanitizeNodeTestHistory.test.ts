@@ -163,3 +163,26 @@ for (const [field, expected] of [
     assert.equal(shown, expected)
   })
 }
+
+// Value: protects=the cited test file a replay's surfaces print (the Application header, the Study section) loses its bidirectional and terminal controls, and a configuration that cites its file alone gains no titles; fails_when=a U+202E or a color sequence survives in the test file, or a history without titles is given an empty title list that the header would read as a title path; why_new=F318 (PR-2 /ship Step 7 re-entry): the test file and the title-less configuration had no assertion since F317 joined the strip rules; seam=none; no_claim=the Saved studies entry's own strip (its catalog test)
+test('a replay’s cited test file comes without controls, and a configuration without titles stays without them', () => {
+  // Arrange: the fixture's configuration cites its file alone (no titles), here with controls in the file name.
+  const cited = forgedHistory()
+  const history = {
+    ...cited,
+    header: {
+      ...cited.header,
+      configuration: {
+        ...baseHeader.configuration,
+        testFile: 'src/th‮eme\u001b[31m.test.ts',
+      },
+    },
+  }
+
+  // Act
+  const shown = sanitizeNodeTestHistory(history)
+
+  // Assert
+  assert.equal(shown.header.configuration.testFile, 'src/theme.test.ts')
+  assert.equal('testTitles' in shown.header.configuration, false)
+})
