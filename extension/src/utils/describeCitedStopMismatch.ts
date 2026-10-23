@@ -24,12 +24,7 @@ export function describeCitedStopMismatch(
   const opening = `node-test preparation refused: ${label}`
   const anchor = descriptor.anchors[anchorIndex]
   if (mismatch === 'anchor' || !anchor) {
-    const count = descriptor.anchors.length
-    return `${opening} uses anchorIndex ${anchorIndex}, but the article node cites ${
-      count === 0
-        ? 'no source range'
-        : `${count} source ranges (anchorIndex 0 to ${count - 1})`
-    }. Send the anchorIndex of the citation that covers the stop.`
+    return `${opening} uses anchorIndex ${anchorIndex}, but the article node cites ${citedRanges(descriptor.anchors.length)}. Send the anchorIndex of the citation that covers the stop.`
   }
   const cited = `anchorIndex ${anchorIndex} cites ${anchor.path} lines ${anchor.startLine} to ${anchor.endLine}`
   switch (mismatch) {
@@ -47,4 +42,16 @@ export function describeCitedStopMismatch(
       return `${opening} sends column ${position.column} on line ${position.line} of ${anchor.path}, but that line has ${length} characters, so the last column is ${length + 1}. Send a column from 1 to ${length + 1}.`
     }
   }
+}
+
+/**
+ * Names how many source ranges an article node cites, for the anchorIndex refusal of {@link describeCitedStopMismatch}: none, one, or a count with its index range (F242).
+ * @param count - The number of the node's citations.
+ * @returns The phrase that follows "the article node cites".
+ * @example citedRanges(1) // => 'one source range (anchorIndex 0)'
+ */
+function citedRanges(count: number): string {
+  if (count === 0) return 'no source range'
+  if (count === 1) return 'one source range (anchorIndex 0)'
+  return `${count} source ranges (anchorIndex 0 to ${count - 1})`
 }
