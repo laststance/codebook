@@ -1303,3 +1303,45 @@ test("an interrupted history's broken journal line is read with a reason the sto
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the reason of a test history that is still being recorded and whose journal gained a broken line, as the catalog of saved studies lists it: worded by the store's describer and cut to the index's 1,024-character bound (F243); fails_when=the recording branch of the summary shows the scan's reason uncut, so a long failure that quotes test output reaches Saved studies and the agent's node-history catalog whole; why_new=the sealed-read test reaches the read's own cut only, and the scan's reason is cut in a different place when the summary shows it; seam=none (describeCause is the store's own field the Study workspace sets); no_claim=what the describer hides, which sanitizeCause.test.ts pins
+test("a recording history's broken journal line is listed with a reason cut to the index's bound", async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-recording-broken-'),
+  )
+  const header = nodeTestHistoryHeader(sha256('recording-broken-workspace'))
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey)
+  const writer = await store.start(header)
+  try {
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 4,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    await appendFile(
+      join(
+        directory,
+        NODE_TEST_HISTORY_DIRECTORY,
+        header.studyId,
+        'events.jsonl',
+      ),
+      '{"type":"output",broken}\n',
+    )
+    store.describeCause = () => 'x'.repeat(5_000)
+
+    // Act
+    const [listed] = await store.list()
+
+    // Assert
+    const prefix = 'Interrupted Node history after its verified prefix: '
+    assert.equal(listed?.status, 'recording')
+    assert.equal(
+      listed?.reason,
+      `${prefix}${'x'.repeat(1_024 - prefix.length)}`,
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

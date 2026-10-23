@@ -1151,3 +1151,113 @@ test('standard MCP explanation calls persist learning material and reject foreig
     await harness.close()
   }
 })
+
+// Value: protects=the agent's answer to codebook_status when the service fails with a file error: RUNTIME_FAILED whose cause reads <workspace> where the failure quoted the opened repository's folder (F243); fails_when=toolResult describes the failure with the raw error, so an absolute private path reaches the structured error of every tool that answers through it; why_new=the only MCP test of an unexpected failure goes through codebook_read_resource, a different answer path; seam=none (a failing method set on the real service); no_claim=the other tools that answer through the same path
+test('a codebook_status call that fails with a file error is answered with a cause that names no workspace path', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service),
+    connection = await connect(endpoint.descriptor)
+  harness.service.status = () => {
+    throw new Error(`ENOENT: lstat '${harness.directory}/src/theme.ts'`)
+  }
+  try {
+    // Act
+    const answer = await connection.client.callTool({
+      name: 'codebook_status',
+      arguments: {},
+    })
+
+    // Assert
+    const failure = z
+      .object({
+        ok: z.literal(false),
+        error: z.object({ code: z.string(), cause: z.string() }),
+      })
+      .parse(answer.structuredContent).error
+    assert.equal(answer.isError, true)
+    assert.equal(failure.code, 'RUNTIME_FAILED')
+    assert.ok(!failure.cause.includes(harness.directory), failure.cause)
+    assert.match(failure.cause, /<workspace>|<storage>/)
+  } finally {
+    await connection.close()
+    await endpoint.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the agent's answer to codebook_stop when stopping fails with a file error rather than a failed seal: RUNTIME_FAILED whose cause names no private path (F243); fails_when=the stop answer's catch describes the failure with the raw error, so an absolute private path reaches the agent; why_new=no test made the stop tool throw, and its catch is a separate site from the other tools'; seam=none (a failing method set on the real service); no_claim=the HISTORY_SEAL_FAILED answer, which the seal tests pin
+test('a codebook_stop call that fails with a file error is answered with a cause that names no workspace path', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service),
+    connection = await connect(endpoint.descriptor)
+  harness.service.stopForTool = async () => {
+    throw new Error(`EACCES: open '${harness.directory}/runs/run.json'`)
+  }
+  try {
+    // Act
+    const answer = await connection.client.callTool({
+      name: 'codebook_stop',
+      arguments: {
+        instanceId: '00000000-0000-4000-8000-000000000001',
+        runId: '00000000-0000-4000-8000-000000000002',
+      },
+    })
+
+    // Assert
+    const failure = z
+      .object({
+        ok: z.literal(false),
+        error: z.object({ code: z.string(), cause: z.string() }),
+      })
+      .parse(answer.structuredContent).error
+    assert.equal(answer.isError, true)
+    assert.equal(failure.code, 'RUNTIME_FAILED')
+    assert.ok(!failure.cause.includes(harness.directory), failure.cause)
+    assert.match(failure.cause, /<workspace>|<storage>/)
+  } finally {
+    await connection.close()
+    await endpoint.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the MCP error of a resources/read whose read fails with a file error: the error's data carries RUNTIME_FAILED with a cause that names no private path (F243); fails_when=the resource read's McpError is made from the raw error, so the storage folder reaches the agent in the error data; why_new=the earlier test reaches the codebook_read_resource tool, and the resources/read route builds its error in a separate place; seam=none (a failing store set on the real service); no_claim=the tool route, which the history-folder test pins
+test('a resources/read of the node-history catalog that fails with a file error carries a cause that names no storage path', async () => {
+  // Arrange
+  const harness = await createHarness()
+  const store = new NodeTestHistoryStore(
+    harness.directory,
+    sha256('resources-read-workspace'),
+  )
+  store.list = async () => {
+    throw new Error(`EIO: scandir '${harness.directory}/node-tests.v1'`)
+  }
+  harness.service.nodeHistoryStore = store
+  const endpoint = await startServer(harness.service),
+    connection = await connect(endpoint.descriptor)
+  try {
+    // Act
+    const failure = await connection.client
+      .readResource({ uri: 'codebook://node-history' })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+    // Assert
+    const data = z
+      .object({
+        data: z.object({ code: z.string(), cause: z.string() }),
+      })
+      .parse(failure).data
+    assert.equal(data.code, 'RUNTIME_FAILED')
+    assert.ok(!data.cause.includes(harness.directory), data.cause)
+    assert.match(data.cause, /<workspace>|<storage>/)
+  } finally {
+    await connection.close()
+    await endpoint.close()
+    await harness.close()
+  }
+})
