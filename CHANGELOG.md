@@ -23,7 +23,7 @@ Cycle 0050's second pull request ([Issue #118](https://github.com/laststance/cod
 - **Test replay words.** Saved studies rows read `Test replay · …`, and refusals say test replay where they said Node history: `Test replays cannot be deleted here yet.`, `There is no next stop in this test replay.`, `The replay debugger was stopped. Select this stop or use Inspect in native debugger to restart it.` (said by a seek or Play that reaches a stop after you stopped the debugger; Next stop, Previous stop or Inspect start it again).
 - **A browser recording opened while a test replay is selected** retires the test replay, and the Application pane shows the recording's own pages.
 
-**Another window of the same workspace.** A test history that another live window records is listed and opened as recording, not interrupted, and its journal is read only where it grew; once that window ends or crashes it reads interrupted. A writer record that could not be read for a moment is judged again a few seconds later.
+**Another window of the same workspace.** A test history that another live window records is listed and opened as recording, not interrupted, and its journal is read only where it grew; once that window seals it, it reads with its sealed status, and if that window ends without sealing it, as in a crash, it reads interrupted. A writer record that could not be read for a moment is judged again a few seconds later.
 
 **Compatibility.** The MCP API stays 1.8. A history being recorded now carries a small writer record in its folder, removed when it seals; earlier versions ignore it, and test histories, learning materials and reader positions open in both directions unchanged.
 
