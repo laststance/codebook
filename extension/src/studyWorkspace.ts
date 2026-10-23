@@ -14120,15 +14120,18 @@ export class StudyWorkspace {
 
   /**
    * Brings the Application pane to the front, building it again first when the learner closed it while a test replay is selected, so Show recorded output and Focus application show the selected moment's recorded output (DS7); called for the Study pane's `focus-app` action.
-   * The reader's own entry ({@link open}) rebuilds the closed pane and draws the selected moment into it; the Study arrangement then places the rebuilt pane. Outside a test replay a closed pane stays closed: a browser replay and a live run own their pane's lifecycle, and a browser recording that loads retires the selected test replay (D20), so no test replay is selected during one.
+   * The reader's own entry ({@link open}) rebuilds the closed pane and draws the selected moment into it, after {@link prepareApplicationGroup} gave the pane a group of its own above the source's when the editor removed the emptied one. Outside a test replay a closed pane stays closed: a browser replay and a live run own their pane's lifecycle, and a browser recording that loads retires the selected test replay (D20), so no test replay is selected during one.
    * @example await this.focusApplication()
    */
   private async focusApplication(): Promise<void> {
     if (!this.app && this.selectedNodeHistory) {
+      // With `workbench.editor.closeEmptyGroups` off the editor keeps the emptied Application group as the first one, and `open` puts the pane back into it (F137); otherwise the first group is the source's (the emptied one is gone), and `open` alone would rebuild the pane there as a second tab before the stop's source, with the Study arrangement unable to move it because its receipt already says `study`. The pane then gets a group of its own above the source's, as a live run's and a replay's does, and nothing else moves.
+      const firstGroup = vscode.window.tabGroups.all.find(
+        (group) => group.viewColumn === vscode.ViewColumn.One,
+      )
+      if (firstGroup?.tabs.length)
+        await this.prepareApplicationGroup(undefined, undefined, true)
       await this.open()
-      // The pane `open` rebuilt sits at the fixed Application column, which is the source's group when the editor closed the emptied one (workbench.editor.closeEmptyGroups), and the re-entry's arrangement returns at once because its receipt already says `study`. With the receipt cleared the Study arrangement places the pane again, now that the three panes exist (D21, F137).
-      this.layoutReceipt = undefined
-      await this.arrange(undefined, 'study')
     }
     this.app?.reveal(undefined, false)
   }
