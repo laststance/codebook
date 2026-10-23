@@ -9147,6 +9147,8 @@ export class StudyWorkspace {
     this.repositoryRecordingOpen = undefined
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
     this.selectedNodeHistoryRequest++
+    // The cut-off selection no longer clears its requested moment (its token is gone), so the bump gives it back.
+    this.requestedNodeHistorySequence = undefined
     this.nodeHistoryPlaybackController?.abandon()
     this.replayUninspectedSnapshot = undefined
     this.selectedNodeHistoryValuesUninspected = false
@@ -11111,6 +11113,8 @@ export class StudyWorkspace {
     this.assertStudyNotMoving(id)
     // Once admitted, browser replay takes over the shared historical debugger; a Node stop still loading its values no longer owns it.
     this.selectedNodeHistoryRequest++
+    // The cut-off selection no longer clears its requested moment (its token is gone), so the bump gives it back.
+    this.requestedNodeHistorySequence = undefined
     this.nodeHistoryPlaybackController?.abandon()
     // The Node stop no longer owns Run and Debug: its hint goes, and Inspect restarts the debugger for it.
     this.selectedNodeHistoryValuesUninspected = false
@@ -23562,6 +23566,8 @@ export class StudyWorkspace {
       ))
     )
       return
+    // A caller that withdrew meanwhile (Pause, dispose) commits nothing, also after a slot that failed to open, which skips the debugger's own check.
+    if (this.isNodeHistoryRequestOutdated(request, isCurrent)) return
     // The slot's stopped line and label commit with the moment.
     if (this.nodeSourceSlot && slot !== 'failed')
       this.nodeSourceSlot = { ...this.nodeSourceSlot, stop: verifiedStop }

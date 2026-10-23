@@ -916,3 +916,35 @@ test('returning to the shown output while a stop still presents leaves the debug
     await harness.close()
   }
 })
+
+// Value: protects=a Play step or seek that the learner withdrew (Pause or dispose, with no newer selection) while its recorded-source slot was still failing to open commits nothing: not its moment, not its page, not its reader position; fails_when=the failed-slot branch skips the caller's withdrawal check and the moment (sequence 2) becomes the selected one after the learner paused; why_new=F282: only the debugger branch checked isCurrent; seam=the workspace harness's held and rejected non-file document open, with the caller's isCurrent turned false while the open is held; no_claim=the wording of the slot's failure row
+test('a Play step withdrawn while its slot fails to open commits no moment', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    const selected = harness.reader['selectedNodeHistory']!
+    let wanted = true
+    const held = harness.holdNextSource()
+    const step = harness.reader['requestNodeHistoryEvent'](selected, 2, {
+      publish: false,
+      alignPlayback: false,
+      isCurrent: () => wanted,
+    })
+    await held.started
+
+    // Act: the learner pauses while the slot's open is held, then the open fails.
+    wanted = false
+    held.reject(new Error('Injected held slot open failure'))
+    await step
+
+    // Assert
+    assert.equal(harness.reader['selectedNodeHistorySequence'], 1)
+    assert.equal(harness.reader['selectedNodeHistoryPage'], 0)
+  } finally {
+    await harness.close()
+  }
+})
