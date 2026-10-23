@@ -2324,26 +2324,33 @@ async function check(page, options, collected) {
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
       // Value: protects=a test replay's open putting its section in view once, so the Study's article above it does not push the transport out of sight, while the learner's later scroll is left alone and the next open scrolls again; fails_when=the message's scroll token is ignored, is honoured at every message (the learner cannot scroll away), or the next open does not scroll; why_new=F156 (the test replay section started far below the article); seam=none; no_claim=where the host places the pane (the native check)
       // Arrange: a short pane (240 px), the section below the fold, the page at its top; at the end of the page the section's top is its header's height from the pane's top, inside the pane.
-      await page.setViewportSize({ width: 600, height: 240 })
-      await publish(atFirstOutput)
-      await page.evaluate(() => window.scrollTo(0, 0))
-      const sectionTop = () =>
-        page.evaluate(() =>
-          Math.round(
-            document.getElementById('node-history').getBoundingClientRect().top,
-          ),
-        )
-      const topBeforeOpen = await sectionTop()
-      // Act
-      await publish({ ...atFirstOutput, nodeHistoryScrollToken: 11 })
-      const topAtOpen = await sectionTop()
-      await page.evaluate(() => window.scrollTo(0, 0))
-      await publish({ ...atFirstOutput, nodeHistoryScrollToken: 11 })
-      const topAfterLearnerScroll = await sectionTop()
-      await publish({ ...atFirstOutput, nodeHistoryScrollToken: 12 })
-      const topAtNextOpen = await sectionTop()
-      await page.setViewportSize({ width: 600, height: 800 })
-      // Assert
+      const shortPaneHeight = 240
+      await page.setViewportSize({ width: 600, height: shortPaneHeight })
+      let topBeforeOpen, topAtOpen, topAfterLearnerScroll, topAtNextOpen
+      try {
+        await publish(atFirstOutput)
+        await page.evaluate(() => window.scrollTo(0, 0))
+        const sectionTop = () =>
+          page.evaluate(() =>
+            Math.round(
+              document.getElementById('node-history').getBoundingClientRect()
+                .top,
+            ),
+          )
+        topBeforeOpen = await sectionTop()
+        // Act
+        await publish({ ...atFirstOutput, nodeHistoryScrollToken: 11 })
+        topAtOpen = await sectionTop()
+        await page.evaluate(() => window.scrollTo(0, 0))
+        await publish({ ...atFirstOutput, nodeHistoryScrollToken: 11 })
+        topAfterLearnerScroll = await sectionTop()
+        await publish({ ...atFirstOutput, nodeHistoryScrollToken: 12 })
+        topAtNextOpen = await sectionTop()
+      } finally {
+        // The next cases need the 800 px pane even when a step above threw.
+        await page.setViewportSize({ width: 600, height: 800 })
+      }
+      // Assert: the section starts below the 240 px pane, so only a scroll to it brings its top inside.
       cases.push({
         name: 'a test replay’s open scrolls its section into view once, and a later message of the same open leaves the learner’s scroll alone',
         actual: {
@@ -2353,10 +2360,12 @@ async function check(page, options, collected) {
           topAtNextOpen,
         },
         passed:
-          topBeforeOpen > 100 &&
-          topAtOpen < 240 &&
+          topBeforeOpen >= shortPaneHeight &&
+          topAtOpen < topBeforeOpen &&
+          topAtOpen < shortPaneHeight &&
           topAfterLearnerScroll === topBeforeOpen &&
-          topAtNextOpen < 240,
+          topAtNextOpen < topAfterLearnerScroll &&
+          topAtNextOpen < shortPaneHeight,
       })
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
       // Value: protects=a closed Application pane is named in the test replay section with a way back: the row with Show recorded output appears, its click asks the host for the pane (`focus-app`), and the row goes once the pane is back; fails_when=the row stays hidden while the pane is closed, the button sends another action (`arrange`, which could not bring the pane back), or the row stays after the pane is back; why_new=Step 9 pass 1b's QA critical (Show recorded output could not bring the pane back) and pass 2's testing review: no DOM case showed the row or clicked it; seam=none; no_claim=that the host builds the pane again, which studyWorkspaceTestReplayOutput.test.ts proves
