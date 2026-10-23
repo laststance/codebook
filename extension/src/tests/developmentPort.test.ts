@@ -152,8 +152,13 @@ for (const [name, scripts] of [
   ],
   ['a program that is not next', { dev: 'node server.js -p 4433' }],
   [
-    'a delegation two levels deep',
-    { dev: 'npm run a', a: 'npm run b', b: 'next dev -p 4434' },
+    'a delegation three levels deep',
+    {
+      dev: 'npm run a',
+      a: 'npm run b',
+      b: 'npm run c',
+      c: 'next dev -p 4434',
+    },
   ],
 ] as const)
   test(`${name} does not decide the port and the default is reported`, async () => {
@@ -164,7 +169,340 @@ for (const [name, scripts] of [
     const declared = await declaredPortOf(files)
 
     // Assert
-    assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
+    assert.equal(declared.port, 3000)
+    assert.match(declared.source, /^Next's default port/)
+  })
+
+/** What `applicationPortSource` starts with when the dev script has a form the reader does not read (D68). */
+const UNREAD_SOURCE = (segment: string): string =>
+  `Next's default port, taken because the dev script has a form Codebook does not read: "${segment}"`
+
+// Value: protects=each form D68 lists is read, so the app starts on the port the project's own dev script uses (F451); fails_when=a form falls back silently to 3000 while the script declares another port; why_new=OCR medium of the review of 944a4d25..6bc9eab2, reproduced for each form; seam=temporary project folders; no_claim=that the shell or Next accepts each form
+for (const [name, scripts, expected] of [
+  [
+    'cmd /c with a set before &&',
+    { dev: 'cmd /c "set PORT=4101&& next dev"' },
+    {
+      port: 4101,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'cmd.exe with its own flags',
+    { dev: 'cmd.exe /d /s /c "next dev -p 4102"' },
+    { port: 4102, source: 'the dev script in package.json' },
+  ],
+  [
+    'a next.cmd launcher',
+    { dev: 'next.cmd dev -p 4103' },
+    { port: 4103, source: 'the dev script in package.json' },
+  ],
+  [
+    'a Windows path to next.cmd',
+    { dev: 'node_modules\\.bin\\next.cmd dev -p 4104' },
+    { port: 4104, source: 'the dev script in package.json' },
+  ],
+  [
+    'cross-env-shell',
+    { dev: 'cross-env-shell "PORT=4105 next dev"' },
+    {
+      port: 4105,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'sh -c',
+    { dev: "sh -c 'next dev -p 4106'" },
+    { port: 4106, source: 'the dev script in package.json' },
+  ],
+  [
+    'bash -c with an assignment',
+    { dev: 'bash -c "PORT=4107 next dev"' },
+    {
+      port: 4107,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'dotenv before --',
+    { dev: 'dotenv -e .env -- next dev -p 4108' },
+    { port: 4108, source: 'the dev script in package.json' },
+  ],
+  [
+    'env -u with an assignment',
+    { dev: 'env -u X PORT=4109 next dev' },
+    {
+      port: 4109,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'node with its own flags and a path to next',
+    { dev: 'node --inspect node_modules/.bin/next dev -p 4110' },
+    { port: 4110, source: 'the dev script in package.json' },
+  ],
+  [
+    'node with a flag that takes a value',
+    {
+      dev: 'node --require ./setup.js node_modules/next/dist/bin/next dev -p 4111',
+    },
+    { port: 4111, source: 'the dev script in package.json' },
+  ],
+  [
+    'yarn next',
+    { dev: 'yarn next dev -p 4112' },
+    { port: 4112, source: 'the dev script in package.json' },
+  ],
+  [
+    'pnpm next',
+    { dev: 'pnpm next dev -p 4113' },
+    { port: 4113, source: 'the dev script in package.json' },
+  ],
+  [
+    'bunx next',
+    { dev: 'bunx next dev -p 4114' },
+    { port: 4114, source: 'the dev script in package.json' },
+  ],
+  [
+    'npm exec --',
+    { dev: 'npm exec -- next dev -p 4123' },
+    { port: 4123, source: 'the dev script in package.json' },
+  ],
+  [
+    'dotenvx run',
+    { dev: 'dotenvx run -- next dev -p 4122' },
+    { port: 4122, source: 'the dev script in package.json' },
+  ],
+  [
+    'bun naming a script',
+    { dev: 'bun web', web: 'next dev -p 4116' },
+    {
+      port: 4116,
+      source: 'the "web" script that the dev script runs in package.json',
+    },
+  ],
+  [
+    'concurrently npm:<script>',
+    { dev: 'concurrently npm:dev:web', 'dev:web': 'next dev -p 4117' },
+    {
+      port: 4117,
+      source: 'the "dev:web" script that the dev script runs in package.json',
+    },
+  ],
+  [
+    'concurrently pnpm:<script> after another command',
+    {
+      dev: 'concurrently "tsc -w" pnpm:web',
+      web: 'next dev -p 4124',
+    },
+    {
+      port: 4124,
+      source: 'the "web" script that the dev script runs in package.json',
+    },
+  ],
+  [
+    'a concurrently wildcard that names exactly one script',
+    {
+      dev: 'concurrently npm:dev:*',
+      'dev:web': 'next dev -p 4118',
+      lint: 'eslint .',
+    },
+    {
+      port: 4118,
+      source: 'the "dev:web" script that the dev script runs in package.json',
+    },
+  ],
+  [
+    'a delegation through two scripts',
+    { dev: 'npm run a', a: 'npm run b', b: 'next dev -p 4119' },
+    {
+      port: 4119,
+      source: 'the "b" script that the dev script runs in package.json',
+    },
+  ],
+  [
+    'a shell default in the port flag',
+    { dev: 'next dev -p ${PORT:-4120}' },
+    { port: 4120, source: 'the dev script in package.json' },
+  ],
+  [
+    'a quoted shell default in the port flag',
+    { dev: 'next dev --port "${PORT:-4121}"' },
+    { port: 4121, source: 'the dev script in package.json' },
+  ],
+  [
+    'a subshell followed by the real command',
+    { dev: '(echo starting) && next dev -p 4130' },
+    { port: 4130, source: 'the dev script in package.json' },
+  ],
+] as const)
+  test(`the dev script form ${name} declares its port`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=a dev script segment the reader cannot interpret is told in the port source instead of silently taking 3000 (D68); fails_when=the source says only "Next's default port" for a subshell, an unknown wrapper or an unresolvable variable, or quotes a secret value; why_new=F451; seam=temporary project folders; no_claim=that the learner's script runs on 3000
+for (const [name, scripts, segment] of [
+  ['a subshell', { dev: '(cd app && next dev -p 4000)' }, '( cd app'],
+  [
+    'an unknown wrapper',
+    { dev: 'turbo-run next dev -p 4000' },
+    'turbo-run next dev -p 4000',
+  ],
+  [
+    'a port flag with a variable it cannot resolve',
+    { dev: 'next dev -p $APP_PORT' },
+    'next dev -p $APP_PORT',
+  ],
+  [
+    'a PORT assignment with a variable it cannot resolve',
+    { dev: 'PORT=$APP_PORT next dev' },
+    'PORT=$APP_PORT next dev',
+  ],
+  [
+    'a secret assignment before an unknown wrapper',
+    { dev: 'API_KEY=secret123 turbo-run next dev' },
+    'API_KEY=… turbo-run next dev',
+  ],
+  [
+    'a concurrently wildcard that names two scripts',
+    {
+      dev: 'concurrently npm:dev:*',
+      'dev:web': 'next dev -p 4000',
+      'dev:api': 'node api.js',
+    },
+    'npm:dev:*',
+  ],
+  ['a delegation cycle', { dev: 'npm run dev' }, 'npm run dev'],
+  [
+    'a delegation deeper than the nesting limit',
+    {
+      dev: 'npm run a',
+      a: 'npm run b',
+      b: 'npm run c',
+      c: 'next dev -p 4000',
+    },
+    'npm run c',
+  ],
+  [
+    'a terminal control sequence in the segment',
+    { dev: 'turbo-run \u001b[31m next dev -p 4000' },
+    'turbo-run  next dev -p 4000',
+  ],
+] as const)
+  test(`${name} makes the port source say Next's default was taken for a form Codebook does not read`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE(segment) })
+  })
+
+test('a long unread segment is cut to 120 characters in the port source', async () => {
+  // Arrange
+  const files = {
+    'package.json': packageScripts({
+      dev: `turbo-run next dev ${'x'.repeat(300)}`,
+    }),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  const quoted = declared.source.slice(declared.source.indexOf('"') + 1, -1)
+  assert.equal(Array.from(quoted).length, 120)
+  assert.ok(quoted.endsWith('… [cut]'))
+})
+
+// Value: protects=a delegation chain exactly at the nesting limit is read and one step further is told as unread (F458); fails_when=the limit is checked only for concurrently, so a delegation loop is followed too deep or stops one level early; why_new=CodeRabbit CLI trivial of the review of 944a4d25..6bc9eab2; seam=temporary project folders; no_claim=other depths
+test('a delegation chain of exactly the nesting limit is read', async () => {
+  // Arrange
+  const files = {
+    'package.json': packageScripts({
+      dev: 'pnpm a',
+      a: 'pnpm b',
+      b: 'PORT=4132 next dev',
+    }),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, {
+    port: 4132,
+    source:
+      'a PORT assignment in the "b" script that the dev script runs in package.json',
+  })
+})
+
+// Value: protects=the last -p/--port wins, as in Next's own parser (F452); fails_when=the first value is taken and the app starts on a port its own `next dev` would not use; why_new=OCR low of the review of 944a4d25..6bc9eab2 (`next dev -p 4000 -p 5000` runs on 5000); seam=temporary project folders; no_claim=Next's parser
+for (const [script, port] of [
+  ['next dev -p 4140 -p 4141', 4141],
+  ['next dev --port 4142 -p=4143', 4143],
+  ['next dev -p 4144 --port=4145 --turbo', 4145],
+] as const)
+  test(`the dev script "${script}" declares the last port ${port}`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, {
+      port,
+      source: 'the dev script in package.json',
+    })
+  })
+
+// Value: protects=an unquoted # at the start of a word is a shell comment, so a port written after it is not the app's (F450); fails_when=`next dev # -p 4000` reads 4000 while the shell runs 3000; why_new=OCR medium of the review of 944a4d25..6bc9eab2, reproduced; seam=temporary project folders; no_claim=quoted or mid-word # (kept as text)
+for (const [name, script, expected] of [
+  [
+    'a comment after the command',
+    'next dev # -p 4000',
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'a comment after the port',
+    'next dev -p 4150 # -p 5000',
+    { port: 4150, source: 'the dev script in package.json' },
+  ],
+  [
+    'a comment that holds a separator',
+    'next dev -p 4151 # && next dev -p 5000',
+    { port: 4151, source: 'the dev script in package.json' },
+  ],
+  [
+    'a quoted hash',
+    'next dev -p 4152 "#" -p 4153',
+    { port: 4153, source: 'the dev script in package.json' },
+  ],
+  [
+    'a hash inside a word',
+    'next dev -p 4154#x',
+    { port: 3000, source: "Next's default port" },
+  ],
+] as const)
+  test(`${name} is read as the shell reads it`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, expected)
   })
 
 // Value: protects=applicationPortSource names the step that gave the port (D67); fails_when=a flag, an assignment or a delegation is reported as another step; why_new=D67 asks for the step in the source; seam=temporary project folders; no_claim=wording of the refusal
@@ -574,4 +912,84 @@ test('cancelling during the wait for a stopping run ends the start check at once
   } finally {
     releaseOwnedDevelopmentPort(stuck)
   }
+})
+
+// Value: protects=a start is refused while another run has claimed the port but its server has not bound yet, even when this start's probe reads the port free (F449); fails_when=two parallel starts both pass and launch on one port; why_new=OCR medium of the review of 944a4d25..6bc9eab2; seam=two parallel checks on one free OS-chosen port, run B's bind probe held until run A has claimed; no_claim=the real launch
+test('a parallel start is refused once the other run claimed the port, although the probe reads it free', async () => {
+  // Arrange
+  const port = await freePort()
+  let runAClaim: ReturnType<typeof claimOwnedDevelopmentPort> | undefined
+  let openGate: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => {
+    openGate = resolve
+  })
+  const bindForB = async () => {
+    await gate
+    return undefined
+  }
+  const runB = assertDevelopmentPortFree(
+    { port, source: 'test' },
+    { connect: silentConnect, bind: bindForB },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  try {
+    // Act
+    await assertDevelopmentPortFree(
+      { port, source: 'test' },
+      { connect: silentConnect },
+    )
+    runAClaim = claimOwnedDevelopmentPort(port)
+    openGate()
+    const refusal = await runB
+
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.equal(
+      refusal.message,
+      `Port ${port} is still held by an earlier Codebook repository-browser run that is still running, and the project declares it (test): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port. Stop that run (codebook_stop) and wait for it to finish stopping, then start again.`,
+    )
+  } finally {
+    if (runAClaim) releaseOwnedDevelopmentPort(runAClaim)
+  }
+})
+
+// Value: protects=a cancel during the probe's own connect ends the start check at once instead of after the pending connect (F456); fails_when=the abort is honored only after the connect times out and the check goes on; why_new=OCR low of the review of 944a4d25..6bc9eab2; seam=an injected connect that answers only after 400 ms and an abort after 30 ms; no_claim=a real network connect
+test('cancelling while the probe waits for a connect ends the start check at once', async () => {
+  // Arrange
+  const port = await freePort()
+  const controller = new AbortController()
+  let connects = 0
+  let destroyed = false
+  const slowConnect: ConnectLoopback = () => {
+    connects += 1
+    const socket = new EventEmitter() as unknown as Socket
+    const timer = setTimeout(() => socket.emit('timeout'), 400)
+    Object.assign(socket, {
+      setTimeout: () => socket,
+      destroy: () => {
+        destroyed = true
+        clearTimeout(timer)
+        return socket
+      },
+    })
+    return socket
+  }
+  setTimeout(() => controller.abort(new Error('Run cancelled')), 30)
+
+  // Act
+  const failure = await assertDevelopmentPortFree(
+    { port, source: 'test' },
+    { connect: slowConnect, signal: controller.signal },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.equal(String(failure), 'Error: Run cancelled')
+  assert.equal(connects, 1)
+  assert.equal(destroyed, true)
 })
