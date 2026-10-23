@@ -102,9 +102,27 @@ const TIMELINE_FULL_WIDTH_PERCENT = 100
 // What brings a recorded moment back while another tab is in front of the recorded application: the second sentence of the summary's line, and alone what a screen reader hears after the transport's status has said the label.
 const APPLICATION_COVERED_ANNOUNCEMENT =
   'Bring the Recorded application tab to the front to show this moment again.'
+/**
+ * The words of a timeline coverage strip's accessible name and marks, shared by the browser transport and the test replay transport (the String catalog); the pane's client code imports nothing, so they arrive through {@link STUDY_UI_OPTIONS}.
+ * The client words a name from them: `<n> <gap or gaps>: <times>; <n> <stop or stops>: <times>`.
+ */
+const TIMELINE_COVERAGE_TEXT = {
+  /** The strip's accessible name when no coverage is known. */
+  unknownName: 'Historical source and debugger coverage unknown',
+  gapSingular: 'source/debugger history gap',
+  gapPlural: 'source/debugger history gaps',
+  stopSingular: 'recorded stop',
+  stopPlural: 'recorded stops',
+  /** The tooltip of a gap span, before its times. */
+  gapTitle: 'Not recorded at this moment',
+  /** The tooltip of a recorded stop tick, before its time. */
+  stopTitle: 'Recorded source and debugger',
+} as const
 export const STUDY_UI_OPTIONS = {
   /** A test replay's fixed words (the String catalog); the pane's client code imports nothing, so they arrive here. */
   testReplay: NODE_TEST_REPLAY_TEXT,
+  /** The words of both transports' coverage strips. */
+  coverage: TIMELINE_COVERAGE_TEXT,
   sequence: STUDY_SEQUENCE_LAYOUT,
   maxStickyFraction: 0.35,
   compactReaderMaxWidthPx: STUDY_COMPACT_READER_MAX_WIDTH_PX,
