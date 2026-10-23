@@ -2040,6 +2040,50 @@ test('a slot shown again without the keyboard gets its stopped line and label ag
   }
 })
 
+// Value: protects=the Study pane's Focus source while a test replay is selected: the recorded-source slot's tab comes to the front of its group beneath another tab and takes the keyboard, with the stop's line and label as the slot shows them; fails_when=Focus source runs the article render, which a selected test replay skips (F156), so the slot stays behind the learner's tab and nothing happens, with no error; why_new=Cycle 0050 F383 (N50: Focus source did nothing with a test replay selected); seam=the workspace harness, coverSlot (a learner's file in front of the slot's group), the reader's source action and the harness's active text editor; no_claim=the native tab strip
+test('Focus source brings the recorded-source slot to the front of its group and gives it the keyboard', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const column = await coverSlot(harness)
+    const slotGroup = harness.groups.find(
+      (group) => group.viewColumn === column,
+    )!
+    assert.equal(
+      (
+        slotGroup.activeTab?.input as { uri?: { path?: string } }
+      ).uri?.path?.includes('/node-history-slot/'),
+      false,
+    )
+
+    // Act
+    await harness.reader.action('source')
+
+    // Assert
+    assert.equal(
+      (
+        slotGroup.activeTab?.input as { uri?: { path?: string } }
+      ).uri?.path?.includes('/node-history-slot/'),
+      true,
+    )
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.path.includes(
+        '/node-history-slot/',
+      ),
+      true,
+    )
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the stopped line is revealed once, at a selection's commit: returning to the slot tab redraws its line and label but does not scroll the learner back to the stop; fails_when=every redraw reveals the stopped line again, so the learner's scroll in the slot is lost whenever the tab comes back; why_new=F161 (decorateNodeSourceSlot revealed on every redraw); seam=the workspace harness's reveal log of the slot's editor and its fake onDidChangeVisibleTextEditors; no_claim=the native scroll position itself
 test('returning to the slot tab redraws the stop but does not scroll back to its line', async () => {
   // Arrange

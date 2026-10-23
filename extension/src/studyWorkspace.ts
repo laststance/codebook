@@ -8689,7 +8689,11 @@ export class StudyWorkspace {
       return
     }
     if (action === 'return-current') await this.returnCurrentSelection()
-    if (action === 'source') await this.renderSelection(false)
+    if (action === 'source') {
+      // A test replay's source is its recorded-source slot; the Study's own selection shows no article source (F156), so Focus source fronts the slot (F383).
+      if (this.testReplayHoldsComposition()) await this.focusNodeSourceSlot()
+      else await this.renderSelection(false)
+    }
     if (action === 'focus-app') await this.focusApplication()
     if (action === 'focus-context') {
       if (this.summaryComposition) await this.showLearningSummary()
@@ -11465,7 +11469,9 @@ export class StudyWorkspace {
   }
 
   /**
-   * Opens the Study composition for a test replay that is about to open: a closed reader opens, and the Live composition (which has no Study pane) gives way to it (F208); called by {@link openNodeHistoryFromHost}.
+   * Opens the Study composition for a test replay that is about to open: a closed reader opens, the Live composition (which has no Study pane) gives way to it (F208), and a reader that stands in the Study composition without its Study pane gets the pane again; called by {@link openNodeHistoryFromHost}.
+   * An earlier entry that failed after it left the Live composition leaves exactly that state (open, not live, no Study pane); skipping the open then showed the Application, the slot and the debugger with no transport (F384).
+   * @throws What {@link open} throws; the caller tells it.
    * @example await this.enterStudyCompositionForReplay()
    */
   private async enterStudyCompositionForReplay(): Promise<void> {
@@ -24420,6 +24426,34 @@ export class StudyWorkspace {
     } finally {
       deadline.cancel()
     }
+  }
+
+  /**
+   * Brings the recorded-source slot's tab to the front of its group with the keyboard in it, the stop's line as the slot already shows it; called by the Study pane's Focus source action ({@link receive}) while a test replay is selected.
+   * Nothing is shown when the replay has no slot yet (it is still opening or was retired); the slot's own selection draws its line and label, and this only fronts the tab that already holds them.
+   * @returns Once the editor showed the slot tab, or at once when no slot exists.
+   * @example await this.focusNodeSourceSlot() // the Captured-data.ts tab in front of the Welcome tab, with the keyboard
+   */
+  private async focusNodeSourceSlot(): Promise<void> {
+    const slot = this.nodeSourceSlot
+    if (!slot) return
+    const address = slot.uri.toString()
+    // The group that holds the slot's tab now; a slot closed by hand opens again where its column rule puts it.
+    const holder = vscode.window.tabGroups.all.find((group) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === address,
+      ),
+    )
+    const document = await vscode.workspace.openTextDocument(slot.uri)
+    await vscode.window.showTextDocument(document, {
+      viewColumn:
+        holder?.viewColumn ?? this.nodeSourceSlotColumn(slot.uri, undefined),
+      preserveFocus: false,
+      preview: false,
+    })
+    this.decorateNodeSourceSlot()
   }
 
   /**
