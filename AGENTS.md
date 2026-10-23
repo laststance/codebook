@@ -214,7 +214,7 @@ Standing rules, stated as rules (no decision log); delivery chain and ship limit
 - Never an easier repository, never a tenth acceptance target. Recheck its revision, settings, dirty state; tell the owner before occupying the desktop; record unsupported behavior and missing setup. Docs-only work needs no native launch.
 - Development results earn no nine-project credit, fill no final row. Final acceptance freezes its own targets and candidate; Stage 1 starts only when its prerequisites hold.
 - Use real opened repositories; isolated inputs verify mechanisms only, never as bundled demos or practical trials. Retired local trial resources are removed; old records in Git are no current proof.
-- Development chats: VS Code = Copilot Chat, model **GPT6 Luna** (owner, 2026-10-21: the cheaper model); Cursor = Agent, model **Grok 4.6 high**, Fast on allowed (owner, 2026-10-24: 「これからGrok4.6Hiのファストオンで大丈夫ですよ。」); after observed credit exhaustion (either host) = the installed **Codex Extension** (Claude Code extension fallback retired).
+- Development chats: VS Code = Copilot Chat, model **GPT6 Luna** (owner, 2026-10-21: the cheaper model); Cursor = Agent, model **Grok 4.6 high**, Fast on allowed (owner, 2026-10-24 JST: 「これからGrok4.6Hiのファストオンで大丈夫ですよ。」); after observed credit exhaustion (either host) = the installed **Codex Extension** (Claude Code extension fallback retired).
   - Model missing from the picker → that host's trial is NOT RUN, picker list recorded.
   - Record the actual chat and fallback reason; buy no credits; never label fallback evidence Copilot.
   - Final acceptance has its own standard-chat rules. Historical Claude extension observations keep their identities.
