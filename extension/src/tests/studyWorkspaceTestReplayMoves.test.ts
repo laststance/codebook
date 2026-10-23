@@ -7,6 +7,8 @@ import { workspaceHarness } from './studyWorkspaceHarness'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
+type Harness = Awaited<ReturnType<typeof workspaceHarness>>
+
 // Value: protects=two quick moves of a test replay add up: while the first move's debugger presentation is still loading, the second move is computed from the moment the first one is going to, not from the moment still shown; fails_when=the second press targets from the shown moment, so Next stop then Next event lands on the output after the first stop (sequence 3) instead of the result after the second stop (sequence 5); why_new=F129: both presses computed their target from selectedNodeHistorySequence, which changes only after the presentation and the position write; seam=the workspace harness's held historical debug presentation; no_claim=Play's own pacing
 test('Next stop then Next event pressed while the first move loads moves on from where the first move goes', async () => {
   // Arrange
@@ -348,3 +350,109 @@ for (const { request, message } of requestsOfTheSecondStop) {
     }
   })
 }
+
+/** The slow requests a reopen or a return to Live can cut off: Next stop from the first stop, and the two requests of the second stop above. */
+const SLOW_REQUESTS = [
+  {
+    request: 'Next stop',
+    message: (studyId: string, revision: number) => ({
+      type: 'node-history-step',
+      revision,
+      studyId,
+      direction: 'next',
+      unit: 'stop',
+    }),
+  },
+  ...requestsOfTheSecondStop,
+] as const
+
+/** What cuts a slow request off: opening the same replay again, or leaving it for Live (which retires it) and opening it again. */
+const CUT_OFFS = [
+  {
+    name: 'opening the replay again',
+    cutOff: async (
+      harness: Harness,
+      studyId: string,
+      settle: () => void,
+    ): Promise<void> => {
+      const reopening = harness.reader.openLearningReplay(studyId)
+      settle()
+      await reopening
+    },
+  },
+  {
+    name: 'Return to Live',
+    cutOff: async (
+      harness: Harness,
+      studyId: string,
+      settle: () => void,
+    ): Promise<void> => {
+      const leaving = harness.reader.action('return-current')
+      settle()
+      await leaving
+      await harness.reader.openLearningReplay(studyId)
+    },
+  },
+] as const
+
+for (const { request, message } of SLOW_REQUESTS)
+  for (const { name, cutOff } of CUT_OFFS) {
+    // Value: protects=a slow Next stop, Select event or Inspect that the learner cuts off by opening the replay again or by returning to Live gives its requested moment back: in the replay opened again, one Next stop lands on the stop after the shown one; fails_when=the cut-off request's target (the second stop) outlives the reopen or the retire and the next Next stop starts from it, so there is no stop after it and the press is refused; why_new=F335 (PR-2 /ship Step 9 pass 3 state-machines): only Close and a browser recording's admission cut off a request in a test; seam=the workspace harness's held historical debug presentation, released as superseded while the cut-off runs; no_claim=the wording of the failure the cut-off request reports
+    test(`Next stop after ${name} cut off a slow ${request} of the second stop moves on from the shown stop`, async () => {
+      // Arrange
+      const harness = await workspaceHarness()
+      try {
+        const history = await saveTwoStopNodeHistory(
+          harness.service.nodeHistoryStore!,
+        )
+        await harness.reader.action('retry')
+        await harness.reader.openLearningReplay(history.studyId)
+        await waitUntil(
+          () =>
+            lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+            !lastView(harness)?.loading,
+          'the test replay lands on its first stop',
+          READER_RESULT_BOUND_MS,
+        )
+        const held = harness.holdHistoricalDebugPresentation(true)
+        harness.receiveContext(
+          message(history.studyId, lastView(harness)!.revision),
+        )
+        await held.started
+        await cutOff(harness, history.studyId, () =>
+          held.reject(
+            new Error('Historical debugger presentation was superseded.'),
+          ),
+        )
+        const shown = () =>
+          harness.reader['message']().nodeHistoryPosition?.sequence
+        await waitUntil(
+          () => shown() === 2 && !harness.reader['message']().loading,
+          'the replay opened again shows its first stop',
+          READER_RESULT_BOUND_MS,
+        )
+
+        // Act: delivered to the reader as the Study pane's step control would, as a return to Live closed the pane.
+        void harness.reader['receive'](
+          {
+            type: 'node-history-step',
+            revision: harness.reader['message']().revision,
+            studyId: history.studyId,
+            direction: 'next',
+            unit: 'stop',
+          },
+          'context',
+        )
+        await waitUntil(
+          () => shown() === 4,
+          'the Next stop lands on the second stop',
+          READER_RESULT_BOUND_MS,
+        )
+
+        // Assert
+        assert.equal(shown(), 4)
+      } finally {
+        await harness.close()
+      }
+    })
+  }

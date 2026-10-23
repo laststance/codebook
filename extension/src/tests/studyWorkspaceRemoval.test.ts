@@ -2684,7 +2684,7 @@ test('a Node test history chosen during Recording is refused with its sentence a
     assert.equal(view.nodeHistory, undefined)
     assert.equal(
       view.errors.includes(
-        'Error: Close browser replay before opening a separate Node test history.',
+        'Error: Close browser replay before opening a test replay.',
       ),
       true,
     )
@@ -2718,8 +2718,7 @@ test('the browser-replay refusal of a Node test history disappears once that his
       'the reply to the refused open request',
       1_000,
     )
-    const refusal =
-      'Error: Close browser replay before opening a separate Node test history.'
+    const refusal = 'Error: Close browser replay before opening a test replay.'
     const refusedErrors = [...harness.reader.inspect().view!.errors]
     await readerSeams(harness).receive(
       {
@@ -2771,8 +2770,7 @@ test('the browser-replay refusal of a Node test history offers no Retry storage 
       'the reply to the refused open request',
       1_000,
     )
-    const refusal =
-      'Error: Close browser replay before opening a separate Node test history.'
+    const refusal = 'Error: Close browser replay before opening a test replay.'
     const refused = structuredClone(harness.reader.inspect().view!)
 
     // Act: the learner chooses a tab in the pane.

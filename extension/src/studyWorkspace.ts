@@ -11316,9 +11316,7 @@ export class StudyWorkspace {
         present: async (sequence, isCurrent) => {
           const selectedHistory = this.selectedNodeHistory
           if (!selectedHistory || selectedHistory.header.studyId !== studyId)
-            throw new Error(
-              'The selected Node history changed during playback.',
-            )
+            throw new Error('The selected test replay changed during playback.')
           await this.requestNodeHistoryEvent(selectedHistory, sequence, {
             publish: false,
             alignPlayback: false,
@@ -12130,7 +12128,7 @@ export class StudyWorkspace {
     if (previews.length) {
       try {
         if (!(await vscode.window.tabGroups.close(previews, true)))
-          throw new Error('The editor kept the previous Node history preview.')
+          throw new Error('The editor kept the previous test replay preview.')
       } catch (error) {
         this.report(
           'layout',
@@ -12302,7 +12300,7 @@ export class StudyWorkspace {
     if (this.selectedNodeHistoryOutputIndex?.history !== history)
       this.selectedNodeHistoryOutputIndex = {
         history,
-        index: indexNodeTestOutput(history.entries, { alreadyShown: true }),
+        index: indexNodeTestOutput(history.entries),
       }
     // Only a test replay that is opening reads as loading, by its own marker: a background render's loading state, which may end in the middle of the open, never does.
     // The marker belongs to the replay being opened: while another replay is read, the one still shown keeps its output, scroll position and selection, and its name never stands under the loading line (F143, F150).
@@ -21986,9 +21984,7 @@ export class StudyWorkspace {
       this.publish()
     if (message.type === 'node-history') {
       if (this.recordingActive)
-        throw new Error(
-          'Close browser replay before opening a separate Node test history.',
-        )
+        throw new Error('Close browser replay before opening a test replay.')
       await this.openNodeHistory(message.studyId, message.revision)
     }
     if (message.type === 'node-history-understanding') {
@@ -22001,7 +21997,7 @@ export class StudyWorkspace {
         this.selectedNodeHistory.header.studyId !== message.studyId
       )
         throw new Error(
-          'Select the matching Node test history before saving an understanding choice.',
+          'Select the matching test replay before saving an understanding choice.',
         )
       const decision = await this.nodeHistoryStore!.saveLearningDecision(
         message.studyId,
@@ -22025,7 +22021,7 @@ export class StudyWorkspace {
         this.selectedNodeHistory.header.studyId !== message.studyId
       )
         throw new Error(
-          'Select the matching Node test history before saving its learning material.',
+          'Select the matching test replay before saving its learning material.',
         )
       const material = await this.service?.explainNodeHistory({
         studyId: message.studyId,
@@ -22046,7 +22042,7 @@ export class StudyWorkspace {
     }
     if (message.type === 'node-history-page') {
       if (this.selectedNodeHistory?.header.studyId !== message.studyId)
-        throw new Error('Select the matching Node history before paging.')
+        throw new Error('Select the matching test replay before paging.')
       const pageCount = Math.max(
         1,
         Math.ceil(
@@ -22055,19 +22051,19 @@ export class StudyWorkspace {
         ),
       )
       if (message.page >= pageCount)
-        throw new Error('The requested Node history page is unavailable.')
+        throw new Error(
+          'The requested page of this test replay is unavailable.',
+        )
       this.selectedNodeHistoryPage = message.page
       this.publish()
     }
     if (message.type === 'node-history-step') {
       if (this.recordingActive)
-        throw new Error(
-          'Close browser replay before navigating a separate Node test history.',
-        )
+        throw new Error('Close browser replay before navigating a test replay.')
       const history = this.selectedNodeHistory
       if (!history || history.header.studyId !== message.studyId)
         throw new Error(
-          'Select the matching saved Node history before navigating its timeline.',
+          'Select the matching saved test replay before navigating its timeline.',
         )
       const target = nodeHistoryStepTarget(
         history.entries,
@@ -22086,13 +22082,11 @@ export class StudyWorkspace {
     }
     if (message.type === 'node-history-event') {
       if (this.recordingActive)
-        throw new Error(
-          'Close browser replay before navigating a separate Node test history.',
-        )
+        throw new Error('Close browser replay before navigating a test replay.')
       const history = this.selectedNodeHistory
       if (!history || history.header.studyId !== message.studyId)
         throw new Error(
-          'Select the matching saved Node history before navigating its timeline.',
+          'Select the matching saved test replay before navigating its timeline.',
         )
       // A step's action selects its event and that step; an event's own control, the event's first step (DS21), once the selection commits.
       await this.requestNodeHistoryEvent(history, message.sequence, {
@@ -22102,19 +22096,19 @@ export class StudyWorkspace {
     if (message.type === 'node-history-stop') {
       if (this.recordingActive)
         throw new Error(
-          'Close browser replay before inspecting a separate Node history stop.',
+          'Close browser replay before inspecting a stop of a test replay.',
         )
       const history = this.selectedNodeHistory
       if (!history || history.header.studyId !== message.studyId)
         throw new Error(
-          'Select the matching saved Node history before inspecting its debugger state.',
+          'Select the matching saved test replay before inspecting its debugger state.',
         )
       if (
         history.entries.find((entry) => entry.sequence === message.sequence)
           ?.type !== 'stop'
       )
         throw new Error(
-          'The requested Node history event is not a debugger stop.',
+          'The requested event of this test replay is not a debugger stop.',
         )
       await this.requestNodeHistoryEvent(history, message.sequence, {
         requireDebugger: true,
@@ -22123,23 +22117,23 @@ export class StudyWorkspace {
     if (message.type === 'node-history-playback') {
       if (this.recordingActive)
         throw new Error(
-          'Close browser replay before controlling a separate Node test history.',
+          'Close browser replay before controlling a test replay.',
         )
       if (
         this.selectedNodeHistory?.header.studyId !== message.studyId ||
         !this.nodeHistoryPlaybackController
       )
         throw new Error(
-          'Select the matching saved Node history before controlling its timeline.',
+          'Select the matching saved test replay before controlling its timeline.',
         )
       if (message.action !== 'seek' && message.positionMs !== undefined)
-        throw new Error('Only a Node history time seek accepts a position.')
+        throw new Error('Only a seek in a test replay accepts a position.')
       if (message.action === 'play') this.nodeHistoryPlaybackController.play()
       else if (message.action === 'pause')
         this.nodeHistoryPlaybackController.pause()
       else if (message.action === 'seek') {
         if (message.positionMs === undefined)
-          throw new Error('Node history seek requires a recorded time.')
+          throw new Error('A seek in a test replay needs a recorded time.')
         await this.nodeHistoryPlaybackController.seek(message.positionMs)
       }
     }
@@ -23588,17 +23582,17 @@ export class StudyWorkspace {
     const position = this.nodeHistoryEventPosition(history, sequence)
     const entry = position === undefined ? undefined : history.entries[position]
     if (!entry || position === undefined)
-      throw new Error('The requested Node history event is unavailable.')
+      throw new Error('The requested event of this test replay is unavailable.')
     const verifiedStop =
       entry.type === 'stop' && nodeStopSourceMatches(entry) ? entry : undefined
     if (entry.type === 'stop' && !verifiedStop && requireDebugger)
       throw new Error(
-        'The selected Node stop has no matching verified captured source for native debugging.',
+        'The selected stop of this test replay has no matching verified captured source for native debugging.',
       )
     // Only an explicit learner selection restarts a debugger the learner stopped; seek and Play report why they stopped.
     if (verifiedStop && this.replayDebugger?.available === false && !publish)
       throw new Error(
-        'The historical Node debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
+        'The replay debugger was stopped. Select this stop or use Inspect in native debugger to restart it.',
       )
     // A step action or Inspect on the moment already shown keeps every surface; another moment leaves the earlier one at once.
     if (entry.sequence !== this.selectedNodeHistorySequence)

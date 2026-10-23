@@ -394,3 +394,31 @@ test('a writer record the file system refuses leaves the start recording here an
   assert.equal(seenHere?.status, 'recording')
   assert.equal(seenElsewhere?.status, 'interrupted')
 })
+
+// Value: protects=opening a test history that another live window records reads it as recording, and as interrupted once that writer is gone, as Saved studies lists it; fails_when=the open reads such a history as interrupted with "no verified final seal" while it is still being recorded (only this window's own recordings were read as recording), or keeps reading it as recording after its writer crashed; why_new=F334 (PR-2 /ship Step 9 pass 3 testing): F260's branch of read() had no test, as every other-window test went through list(); seam=none; no_claim=the Study workspace's own refresh of an opened recording
+test('a test history another live window records opens as recording in a second window, and as interrupted once its writer is gone', async (context) => {
+  // Arrange
+  const { directory, writing, reading, workspaceKey } =
+    await twoWindows(context)
+  const header = nodeTestHistoryHeader(workspaceKey)
+  const writer = await writing.start(header)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 2,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+
+  // Act
+  const whileLive = await reading.read(header.studyId)
+  await markNodeTestWriterGone(directory, header.studyId)
+  const afterCrash = await reading.read(header.studyId)
+
+  // Assert
+  assert.equal(whileLive.status, 'recording')
+  assert.equal(afterCrash.status, 'interrupted')
+  assert.equal(
+    afterCrash.reason,
+    'Node test history has no verified final seal.',
+  )
+})

@@ -4,7 +4,10 @@ import { test } from 'node:test'
 import type { NodeTestHistoryEntry } from '../nodeTestHistorySchemas'
 import { accumulateNodeTestOutput } from '../utils/accumulateNodeTestOutput'
 import * as tailCut from '../utils/cutTextToTail'
-import { indexNodeTestOutput } from '../utils/indexNodeTestOutput'
+import {
+  indexNodeTestOutput,
+  stripOutputEntries,
+} from '../utils/indexNodeTestOutput'
 
 /** An output entry of a test replay, printed at `sequence` ms. */
 const printed = (
@@ -19,6 +22,21 @@ const printed = (
   channel,
   text,
 })
+
+/**
+ * Gives the entries as the Study workspace indexes them: their terminal controls removed across each channel ({@link stripOutputEntries}), as {@link sanitizeNodeTestHistory} does once per opened replay, before {@link indexNodeTestOutput} reads the shown text.
+ * @param entries - The entries as recorded.
+ * @returns The entries with each output entry's shown text.
+ * @example asShown([printed(1, 'stdout', 'a\u001b[3'), printed(2, 'stdout', '2mb')]) // texts 'a' and 'b'
+ */
+const asShown = (entries: NodeTestHistoryEntry[]): NodeTestHistoryEntry[] => {
+  const texts = stripOutputEntries(entries)
+  return entries.map((entry) =>
+    entry.type === 'output'
+      ? { ...entry, text: texts.get(entry.sequence)! }
+      : entry,
+  )
+}
 
 /** A result entry of a passing test at `sequence` ms. */
 const passed = (sequence: number): NodeTestHistoryEntry => ({
@@ -136,19 +154,21 @@ test('a long recorded output keeps its end and counts the characters left out', 
   })
 })
 
-// Value: protects=the Node inspector's own standard-error lines are counted for one muted line instead of shown or dropped silently, and output of only such lines or of terminal controls reads as nothing printed; fails_when=an inspector line shows as test output, the count is wrong, or a controls-only chunk makes the pane claim output; why_new=EN10's disclosed inspector line and DS7's empty state; seam=none; no_claim=inspector lines of other Node versions' wording
+// Value: protects=the Node inspector's own standard-error lines are counted for one muted line instead of shown or dropped silently, and output of only such lines or of terminal controls reads as nothing printed; fails_when=an inspector line shows as test output, the count is wrong, or a controls-only chunk makes the pane claim output; why_new=EN10's disclosed inspector line and DS7's empty state; why_changed=F339 (PR-2 /ship Step 9 pass 3 simplification): the index reads shown text, so the case strips its entries first, as the Study workspace does once per opened replay; seam=none; no_claim=inspector lines of other Node versions' wording
 test('Node inspector lines are counted, not shown, and controls alone are no output', () => {
   // Arrange
-  const index = indexNodeTestOutput([
-    printed(
-      1,
-      'stderr',
-      'Debugger listening on ws://127.0.0.1:9229/5f0c\nFor help, see: https://nodejs.org/en/docs/inspector\n',
-    ),
-    printed(2, 'stdout', '\u001b[2K'),
-    printed(3, 'stdout', 'RUN src/jobs.test.ts\n'),
-    printed(4, 'stderr', 'Debugger attached.\n'),
-  ])
+  const index = indexNodeTestOutput(
+    asShown([
+      printed(
+        1,
+        'stderr',
+        'Debugger listening on ws://127.0.0.1:9229/5f0c\nFor help, see: https://nodejs.org/en/docs/inspector\n',
+      ),
+      printed(2, 'stdout', '\u001b[2K'),
+      printed(3, 'stdout', 'RUN src/jobs.test.ts\n'),
+      printed(4, 'stderr', 'Debugger attached.\n'),
+    ]),
+  )
 
   // Act
   const onlyInspector = accumulateNodeTestOutput(index, 2)
@@ -164,15 +184,17 @@ test('Node inspector lines are counted, not shown, and controls alone are no out
   ])
 })
 
-// Value: protects=a chunk of only terminal controls, written on the other stream while a line is still being printed (a reporter's erase or cursor move on standard error in the middle of a standard-output line), changes no line and no channel: the unfinished line stays one line of its own channel and the lines after it keep their numbers; fails_when=the controls-only chunk ends the unfinished line (the line shows in two halves and every later line number moves by one) or is read as an empty line of its own channel; why_new=indexNodeTestOutput skips a chunk that holds only controls so a terminal's cursor moves cannot cut a line (EN10), and the test above puts its controls-only chunk where no line is unfinished, so removing that skip changes nothing it asserts; seam=none; no_claim=how the controls are removed (stripTerminalControls's tests)
+// Value: protects=a chunk of only terminal controls, written on the other stream while a line is still being printed (a reporter's erase or cursor move on standard error in the middle of a standard-output line), changes no line and no channel: the unfinished line stays one line of its own channel and the lines after it keep their numbers; fails_when=the controls-only chunk ends the unfinished line (the line shows in two halves and every later line number moves by one) or is read as an empty line of its own channel; why_new=indexNodeTestOutput skips a chunk that holds only controls so a terminal's cursor moves cannot cut a line (EN10), and the test above puts its controls-only chunk where no line is unfinished, so removing that skip changes nothing it asserts; why_changed=F339 (PR-2 /ship Step 9 pass 3 simplification): the index reads shown text, so the case strips its entries first, as the Study workspace does once per opened replay; seam=none; no_claim=how the controls are removed (stripTerminalControls's tests)
 test('a chunk of only terminal controls on the other stream leaves an unfinished line whole', () => {
   // Arrange
-  const index = indexNodeTestOutput([
-    printed(1, 'stdout', 'job 1 sch'),
-    printed(2, 'stderr', '\u001b[2K\u001b[?25l'),
-    printed(3, 'stdout', 'eduled\n'),
-    printed(4, 'stdout', 'job 2 scheduled\n'),
-  ])
+  const index = indexNodeTestOutput(
+    asShown([
+      printed(1, 'stdout', 'job 1 sch'),
+      printed(2, 'stderr', '\u001b[2K\u001b[?25l'),
+      printed(3, 'stdout', 'eduled\n'),
+      printed(4, 'stdout', 'job 2 scheduled\n'),
+    ]),
+  )
 
   // Act
   const whileControlsArrive = accumulateNodeTestOutput(index, 2)
@@ -192,15 +214,17 @@ test('a chunk of only terminal controls on the other stream leaves an unfinished
   ])
 })
 
-// Value: protects=a color sequence and a window-title string that the launcher's 4,096-character entry limit split across entries leave no tail or forged title in the lines, and the entries of the other channel between them do not break the string; fails_when=`2m` or `forged title` shows as output, or a line is lost; why_new=F109 and F148 (controls were removed per entry); seam=none; no_claim=the bounds of a stray introducer, which stripTerminalControls's tests pin
+// Value: protects=a color sequence and a window-title string that the launcher's 4,096-character entry limit split across entries leave no tail or forged title in the lines, and the entries of the other channel between them do not break the string; fails_when=`2m` or `forged title` shows as output, or a line is lost; why_new=F109 and F148 (controls were removed per entry); why_changed=F339 (PR-2 /ship Step 9 pass 3 simplification): the index reads shown text, so the case strips its entries first, as the Study workspace does once per opened replay; seam=none; no_claim=the bounds of a stray introducer, which stripTerminalControls's tests pin
 test('terminal strings split across output entries leave no text in the lines', () => {
   // Arrange
-  const index = indexNodeTestOutput([
-    printed(1, 'stdout', 'green \u001b[3'),
-    printed(2, 'stderr', 'warn\n'),
-    printed(3, 'stdout', '2mtext\n\u001b]0;forged '),
-    printed(4, 'stdout', 'title\u0007next\n'),
-  ])
+  const index = indexNodeTestOutput(
+    asShown([
+      printed(1, 'stdout', 'green \u001b[3'),
+      printed(2, 'stderr', 'warn\n'),
+      printed(3, 'stdout', '2mtext\n\u001b]0;forged '),
+      printed(4, 'stdout', 'title\u0007next\n'),
+    ]),
+  )
 
   // Act
   const shown = accumulateNodeTestOutput(index, 4)

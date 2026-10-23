@@ -544,7 +544,7 @@ test('Inspect on the selected stop keeps the step the learner chose', async () =
   }
 })
 
-// Value: protects=a move to an event the replay lacks, a seek outside its range and an Inspect on an event that is no debugger stop are each refused by name and change nothing: the moment, the step the learner chose and the Application pane stay; fails_when=a refused request moves the selection or the chosen step, posts into the Application pane, or says nothing; why_new=F125: Select event, seek and Inspect had no refused cell; seam=none; no_claim=the move buttons' disabled state (the Reader DOM check)
+// Value: protects=a move to an event the replay lacks, a seek outside its range and an Inspect on an event that is no debugger stop are each refused by name and change nothing: the moment, the step the learner chose and the Application pane stay; fails_when=a refused request moves the selection or the chosen step, posts into the Application pane, says nothing, or names a "Node history"; why_new=F125: Select event, seek and Inspect had no refused cell; why_changed=F336 (PR-2 /ship Step 9 pass 3 maintainability): each refusal is in test replay words, never "Node" (DS14, as F117); seam=none; no_claim=the move buttons' disabled state (the Reader DOM check)
 test('a Select event, a seek and an Inspect that the replay refuses change nothing and say why', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -598,6 +598,10 @@ test('a Select event, a seek and an Inspect that the replay refuses change nothi
 
     // Assert
     assert.equal(refusals.length, 3)
+    assert.equal(
+      refusals.some((refusal) => /\bNode\b/.test(refusal ?? '')),
+      false,
+    )
     assert.deepEqual(shownMoment(harness), before)
     assert.equal(harness.applicationOutputs().length, outputsBefore)
   } finally {
@@ -845,7 +849,7 @@ test('Play after the learner stopped the replay debugger pauses at the next stop
     advance(60)
     await waitUntil(
       () =>
-        /historical Node debugger was stopped/.test(
+        /replay debugger was stopped/.test(
           lastView(harness)?.errors.at(-1) ?? '',
         ),
       'Play tells why it stopped',

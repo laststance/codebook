@@ -9283,8 +9283,7 @@ async function check(page, options, collected) {
     )
   const layoutNotice =
       'Error: Existing editor groups were preserved because the editor did not retain the requested Codebook layout.',
-    controlRefusal =
-      'Error: Close browser replay before opening a separate Node test history.'
+    controlRefusal = 'Error: Close browser replay before opening a test replay.'
   await library([shownStudy], shownStudy.id, {
     errors: [layoutNotice],
     unretryableErrorCount: 1,

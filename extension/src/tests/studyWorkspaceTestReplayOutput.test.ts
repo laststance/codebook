@@ -562,7 +562,7 @@ test('a refused step action keeps the selected moment and the step the learner c
     // Assert
     assert.equal(
       lastView(harness)?.errors[0],
-      'Error: The requested Node history event is unavailable.',
+      'Error: The requested event of this test replay is unavailable.',
     )
     assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
     assert.equal(lastView(harness)?.nodeHistorySection?.selectedStepId, 'keep')
