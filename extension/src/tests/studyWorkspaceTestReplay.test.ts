@@ -18,6 +18,11 @@ import {
   saveOneStopNodeHistory,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
@@ -1615,6 +1620,136 @@ test('a test replay that cannot be read names a title with a U+202E in its failu
       /^Codebook could not open the test replay "src\/theme\.test\.ts › theme › applies dark mode": /,
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Open replay after a live node-test run whose reader stood in the Live composition and whose Study entry failed once: the failure is told in Output › Codebook and a notification, not as a bare command error, and the learner's next Open replay still reaches a Study pane with the replay in it; fails_when=the composition entry's failure escapes the command with no Output entry, or the failed entry leaves the reader open, not live and without a Study pane so the retry skips the entry and shows the Application, the slot and the debugger with no transport (F384, F382 closure); why_new=Cycle 0050 F384 and F382 (N50, the first Open replay after a live run); seam=workspaceHarness with the fake owned Node run, failNextPanelCreation of the Study pane, the diagnostics log, the reader's open, continue and stop; no_claim=which native change F382's guard saw (the cause of that refusal is not settled in the harness)
+test('a failed Study entry of Open replay after a live node-test run is told in Output and the next Open replay shows the Study pane', async () => {
+  // Arrange: the reader stands in the Live composition for the run, which then completes and stops; the Study pane's creation fails once.
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const { record, studyId } = await startLiveTestRun(harness, 'failed-entry')
+    harness.focusMutableDraft('utils.ts', 1)
+    await readerSeams(harness).refresh()
+    await harness.reader.open()
+    for (const generation of [1, 2])
+      await harness.service.continue({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        participant: 'server',
+        sessionId: 'owned-session',
+        threadId: 7,
+        generation,
+      })
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+    })
+    await readerSeams(harness).refresh()
+    await harness.reader.saveLearningReplay(studyId)
+    harness.failNextPanelCreation('codebook.studyContext')
+
+    // Act
+    const firstOpen = await harness.reader.openLearningReplay(studyId).then(
+      () => 'returned',
+      (error: unknown) => String(error),
+    )
+    await harness.reader.openLearningReplay(studyId)
+
+    // Assert
+    assert.equal(firstOpen, 'returned')
+    assert.deepEqual(
+      logged.map((entry) => [entry.surface, entry.studyId, entry.cause]),
+      [['open:test-replay', studyId, 'Injected native panel creation failure']],
+    )
+    assert.equal(harness.errorMessages.length, 1)
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      studyId,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the first Open replay after a node-test run beside Cursor's Agent, which Cursor refuses with the unreported-focus sentence after five seconds: the refusal is told in Output › Codebook and in a notification instead of failing the command bare, and after the learner clicks into a file the next Open replay opens the Study pane with the replay; fails_when=the refusal escapes openLearningReplay with no Output entry, or the retry shows the replay without a Study pane; why_new=Cycle 0050 F384 (N50 Cursor 3.26.16); seam=workspaceHarness with the fake owned Node run, addSeparateEditorPart and leavePaneFocusUnreportedBesideChat (Cursor's chat part), the fake clock, focusMutableDraft as the learner's click; no_claim=Cursor's own focus reports
+test('Open replay refused beside the Cursor Agent is told in Output and the retry after a click into a file shows the Study pane', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    const { record, studyId } = await startLiveTestRun(
+      harness,
+      'cursor-refusal',
+    )
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    await readerSeams(harness).refresh()
+    for (const generation of [1, 2])
+      await harness.service.continue({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        participant: 'server',
+        sessionId: 'owned-session',
+        threadId: 7,
+        generation,
+      })
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+    })
+    await readerSeams(harness).refresh()
+    await harness.reader.saveLearningReplay(studyId)
+
+    // Act: the five seconds of the wait for the focus report pass on a faked clock; the learner then clicks into a file and asks again.
+    enableFakeClock(context)
+    const firstOpen = harness.reader.openLearningReplay(studyId).then(
+      () => 'returned',
+      (error: unknown) => String(error),
+    )
+    await advanceClockUntilSettled(context, firstOpen, 6_000)
+    const firstResult = await firstOpen
+    resetFakeClock(context)
+    harness.focusMutableDraft('utils.ts', 1)
+    await harness.reader.openLearningReplay(studyId)
+
+    // Assert
+    assert.equal(firstResult, 'returned')
+    assert.equal(logged.length, 1)
+    assert.equal(logged[0]!.surface, 'open:test-replay')
+    assert.match(
+      logged[0]!.cause,
+      /did not report the keyboard focus within 5 s/,
+    )
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      studyId,
+    )
+  } finally {
+    resetFakeClock(context)
     await harness.close()
   }
 })

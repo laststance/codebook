@@ -11453,7 +11453,17 @@ export class StudyWorkspace {
       await this.returnCurrentSelection('learner')
       if (this.recordingActive) return
     }
-    await this.enterStudyCompositionForReplay()
+    try {
+      await this.enterStudyCompositionForReplay()
+    } catch (error) {
+      // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
+      const cause = sanitizeCause(
+        error,
+        this.service?.causeRoots ?? { storage: [] },
+      )
+      await this.tellTestReplayOpenFailure(studyId, error, cause)
+      return
+    }
     const outcome = await this.openNodeHistory(studyId, this.revision)
     if (outcome.status !== 'failed') {
       // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
@@ -11475,7 +11485,7 @@ export class StudyWorkspace {
    * @example await this.enterStudyCompositionForReplay()
    */
   private async enterStudyCompositionForReplay(): Promise<void> {
-    if (this.opened && !this.liveComposition) return
+    if (this.opened && !this.liveComposition && this.contextPanel) return
     this.hostOpeningTestReplay = true
     try {
       await this.open()
