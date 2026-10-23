@@ -1262,6 +1262,11 @@ export const REPOSITORY_DISCOVERY_CANDIDATE_LIMIT = 2_048
 export const REPOSITORY_DISCOVERY_TIMEOUT_MS = 30_000
 export const REPOSITORY_APPLICATION_LOG_LIMIT_BYTES = 262_144
 export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
+/** Next's own development port, used when neither the dev script nor an env file declares one. */
+export const DEVELOPMENT_SERVER_DEFAULT_PORT = 3000
+export const DEVELOPMENT_SERVER_MAX_PORT = 65_535
+/** Bounds how much of a project's package.json or env file is read to find its declared port. */
+export const DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES = 1_048_576
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT = 8
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT_CHARS = 512

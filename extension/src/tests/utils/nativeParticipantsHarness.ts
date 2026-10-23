@@ -944,6 +944,15 @@ export async function nativeParticipantsHarness(
       './utils/assertDevelopmentWorkspace': {
         assertDevelopmentWorkspace: async () => undefined,
       },
+      './utils/readDeclaredDevelopmentPort': {
+        readDeclaredDevelopmentPort: async () => ({
+          port: 4321,
+          source: 'the dev script in package.json',
+        }),
+      },
+      './utils/assertDevelopmentPortFree': {
+        assertDevelopmentPortFree: async () => undefined,
+      },
       './utils/launchDevelopmentServer': {
         launchDevelopmentServer: (
           _workspace: string,

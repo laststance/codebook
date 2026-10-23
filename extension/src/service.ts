@@ -2643,6 +2643,7 @@ export class StudyService {
               },
             }
           : undefined,
+      applicationOrigin: runtime?.applicationOrigin,
       manifestUri:
         runtime?.manifest || record.nodePrepared
           ? this.uri(record.id, 'manifest')

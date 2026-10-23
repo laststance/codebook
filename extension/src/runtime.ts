@@ -62,6 +62,8 @@ export type RuntimeParticipant = {
 }
 export type ConfiguredRuntimeView = {
   runId: string
+  /** The origin the owned app listens on (the project's own port), once it is ready. */
+  applicationOrigin?: string
   status: string
   cleaned: boolean
   resourcesReleased: boolean
