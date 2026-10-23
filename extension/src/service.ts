@@ -2644,6 +2644,7 @@ export class StudyService {
             }
           : undefined,
       applicationOrigin: runtime?.applicationOrigin,
+      applicationPortSource: runtime?.applicationPortSource,
       manifestUri:
         runtime?.manifest || record.nodePrepared
           ? this.uri(record.id, 'manifest')
