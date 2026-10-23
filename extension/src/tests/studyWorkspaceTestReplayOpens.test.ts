@@ -680,3 +680,48 @@ test('a render that settles while the shown test replay opens again ends on its 
     await harness.close()
   }
 })
+
+// Value: protects=closing the Study reader waits for the reader-position write of a test replay that is still running, so a window that closes (or storage removed after a close) never has the position file created under it; fails_when=close reports closed while a position write is still pending, so the write then lands in storage that is gone (ENOTEMPTY when a test removes its folder); why_new=F234: "stop moves skip outputs…" failed about half the time on 571d1bd because close did not wait for the write made after the commit; seam=the history store's read, held, which the position write awaits when it is not given a verified history; no_claim=the bound on a write that never returns (READER_CLOSE_STORAGE_TIMEOUT_MS, shared with the close's other storage waits)
+test('closing the reader waits for a reader-position write that is still running', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await openAtFirstStop(harness, history.studyId)
+    const read = store.read.bind(store)
+    let releaseRead = (): void => {}
+    const readHeld = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let readEntered = (): void => {}
+    const readStarted = new Promise<void>((resolve) => {
+      readEntered = resolve
+    })
+    store.read = async (studyId): ReturnType<typeof read> => {
+      readEntered()
+      await readHeld
+      return read(studyId)
+    }
+    const write = store.saveReaderPosition(history.studyId, 4)
+    await readStarted
+
+    // Act
+    const closing = harness.reader.close()
+    const closedWhileWriting = await Promise.race([
+      closing.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 300)),
+    ])
+    releaseRead()
+    await closing
+    await write
+    store.read = read
+
+    // Assert
+    assert.equal(closedWhileWriting, false)
+    assert.equal(await store.readReaderPosition(history.studyId), 4)
+  } finally {
+    await harness.close()
+  }
+})

@@ -9170,6 +9170,11 @@ export class StudyWorkspace {
         Promise.allSettled(this.archiveWrites.values()),
         storageTimeLeftMs(),
       )
+      // The test replay's reader position is written after each commit; a close does not report closed with that file still being created (F234).
+      await settledWithin(
+        this.nodeHistoryStore?.settleReaderPositionWrites(),
+        storageTimeLeftMs(),
+      )
       await settledWithin(this.library?.flush(), storageTimeLeftMs())
       // A Read maximized an editor group for the pane it showed; a closed workspace does not leave that maximization behind.
       const movedKeyboardToSideBar = await this.endEnlargementAtClose(
