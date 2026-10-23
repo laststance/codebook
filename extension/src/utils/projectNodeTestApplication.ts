@@ -18,8 +18,8 @@ import type { NodeTestOutputIndex } from './indexNodeTestOutput'
  */
 export type NodeTestApplicationView = {
   generation: number
-  /** Header line 1 (`Recorded test output · <t> s`), absent without a selected event. */
-  time?: string
+  /** Header line 1: `Recorded test output · <t> s`, or `Recorded test output` alone without a selected event (loading, no entries). */
+  time: string
   /** Header line 2: the cited test, shown in at most two lines with this whole text in its tooltip. */
   test: string
   /** The pane's accessible name. */
@@ -66,10 +66,11 @@ export function projectNodeTestApplication(
       : {}),
   }
   const testLine = describeNodeTestReplay({ kind: 'application-test', test })
-  // A history without entries has no time to name; neither has one still opening or one without a selected event.
+  // A history without entries has no time to name; neither has one still opening or one without a selected event: its header line 1 names the surface alone (F116).
   if (loading || !history.entries.length || !selected)
     return {
       generation,
+      time: describeNodeTestReplay({ kind: 'application-time' }),
       test: testLine,
       name: describeNodeTestReplay({ kind: 'application-name', test }),
       lines: [],

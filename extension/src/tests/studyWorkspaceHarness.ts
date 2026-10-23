@@ -5072,6 +5072,9 @@ export async function workspaceHarness(
     articleReturns,
     receiveContext: (message: unknown): void =>
       receivers.get('codebook.studyContext')!(message),
+    /** Delivers a message to the host as the Application pane's webview posts it (its test replay document's reports). @example harness.receiveApplication({ type: 'node-history-output-ready', history, generation: 1, follow: true }) */
+    receiveApplication: (message: unknown): void =>
+      receivers.get('codebook.scopedBrowser')!(message),
     receive: (message: unknown): void => {
       if (reader.inspect().view?.contentTab === 'recording') {
         for (const listener of summaryListeners) listener(message)

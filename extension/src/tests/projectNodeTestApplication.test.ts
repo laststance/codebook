@@ -160,7 +160,7 @@ test('a test replay that is still recording does not say its recording ended bef
   )
 })
 
-// Value: protects=the Application pane's states read as the String catalog writes them: loading while the replay opens, no output yet before the first output, no entries without a time, and a retired header named by its file alone; fails_when=a state shows another's line, an empty replay shows a time, or a retired header prints a title separator; why_new=DS7 and E2 states of the Application pane; seam=none; no_claim=the pane's closed state, which the Study section shows
+// Value: protects=the Application pane's states read as the String catalog writes them: loading while the replay opens, no output yet before the first output, no entries without a time, and a retired header named by its file alone; fails_when=a state shows another's line, an empty replay or one still loading shows a time or leaves header line 1 empty (F116), or a retired header prints a title separator; why_new=DS7 and E2 states of the Application pane; seam=none; no_claim=the pane's closed state, which the Study section shows
 test('the Application view says loading, nothing printed yet and no entries, and names a retired test by its file', () => {
   // Arrange
   const retiredHeader = storedHeader('workspace')
@@ -194,7 +194,7 @@ test('the Application view says loading, nothing printed yet and no entries, and
 
   // Assert
   assert.equal(loading.placeholder, 'Loading recorded test output…')
-  assert.equal(loading.time, undefined)
+  assert.equal(loading.time, 'Recorded test output')
   assert.equal(
     beforeOutput.placeholder,
     'No test output recorded up to this moment.',
@@ -202,6 +202,7 @@ test('the Application view says loading, nothing printed yet and no entries, and
   assert.equal(beforeOutput.time, 'Recorded test output · 0.05 s')
   assert.deepEqual(noEntries, {
     generation: 4,
+    time: 'Recorded test output',
     test: 'src/theme.test.ts',
     name: 'Recorded test output · src/theme.test.ts',
     lines: [],

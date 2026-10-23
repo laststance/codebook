@@ -1,12 +1,11 @@
 import { NODE_TEST_OUTPUT_TAIL_CHARS } from '../constants'
 
 import { cutTextToTail } from './cutTextToTail'
-import { NODE_TEST_REPLAY_TEXT } from './describeNodeTestReplay'
 import type {
   NodeTestOutputIndex,
   NodeTestOutputLine,
-  NodeTestOutputPendingLine,
 } from './indexNodeTestOutput'
+import { nodeTestOutputLineCost } from './nodeTestOutputLineCost'
 
 /** A kept line of the Application pane: its absolute number in the replay's output (an unfinished last line takes the next number), and `cut` when only its end fits. */
 export type NodeTestOutputViewLine = NodeTestOutputLine & {
@@ -49,7 +48,7 @@ export function accumulateNodeTestOutput(
     }
   const { lineCount, pending, inspectorLines } = index.after[position]!
   const pendingCost = pending
-    ? markCost(pending.channel) + pending.codePoints
+    ? nodeTestOutputLineCost(pending.channel, pending.codePoints, false)
     : 0
   const total = index.lineTotals[lineCount]! + pendingCost
   // The kept lines are gathered from the end backward and put in order once.
@@ -58,46 +57,40 @@ export function accumulateNodeTestOutput(
     startsMidLine = false
   /** Keeps a line whole when it fits, else its end, and says whether an earlier line can still be kept; `cost` is the line's shown code points, read from the index, never counted again. */
   const keep = (
-    line: () => NodeTestOutputLine,
-    tail: (characters: number) => string,
+    channel: NodeTestOutputLine['channel'],
+    span: { start: number; end: number },
     cost: number,
     number: number,
     lineFeed: boolean,
   ): boolean => {
     if (used + cost <= limit) {
-      keptFromEnd.push({ ...line(), number })
+      keptFromEnd.push({
+        channel,
+        text: index.body.slice(span.start, span.end),
+        number,
+      })
       used += cost
       return used < limit
     }
     // A cut line keeps its end and no `[stderr] ` mark, which belongs to its start.
     const characters = limit - used - (lineFeed ? 1 : 0)
     if (characters > 0) {
-      keptFromEnd.push({
-        channel: line().channel,
-        text: tail(characters),
-        number,
-        cut: true,
-      })
-      used += characters + (lineFeed ? 1 : 0)
+      const text = spanTail(index.body, span, characters)
+      keptFromEnd.push({ channel, text, number, cut: true })
+      // The count is taken from the kept text: a line shorter than the room left keeps all of it (F114).
+      used += Array.from(text).length + (lineFeed ? 1 : 0)
       startsMidLine = true
     }
     return false
   }
   // From the end backward: the unfinished line first, then the complete lines, until the tail is full.
   let earlierFits = pending
-    ? keep(
-        () => ({ channel: pending.channel, text: pendingText(pending) }),
-        (characters) => pendingTail(pending, characters),
-        pendingCost,
-        lineCount,
-        false,
-      )
+    ? keep(pending.channel, pending, pendingCost, lineCount, false)
     : true
   for (let number = lineCount - 1; earlierFits && number >= 0; number--) {
-    const line = index.lines[number]!
     earlierFits = keep(
-      () => line,
-      (characters) => cutTextToTail(line.text, characters),
+      index.lineChannels[number]!,
+      { start: index.lineStarts[number]!, end: index.lineEnds[number]! },
       index.lineTotals[number + 1]! - index.lineTotals[number]!,
       number,
       true,
@@ -114,49 +107,23 @@ export function accumulateNodeTestOutput(
 }
 
 /**
- * The code points the `[stderr] ` mark adds to a line of a channel; called by {@link accumulateNodeTestOutput} for the unfinished line, whose own code points the index counted.
- * @param channel - The line's channel.
- * @returns The mark's length for standard error, else 0.
- * @example markCost('stderr') // => 9
- */
-function markCost(channel: NodeTestOutputLine['channel']): number {
-  return channel === 'stderr' ? NODE_TEST_REPLAY_TEXT.stderrMark.length : 0
-}
-
-/**
- * Joins the unfinished line as an entry left it; called by {@link accumulateNodeTestOutput} only when the whole line fits the tail.
- * @param pending - The unfinished line at the selected entry.
- * @returns Its text.
- * @example pendingText({ channel: 'stdout', chunks: ['1 ', '2 ', '3'], chunkCount: 2, codePoints: 4 }) // => '1 2 '
- */
-function pendingText(pending: NodeTestOutputPendingLine): string {
-  return pending.chunks.slice(0, pending.chunkCount).join('')
-}
-
-/**
- * Keeps the end of the unfinished line as an entry left it, reading its chunks from the last one backward only until they hold enough, so a line printed without line feeds costs its tail, not its length; called by {@link accumulateNodeTestOutput} when the line does not fit whole.
- * @param pending - The unfinished line at the selected entry.
+ * Keeps the end of a line, reading only as much of the shared body as the end needs, so a line printed without line feeds costs its tail, not its length; called by {@link accumulateNodeTestOutput} for a line that does not fit whole.
+ * @param body - The index's shown text.
+ * @param span - The line's span in the body.
  * @param characters - How many code points of its end to keep.
- * @returns Its last `characters` code points.
- * @example pendingTail({ channel: 'stdout', chunks: ['1 2 ', '3 4 '], chunkCount: 2, codePoints: 8 }, 3) // => ' 4 '
+ * @returns The line's last `characters` code points (all of it when it has fewer).
+ * @example spanTail('1 2 3 4 ', { start: 0, end: 8 }, 3) // => ' 4 '
  */
-function pendingTail(
-  pending: NodeTestOutputPendingLine,
+function spanTail(
+  body: string,
+  span: { start: number; end: number },
   characters: number,
 ): string {
-  const parts: string[] = []
-  let held = 0
-  // A code point is at most two UTF-16 units, so chunks holding twice the units hold at least the code points asked for.
-  for (
-    let chunk = pending.chunkCount - 1;
-    chunk >= 0 && held < characters * 2;
-    chunk--
-  ) {
-    const text = pending.chunks[chunk]!
-    parts.push(text)
-    held += text.length
-  }
-  return cutTextToTail(parts.reverse().join(''), characters)
+  // A code point is at most two UTF-16 units, so the last twice the units hold at least the code points asked for.
+  return cutTextToTail(
+    body.slice(Math.max(span.start, span.end - characters * 2), span.end),
+    characters,
+  )
 }
 
 /**

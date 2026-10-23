@@ -1,38 +1,65 @@
 import type { NodeTestApplicationView } from './projectNodeTestApplication'
 
+/** Where the learner reads in the output region: the number of the first line in view and how far its top is above the region's top, so the same place is found again in a document written later (EN3). */
+export type NodeTestOutputAnchor = {
+  line: number
+  offsetPx: number
+}
+
+/** What the host keeps of the learner's reading of one test replay's output (D22): the follow choice and the scroll anchor. */
+export type NodeTestOutputReading = {
+  follow: boolean
+  anchor?: NodeTestOutputAnchor
+}
+
 /** What the document's script needs from the host; passed in, as the script imports nothing. */
 export type NodeTestOutputOptions = {
   /** Starts a line the test wrote to standard error. */
   stderrMark: string
-  /** The test replay the document shows; the learner's follow choice belongs to it (DS20). */
+  /** The test replay the document shows; the host files the learner's reading under it (DS20). */
   history: string
   /** How close to its end the output region counts as at its end. */
   endTolerancePx: number
-  /** At most how often the document writes its state; the writes in between are joined into one. */
-  stateWriteIntervalMs: number
+  /** At most how often the document reports the learner's scroll anchor to the host; the reports in between are joined into one. */
+  stateReportIntervalMs: number
+  /** The first view, drawn by the same code that draws every later one (F136). */
+  view: NodeTestApplicationView
+  /** The learner's reading of this replay as the host keeps it: a new document takes it, never state an earlier document left (D22). */
+  reading: NodeTestOutputReading
 }
 
-/** The message the Study workspace posts to the Application pane for each later event of the same test replay. */
+/** The message the Study workspace posts to the Application pane for each later event of the same test replay; the answer to the document's ready message also carries the host's reading. */
 export type NodeTestOutputUpdate = {
   type: 'node-history-output'
   generation: number
   view: NodeTestApplicationView
+  reading?: NodeTestOutputReading
 }
 
+/** What the document tells the host: it is ready for views (with the generation it shows and its follow choice), or the learner's reading changed. */
+export type NodeTestOutputReport =
+  | {
+      type: 'node-history-output-ready'
+      history: string
+      generation: number
+      follow: boolean
+    }
+  | ({
+      type: 'node-history-output-state'
+      history: string
+    } & NodeTestOutputReading)
+
 /**
- * Applies each later event of a test replay to the Application pane's one document in place (EN3), so moving through the replay never reloads the page: unchanged lines keep their nodes, so the learner's text selection, the scroll position and the keyboard focus survive, and an update older than the one shown is ignored. It follows the latest output until the learner scrolls up, and `Jump to latest` follows again (DS20); called by the document {@link testOutputHtml} writes, serialized with `toString()`, so it imports nothing.
- * The follow choice and the latest moment's view are kept in the webview's state with the replay they belong to: a document of the same replay that the editor loads again in the same panel (moved to another window, webviews reloaded) keeps the learner's choice and shows the latest moment. A replacement panel starts with an empty state, so the restore copy written into it starts following, as another replay's document does. The state is written at most once per interval while moments stream in, and when the document is left.
+ * Draws the Application pane's one document for a test replay and applies each later event to it in place (EN3), so moving through the replay never reloads the page: unchanged lines keep their nodes, so the learner's text selection, the scroll position and the keyboard focus survive, and an update older than the one shown is ignored. It follows the latest output until the learner scrolls up, and `Jump to latest` follows again (DS20); called by the document {@link testOutputHtml} writes, serialized with `toString()`, so it imports nothing.
+ * The first view is drawn by the same code as every later one. The learner's follow choice and scroll anchor belong to the host, which files them under the replay and passes them in the options of each document it writes, so a document that replaces another of the same replay (a presentation change, a Retry, a reload) opens where the learner was (D22). The document reports a change of its follow choice at once and its scroll anchor at most once per interval, and tells the host when it is ready, so a document that VS Code reloads in place is brought to the host's current view (F141). Views posted in a burst are drawn once per animation frame, the newest only (F140). Following is decided by the scroll position alone: a scroll that leaves the position the document itself set is the learner's (F106).
  * @param api - The webview's API.
- * @param generation - The generation of the view the document was written with.
- * @param options - The stderr mark, the shown replay, the end tolerance and the interval of state writes.
- * @example installNodeTestOutput(acquireVsCodeApi(), 3, { stderrMark: '[stderr] ', history: 'study_1', endTolerancePx: 2, stateWriteIntervalMs: 500 })
+ * @param options - The stderr mark, the shown replay, the end tolerance, the report interval, the first view and the host's reading.
+ * @example installNodeTestOutput(acquireVsCodeApi(), { stderrMark: '[stderr] ', history: 'study_1', endTolerancePx: 2, stateReportIntervalMs: 500, view, reading: { follow: true } })
  */
 export function installNodeTestOutput(
   api: {
-    getState(): unknown
-    setState(state: unknown): void
+    postMessage(message: NodeTestOutputReport): void
   },
-  generation: number,
   options: NodeTestOutputOptions,
 ): void {
   const element = (id: string): HTMLElement => {
@@ -42,78 +69,71 @@ export function installNodeTestOutput(
   }
   const output = element('test-output'),
     jump = element('test-output-jump')
-  /** The webview's state as an object, or none. */
-  const savedState = (): Record<string, unknown> | undefined => {
-    const state: unknown = api.getState()
-    return typeof state === 'object' && state !== null
-      ? { ...state }
-      : undefined
-  }
-  /** What this document kept of its own replay before the editor loaded it again (moved to another window, webviews reloaded): the follow choice and the latest moment's view; another replay's state does not carry over (DS20). */
-  const keptState = (): {
-    follow: boolean
-    view: NodeTestApplicationView | undefined
-  } => {
-    const state = savedState()
-    if (state?.testOutputHistory !== options.history)
-      return { follow: true, view: undefined }
-    const view = state.testOutputView
+  let shown = options.view.generation,
+    follow = options.reading.follow,
+    // The scroll position the document itself left; a scroll event that ends elsewhere is the learner's.
+    expectedTop = 0,
+    queued: NodeTestOutputUpdate | undefined,
+    frame: number | undefined,
+    reportTimer: ReturnType<typeof setTimeout> | undefined,
+    reportDue = false
+  /** Finds the first line in view and how far its top is above the region's top, by bisection over the lines (each probe reads one rectangle). */
+  const currentAnchor = (): NodeTestOutputAnchor | undefined => {
+    const lines = output.children
+    const regionTop = output.getBoundingClientRect().top
+    let low = 0,
+      high = lines.length - 1
+    while (low < high) {
+      const middle = (low + high) >> 1
+      if (lines[middle]!.getBoundingClientRect().bottom > regionTop)
+        high = middle
+      else low = middle + 1
+    }
+    const first = lines[low]
+    if (!(first instanceof HTMLElement)) return undefined
     return {
-      follow:
-        typeof state.testOutputFollow === 'boolean'
-          ? state.testOutputFollow
-          : true,
-      // The kept view is this document's own earlier update, which it wrote into its state itself.
-      view:
-        typeof view === 'object' &&
-        view !== null &&
-        'generation' in view &&
-        typeof view.generation === 'number'
-          ? (view as NodeTestApplicationView)
-          : undefined,
+      line: Number(first.dataset.line),
+      offsetPx: regionTop - first.getBoundingClientRect().top,
     }
   }
-  const kept = keptState()
-  let shown = generation,
-    follow = kept.follow,
-    scrolledByDocument = false,
-    latestView: NodeTestApplicationView | null = null,
-    writeTimer: ReturnType<typeof setTimeout> | undefined,
-    writeDue = false
-  /** Writes the follow choice and the latest moment's view with the replay they belong to, so the document the editor loads again shows them. */
-  const writeState = (): void => {
-    writeDue = false
-    api.setState({
-      ...savedState(),
-      testOutputFollow: follow,
-      testOutputHistory: options.history,
-      testOutputView: latestView,
+  /** Tells the host the learner's reading: the follow choice and the scroll anchor. */
+  const reportState = (): void => {
+    reportDue = false
+    api.postMessage({
+      type: 'node-history-output-state',
+      history: options.history,
+      follow,
+      anchor: currentAnchor(),
     })
   }
-  /** Writes the state now, or once the interval since the last write ends: each write copies the whole shown output, and Play posts up to twenty moments a second. */
-  const remember = (): void => {
-    if (writeTimer !== undefined) {
-      writeDue = true
+  /** Reports now, or once the interval since the last report ends: scrolling produces events faster than the host needs the anchor. */
+  const reportSoon = (): void => {
+    if (reportTimer !== undefined) {
+      reportDue = true
       return
     }
-    writeState()
-    writeTimer = setTimeout(() => {
-      writeTimer = undefined
-      // The moments that came during the interval are written as one.
-      if (writeDue) remember()
-    }, options.stateWriteIntervalMs)
+    reportState()
+    reportTimer = setTimeout(() => {
+      reportTimer = undefined
+      // The scrolls that came during the interval are reported as one.
+      if (reportDue) reportSoon()
+    }, options.stateReportIntervalMs)
   }
-  // A document that is left (moved to another window, webviews reloaded) writes the moment it shows before it goes.
+  // A document that is left reports the anchor it had joined before it goes.
   window.addEventListener('pagehide', () => {
-    if (writeDue) writeState()
+    if (reportDue) reportState()
   })
+  /** Remembers where the document left the scroll position, so the scroll event it causes (or none) is told from the learner's. */
+  const settle = (): void => {
+    expectedTop = output.scrollTop
+  }
   /** Shows a muted line with its text, or leaves it out without text. */
   const line = (id: string, value: string | undefined): void => {
     const target = element(id)
     target.textContent = value ?? ''
     target.hidden = value === undefined
   }
-  /** Makes the node of one output line: the `[stderr] ` mark for a standard-error line that is not cut, its text and a line feed, all as text. */
+  /** Makes the node of one output line: the `[stderr] ` mark for a standard-error line that is not cut, its text and a line feed, all as text. The one place that draws a line (F136). */
   const lineNode = (
     view: NodeTestApplicationView['lines'][number],
   ): HTMLSpanElement => {
@@ -138,9 +158,9 @@ export function installNodeTestOutput(
     output.scrollHeight - output.scrollTop - output.clientHeight <=
     options.endTolerancePx
   const toEnd = (): void => {
-    scrolledByDocument = true
     // Instant, never smooth: the learner's reduced-motion choice needs no separate path.
     output.scrollTop = output.scrollHeight
+    settle()
   }
   /** Removes the lines a view no longer holds and lists the kept ones by their number, so each line is found without searching the whole output. */
   const keptLines = (
@@ -178,10 +198,29 @@ export function installNodeTestOutput(
     for (const value of lines)
       previous = placeLine(value, kept.get(value.number), previous)
   }
+  /** Scrolls so that the anchor's line stands where it stood; an anchor whose line the view no longer holds leaves the region at its start. */
+  const restoreAnchor = (anchor: NodeTestOutputAnchor): void => {
+    const target = output.querySelector(`[data-line="${anchor.line}"]`)
+    if (target instanceof HTMLElement)
+      output.scrollTop +=
+        target.getBoundingClientRect().top -
+        output.getBoundingClientRect().top +
+        anchor.offsetPx
+    else output.scrollTop = 0
+    settle()
+  }
+  /** Takes the host's reading of the replay: following goes to the end, otherwise the anchor's line is found again. */
+  const takeReading = (reading: NodeTestOutputReading): void => {
+    follow = reading.follow
+    jump.hidden = follow
+    if (follow) toEnd()
+    else if (reading.anchor) restoreAnchor(reading.anchor)
+    else settle()
+  }
   const apply = (view: NodeTestApplicationView): void => {
     document.title = view.name
     element('test-output-main').setAttribute('aria-label', view.name)
-    element('test-output-time').textContent = view.time ?? ''
+    element('test-output-time').textContent = view.time
     const test = element('test-output-test')
     test.textContent = view.test
     test.title = view.test
@@ -190,31 +229,41 @@ export function installNodeTestOutput(
     line('test-output-cut', view.cut)
     line('test-output-placeholder', view.placeholder)
     line('test-output-end', view.end)
-    const scrollTopBefore = output.scrollTop
     placeLines(view.lines)
-    // A shorter output clamps the scroll position: that scroll is the document's, never the learner's return to the end (DS20).
-    if (output.scrollTop !== scrollTopBefore) scrolledByDocument = true
+    // A shorter output clamps the scroll position: that is the document's change, never the learner's return to the end (DS20), and `settle` records it as such.
     if (follow) toEnd()
+    else settle()
     jump.hidden = follow
   }
+  /** Draws the newest view that came since the last frame, and takes the host's reading when the update carries it. */
+  const drawQueued = (): void => {
+    frame = undefined
+    const update = queued
+    queued = undefined
+    if (!update) return
+    shown = update.generation
+    apply(update.view)
+    if (update.reading) takeReading(update.reading)
+  }
   output.addEventListener('scroll', () => {
-    // The document's own scroll to the end is no choice of the learner's.
-    if (scrolledByDocument) {
-      scrolledByDocument = false
+    // A scroll that ends where the document left the position (its own scroll to the end, or a clamp to a shorter output, or none at all) is no choice of the learner's.
+    if (output.scrollTop === expectedTop) return
+    expectedTop = output.scrollTop
+    const following = atEnd()
+    if (following === follow) {
+      reportSoon()
       return
     }
-    const following = atEnd()
-    if (following === follow) return
     follow = following
     jump.hidden = follow
-    // The learner's own choice is written at once; only the stream of moments is joined.
-    writeState()
+    // The learner's own choice is reported at once; only the anchor of a long scroll is joined.
+    reportState()
   })
   jump.addEventListener('click', () => {
     follow = true
-    writeState()
     toEnd()
     jump.hidden = true
+    reportState()
     // The button leaves the page, so the keyboard stays in the output it led to.
     output.focus()
   })
@@ -228,21 +277,25 @@ export function installNodeTestOutput(
         !data.view
       )
         return
-      // An update older than the one shown came late: the newer selection stands.
-      if (data.generation < shown) return
-      shown = data.generation
-      apply(data.view)
-      latestView = data.view
-      remember()
+      // An update older than the one shown or waiting came late: the newer selection stands.
+      if (data.generation < Math.max(shown, queued?.generation ?? 0)) return
+      queued = {
+        type: 'node-history-output',
+        generation: data.generation,
+        view: data.view,
+        ...(data.reading ? { reading: data.reading } : {}),
+      }
+      // Views that arrive faster than frames (Play posts up to twenty a second) are drawn once, the newest.
+      frame ??= requestAnimationFrame(drawQueued)
     },
   )
-  // A document loaded again from its first write shows the latest moment it had received, not the moment it was written with.
-  if (kept.view && kept.view.generation > generation) {
-    latestView = kept.view
-    shown = kept.view.generation
-    apply(kept.view)
-    return
-  }
-  if (follow) toEnd()
-  jump.hidden = follow
+  apply(options.view)
+  takeReading(options.reading)
+  // The host answers with its current view when this document's is older, as after VS Code reloads the page in place (F141).
+  api.postMessage({
+    type: 'node-history-output-ready',
+    history: options.history,
+    generation: shown,
+    follow,
+  })
 }
