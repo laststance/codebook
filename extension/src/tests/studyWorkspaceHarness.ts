@@ -3555,6 +3555,11 @@ export async function workspaceHarness(
       displayedImage = undefined
       this.abandonPaint?.(new Error('Pause display invalidated'))
     }
+    /** Shows the next recorded frame at once and clears nothing, as the real viewport's non-required preview frame does; the later required frame follows with the receipt. @example viewport.previewRecorded(png.toString('base64'), 'Recorded · 1.50 s') */
+    previewRecorded(image: string): void {
+      if (this.closed) return
+      displayedImage = image
+    }
     private abandonPaint?: (error: Error) => void
     /** Delays only the requested replay image so workspace tests can interrupt pending paints. @example await viewport.present(png) */
     async present(image: string): Promise<void> {

@@ -1180,6 +1180,29 @@ test('a recorded seek clears pending pixels and rejects their late acknowledgeme
   harness.viewport.close()
 })
 
+// Value: protects=a recorded moment's frame reaching the pane before its source and values are presented, as a frame that asks for no receipt and clears nothing; fails_when=the preview posts a `reset` with `clear: true` (a blank pane), or asks for a paint receipt that holds the moment; why_new=Cycle 0050 F3 (D29); seam=the viewport harness; no_claim=the webview's off-screen decode and swap
+test('a recorded preview posts one non-required frame and no clearing reset', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true, undefined, 'recording'),
+    epoch = '11111111-1111-1111-1111-111111111111'
+  harness.ready(epoch)
+
+  // Act
+  harness.viewport.previewRecorded('b2xk', 'Recorded 0.10 s')
+  await delay(0)
+
+  // Assert
+  const frames = harness.messages.filter((message) => message.type === 'frame')
+  assert.equal(frames.length, 1)
+  assert.equal(frames[0]?.required, false)
+  assert.equal(frames[0]?.phase, 'Recorded 0.10 s')
+  assert.equal(
+    harness.messages.some((message) => message.type === 'reset'),
+    false,
+  )
+  harness.viewport.close()
+})
+
 test('a recorded gap requires its own current renderer receipt and never certifies a PNG', async () => {
   // Arrange
   const harness = await viewportHarness('normal', true, undefined, 'recording'),

@@ -100,7 +100,7 @@ The bundled skill (1.0.47) routes a question about a test, or about library beha
 - **Learning replay**: a saved explained run that you can replay after it ended; a browser run's holds the application video.
 - **Test replay**: the learning replay of a test run: its test output, the executed source and the debugger's recorded stops; no application video.
 - **Study pane**: Codebook's reader beside the editor, with Saved studies, a replay's summary and its controls.
-- **Application pane**: the pane that shows the recorded application of a browser replay, or the recorded test output of a test replay.
+- **Application pane**: the pane that shows the recorded application of a browser replay, or the recorded test output of a test replay. When you seek or Play reaches another moment of a browser replay, the pane keeps the frame on screen while the next one is read and swaps to it at once, so it shows no dark page between moments; only a read that takes longer than one second blanks the pane to its loading line.
 - **Stop**: a place in source where the run paused for the explanation, numbered in the order the run reached it.
 - **Saved studies**: the list of saved replays in the Study pane.
 

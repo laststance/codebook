@@ -663,6 +663,16 @@ function tellKeyboardNoticeOnce(
 }
 
 /**
+ * Words the phase line of a recorded frame in the Application pane; called by the playback's frame preview and by {@link StudyWorkspace}'s presentation of a moment, so both name the same time.
+ * @param positionMs - The recorded moment in milliseconds.
+ * @returns The phase text, for example `Recorded · 1.50 s`.
+ * @example recordedFrameLabel(1500) // => 'Recorded · 1.50 s'
+ */
+function recordedFrameLabel(positionMs: number): string {
+  return `Recorded · ${(positionMs / MILLISECONDS_PER_SECOND).toFixed(2)} s`
+}
+
+/**
  * Words a hover so the editor, which renders a plain string as Markdown, shows every character of it as text: a recorded path that holds `[text](url)` draws no link (F176).
  * Called for the end-of-line labels of the recorded-source slot and of a browser replay's source, whose paths come from recordings.
  * @param text - The words.
@@ -10317,7 +10327,7 @@ export class StudyWorkspace {
         // A debugger that was never created is started by the next presentation; only one that ended needs the reload.
         presentable: () =>
           this.replayReaderOpen && this.replayDebugger?.available !== false,
-        invalidate: (keepPixels) => {
+        invalidate: (keepPixels, next) => {
           this.replayDebugger?.invalidate(
             this.replayApplicationCovered ? REPLAY_COVERED_LABEL : undefined,
           )
@@ -10336,7 +10346,13 @@ export class StudyWorkspace {
           this.sourceRevision = undefined
           this.lastSelectionKey = undefined
           // A reload of the displayed recording, the end of a stop's pause, or a Pause with no frame in flight keeps the frame on screen until the next moment paints.
-          if (!keepPixels) this.replayViewport?.clearRecorded()
+          // The next moment's frame, already read, replaces the pixels at once; the pane never blanks between two moments (F3).
+          if (next)
+            this.replayViewport?.previewRecorded(
+              next.image.toString('base64'),
+              recordedFrameLabel(next.positionMs),
+            )
+          else if (!keepPixels) this.replayViewport?.clearRecorded()
         },
         changed: () => {
           const state = this.playback?.state()
@@ -11925,7 +11941,7 @@ export class StudyWorkspace {
     try {
       if (bundle.image) {
         const image = bundle.image.toString('base64'),
-          label = `Recorded · ${(bundle.projection.positionMs / MILLISECONDS_PER_SECOND).toFixed(2)} s`
+          label = recordedFrameLabel(bundle.projection.positionMs)
         // Earlier reveal/seek receipts must not be attributed to this frame's first attempt.
         this.replayDelivery = { receipts: [], omitted: 0 }
         try {

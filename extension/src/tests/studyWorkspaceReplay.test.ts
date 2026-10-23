@@ -31,6 +31,7 @@ import {
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import {
   REPLAY_MODEL_SELECTION_SCENARIO,
   selectionsThroughScenario,
@@ -3900,7 +3901,7 @@ test('Play across the end of a stop’s recorded pause on the same frame keeps t
 })
 
 // Value: protects=the recorded application image staying painted when Play reaches the end of a stop's recorded pause and the application has already sent a newer frame, until that frame replaces it, while Run and Debug, the stop's native session and its source highlight end there; fails_when=the pause end clears the Application pane because the next moment's frame differs (native check F18 on candidate 20: 0.6 s dark at 153.19 and 183.46 s, where the next frame arrived 49 and 14 ms after the pause ended), or the stop's values or highlight stay; why_new=Cycle 0045 NF-13d; seam=duringStop records a newer frame at the 900 ms continuation, and the test reads the displayed image when the newer frame is sent
-test('Play across the end of a stop’s recorded pause onto a newer frame keeps the stop’s image painted until the newer frame replaces it, while Run and Debug, the stop’s session and its source highlight end', async () => {
+test('Play across the end of a stop’s recorded pause onto a newer frame keeps the stop’s image painted until the newer frame replaces it at the leave, without a blank, while Run and Debug, the stop’s session and its source highlight end', async () => {
   // Arrange: a stop with recorded debugger state committed at 100 ms and paused until 900 ms of a film that ended at 1,000 ms; the application sent a new frame at 900 ms.
   const newerPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
@@ -3977,10 +3978,11 @@ test('Play across the end of a stop’s recorded pause onto a newer frame keeps 
 
     // Assert
     assert.equal(imageAtStop, png.toString('base64'))
+    // The newer frame was handed to the pane at the leave (F3, D29), so it is already painted when the moment's own frame is sent for its receipt; the stop's image was never cleared in between.
     assert.deepEqual(imagePresentations, [
       {
         atMs: 900,
-        shownBefore: png.toString('base64'),
+        shownBefore: newerPng.toString('base64'),
         sent: newerPng.toString('base64'),
       },
     ])
@@ -3996,6 +3998,82 @@ test('Play across the end of a stop’s recorded pause onto a newer frame keeps 
       harness.decoratedRangeCounts().slice(highlightsAtStop),
       [0, 0],
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application pane keeping its pixels while a seek's next frame is read from storage, and swapping to that frame without a blank; fails_when=the seek clears the recorded pixels (the `reset` with `clear: true`) before the frame resolves, which showed dark frames at a stop's entry (F3, D29); why_new=Cycle 0050 F3 (Cycle 0044 on Linux: 0.5 to 1.2 s of dark frames and a short Canceled); seam=a held RecordingStore.readFrame and the harness's viewport; no_claim=the webview's own decode and swap (the native check inspects every frame)
+test('a seek holds the shown pixels while the next frame is read and swaps to it without clearing the pane', async () => {
+  // Arrange: a stop is shown with its frame; the application sent a newer frame at 900 ms.
+  const newerPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const harness = await recordedReaderHarness(
+    true,
+    true,
+    1,
+    async (stopped) => {
+      const recording = [...stopped.service.records.values()][0]!.recording!
+      recording.frame({ bytes: newerPng, elapsedMs: 900, kind: 'stream' })
+    },
+  )
+  try {
+    const { controller, studyId, png } = harness
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    const viewport = harness.viewportInstances.find(
+      (instance) => instance.mode === 'recording',
+    )!
+    const clearedAtMs: Array<number | undefined> = [],
+      clearImage = viewport.clearRecorded.bind(viewport)
+    viewport.clearRecorded = (): void => {
+      clearedAtMs.push(controller.state().requestedMs)
+      clearImage()
+    }
+    const recordings = harness.reader['recordings']!,
+      readFrame = recordings.readFrame.bind(recordings)
+    let releaseRead = (): void => {}
+    const readHeld = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let reads = 0
+    recordings.readFrame = async (id, hash) => {
+      reads++
+      await readHeld
+      return readFrame(id, hash)
+    }
+
+    // Act: the seek to the newer frame waits for its bytes.
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 900,
+    })
+    await waitUntil(
+      () => reads === 1,
+      'the seek reads the next frame',
+      READER_RESULT_BOUND_MS,
+    )
+    const shownWhileHeld = harness.displayedImage(),
+      clearedWhileHeld = [...clearedAtMs]
+    releaseRead()
+    await controller.settle()
+
+    // Assert
+    assert.equal(shownWhileHeld, png.toString('base64'))
+    assert.deepEqual(clearedWhileHeld, [])
+    assert.deepEqual(clearedAtMs, [])
+    assert.equal(harness.displayedImage(), newerPng.toString('base64'))
   } finally {
     await harness.close()
   }
