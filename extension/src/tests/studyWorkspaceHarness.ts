@@ -329,7 +329,6 @@ export async function workspaceHarness(
       readonly result: Uri,
     ) {}
   }
-  /** Supplies native position operations to the editor boundary fake used by workspace tests. @example new Position(22, 0).with(40, 0) */
   /**
    * The editor's `MarkdownString` as far as the reader uses it: text appended with `appendText` is escaped the way VS Code escapes it (backslash-escaped Markdown syntax tokens, a no-break space per blank, an escaped quote marker and line break), so a test reads what the hover would render.
    * @example new MarkdownString().appendText('a[b](c)').value // => 'a\\[b\\]\\(c\\)'
@@ -358,6 +357,7 @@ export async function workspaceHarness(
       readonly command?: { title: string; command: string },
     ) {}
   }
+  /** Supplies native position operations to the editor boundary fake used by workspace tests. @example new Position(22, 0).with(40, 0) */
   class Position {
     constructor(
       readonly line: number,
@@ -562,8 +562,20 @@ export async function workspaceHarness(
   }
   /** The listeners of the editor's `onDidChangeVisibleTextEditors`, told whenever a tab comes to the front of its group, opens, or closes. */
   const visibleEditorListeners = new Set<() => void>()
+  /** What the listeners of `onDidChangeVisibleTextEditors` threw: the extension host logs a listener's error and goes on with the other listeners, so the fake keeps it here instead of letting it end the editor operation that announced the change; see `visibleEditorListenerErrors`. */
+  const visibleEditorListenerErrors: unknown[] = []
+  /**
+   * Tells the listeners of `onDidChangeVisibleTextEditors` that a tab opened, closed or came to the front of its group.
+   * The fake delivers inside the operation that caused the change, where the extension host delivers after a hop; a listener that throws is isolated like the host's and its error is kept.
+   * @example changedVisibleEditors()
+   */
   const changedVisibleEditors = (): void => {
-    for (const listener of [...visibleEditorListeners]) listener()
+    for (const listener of [...visibleEditorListeners])
+      try {
+        listener()
+      } catch (error) {
+        visibleEditorListenerErrors.push(error)
+      }
   }
   type CodeLensProvider = {
     provideCodeLenses(document: {
@@ -572,9 +584,40 @@ export async function workspaceHarness(
     }): readonly CodeLens[]
     onDidChangeCodeLenses?: (listener: () => void) => { dispose(): void }
   }
-  /** The CodeLens providers the reader registered; see `codeLensesOf`. */
+  /** The CodeLens providers the reader registered with the selector each was registered for; see `codeLensTitles`. */
   const codeLensProviders: { selector: unknown; provider: CodeLensProvider }[] =
     []
+  /** How many times a registered provider announced `onDidChangeCodeLenses`, as the editor counts the refreshes it would run; see `codeLensRefreshCount`. */
+  let codeLensRefreshes = 0
+  /**
+   * Tells whether a document selector, as `registerCodeLensProvider` takes it, matches a document, as the editor decides which providers it asks (a language id, a filter of scheme and language, or a list of them); a filter's pattern is not modelled and matches nothing.
+   * @param selector - The selector the provider was registered with.
+   * @param document - The document's address and language.
+   * @returns `true` when the editor would ask the provider about the document.
+   * @example documentSelectorMatches({ scheme: 'codebook-source' }, { uri, languageId: 'typescript' }) // => true for a codebook-source uri
+   */
+  function documentSelectorMatches(
+    selector: unknown,
+    document: { uri: Uri; languageId: string },
+  ): boolean {
+    if (Array.isArray(selector))
+      return selector.some((member) =>
+        documentSelectorMatches(member, document),
+      )
+    if (typeof selector === 'string')
+      return selector === '*' || selector === document.languageId
+    if (typeof selector !== 'object' || selector === null) return false
+    const filter = selector as {
+      scheme?: string
+      language?: string
+      pattern?: unknown
+    }
+    if (filter.pattern !== undefined) return false
+    return (
+      (filter.scheme === undefined || filter.scheme === document.uri.scheme) &&
+      (filter.language === undefined || filter.language === document.languageId)
+    )
+  }
   /** Every `revealRange` call of a recorded-source slot's editor, in order, with the first line of the revealed range; see `slotReveals`. */
   const slotRevealCalls: { uri: string; line: number }[] = []
   let lastSourceEditor: SourceEditor | undefined
@@ -2512,6 +2555,9 @@ export async function workspaceHarness(
         }, 60)
       } else activeTextEditorChanged(focusedSourceEditor())
     }
+    // Every close of a tab (a close request, the learner's Close Editor, a dead pane's removal) changes the visible text editors, not only the reader's own close request.
+    if (tabs.some((tab) => !groups.some((group) => group.tabs.includes(tab))))
+      changedVisibleEditors()
     return accepted
   }
   /** Models Cursor's refusal to place a normal reader in its separate chat part; panel and text opens share this boundary. @example nativeReaderColumn(2) // 1 when only main column one and chat column two exist */
@@ -3384,6 +3430,8 @@ export async function workspaceHarness(
     onDidDelete: disposable,
     dispose(): void {},
   }
+  /** Whether the fake recorded viewport has a required frame queued behind one in flight, which makes it drop preview frames; see `holdRequiredFramePending`. */
+  let requiredFramePending = false
   const viewportEvents: string[] = [],
     viewportInstances: WorkspaceViewport[] = []
   /** Models the leased renderer contract so workspace tests fail when retirement precedes transfer. @example reader.presentation.createViewport('run', record, fail, 'normal') */
@@ -3555,10 +3603,22 @@ export async function workspaceHarness(
       displayedImage = undefined
       this.abandonPaint?.(new Error('Pause display invalidated'))
     }
-    /** Shows the next recorded frame at once and clears nothing, as the real viewport's non-required preview frame does; the later required frame follows with the receipt. @example viewport.previewRecorded(png.toString('base64'), 'Recorded · 1.50 s') */
-    previewRecorded(image: string): void {
-      if (this.closed) return
+    /**
+     * Shows the next recorded frame at once and clears nothing, as the real viewport's non-required preview frame does; the later required frame follows with the receipt.
+     * The frame is dropped under the real viewport's conditions: the viewport is not a recording, is closed or historical, or a required frame is pending (see `holdRequiredFramePending`); the pane then keeps what it showed.
+     * @returns `true` when the frame was shown; `false` when it was dropped.
+     * @example viewport.previewRecorded(png.toString('base64'), 'Recorded · 1.50 s')
+     */
+    previewRecorded(image: string): boolean {
+      if (
+        this.mode !== 'recording' ||
+        this.closed ||
+        this.historical ||
+        requiredFramePending
+      )
+        return false
       displayedImage = image
+      return true
     }
     private abandonPaint?: (error: Error) => void
     /** Delays only the requested replay image so workspace tests can interrupt pending paints. @example await viewport.present(png) */
@@ -3769,12 +3829,16 @@ export async function workspaceHarness(
         ) {
           const registration = { selector, provider }
           codeLensProviders.push(registration)
+          // The editor subscribes once, at registration, and refreshes the lenses of its open documents when the provider announces a change.
+          const refreshSubscription = provider.onDidChangeCodeLenses?.(() => {
+            codeLensRefreshes++
+          })
           return {
             dispose(): void {
-              codeLensProviders.splice(
-                codeLensProviders.indexOf(registration),
-                1,
-              )
+              refreshSubscription?.dispose()
+              // A second dispose of the same registration removes nothing (`indexOf` is -1 for a registration that is gone).
+              const index = codeLensProviders.indexOf(registration)
+              if (index >= 0) codeLensProviders.splice(index, 1)
             },
           }
         },
@@ -4822,7 +4886,6 @@ export async function workspaceHarness(
               activeTabGroup.activeTab !== undefined &&
               tabs.includes(activeTabGroup.activeTab)
             const closed = closeTabs(tabs, preserveFocus)
-            if (closed) changedVisibleEditors()
             if (closesFocusedTab && closed) keyboardOnBody = true
             // A native webview-tab close disposes its panel before the extension's close continuation runs.
             disposePanelsOfClosedTabs(tabs)
@@ -5000,19 +5063,30 @@ export async function workspaceHarness(
       )
     },
   }
+  /**
+   * Gives a value the way the editor's `Memento` keeps it: as JSON, so a Date becomes its text, a Map becomes an empty object and a function disappears, where `structuredClone` would keep them.
+   * @param value - A value an extension stored with `update`.
+   * @returns The value after a round trip through JSON; `undefined` for a value JSON cannot hold.
+   * @example toMementoValue(new Date(0)) // => '1970-01-01T00:00:00.000Z'
+   */
+  const toMementoValue = (value: unknown): unknown => {
+    const text = JSON.stringify(value)
+    return text === undefined ? undefined : JSON.parse(text)
+  }
   const presentationPreferences = new Map<string, unknown>()
   /** The workspace state's Application group record (finding 590), kept apart from the presentation preferences: a test that asserts no preference was saved counts only those, and the injected preference holds and failures do not reach this record. */
   const applicationGroupMarkers = new Map<string, unknown>()
   let preferenceFailure = false
   let nextPreference: { wait: Promise<void>; entered(): void } | undefined
   const workspaceState = {
-    get: <Value>(key: string) =>
-      (key === APPLICATION_GROUP_MARKER_KEY
+    get: <Value>(key: string, defaultValue?: Value) =>
+      ((key === APPLICATION_GROUP_MARKER_KEY
         ? applicationGroupMarkers.get(key)
-        : presentationPreferences.get(key)) as Value | undefined,
+        : presentationPreferences.get(key)) ?? defaultValue) as
+        Value | undefined,
     update: async (key: string, value: unknown): Promise<void> => {
       if (key === APPLICATION_GROUP_MARKER_KEY) {
-        applicationGroupMarkers.set(key, structuredClone(value))
+        applicationGroupMarkers.set(key, toMementoValue(value))
         return
       }
       const held = nextPreference
@@ -5020,16 +5094,19 @@ export async function workspaceHarness(
       held?.entered()
       await held?.wait
       if (preferenceFailure) throw new Error('Injected preference failure')
-      presentationPreferences.set(key, structuredClone(value))
+      presentationPreferences.set(key, toMementoValue(value))
     },
   }
   /** The profile-wide state of the fake extension context (`globalState`), and the `vscode.moveViews` arguments the reader sent; see `profileState` and `moveViewsCalls`. */
   const profileState = new Map<string, unknown>()
   const moveViewsCalls: unknown[] = []
   const globalState = {
-    get: <Value>(key: string) => profileState.get(key) as Value | undefined,
+    get: <Value>(key: string, defaultValue?: Value) =>
+      (profileState.has(key) ? profileState.get(key) : defaultValue) as
+        Value | undefined,
     update: async (key: string, value: unknown): Promise<void> => {
-      profileState.set(key, structuredClone(value))
+      if (value === undefined) profileState.delete(key)
+      else profileState.set(key, toMementoValue(value))
     },
   }
   /** Makes one more reader over the same fake editor and storage, as the extension does after a change of the workspace's folders; `handedOverArchives` are the study archives the reader before it could not save and released. @example const replacement = harness.createReader(undefined, harness.reader.releaseUnsavedStudies()) */
@@ -5622,6 +5699,10 @@ export async function workspaceHarness(
     },
     /** The arguments of every `vscode.moveViews` the reader ran. @example harness.moveViewsCalls() // => [{ viewIds: ['codebook.learningSummary'], destinationId: 'workbench.panel.chat' }] */
     moveViewsCalls: () => [...moveViewsCalls],
+    /** What the listeners of `onDidChangeVisibleTextEditors` threw; the fake isolates a throwing listener as the extension host does and keeps its error here. @example assert.deepEqual(harness.visibleEditorListenerErrors, []) */
+    visibleEditorListenerErrors,
+    /** The fake `globalState` of the extension context, as the reader gets it: values are kept as JSON and a missing key answers the default. @example harness.globalState.get('key', false) */
+    globalState,
     /** The fake profile-wide state (`globalState`) of the extension context. @example harness.profileState.get('codebook.summaryBesideChatMoved.v1') */
     profileState,
     movePanel(kind: string, column: number): void {
@@ -6984,19 +7065,24 @@ export async function workspaceHarness(
       manualSlotClock = true
     },
     /**
-     * Moves the hand-driven slot clock forward and fires every timer that falls due, in order.
+     * Moves the hand-driven slot clock forward and fires every timer that falls due, in order, also a timer that a firing timer sets and that falls due within the same span.
+     * Only the reader's slot deadline timers are hand-driven. The wait of `awaitDocumentSettled` (its poll and the 5,000 ms bound it is given) keeps the real clock; a test ends that wait through the deadline's signal, which this clock fires.
      * @param milliseconds - How far to move the clock.
      * @example harness.elapseSlotClock(1_000)
      */
     elapseSlotClock(milliseconds: number): void {
-      slotClockMs += milliseconds
-      for (const timer of manualSlotTimers.toSorted(
-        (left, right) => left.dueMs - right.dueMs,
-      ))
-        if (timer.active && timer.dueMs <= slotClockMs) {
-          timer.active = false
-          timer.callback()
-        }
+      const targetMs = slotClockMs + milliseconds
+      // Each pass takes the earliest due timer and moves the clock to its due time, so a timer set by a callback is due from that moment and joins the order.
+      for (;;) {
+        const due = manualSlotTimers
+          .filter((timer) => timer.active && timer.dueMs <= targetMs)
+          .toSorted((left, right) => left.dueMs - right.dueMs)[0]
+        if (!due) break
+        slotClockMs = Math.max(slotClockMs, due.dueMs)
+        due.active = false
+        due.callback()
+      }
+      slotClockMs = targetMs
     },
     /** How many hand-driven slot timers are set and not yet fired or cancelled. @example assert.equal(harness.pendingSlotTimers(), 0) */
     pendingSlotTimers: (): number =>
@@ -7014,9 +7100,28 @@ export async function workspaceHarness(
         (editor) => editor.document.uri.toString() === uri,
       )?.document
       assert.ok(document, `No editor shows ${uri}`)
+      // Only the providers registered for this document's scheme and language are asked, as the editor does.
       return codeLensProviders
+        .filter(({ selector }) =>
+          documentSelectorMatches(selector, {
+            uri: document.uri,
+            languageId:
+              virtualSourceDocuments.get(uri)?.languageId ?? 'plaintext',
+          }),
+        )
         .flatMap(({ provider }) => provider.provideCodeLenses(document))
         .map((lens) => lens.command?.title ?? '')
+    },
+    /** How many times a CodeLens provider announced a change since the harness started, as a refresh of the open lenses; the reader announces one whenever the slot's label is drawn or cleared. @example const before = harness.codeLensRefreshCount(); …; assert.ok(harness.codeLensRefreshCount() > before) */
+    codeLensRefreshCount: (): number => codeLensRefreshes,
+    /** How many CodeLens providers are registered now. @example assert.equal(harness.codeLensProviderCount(), 1) */
+    codeLensProviderCount: (): number => codeLensProviders.length,
+    /** Registers a CodeLens provider as another extension would, for the test of the registration's own dispose; returns its registration handle. @example const other = harness.registerOtherCodeLensProvider() */
+    registerOtherCodeLensProvider(): { dispose(): void } {
+      return editorDependencies.vscode.languages.registerCodeLensProvider(
+        { scheme: 'file' },
+        { provideCodeLenses: () => [] },
+      )
     },
     /**
      * Gives the keyboard to the editor group at a column, as a click in that group does, so a document another action shows in a different group comes to the front without becoming the active editor.
@@ -7026,9 +7131,17 @@ export async function workspaceHarness(
     activateEditorGroup(column: number): void {
       const group = groups.find((candidate) => candidate.viewColumn === column)
       assert.ok(group, `No editor group at column ${column}`)
+      const previousGroup = activeTabGroup
       activeTabGroup = group
       staleNamedGroup = undefined
       keyboardOnBody = false
+      // A group the learner clicks into becomes the active one, which the editor announces as a change of the tab groups, as its numbered focus commands do.
+      if (previousGroup !== group)
+        changedGroups({
+          opened: [],
+          closed: [],
+          changed: [previousGroup, group],
+        })
       activeTextEditorChanged(focusedSourceEditor())
     },
     /** The text an open virtual document holds right now, as the editor's document model keeps it (not what the provider would serve); `undefined` when no such document is open. @example harness.documentTextOf(slotUri) // => 'const nextTheme = "dark";\n' */
@@ -7281,6 +7394,26 @@ export async function workspaceHarness(
       groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
       return tab
     },
+    /**
+     * Opens a learner's non-text preview tab (an image or a custom editor) in a group, as the tab the group shows; the editor keeps it with its own `workbench.action.keepEditor` while that group has the focus.
+     * @param label - The tab's title.
+     * @param column - The view column of the group.
+     * @param isFront - Whether the tab is the one the group shows; a preview behind another tab cannot be kept by the command.
+     * @returns The tab.
+     * @example const image = harness.addNonTextPreview('diagram.png', 1)
+     */
+    addNonTextPreview(label: string, column: number, isFront = true) {
+      const tab: Tab = {
+        input: new TabInputUnknown(),
+        label,
+        isPreview: true,
+        isDirty: false,
+      }
+      const group = groups.find((group) => group.viewColumn === column)!
+      group.tabs.push(tab)
+      if (isFront) group.activeTab = tab
+      return tab
+    },
     addNodeHistoryPreview(
       studyId: string,
       column: number,
@@ -7445,6 +7578,14 @@ export async function workspaceHarness(
         else if (kind === 'duplicate') seededTabs = [tab, { ...tab }]
         group.tabs = seededTabs
       }
+    },
+    /**
+     * Makes the fake recorded viewport drop its preview frames, as the real one does while a required frame is queued behind one in flight (`FrameDelivery.offer` refuses a frame then), until the test lifts it.
+     * @param isPending - `true` while a required frame is pending; `false` lifts it.
+     * @example harness.holdRequiredFramePending(true)
+     */
+    holdRequiredFramePending(isPending: boolean): void {
+      requiredFramePending = isPending
     },
     holdNextImage() {
       let release = (): void => {},

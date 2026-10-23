@@ -616,6 +616,95 @@ test('a slow reader position write does not hold the selected moment back', asyn
   }
 })
 
+// Value: protects=a reader position queued in the instant between the write loop's last check and the end of its run is still written, so the learner's last moment is the position that reopens; fails_when=the loop has ended but its run is not yet cleared, the late call sees a running writer and returns, and nothing writes the latest position; why_new=F366 (the run was cleared one microtask after the loop saw an empty queue); seam=the history store's position write, answered by a thenable whose continuation queues the next position right behind the loop's own; no_claim=the write's outcome or the disk
+test('a reader position queued as the position write loop ends is still written', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const writtenSequences: number[] = []
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await openReplayAt(harness, history.studyId, 2)
+    const selected = harness.reader['selectedNodeHistory']!
+    // Wait for the open's own position write to end, so only the two writes of this test remain.
+    await waitUntil(
+      () => harness.reader['nodeHistoryPositionWrites'].size === 0,
+      'the open’s position write ends',
+      READER_RESULT_BOUND_MS,
+    )
+    context.mock.method(
+      store,
+      'saveReaderPosition',
+      (...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>) => {
+        writtenSequences.push(args[1])
+        const isFirstWrite = writtenSequences.length === 1
+        // The loop awaits this thenable: its continuation is queued by `onFulfilled`, and the next position is queued right behind it, before the run's end is announced.
+        return {
+          then(onFulfilled: () => void): void {
+            onFulfilled()
+            if (isFirstWrite)
+              queueMicrotask(() =>
+                harness.reader['queueNodeHistoryPositionWrite'](selected, 3),
+              )
+          },
+        } as unknown as Promise<void>
+      },
+    )
+
+    // Act
+    harness.reader['queueNodeHistoryPositionWrite'](selected, 2)
+    await waitUntil(
+      () => writtenSequences.length >= 2,
+      'the position queued at the loop’s end is written',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(writtenSequences, [2, 3])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the failure of a moment's presentation reaching the learner as itself when the return to the committed moment fails too, so the Study names why the moment did not open and not a secondary slot error; fails_when=the return's error replaces the presentation's error; why_new=F368 (the return was awaited inside the catch, so its throw hid the original); seam=the workspace harness's held historical debug presentation, rejected, and the return to the committed moment made to throw; no_claim=what the return would have shown
+test('a failed presentation is reported as itself when the return to the committed moment fails too', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    context.mock.method(
+      harness.reader as unknown as {
+        returnToCommittedNodeMoment: () => Promise<void>
+      },
+      'returnToCommittedNodeMoment',
+      () => Promise.reject(new Error('The return failed.')),
+    )
+    const held = harness.holdHistoricalDebugPresentation(true)
+    const selecting = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    // The rejection is awaited below, after the held presentation fails.
+    const outcome = assert.rejects(selecting, {
+      message: 'The presentation failed.',
+    })
+    await held.started
+
+    // Act
+    held.reject(new Error('The presentation failed.'))
+
+    // Assert
+    await outcome
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=two quick selections show only the last one: the first selection, overtaken while its debugger presentation loads, commits nothing, and the slot, its label and the Study position all show the last moment; fails_when=the overtaken stop's label, slot bytes or Study position appear after the later selection; why_new=Design 4's generations (rapid seeks, AC6); seam=the workspace harness's held historical debug presentation; no_claim=Play's own pacing (the timeline and pacing tests)
 test('a stop selection overtaken by an output selection leaves only the output on every surface', async () => {
   // Arrange
@@ -976,11 +1065,9 @@ function countSlotRequests(harness: Harness) {
     harness.editor.window,
   )
   harness.editor.window.showTextDocument = ((...args: unknown[]) => {
-    if (
-      String(args[0] && (args[0] as { uri?: unknown }).uri).includes(
-        '/node-history-slot/',
-      )
-    )
+    // The editor takes a document or its address; the address of a document is its `uri`.
+    const shown = args[0] as { uri?: unknown } | undefined
+    if (String(shown?.uri ?? shown).includes('/node-history-slot/'))
       counts.shows++
     return (show as (...rest: unknown[]) => unknown)(...args)
   }) as typeof harness.editor.window.showTextDocument
@@ -2207,6 +2294,46 @@ test('a slot show that completes after the deadline is closed, not shown', async
   }
 })
 
+// Value: protects=a slot show still in the editor when the reader closes or the replay is retired (Return to Live) leaves no recorded-source tab when it completes, so a closed reader or a retired replay keeps no tab of bytes no moment owns; fails_when=a show that completes after the retire or the close is neither current nor overtaken by a newer show, so its tab stays open; why_new=F364 (F184's case: the late-show cleanup knew only the deadline and a newer show, not the retirement); seam=the workspace harness's held text document show (no slot clock elapsed: the show is still inside its deadline); no_claim=a slot tab the learner pinned
+for (const ending of ['the reader closes', 'the replay is retired'] as const)
+  test(`a slot show that completes after ${ending} leaves no recorded-source tab`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    let stalled: ReturnType<Harness['holdNextTextDocumentShow']> | undefined
+    try {
+      const history = await saveTwoFileNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      stalled = harness.holdNextTextDocumentShow({ uri: nextFileSlot(harness) })
+      startMomentSelection(harness, history.studyId, 4)
+      await stalled.started
+      if (ending === 'the reader closes') await harness.reader.close()
+      else await harness.reader.action('return-current')
+      assert.deepEqual(slotTabs(harness), [])
+
+      // Act
+      stalled.release()
+      await waitUntil(
+        () =>
+          harness
+            .tabCloseRequests()
+            .flat()
+            .some((tab) =>
+              JSON.stringify(tab.input).includes('Captured-theme-next.ts'),
+            ),
+        'the late tab is closed',
+        2_000,
+      )
+
+      // Assert
+      assert.deepEqual(slotTabs(harness), [])
+    } finally {
+      stalled?.release()
+      await harness.close()
+    }
+  })
+
 // Value: protects=Play pauses at the first slot that cannot be shown and does not retry the same failure at every later event; fails_when=Play goes on after a failed slot, so each later event adds a row and an Output entry; why_new=F185 (a failing slot failed again at every later event); seam=the workspace harness's held text document show and its hand-driven slot clock; no_claim=Play's pacing
 test('Play pauses at the first slot that cannot open', async () => {
   // Arrange
@@ -2290,6 +2417,46 @@ test('a refused close of the earlier slot tab commits the moment and is told as 
       ],
     )
     assert.equal(slotTabs(harness).length, 1)
+    assert.deepEqual([...(lastView(harness)?.errors ?? [])], [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a refused close of the earlier slot tab that a withdrawn selection (Return to Live before it commits) never told is not told at the next replay's first commit, which would blame a tab of the retired study; fails_when=the pending close failure survives the retirement of the slot, so the next replay's first moment warns about an earlier tab of another study; why_new=F365 (the pending failure was consumed only by a commit); seam=the workspace harness's refusal to close a tab and its held historical debug presentation (the selection is withdrawn after its slot shows and before it commits); no_claim=the wording of the close warning
+test('a close failure of a withdrawn selection is not told at the next replay’s first moment', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const acceptClose = harness.refuseCloseOfTabsShowing('Captured-theme.ts')
+    const held = harness.holdHistoricalDebugPresentation(true)
+    const withdrawn = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    await held.started
+    acceptClose()
+
+    // Act
+    await harness.reader.action('return-current')
+    held.reject(new Error('Historical debugger presentation was superseded.'))
+    await withdrawn
+    await openReplayAt(harness, history.studyId, 2)
+
+    // Assert
+    assert.deepEqual(
+      logged.map(({ surface }) => surface),
+      [],
+    )
     assert.deepEqual([...(lastView(harness)?.errors ?? [])], [])
   } finally {
     await harness.close()
@@ -2804,6 +2971,79 @@ test('a CodeLens above the stopped line carries the whole recorded label', async
     // Assert
     assert.deepEqual(atStop, ['Recorded: src/theme.ts:1 · 0.20 s'])
     assert.deepEqual(atOutput, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the editor re-asking for the slot's CodeLens whenever the label is drawn or cleared (a moment selected, the slot retired), so a lens never stays on a line the replay left; fails_when=the reader draws or clears the label without announcing the change, or stops announcing at the retire; why_new=F373 (the fake never exercised onDidChangeCodeLenses); seam=the workspace harness's CodeLens refresh counter; no_claim=how many refreshes the editor runs for one announcement
+test('a CodeLens refresh is announced when a moment is selected and when the slot is retired', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const refreshesAtOpen = harness.codeLensRefreshCount()
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+    const refreshesAfterSelect = harness.codeLensRefreshCount()
+    await harness.reader['retireNodeSourceSlot']()
+
+    // Assert
+    assert.equal(refreshesAfterSelect > refreshesAtOpen, true)
+    assert.equal(harness.codeLensRefreshCount() > refreshesAfterSelect, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the fake editor asking a CodeLens provider only about documents its selector names, and one registration's second dispose removing nothing more; fails_when=a provider registered for another scheme still returns the slot's lens in a test, or a repeated dispose of another extension's registration removes the reader's provider; why_new=F373 (the fake asked every provider about every document and spliced index -1 on a second dispose); seam=the workspace harness's CodeLens registry; no_claim=the real editor's selector scoring
+test('a second dispose of another extension’s CodeLens registration keeps the slot’s CodeLens', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const providersWithReader = harness.codeLensProviderCount()
+    const other = harness.registerOtherCodeLensProvider()
+
+    // Act
+    other.dispose()
+    other.dispose()
+
+    // Assert
+    assert.equal(harness.codeLensProviderCount(), providersWithReader)
+    assert.deepEqual(harness.codeLensTitles(slotTabs(harness)[0]!), [
+      'Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a recorded path that holds icon syntax such as $(trash) showing as text in the CodeLens title, so a recording cannot draw an icon of its own there; fails_when=the title carries the path unescaped and the editor draws a codicon in place of the characters; why_new=F367 (the title stripped terminal controls only; the hover was escaped in F176); seam=the workspace harness's CodeLens provider; no_claim=how the editor draws the escaped title (the native check)
+test('a CodeLens title shows a recorded path with icon syntax as text', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+      'src/$(trash).ts',
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 4)
+    const slot = slotTabs(harness)[0]!
+
+    // Act
+    const titles = harness.codeLensTitles(slot)
+
+    // Assert
+    assert.deepEqual(titles, ['Recorded: src/\\$(trash).ts:1 · 0.30 s'])
   } finally {
     await harness.close()
   }
