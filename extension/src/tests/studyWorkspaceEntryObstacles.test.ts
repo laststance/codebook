@@ -377,6 +377,90 @@ for (const scenario of [
     }
   })
 
+// Value: protects=the learner who chose Keep Tab Open for a non-text preview that cannot be kept being told once, by the notice that says how to keep it, and not again by a generic "could not open the learning replay" notification about the same preview; fails_when=a refused Keep Tab Open is followed by the load-failure notification of the same refusal; why_new=Cycle 0050 F394 (the keep notice returned false, so the caller told the failure again); seam=addNonTextPreview behind another tab, the fake editor's keepEditor command, answerWarningDialogs, the harness's error notifications; no_claim=the wording of the keep notice
+test('Open replay beside a non-text preview that cannot be kept tells the learner once and shows no load-failure notification', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    const agentChat = harness.addSeparateEditorPart()
+    const preview = harness.addNonTextPreview('diagram.png', 1, false)
+    agentChat.focus()
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      groupCount === 1 && preview.isPreview
+        ? false
+        : hasMainEditorFocus(groupCount)
+    harness.answerWarningDialogs(async () => 'Keep Tab Open')
+
+    // Act
+    await harness.reader.openLearningReplay(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      harness.warningDialogs.slice(1).map((dialog) => dialog.title),
+      [
+        'Codebook could not keep "diagram.png" open. Double-click its tab to keep it, then choose Open replay again.',
+      ],
+    )
+    assert.deepEqual(harness.errorMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who chose Keep Tab Open for a non-text preview that cannot be kept, when a test replay's Open replay was refused for it, being told once and the Output › Codebook receiving no open:test-replay entry for the refusal the keep notice already explained; fails_when=a refused Keep Tab Open is followed by the test replay's load-failure notification and Output entry; why_new=Cycle 0050 F394 (openNodeHistoryFromHost told the failure after the keep notice); seam=openNodeHistory answering a foreign-preview failure, addNonTextPreview behind another tab, answerWarningDialogs, the diagnostics log and the harness's error notifications; no_claim=how the replay's open meets the preview (the F158 rounds above)
+test('a test replay Open replay refused for a non-text preview that cannot be kept tells the learner once and writes no open failure', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    harness.addNonTextPreview('diagram.png', 1, false)
+    harness.answerWarningDialogs(async () => 'Keep Tab Open')
+    context.mock.method(
+      harness.reader as unknown as { openNodeHistory: () => Promise<unknown> },
+      'openNodeHistory',
+      async () => ({
+        status: 'failed',
+        error: new Error(
+          'A destination group contains a foreign preview: "diagram.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+        ),
+      }),
+    )
+
+    // Act
+    await harness.reader.openNodeHistoryFromHost('a_b')
+
+    // Assert
+    assert.deepEqual(
+      harness.warningDialogs.slice(1).map((dialog) => dialog.title),
+      [
+        'Codebook could not keep "diagram.png" open. Double-click its tab to keep it, then choose Open replay again.',
+      ],
+    )
+    assert.deepEqual(harness.errorMessages, [])
+    assert.deepEqual(
+      logged.map((entry) => entry.surface),
+      [],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 test('a presentation selection refused for a learner preview names that tab, its group and how to clear it', async () => {
   // Arrange
   const harness = await workspaceHarness(false)

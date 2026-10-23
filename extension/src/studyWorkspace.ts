@@ -11313,8 +11313,10 @@ export class StudyWorkspace {
     )
       return
     // A learner's preview tab that blocks the open is answered with a choice and a retry, not a toast (F158).
-    if (await this.resolveForeignPreviewRefusal(state.reason))
-      return this.openLearningReplay(studyId)
+    const answer = await this.resolveForeignPreviewRefusal(state.reason)
+    if (answer === 'retry') return this.openLearningReplay(studyId)
+    // The keep-open refusal has told the learner already; a second notice would repeat it.
+    if (answer === 'told') return
     // The controller keeps a failure as its string form, which starts with the error's name.
     void showPlainNotice(
       vscode.window,
@@ -11340,12 +11342,14 @@ export class StudyWorkspace {
    * Answers an Open replay that a learner's preview tab refused with a modal warning that names the file, in both hosts (a toast is cut to one line in Cursor), and carries out the learner's choice; called by {@link openLearningReplay} and {@link openNodeHistoryFromHost} before they tell a failure (F158, D33).
    * Keep Tab Open pins the tab (it stops being a preview) and Close Tab closes it; each is followed by a retry of the open.
    * @param cause - The failure's words; only a {@link foreignPreviewObstacle} sentence in it is answered here.
-   * @returns `true` when the learner chose a way out and the open is to be retried; `false` when the cause is another failure or the dialog was dismissed.
-   * @example if (await this.resolveForeignPreviewRefusal(cause)) return this.openLearningReplay(studyId)
+   * @returns `retry` when the learner chose a way out and the open is to be retried; `told` when Keep Tab Open could not keep a non-text tab and has shown its own notice, so the caller adds none (F394); `unhandled` when the cause is another failure or the dialog was dismissed.
+   * @example if ((await this.resolveForeignPreviewRefusal(cause)) === 'retry') return this.openLearningReplay(studyId)
    */
-  private async resolveForeignPreviewRefusal(cause: string): Promise<boolean> {
+  private async resolveForeignPreviewRefusal(
+    cause: string,
+  ): Promise<'retry' | 'told' | 'unhandled'> {
     const obstacle = parseForeignPreviewObstacle(cause)
-    if (!obstacle) return false
+    if (!obstacle) return 'unhandled'
     const choice = await vscode.window.showWarningMessage(
       `Codebook cannot open the replay: "${obstacle.tabName}" is open as a preview tab in editor group ${obstacle.viewColumn}.`,
       {
@@ -11355,7 +11359,7 @@ export class StudyWorkspace {
       FOREIGN_PREVIEW_ACTION.keepOpen,
       FOREIGN_PREVIEW_ACTION.close,
     )
-    if (!choice) return false
+    if (!choice) return 'unhandled'
     const group = vscode.window.tabGroups.all.find(
       (candidate) =>
         candidate.viewColumn === obstacle.viewColumn &&
@@ -11367,11 +11371,11 @@ export class StudyWorkspace {
       this.isNamedPreview(candidate, obstacle.tabName),
     )
     // The tab may be gone by now; the retry then decides.
-    if (!group || !tab) return true
+    if (!group || !tab) return 'retry'
     // Only Close Tab closes the learner's tab; Keep Tab Open never does (F363).
     if (choice === FOREIGN_PREVIEW_ACTION.close) {
       await vscode.window.tabGroups.close([tab])
-      return true
+      return 'retry'
     }
     if (tab.input instanceof vscode.TabInputText) {
       await vscode.window.showTextDocument(tab.input.uri, {
@@ -11379,7 +11383,7 @@ export class StudyWorkspace {
         preview: false,
         preserveFocus: true,
       })
-      return true
+      return 'retry'
     }
     return this.keepNonTextPreview(group, tab, obstacle.tabName)
   }
@@ -11401,14 +11405,14 @@ export class StudyWorkspace {
    * @param group - The tab's group.
    * @param tab - The preview tab.
    * @param tabName - The tab's name, for the notice.
-   * @returns `true` when the tab is no longer a preview and the open is to be retried; `false` when it is still one.
-   * @example if (await this.keepNonTextPreview(group, tab, 'diagram.png')) retry()
+   * @returns `retry` when the tab is no longer a preview and the open is to be retried; `told` when it is still one and the learner has been told how to keep it.
+   * @example if ((await this.keepNonTextPreview(group, tab, 'diagram.png')) === 'retry') retry()
    */
   private async keepNonTextPreview(
     group: vscode.TabGroup,
     tab: vscode.Tab,
     tabName: string,
-  ): Promise<boolean> {
+  ): Promise<'retry' | 'told'> {
     const focusCommand = focusEditorGroupCommand(group.viewColumn)
     if (focusCommand && group.activeTab === tab) {
       await vscode.commands.executeCommand(focusCommand)
@@ -11421,13 +11425,13 @@ export class StudyWorkspace {
       .filter((candidate) => candidate.viewColumn === group.viewColumn)
       .flatMap((candidate) => candidate.tabs)
       .some((candidate) => this.isNamedPreview(candidate, tabName))
-    if (!stillPreview) return true
+    if (!stillPreview) return 'retry'
     void showPlainNotice(
       vscode.window,
       'warning',
       `Codebook could not keep "${tabName}" open. Double-click its tab to keep it, then choose Open replay again.`,
     )
-    return false
+    return 'told'
   }
 
   /**
@@ -11487,8 +11491,10 @@ export class StudyWorkspace {
     const roots = this.service?.causeRoots ?? { storage: [] }
     const cause = sanitizeCause(outcome.error, roots)
     // A learner's preview tab that blocks the open is answered with a choice and a retry (F158).
-    if (await this.resolveForeignPreviewRefusal(cause))
-      return this.openNodeHistoryFromHost(studyId)
+    const answer = await this.resolveForeignPreviewRefusal(cause)
+    if (answer === 'retry') return this.openNodeHistoryFromHost(studyId)
+    // The keep-open refusal has told the learner already; a second notification and Output entry would repeat it.
+    if (answer === 'told') return
     await this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
   }
 
