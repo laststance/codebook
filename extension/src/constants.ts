@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.36'
+export const EXTENSION_VERSION = '0.2.37'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -710,6 +710,13 @@ export const RECORDING_TERMINAL_RESERVE_BYTES = 16_384
 export const RECORDING_REASON_LIMIT_CHARS = 1_024
 // How many characters of an interrupted or partial test replay's reason the Study section shows on its one line.
 export const NODE_CAPTURE_REASON_LIMIT_CHARS = 240
+
+/** The UTF-16 code units of a surrogate pair's first (high) half; a high unit followed by a low one is one code point ({@link isSurrogatePairAt}). */
+export const HIGH_SURROGATE_FIRST_UNIT = 0xd800
+export const HIGH_SURROGATE_LAST_UNIT = 0xdbff
+/** The UTF-16 code units of a surrogate pair's second (low) half. */
+export const LOW_SURROGATE_FIRST_UNIT = 0xdc00
+export const LOW_SURROGATE_LAST_UNIT = 0xdfff
 export const MAX_RECORDING_CONTEXT_BYTES = 8_388_608
 export const MAX_RECORDING_HEADER_BYTES = 65_536
 export const MAX_RECORDING_TOTAL_BYTES = 570_425_344
@@ -997,7 +1004,7 @@ export const VITEST_PACKAGE_PATH = 'node_modules/vitest/package.json'
 export const VITEST_PROGRAM_PATH = 'node_modules/vitest/vitest.mjs'
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
-/** The file of a test history's folder that names the editor process writing it, removed when the writer seals or is abandoned ({@link writeNodeTestWriterRecord}, {@link isNodeTestWriterLive}). */
+/** The file of a test history's folder that names the editor process writing it, removed when the writer seals or is abandoned ({@link writeNodeTestWriterRecord}, {@link judgeNodeTestWriter}). */
 export const NODE_TEST_HISTORY_WRITER_FILE = 'writer.json'
 /** How long a window keeps the verdict "its writer is live" for a test history another window records, in milliseconds: judging the writer reads its process start, which starts a process (`ps`, PowerShell), and the Study workspace refreshes every 250 ms. A crashed writer is therefore told within this time, without a process query at every refresh; a "gone" verdict is final for that record ({@link NodeTestHistoryStore}). */
 export const NODE_TEST_WRITER_RECHECK_MS = 5_000

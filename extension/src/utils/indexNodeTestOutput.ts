@@ -1,6 +1,7 @@
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
 import { countCodePoints } from './countCodePoints'
+import { isSurrogatePairAt } from './isSurrogatePairAt'
 import { nodeTestOutputLineCost } from './nodeTestOutputLineCost'
 import { stripTerminalControlsAcross } from './stripTerminalControls'
 
@@ -55,8 +56,8 @@ const INSPECTOR_LINES = [
 
 /**
  * Reads a test replay's output entries once into lines, so the Application pane can show the output up to any selected event without reading every entry again (S1-2); called by the Study workspace once per opened test replay.
- * A line-state machine joins the entries: a chunk of the same channel continues an unfinished line, a chunk of the other channel ends it first, terminal controls are removed across the entries of each channel ({@link stripTerminalControlsAcross}) and the Node inspector's own standard-error lines are counted instead of shown. Each line is kept as the offsets of its text in one shared body (F149).
- * @param entries - The history's events in sequence order; only output entries are read.
+ * A line-state machine joins the entries: a chunk of the same channel continues an unfinished line, a chunk of the other channel ends it first, and the Node inspector's own standard-error lines are counted instead of shown; the entries' terminal controls were removed before, across the entries of each channel ({@link stripOutputEntries}). Each line is kept as the offsets of its text in one shared body (F149).
+ * @param entries - The shown history's events in sequence order ({@link sanitizeNodeTestHistory} removed their terminal controls, once); only output entries are read.
  * @returns The index: the output entries' sequences, the shown text, the complete lines' offsets and channels, their running totals and what each output entry leaves behind.
  * @example
  * indexNodeTestOutput([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: 'RUN\nok' }]).after[0]
@@ -65,11 +66,9 @@ const INSPECTOR_LINES = [
 export function indexNodeTestOutput(
   entries: readonly NodeTestHistoryIndex['entries'][number][],
 ): NodeTestOutputIndex {
-  const shownText = stripOutputEntries(entries)
   const outputEntries = entries.filter((entry) => entry.type === 'output')
-  const body = outputEntries
-    .map((entry) => shownText.get(entry.sequence)!)
-    .join('')
+  // The output is shown text already: stripping it again would pass over the whole output for nothing (F315, F339).
+  const body = outputEntries.map((entry) => entry.text).join('')
   const index: NodeTestOutputIndex = {
     sequences: [],
     body,
@@ -117,7 +116,7 @@ export function indexNodeTestOutput(
     if (to <= from) return
     // A surrogate pair split across two entries is one code point, not two (F291).
     const joinsPair =
-      isContinuing && pending.end === from && endsInSplitPair(body, from)
+      isContinuing && pending.end === from && isSurrogatePairAt(body, from - 1)
     pending.end = to
     pending.codePoints += countCodePoints(body, from, to) - (joinsPair ? 1 : 0)
   }
@@ -142,7 +141,7 @@ export function indexNodeTestOutput(
   let offset = 0
   for (const entry of outputEntries) {
     const from = offset
-    offset += shownText.get(entry.sequence)!.length
+    offset += entry.text.length
     // A chunk that held only controls changes no line, not even the channel of an unfinished one.
     if (offset > from) read(entry.channel, from, offset)
     index.sequences.push(entry.sequence)
@@ -156,22 +155,7 @@ export function indexNodeTestOutput(
 }
 
 /**
- * Tells whether a text offset falls inside a surrogate pair, so the code points of the parts on both sides of it add up to one too many; called by the line reader of {@link indexNodeTestOutput}.
- * @param text - The shown text.
- * @param offset - The offset where one part ends and the next begins.
- * @returns Whether a high surrogate stands just before the offset and a low one at it.
- * @example endsInSplitPair('\ud83d\ude00', 1) // => true
- */
-function endsInSplitPair(text: string, offset: number): boolean {
-  const before = text.charCodeAt(offset - 1)
-  const after = text.charCodeAt(offset)
-  return (
-    before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff
-  )
-}
-
-/**
- * Removes the terminal controls of every output entry, reading each channel's entries as one stream so a control string split across entries goes whole (F109, F148); called by {@link indexNodeTestOutput}.
+ * Removes the terminal controls of every output entry, reading each channel's entries as one stream so a control string split across entries goes whole (F109, F148); called by {@link sanitizeNodeTestHistory} once per opened test replay, before {@link indexNodeTestOutput} reads the shown text.
  * @param entries - The history's events in sequence order; only output entries are read.
  * @returns Each output entry's shown text, by the entry's sequence.
  * @example stripOutputEntries([{ type: 'output', sequence: 1, elapsedMs: 5, channel: 'stdout', text: '\u001b[3' }, { type: 'output', sequence: 2, elapsedMs: 6, channel: 'stdout', text: '2mok' }]) // => Map { 1 => '', 2 => 'ok' }

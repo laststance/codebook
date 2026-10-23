@@ -164,46 +164,48 @@ export function installNodeTestOutput(
     output.scrollTop = output.scrollHeight
     settle()
   }
-  /** Removes the lines a view no longer holds and lists the kept ones by their number, so each line is found without searching the whole output. */
-  const keptLines = (
-    lines: NodeTestApplicationView['lines'],
-  ): Map<number, HTMLElement> => {
-    const wanted = new Set(lines.map((value) => value.number)),
-      kept = new Map<number, HTMLElement>()
-    for (const node of Array.from(output.children))
-      if (node instanceof HTMLElement && wanted.has(Number(node.dataset.line)))
-        kept.set(Number(node.dataset.line), node)
-      else node.remove()
-    return kept
+  /** Every drawn line by its number, with the line it shows: a frame compares a line with what it drew, never by querying the document, and the lines a view leaves are found without walking the output (F314). */
+  const drawn = new Map<
+    number,
+    { node: HTMLElement; shows: NodeTestApplicationView['lines'][number] }
+  >()
+  /** Removes the drawn lines a view no longer holds. */
+  const dropLeftLines = (lines: NodeTestApplicationView['lines']): void => {
+    const wanted = new Set(lines.map((value) => value.number))
+    for (const [number, line] of drawn)
+      if (!wanted.has(number)) {
+        line.node.remove()
+        drawn.delete(number)
+      }
   }
   /** Places one line after the line before it: lines are matched by their number, so an unchanged line keeps its node and a selection or focus inside it survives; a changed line is replaced and a new one inserted. */
   const placeLine = (
     value: NodeTestApplicationView['lines'][number],
-    node: HTMLElement | undefined,
     previous: Element | undefined,
   ): Element => {
+    const kept = drawn.get(value.number)
     const unchanged =
-      node?.dataset.channel === value.channel &&
-      (node.dataset.cut === 'true') === Boolean(value.cut) &&
-      node.querySelector('.output-text')?.textContent === value.text
-    if (unchanged && node) return node
+      kept?.shows.channel === value.channel &&
+      Boolean(kept.shows.cut) === Boolean(value.cut) &&
+      kept.shows.text === value.text
+    if (unchanged && kept) return kept.node
     const placed = lineNode(value)
-    if (node) node.replaceWith(placed)
+    if (kept) kept.node.replaceWith(placed)
     else if (previous) previous.after(placed)
     else output.prepend(placed)
+    drawn.set(value.number, { node: placed, shows: value })
     return placed
   }
   /** Brings the output region's lines to a view's in place, in time linear in the lines. */
   const placeLines = (lines: NodeTestApplicationView['lines']): void => {
-    const kept = keptLines(lines)
+    dropLeftLines(lines)
     let previous: Element | undefined
-    for (const value of lines)
-      previous = placeLine(value, kept.get(value.number), previous)
+    for (const value of lines) previous = placeLine(value, previous)
   }
   /** Scrolls so that the anchor's line stands where it stood; an anchor whose line the view no longer holds leaves the region at its start. */
   const restoreAnchor = (anchor: NodeTestOutputAnchor): void => {
-    const target = output.querySelector(`[data-line="${anchor.line}"]`)
-    if (target instanceof HTMLElement)
+    const target = drawn.get(anchor.line)?.node
+    if (target)
       output.scrollTop +=
         target.getBoundingClientRect().top -
         output.getBoundingClientRect().top +
@@ -219,7 +221,16 @@ export function installNodeTestOutput(
     else if (reading.anchor) restoreAnchor(reading.anchor)
     else settle()
   }
+  /** Places the region after a view was drawn: following goes to the end; otherwise the learner's line stands where it stood, whatever the webview's own scroll anchoring did with lines dropped above it (F354), or the position is recorded as the document's own. */
+  const placeReading = (anchor: NodeTestOutputAnchor | undefined): void => {
+    // A shorter output clamps the scroll position: that is the document's change, never the learner's return to the end (DS20), and `settle` records it as such.
+    if (follow) toEnd()
+    else if (anchor && drawn.has(anchor.line)) restoreAnchor(anchor)
+    else settle()
+  }
   const apply = (view: NodeTestApplicationView): void => {
+    // The line the learner reads, taken before the lines change: a view that drops earlier lines would otherwise move it up (F354).
+    const readingAnchor = follow ? undefined : currentAnchor()
     document.title = view.name
     element('test-output-main').setAttribute('aria-label', view.name)
     element('test-output-time').textContent = view.time
@@ -232,9 +243,7 @@ export function installNodeTestOutput(
     line('test-output-placeholder', view.placeholder)
     line('test-output-end', view.end)
     placeLines(view.lines)
-    // A shorter output clamps the scroll position: that is the document's change, never the learner's return to the end (DS20), and `settle` records it as such.
-    if (follow) toEnd()
-    else settle()
+    placeReading(readingAnchor)
     jump.hidden = follow
   }
   /** Draws the newest view that came since the last frame, and takes the host's reading when the update carries it. */
@@ -272,28 +281,37 @@ export function installNodeTestOutput(
     // The button leaves the page, so the keyboard stays in the output it led to.
     output.focus()
   })
+  /** Tells a view the host posted from any other message the webview receives: it has a generation and a view. */
+  const isOutputUpdate = (
+    data: Partial<NodeTestOutputUpdate> | null,
+  ): data is NodeTestOutputUpdate =>
+    data?.type === 'node-history-output' &&
+    typeof data.generation === 'number' &&
+    Boolean(data.view)
+  /** Whether an update is older than the one shown or waiting: it came late, and the newer selection stands. */
+  const isLate = (generation: number): boolean =>
+    generation < Math.max(shown, queued?.generation ?? 0)
+  /** Draws the queued view at the next frame: views that arrive faster than frames (Play posts up to twenty a second) are drawn once, the newest. */
+  const drawSoon = (): void => {
+    frame ??= requestAnimationFrame(drawQueued)
+  }
+  /** Queues the newest view, keeping the host's reading that waited in the update it replaces unless this one brings its own (F290). */
+  const queue = (update: NodeTestOutputUpdate): void => {
+    const reading = update.reading ?? queued?.reading
+    queued = {
+      type: 'node-history-output',
+      generation: update.generation,
+      view: update.view,
+      ...(reading ? { reading } : {}),
+    }
+    drawSoon()
+  }
   window.addEventListener(
     'message',
     (event: MessageEvent<Partial<NodeTestOutputUpdate> | null>) => {
       const data = event.data
-      if (
-        data?.type !== 'node-history-output' ||
-        typeof data.generation !== 'number' ||
-        !data.view
-      )
-        return
-      // An update older than the one shown or waiting came late: the newer selection stands.
-      if (data.generation < Math.max(shown, queued?.generation ?? 0)) return
-      // The newest view is drawn, but the host's reading waiting in the replaced update is kept unless this one brings its own (F290).
-      const reading = data.reading ?? queued?.reading
-      queued = {
-        type: 'node-history-output',
-        generation: data.generation,
-        view: data.view,
-        ...(reading ? { reading } : {}),
-      }
-      // Views that arrive faster than frames (Play posts up to twenty a second) are drawn once, the newest.
-      frame ??= requestAnimationFrame(drawQueued)
+      if (!isOutputUpdate(data) || isLate(data.generation)) return
+      queue(data)
     },
   )
   apply(options.view)

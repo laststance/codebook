@@ -25,7 +25,8 @@ test('recorded test output keeps its text, tabs and line feeds and loses termina
 // Value: protects=recorded output cannot reorder or hide what the learner reads: bidirectional controls and C0 controls other than tab and line feed are removed; fails_when=a bidirectional override or a bell, backspace or form feed reaches the pane; why_new=test output is untrusted text from the learner's repository (EN10, S3-1); seam=none; no_claim=Unicode text without controls, which stays as printed
 test('recorded test output loses bidirectional and other invisible controls', () => {
   // Arrange
-  const printed = '\u0007bell ‮evil‬ done ⁦x⁩\n\u0008back\u000Cfeed؜‎‏ ok\n'
+  const printed =
+    '\u0007bell \u202Eevil\u202C done \u2066x\u2069\n\u0008back\u000Cfeed\u061C\u200E\u200F ok\n'
 
   // Act
   const shown = stripTerminalControls(printed)
@@ -116,7 +117,7 @@ test('an introducer with no terminator within 4,096 code points removes only its
 })
 
 // Value: protects=output dense with unterminated 8-bit introducers is stripped in time linear in its length, so a hostile 8 MiB journal cannot stall the extension host; fails_when=200,000 U+009D take more than 500 ms (the scan of 4,096 code points per introducer returned: about 800 million steps) or the introducers are not all removed; why_new=F289; seam=none; no_claim=the speed of ordinary output
-test('200,000 unterminated 8-bit introducers are stripped in within 500 ms', () => {
+test('200,000 unterminated 8-bit introducers are stripped within 500 ms', () => {
   // Arrange
   const dense = `${'\u009D'.repeat(200_000)}tail`
   const startedAt = performance.now()
@@ -127,6 +128,7 @@ test('200,000 unterminated 8-bit introducers are stripped in within 500 ms', () 
 
   // Assert
   assert.equal(shown, 'tail')
+  // gstack-timing-ok: the bound is F289's contract (linear time): the quadratic scan took 1,431 ms here and the linear one 11 ms, so 500 ms separates them under load.
   assert.ok(elapsedMs < 500, `took ${Math.round(elapsedMs)} ms`)
 })
 

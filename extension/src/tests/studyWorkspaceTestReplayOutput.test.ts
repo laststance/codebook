@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { studyHtml } from '../ui/studyHtml'
+import * as terminalControls from '../utils/stripTerminalControls'
 
 import {
   recordedReaderHarness,
@@ -394,8 +395,8 @@ test('Show recorded output brings a closed Application pane back at the selected
   }
 })
 
-// Value: protects=leaving a test replay for Live releases the replay's output index with the rest of its selection, so a journal of up to 8 MiB (10,000 entries with their debugger snapshots) leaves the extension host's memory; fails_when=the index, which holds the whole history and a copy of its output lines, stays referenced after the selection is retired, until another test replay is opened; why_new=Step 9's performance review found the PR-B1 index cache outliving retireNodeHistorySelection; seam=none; no_claim=when the garbage collector frees it (stand-ins: the workspace's private cache field, read through a type that names it)
-test('returning to Live releases the test replay’s output index with its selection', async () => {
+// Value: protects=leaving a test replay for Live releases the replay's output index with the rest of its selection, so a journal of up to 8 MiB (10,000 entries with their debugger snapshots) leaves the extension host's memory; fails_when=the index, which holds the whole history and a copy of its output lines, stays referenced after the selection is retired, until another test replay is opened; why_new=Step 9's performance review found the PR-B1 index cache outliving retireNodeHistorySelection; why_changed=F332 (PR-2 /ship Step 7 re-entry): the position map of F327 holds the history too and is released with it; seam=none; no_claim=when the garbage collector frees it (stand-ins: the workspace's private cache field, read through a type that names it)
+test('returning to Live releases the test replay’s output index and event positions with its selection', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -413,8 +414,10 @@ test('returning to Live releases the test replay’s output index with its selec
     )
     const cache = harness.reader as unknown as {
       selectedNodeHistoryOutputIndex?: unknown
+      nodeHistoryPositions?: unknown
     }
     const indexWhileShown = cache.selectedNodeHistoryOutputIndex
+    const positionsWhileShown = cache.nodeHistoryPositions
 
     // Act
     await harness.reader.action('return-current')
@@ -427,6 +430,8 @@ test('returning to Live releases the test replay’s output index with its selec
     // Assert
     assert.notEqual(indexWhileShown, undefined)
     assert.equal(cache.selectedNodeHistoryOutputIndex, undefined)
+    assert.notEqual(positionsWhileShown, undefined)
+    assert.equal(cache.nodeHistoryPositions, undefined)
   } finally {
     await harness.close()
   }
@@ -557,7 +562,7 @@ test('a refused step action keeps the selected moment and the step the learner c
     // Assert
     assert.equal(
       lastView(harness)?.errors[0],
-      'Error: The requested Node history event is unavailable.',
+      'Error: The requested event of this test replay is unavailable.',
     )
     assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
     assert.equal(lastView(harness)?.nodeHistorySection?.selectedStepId, 'keep')
@@ -1437,6 +1442,85 @@ test('opening another test replay starts on its own first step, not the step cho
     assert.deepEqual(lastView(harness)?.nodeHistorySection?.sameMomentStepIds, [
       'keep',
     ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the cost of opening a test replay: its recorded output is stripped of terminal controls once, for the history its surfaces print, and the output index reads that shown text without stripping it again; fails_when=the index strips the already-shown output a second time, a pass over up to 8 MiB of output on the extension host at every open; why_new=F315 (PR-2 /ship Step 9 performance): the Study workspace indexed the sanitized history with the index's own strip; seam=the stripping module's cross-entry export, counted; no_claim=the strip's own result (stripTerminalControls' tests)
+test('opening a test replay strips its recorded output once, not again for its output index', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const strip = context.mock.method(
+      terminalControls,
+      'stripTerminalControlsAcross',
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert: one pass, one stream per channel (standard output and standard error).
+    assert.equal(strip.mock.callCount(), 2)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a reloaded Application document that reads away from the end gets the learner's latest place back even when its view is current: the host answers its ready message with the reading that holds the newest anchor; fails_when=the host answers only a document whose view is older or whose follow choice differs, so a document VS Code reloaded from an earlier write opens at that write's anchor, not where the learner scrolled since; why_new=F343 (PR-2 /ship Step 11: Claude adversarial, Codex adversarial and Codex structured review): the ready check compared the generation and the follow choice, never the anchor; seam=none; no_claim=a document that follows, which takes no anchor
+test('a ready Application document that reads away from the end is sent the host’s newest anchor, also when its view is current', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    const current = harness.reader['message']().nodeHistoryApplication!
+    // The learner scrolled away from the end, to line 9, after the document was written.
+    harness.receiveApplication({
+      type: 'node-history-output-state',
+      history: history.studyId,
+      follow: false,
+      anchor: { line: 9, offsetPx: 3 },
+    })
+    const posted = harness.applicationOutputs().length
+
+    // Act: the reloaded document reports the current view and not following.
+    harness.receiveApplication({
+      type: 'node-history-output-ready',
+      history: history.studyId,
+      generation: current.generation,
+      follow: false,
+    })
+
+    // Assert
+    const answer = harness.applicationOutputs().at(-1)
+    assert.equal(harness.applicationOutputs().length, posted + 1)
+    assert.equal(answer?.generation, current.generation)
+    assert.equal(
+      JSON.stringify(answer?.reading),
+      '{"follow":false,"anchor":{"line":9,"offsetPx":3}}',
+    )
   } finally {
     await harness.close()
   }

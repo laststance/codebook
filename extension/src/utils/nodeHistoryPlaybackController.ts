@@ -136,7 +136,9 @@ export class NodeHistoryPlaybackController {
       positionMs < first.elapsedMs ||
       positionMs > last.elapsedMs
     ) {
-      throw new Error('Seek lies outside the verified Node history range.')
+      throw new Error(
+        'Seek lies outside the verified range of this test replay.',
+      )
     }
     this.mode = 'paused'
     this.generation++

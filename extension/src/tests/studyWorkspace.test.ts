@@ -1620,7 +1620,7 @@ test('seeking a Node history onto a stop after the learner stops its historical 
           harness.reader
             .inspect()
             .view?.errors.some((error) =>
-              /historical Node debugger was stopped/.test(error),
+              /replay debugger was stopped/.test(error),
             ),
         ),
       'the seek reports why the stop was not presented',

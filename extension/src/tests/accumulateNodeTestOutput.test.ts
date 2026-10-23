@@ -3,7 +3,11 @@ import { test } from 'node:test'
 
 import type { NodeTestHistoryEntry } from '../nodeTestHistorySchemas'
 import { accumulateNodeTestOutput } from '../utils/accumulateNodeTestOutput'
-import { indexNodeTestOutput } from '../utils/indexNodeTestOutput'
+import * as tailCut from '../utils/cutTextToTail'
+import {
+  indexNodeTestOutput,
+  stripOutputEntries,
+} from '../utils/indexNodeTestOutput'
 
 /** An output entry of a test replay, printed at `sequence` ms. */
 const printed = (
@@ -18,6 +22,21 @@ const printed = (
   channel,
   text,
 })
+
+/**
+ * Gives the entries as the Study workspace indexes them: their terminal controls removed across each channel ({@link stripOutputEntries}), as {@link sanitizeNodeTestHistory} does once per opened replay, before {@link indexNodeTestOutput} reads the shown text.
+ * @param entries - The entries as recorded.
+ * @returns The entries with each output entry's shown text.
+ * @example asShown([printed(1, 'stdout', 'a\u001b[3'), printed(2, 'stdout', '2mb')]) // texts 'a' and 'b'
+ */
+const asShown = (entries: NodeTestHistoryEntry[]): NodeTestHistoryEntry[] => {
+  const texts = stripOutputEntries(entries)
+  return entries.map((entry) =>
+    entry.type === 'output'
+      ? { ...entry, text: texts.get(entry.sequence)! }
+      : entry,
+  )
+}
 
 /** A result entry of a passing test at `sequence` ms. */
 const passed = (sequence: number): NodeTestHistoryEntry => ({
@@ -135,19 +154,21 @@ test('a long recorded output keeps its end and counts the characters left out', 
   })
 })
 
-// Value: protects=the Node inspector's own standard-error lines are counted for one muted line instead of shown or dropped silently, and output of only such lines or of terminal controls reads as nothing printed; fails_when=an inspector line shows as test output, the count is wrong, or a controls-only chunk makes the pane claim output; why_new=EN10's disclosed inspector line and DS7's empty state; seam=none; no_claim=inspector lines of other Node versions' wording
+// Value: protects=the Node inspector's own standard-error lines are counted for one muted line instead of shown or dropped silently, and output of only such lines or of terminal controls reads as nothing printed; fails_when=an inspector line shows as test output, the count is wrong, or a controls-only chunk makes the pane claim output; why_new=EN10's disclosed inspector line and DS7's empty state; why_changed=F339 (PR-2 /ship Step 9 pass 3 simplification): the index reads shown text, so the case strips its entries first, as the Study workspace does once per opened replay; seam=none; no_claim=inspector lines of other Node versions' wording
 test('Node inspector lines are counted, not shown, and controls alone are no output', () => {
   // Arrange
-  const index = indexNodeTestOutput([
-    printed(
-      1,
-      'stderr',
-      'Debugger listening on ws://127.0.0.1:9229/5f0c\nFor help, see: https://nodejs.org/en/docs/inspector\n',
-    ),
-    printed(2, 'stdout', '\u001b[2K'),
-    printed(3, 'stdout', 'RUN src/jobs.test.ts\n'),
-    printed(4, 'stderr', 'Debugger attached.\n'),
-  ])
+  const index = indexNodeTestOutput(
+    asShown([
+      printed(
+        1,
+        'stderr',
+        'Debugger listening on ws://127.0.0.1:9229/5f0c\nFor help, see: https://nodejs.org/en/docs/inspector\n',
+      ),
+      printed(2, 'stdout', '\u001b[2K'),
+      printed(3, 'stdout', 'RUN src/jobs.test.ts\n'),
+      printed(4, 'stderr', 'Debugger attached.\n'),
+    ]),
+  )
 
   // Act
   const onlyInspector = accumulateNodeTestOutput(index, 2)
@@ -163,15 +184,17 @@ test('Node inspector lines are counted, not shown, and controls alone are no out
   ])
 })
 
-// Value: protects=a chunk of only terminal controls, written on the other stream while a line is still being printed (a reporter's erase or cursor move on standard error in the middle of a standard-output line), changes no line and no channel: the unfinished line stays one line of its own channel and the lines after it keep their numbers; fails_when=the controls-only chunk ends the unfinished line (the line shows in two halves and every later line number moves by one) or is read as an empty line of its own channel; why_new=indexNodeTestOutput skips a chunk that holds only controls so a terminal's cursor moves cannot cut a line (EN10), and the test above puts its controls-only chunk where no line is unfinished, so removing that skip changes nothing it asserts; seam=none; no_claim=how the controls are removed (stripTerminalControls's tests)
+// Value: protects=a chunk of only terminal controls, written on the other stream while a line is still being printed (a reporter's erase or cursor move on standard error in the middle of a standard-output line), changes no line and no channel: the unfinished line stays one line of its own channel and the lines after it keep their numbers; fails_when=the controls-only chunk ends the unfinished line (the line shows in two halves and every later line number moves by one) or is read as an empty line of its own channel; why_new=indexNodeTestOutput skips a chunk that holds only controls so a terminal's cursor moves cannot cut a line (EN10), and the test above puts its controls-only chunk where no line is unfinished, so removing that skip changes nothing it asserts; why_changed=F339 (PR-2 /ship Step 9 pass 3 simplification): the index reads shown text, so the case strips its entries first, as the Study workspace does once per opened replay; seam=none; no_claim=how the controls are removed (stripTerminalControls's tests)
 test('a chunk of only terminal controls on the other stream leaves an unfinished line whole', () => {
   // Arrange
-  const index = indexNodeTestOutput([
-    printed(1, 'stdout', 'job 1 sch'),
-    printed(2, 'stderr', '\u001b[2K\u001b[?25l'),
-    printed(3, 'stdout', 'eduled\n'),
-    printed(4, 'stdout', 'job 2 scheduled\n'),
-  ])
+  const index = indexNodeTestOutput(
+    asShown([
+      printed(1, 'stdout', 'job 1 sch'),
+      printed(2, 'stderr', '\u001b[2K\u001b[?25l'),
+      printed(3, 'stdout', 'eduled\n'),
+      printed(4, 'stdout', 'job 2 scheduled\n'),
+    ]),
+  )
 
   // Act
   const whileControlsArrive = accumulateNodeTestOutput(index, 2)
@@ -191,15 +214,17 @@ test('a chunk of only terminal controls on the other stream leaves an unfinished
   ])
 })
 
-// Value: protects=a color sequence and a window-title string that the launcher's 4,096-character entry limit split across entries leave no tail or forged title in the lines, and the entries of the other channel between them do not break the string; fails_when=`2m` or `forged title` shows as output, or a line is lost; why_new=F109 and F148 (controls were removed per entry); seam=none; no_claim=the bounds of a stray introducer, which stripTerminalControls's tests pin
+// Value: protects=a color sequence and a window-title string that the launcher's 4,096-character entry limit split across entries leave no tail or forged title in the lines, and the entries of the other channel between them do not break the string; fails_when=`2m` or `forged title` shows as output, or a line is lost; why_new=F109 and F148 (controls were removed per entry); why_changed=F339 (PR-2 /ship Step 9 pass 3 simplification): the index reads shown text, so the case strips its entries first, as the Study workspace does once per opened replay; seam=none; no_claim=the bounds of a stray introducer, which stripTerminalControls's tests pin
 test('terminal strings split across output entries leave no text in the lines', () => {
   // Arrange
-  const index = indexNodeTestOutput([
-    printed(1, 'stdout', 'green \u001b[3'),
-    printed(2, 'stderr', 'warn\n'),
-    printed(3, 'stdout', '2mtext\n\u001b]0;forged '),
-    printed(4, 'stdout', 'title\u0007next\n'),
-  ])
+  const index = indexNodeTestOutput(
+    asShown([
+      printed(1, 'stdout', 'green \u001b[3'),
+      printed(2, 'stderr', 'warn\n'),
+      printed(3, 'stdout', '2mtext\n\u001b]0;forged '),
+      printed(4, 'stdout', 'title\u0007next\n'),
+    ]),
+  )
 
   // Act
   const shown = accumulateNodeTestOutput(index, 4)
@@ -351,8 +376,8 @@ test('the output index keeps no object per line and still shows the right lines'
   )
 })
 
-// Value: protects=showing the output up to a moment costs about its kept tail, however many lines it holds and however long its last line is: 262,144 one-character lines and one unfinished line of 8 MiB are each assembled in well under a second; fails_when=the kept lines are put first one by one (quadratic in the kept lines: about 8 s for 262,144) or a whole line is spread into characters to count or cut it (its whole length per selection); why_new=/ship Step 11's Codex adversarial review and the carried F107 and F108: about 0.5 s per selection for 65,536 short lines, recomputed at every 250 ms refresh (F111); seam=none; no_claim=the Application document's own update, which the Reader DOM check times
-test('showing the output up to a moment costs about its tail for many short lines and one very long line', () => {
+// Value: protects=showing the output up to a moment costs about its kept tail, however many lines it holds and however long its last line is: 262,144 one-character lines and one unfinished line of 8 MiB are each assembled in well under a second; fails_when=the kept lines are put first one by one (quadratic in the kept lines: about 4 s for 262,144) or a whole line is handed to the cut, which spreads it into characters (its whole length per selection); why_new=/ship Step 11's Codex adversarial review and the carried F107 and F108: about 0.5 s per selection for 65,536 short lines, recomputed at every 250 ms refresh (F111); why_changed=F325 (PR-2 /ship Step 9 pass 2 testing): one timed run could fail on a runner pause, so the short lines' time is the fastest of three, and the long line's 200 ms bound could not catch the whole-line spread it named (about 20 ms), so it is now the length the cut reads, and F352 (hosted CodeRabbit on #120): that bound passed when the cut was never called, so the test also asserts that it was; seam=none; no_claim=the Application document's own update, which the Reader DOM check times
+test('showing the output up to a moment costs about its tail for many short lines and one very long line', (context) => {
   // Arrange
   const shortLines = indexNodeTestOutput(
     Array.from({ length: 64 }, (_, index) =>
@@ -365,22 +390,42 @@ test('showing the output up to a moment costs about its tail for many short line
     ),
   )
 
-  // Act
-  const startedShort = performance.now()
-  const manyLines = accumulateNodeTestOutput(shortLines, 64, 524_288)
-  const shortMs = performance.now() - startedShort
-  const startedLong = performance.now()
+  // Act: each is timed three times and its fastest run kept, so a pause of the runner (a garbage collection, a busy shard) cannot fail it, while a regression slows every run.
+  const fastestOf = <Result>(run: () => Result) => {
+    let result = run(),
+      fastestMs = Number.POSITIVE_INFINITY
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const started = performance.now()
+      result = run()
+      fastestMs = Math.min(fastestMs, performance.now() - started)
+    }
+    return { result, fastestMs }
+  }
+  const { result: manyLines, fastestMs: shortMs } = fastestOf(() =>
+    accumulateNodeTestOutput(shortLines, 64, 524_288),
+  )
+  const cuts = context.mock.method(tailCut, 'cutTextToTail')
   const oneLine = accumulateNodeTestOutput(longLine, 2_048)
-  const longMs = performance.now() - startedLong
+  const longestCutInput = Math.max(
+    ...cuts.mock.calls.map((call) => call.arguments[0].length),
+  )
 
   // Assert
   assert.equal(manyLines.lines.length, 262_144)
   assert.equal(manyLines.lines[0]?.number, 0)
   assert.equal(oneLine.lines[0]?.text.length, 65_536)
-  // gstack-timing-ok: the quadratic assembly took about 8 s and the whole-line spread about 1 s on the Mac; the linear ones take a few milliseconds, so the bounds leave a wide margin under load
+  // gstack-timing-ok: the quadratic assembly takes about 4 s even as the fastest of three runs on the Mac (forced probe, F325); the linear one takes a few milliseconds, so the bound leaves a wide margin under load
   assert.ok(shortMs < 1_000, `262,144 lines took ${shortMs.toFixed(0)} ms`)
-  // gstack-timing-ok: see above; one 8 MiB line costs its 65,536-character tail
-  assert.ok(longMs < 200, `an 8 MiB line took ${longMs.toFixed(0)} ms`)
+  // The cut was reached at all: with no recorded call the bound below would compare -Infinity and pass (F352).
+  assert.ok(
+    cuts.mock.callCount() >= 1,
+    'the cut was never called for the 8 MiB line',
+  )
+  // One 8 MiB line costs its 65,536-character tail: the cut reads at most two units per kept character, never the whole line (a whole-line spread costs about 20 ms here, which no wall-clock bound can tell from load).
+  assert.ok(
+    longestCutInput <= 131_072,
+    `the cut read ${longestCutInput} characters of an 8 MiB line`,
+  )
 })
 
 // Value: protects=the Node inspector's own lines of current Node versions fold into the muted count too: Node 24's help line (`For help, see: https://nodejs.org/learn/getting-started/debugging`) and its `Debugger ending on …` line are counted, not shown; fails_when=only the older help address is recognized, so every replay recorded on Node 24 shows `[stderr] For help, see: …` and its count is one short (the README says the inspector's lines fold); why_new=/ship Step 11's Claude adversarial review, which read the line from the installed Node v24.21.0; seam=none; no_claim=inspector wordings of later Node versions

@@ -1,6 +1,7 @@
 import type { NodeTestHistoryIndex } from '../nodeTestHistorySchemas'
 
 import { stripOutputEntries } from './indexNodeTestOutput'
+import { stripNodeHistorySummaryTexts } from './stripNodeHistorySummaryTexts'
 import { stripTerminalControls } from './stripTerminalControls'
 
 /**
@@ -8,24 +9,18 @@ import { stripTerminalControls } from './stripTerminalControls'
  * A stop's source path is stripped for display only: its hash, line and column, the debugger snapshots and the counts are untouched, and the host verifies a stop against the stored history, not this one; the input is not changed.
  * @param history - The history as the store read it.
  * @returns A history whose output text, result output tail, stop source paths, frame names, fact paths and displays, and the cited test file and titles are free of controls (output entries read as one stream per channel, {@link stripOutputEntries}).
- * @example sanitizeNodeTestHistory(history).entries[0] // => { type: 'output', text: 'ok\n', … } for a recorded 'o‮k\n'
+ * @example sanitizeNodeTestHistory(history).entries[0] // => { type: 'output', text: 'ok\n', … } for a recorded 'o\u202Ek\n'
  */
 export function sanitizeNodeTestHistory(
   history: NodeTestHistoryIndex,
 ): NodeTestHistoryIndex {
   const shownOutput = stripOutputEntries(history.entries)
-  const configuration = history.header.configuration
   return {
     ...history,
     header: {
       ...history.header,
-      configuration: {
-        ...configuration,
-        testFile: stripTerminalControls(configuration.testFile),
-        ...(configuration.testTitles
-          ? { testTitles: configuration.testTitles.map(stripTerminalControls) }
-          : {}),
-      },
+      // The cited test file and titles are stripped as a Saved studies entry's are, by one rule.
+      configuration: stripNodeHistorySummaryTexts(history.header.configuration),
     },
     entries: history.entries.map((entry) => {
       if (entry.type === 'output')

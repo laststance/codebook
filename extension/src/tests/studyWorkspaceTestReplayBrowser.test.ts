@@ -110,7 +110,7 @@ test('Next stop in a test replay reopened after a browser recording cut off a sl
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const held = harness.holdHistoricalDebugPresentation(true)
     harness.receiveContext({
@@ -132,7 +132,7 @@ test('Next stop in a test replay reopened after a browser recording cut off a sl
     await waitUntil(
       () => shown() === 2,
       'the reopened test replay shows its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Act
@@ -150,7 +150,7 @@ test('Next stop in a test replay reopened after a browser recording cut off a sl
     await waitUntil(
       () => shown() === 4,
       'the Next stop lands on the second stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -175,7 +175,7 @@ test('a browser recording opened over a selected test replay ends its recorded-s
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const slotTabs = () =>
       harness.groups
@@ -202,3 +202,72 @@ test('a browser recording opened over a selected test replay ends its recorded-s
     await harness.close()
   }
 })
+
+/** The two requests of the second stop besides Next stop that a browser recording's admission can cut off. */
+const SECOND_STOP_REQUESTS = [
+  { request: 'Select event', type: 'node-history-event' },
+  { request: 'Inspect', type: 'node-history-stop' },
+] as const
+
+for (const { request, type } of SECOND_STOP_REQUESTS)
+  // Value: protects=a browser recording opened during a slow Select event or Inspect leaves no requested moment behind: after the learner reopens the test replay, one Next stop lands on the stop after the shown one; fails_when=the cut-off request's target (the second stop) outlives the admission and the reopened replay's Next stop is refused; why_new=F335 (PR-2 /ship Step 9 pass 3 state-machines): only a cut-off Next stop was tested (F283); seam=the workspace harness's held historical debug presentation, then openRecording and openLearningReplay; no_claim=returning to the same replay without reopening, which the admission does not allow (D20)
+  test(`Next stop in a test replay reopened after a browser recording cut off a slow ${request} moves on from the shown stop`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    try {
+      const history = await saveTwoStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await harness.reader.action('retry')
+      await harness.reader.openLearningReplay(history.studyId)
+      await waitUntil(
+        () =>
+          lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+          !lastView(harness)?.loading,
+        'the test replay lands on its first stop',
+        READER_RESULT_BOUND_MS,
+      )
+      const held = harness.holdHistoricalDebugPresentation(true)
+      harness.receiveContext({
+        type,
+        revision: lastView(harness)!.revision,
+        studyId: history.studyId,
+        sequence: 4,
+      })
+      await held.started
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      held.reject(new Error('Historical debugger presentation was superseded.'))
+      await harness.reader.action('return-current')
+      await harness.reader.openLearningReplay(history.studyId)
+      const shown = () =>
+        harness.reader['message']().nodeHistoryPosition?.sequence
+      await waitUntil(
+        () => shown() === 2,
+        'the reopened test replay shows its first stop',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // Act
+      void harness.reader['receive'](
+        {
+          type: 'node-history-step',
+          revision: harness.reader['message']().revision,
+          studyId: history.studyId,
+          direction: 'next',
+          unit: 'stop',
+        },
+        'context',
+      )
+      await waitUntil(
+        () => shown() === 4,
+        'the Next stop lands on the second stop',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // Assert
+      assert.equal(shown(), 4)
+    } finally {
+      await harness.close()
+    }
+  })

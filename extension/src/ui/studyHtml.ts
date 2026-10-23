@@ -548,12 +548,15 @@ function studyClient(
   })
   const strip = document.querySelector<HTMLElement>('.live-strip')
   const replayTransportBar = document.getElementById('node-history-transport')
+  // The sticky bars this page has, top first: the live strip, then the test replay's transport.
+  const stickyBars = [strip, replayTransportBar].filter(
+    (bar): bar is HTMLElement => bar !== null,
+  )
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
   // The live strip sticks at the top and the test replay's transport sticks right below it, so the sticky bars never cover each other; a bar taller than the fraction of the pane flows with the page instead, and the focus scroll room counts the bars that stay.
   const adaptStrip = (): void => {
     let stickyHeight = 0
-    for (const bar of [strip, replayTransportBar]) {
-      if (!bar) continue
+    for (const bar of stickyBars) {
       const height = bar.getBoundingClientRect().height
       bar.classList.toggle(
         'flowing',
@@ -569,8 +572,9 @@ function studyClient(
       `${stickyHeight}px`,
     )
   }
-  for (const bar of [strip, replayTransportBar])
-    if (bar) new ResizeObserver(adaptStrip).observe(bar)
+  // One observer measures every bar again when any of them changes size.
+  const stickyBarObserver = new ResizeObserver(adaptStrip)
+  for (const bar of stickyBars) stickyBarObserver.observe(bar)
   window.addEventListener('resize', adaptStrip)
   document.addEventListener('click', (event) => {
     const target =
@@ -2367,31 +2371,32 @@ function studyClient(
       options.nodeTransportFocus,
       'node-history',
     )
-    renderTestReplayInspect(message, uninspected, replaying)
+    // The row's Inspect is wanted while the stop's values are not loaded (beside Show Variables) and whenever the debugger does not show the selected stop: after the learner ended its session, or when it could not start, the press starts it again (F348).
+    const inspectWanted =
+      !suppressed &&
+      (uninspected || !message.nodeHistoryPosition?.debuggerAvailable)
+    renderTestReplayInspect(message, inspectWanted, replaying)
   }
   /**
-   * Offers Inspect in native debugger beside the values hint and Show Variables (DS6) for the selected stop whose values are not loaded, so the learner finds it without opening the event list; called by {@link renderTestReplayMoment} for every Study message.
+   * Offers Inspect in native debugger beside the values hint and Show Variables (DS6) for the selected stop, so the learner finds it without opening the event list: pressed ("Debugger stop selected") while the debugger shows the stop and its values are not loaded, and a press that starts the debugger again once it does not show the stop (F348); called by {@link renderTestReplayMoment} for every Study message.
+   * The stop is read from the selected moment's position, which the host sends whatever page the event list shows, so paging the list away from the stop keeps the control (F353).
    * @param message - The current Study message.
-   * @param uninspected - Whether the selected stop's values are not loaded, so the hint is shown.
+   * @param wanted - Whether the row wants the control: the selected stop's values are not loaded, or the debugger does not show the stop.
    * @param replaying - Whether a browser recording is shown, which disables the control.
    * @example renderTestReplayInspect(message, true, false)
    */
   const renderTestReplayInspect = (
     message: StudyViewMessage,
-    uninspected: boolean,
+    wanted: boolean,
     replaying: boolean,
   ): void => {
     const inspect = element('node-history-inspect')
-    const stop = message.nodeHistory?.entries.find(
-      (entry) =>
-        entry.type === 'stop' &&
-        entry.sequence === message.nodeHistoryPosition?.sequence,
-    )
+    const position = message.nodeHistoryPosition
+    // Only a selected stop has `sourceAvailable`, true when the extension verified its captured source.
     const offered =
-      uninspected &&
+      wanted &&
       inspect instanceof HTMLButtonElement &&
-      stop?.type === 'stop' &&
-      testReplayStopInspectable(stop, message, true)
+      position?.sourceAvailable === true
     // Hidden through the rule Show Variables follows: a keyboard learner on it is handed to the transport, not to the page (F292).
     offerShowVariables(
       'node-history-inspect',
@@ -2400,8 +2405,8 @@ function studyClient(
       'node-history',
     )
     if (!offered) return
-    const shown = Boolean(message.nodeHistoryPosition?.debuggerAvailable)
-    inspect.dataset.nodeHistorySequence = String(stop.sequence)
+    const shown = Boolean(position.debuggerAvailable)
+    inspect.dataset.nodeHistorySequence = String(position.sequence)
     inspect.textContent = shown
       ? 'Debugger stop selected'
       : 'Inspect in native debugger'
@@ -2426,6 +2431,14 @@ function studyClient(
       text(id, value)
     element('node-history-closed').hidden = !section?.applicationClosed
   }
+  /** The section's lines that show one of its fields as it is, by element id, each empty when the field is absent. */
+  const testReplayFieldLines = [
+    ['node-history-capture-reason', 'captureReason'],
+    ['node-history-explanation', 'explanation'],
+    ['node-history-not-recorded', 'notRecorded'],
+    ['node-history-unverified', 'unverified'],
+    ['node-history-pointer', 'pointer'],
+  ] as const
   /**
    * Gives the text of each of the section's worded lines by its element id; called by {@link renderTestReplayLines}.
    * @param section - The section's worded view, absent while suppressed or without a test replay.
@@ -2440,15 +2453,21 @@ function studyClient(
     // Without a section every line is empty and the status line says `idle`.
     ({
       'node-history-status': section?.status ?? idle,
-      'node-history-capture-reason': section?.captureReason ?? '',
-      'node-history-position': section
-        ? (section.position ?? options.testReplay.noSelection)
-        : '',
-      'node-history-explanation': section?.explanation ?? '',
-      'node-history-not-recorded': section?.notRecorded ?? '',
-      'node-history-unverified': section?.unverified ?? '',
-      'node-history-pointer': section?.pointer ?? '',
+      'node-history-position': testReplayPositionText(section),
+      ...Object.fromEntries(
+        testReplayFieldLines.map(([id, field]) => [id, section?.[field] ?? '']),
+      ),
     })
+  /**
+   * Gives the selected moment's locator line; called by {@link testReplayLineTexts}.
+   * @param section - The section's worded view, absent while suppressed or without a test replay.
+   * @returns The section's position, the line that no moment is selected, or nothing without a section.
+   * @example testReplayPositionText(undefined) // => ''
+   */
+  const testReplayPositionText = (
+    section: StudyViewMessage['nodeHistorySection'],
+  ): string =>
+    section ? (section.position ?? options.testReplay.noSelection) : ''
   /**
    * Enables or disables a control of the section by its id; called by the transport's renderers.
    * @param id - The control's id.
@@ -2691,6 +2710,18 @@ function studyClient(
       element('node-learning-sequence').replaceChildren(visual)
       element('node-learning-steps').replaceChildren(list)
     }
+    markTestReplaySteps(section, replaying)
+  }
+  /**
+   * Marks the test replay's numbered steps for the selected moment (DS21): the selected step `aria-current`, the selected event's other steps `Same recorded moment`, and every step's control disabled while a browser recording is shown; called by {@link renderTestReplayLearning} for every Study message, also when the steps were drawn before.
+   * @param section - The section's worded view, which names the selected step and the steps of the same moment.
+   * @param replaying - Whether a browser recording is shown.
+   * @example markTestReplaySteps(message.nodeHistorySection, false)
+   */
+  const markTestReplaySteps = (
+    section: StudyViewMessage['nodeHistorySection'],
+    replaying: boolean,
+  ): void => {
     for (const control of Array.from(
       element('node-learning-steps').querySelectorAll<HTMLButtonElement>(
         'button[data-node-step]',
@@ -2959,7 +2990,7 @@ function studyClient(
     }
   }
   /**
-   * Says whether a stop can be inspected in the native debugger: the extension verified its captured source (the host names every shown stop that failed in `nodeHistoryUnverifiedStops`), and a selected stop's source is available; called by {@link testReplayInspectControl} and {@link renderTestReplayInspect}.
+   * Says whether a stop can be inspected in the native debugger: the extension verified its captured source (the host names every shown stop that failed in `nodeHistoryUnverifiedStops`), and a selected stop's source is available; called by {@link testReplayInspectControl}.
    * @param entry - The stop.
    * @param message - The current Study message.
    * @param isSelected - Whether the stop is the selected event.

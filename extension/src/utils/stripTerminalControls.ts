@@ -1,5 +1,7 @@
 import { TERMINAL_CONTROL_STRING_LOOKAHEAD_CODE_POINTS } from '../constants'
 
+import { isSurrogatePairAt } from './isSurrogatePairAt'
+
 const LOOKAHEAD = TERMINAL_CONTROL_STRING_LOOKAHEAD_CODE_POINTS
 
 /**
@@ -76,11 +78,7 @@ function countSurrogatePairsBefore(text: string): Int32Array | undefined {
   if (!/[\ud800-\udbff][\udc00-\udfff]/.test(text)) return undefined
   const table = new Int32Array(text.length + 1)
   for (let index = 0; index < text.length; index++) {
-    const unit = text.charCodeAt(index)
-    const next = text.charCodeAt(index + 1)
-    const isPair =
-      unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff
-    table[index + 1] = table[index]! + (isPair ? 1 : 0)
+    table[index + 1] = table[index]! + (isSurrogatePairAt(text, index) ? 1 : 0)
   }
   return table
 }
@@ -123,10 +121,10 @@ function findAnsiRanges(joined: string): { from: number; to: number }[] {
 
 /** C0 controls other than tab and line feed, DEL and the C1 controls, and the bidirectional controls that can reorder what a reader sees (the set {@link sanitizeCause} removes, with tab and line feed kept). */
 const UNREADABLE_CONTROLS =
-  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F؜‎‏‪-‮⁦-⁩]/g
+  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g
 
 /**
- * Removes what a terminal would interpret instead of show from the pieces of one recorded stream, so a control string split across pieces (the launcher ends an output entry at 4,096 characters) is removed whole and its tail never shows as text (F109, F148); called by {@link indexNodeTestOutput} for each channel's output entries and by {@link stripTerminalControls} for one text.
+ * Removes what a terminal would interpret instead of show from the pieces of one recorded stream, so a control string split across pieces (the launcher ends an output entry at 4,096 characters) is removed whole and its tail never shows as text (F109, F148); called by {@link stripOutputEntries} for each channel's output entries (once per opened replay, through {@link sanitizeNodeTestHistory}) and by {@link stripTerminalControls} for one text.
  * Escapes are found in the pieces joined; a string whose terminator arrives in a later piece is removed across both, and an introducer with no terminator within the next 4,096 code points of the joined stream is a stray: only its own code points go.
  * @param pieces - The stream's pieces in order.
  * @returns The pieces in order, each without ANSI escape sequences, C0 controls other than tab and line feed, DEL, C1 controls and bidirectional controls; the same count as `pieces`.
@@ -166,7 +164,7 @@ export function stripTerminalControlsAcross(
 }
 
 /**
- * Removes what a terminal would interpret instead of show from a recorded text, so the replay's surfaces show the text and nothing in it can recolor, move or reorder what the learner reads; called by {@link sanitizeNodeTestHistory} for each recorded text a replay surface prints.
+ * Removes what a terminal would interpret instead of show from a recorded text, so the replay's surfaces show the text and nothing in it can recolor, move or reorder what the learner reads; called by {@link sanitizeNodeTestHistory} for each recorded text a replay surface prints, by {@link stripNodeHistorySummaryTexts} for Saved studies' test names, by {@link projectNodeLearningSummary} for the learning material's texts, by {@link wordNodeCaptureReason} for a capture reason and by {@link describeNodeRecordedSource} for a recorded path.
  * Tabs and line feeds stay; a carriage return goes, so a `\r\n` line end reads as one line feed.
  * @param text - One recorded text.
  * @returns The text without ANSI escape sequences, C0 controls other than tab and line feed, DEL, C1 controls and bidirectional controls.

@@ -20,6 +20,7 @@ import {
 } from './studyWorkspaceHarness'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
+import { saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
 /** The last view the reader posted to its panes. */
 function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
@@ -1579,6 +1580,40 @@ test('a replay debugger the learner stopped stays stopped when the output is sel
       presentationsAfterStop,
     )
     assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the load-failure notice of a test replay names it without the right-to-left override a recorded test title holds, so the title cannot reorder the notice text; fails_when=the notice builds its title from the catalog entry before the controls are stripped; why_new=the catalog and the Study message are tested for F131, the host's notice is a third surface; seam=none; no_claim=other notices
+test('a test replay that cannot be read names a title with a U+202E in its failure notice without the control', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+      ['theme', 'applies \u202Edark\u202C mode'],
+    )
+    await harness.reader.action('retry')
+    await appendFile(
+      join(
+        (await harness.reader.learningStorage()).directory,
+        NODE_TEST_HISTORY_DIRECTORY,
+        history.studyId,
+        'events.jsonl',
+      ),
+      '{"type":"forged"}\n',
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.equal(harness.errorMessages.length, 1)
+    assert.match(
+      harness.errorMessages[0]!,
+      /^Codebook could not open the test replay "src\/theme\.test\.ts › theme › applies dark mode": /,
+    )
   } finally {
     await harness.close()
   }

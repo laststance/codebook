@@ -1254,9 +1254,10 @@ async function check(page, options, collected) {
           (await page.locator('#playback-hint').isHidden()) &&
           (await page.locator('#playback-reason').isVisible()),
       })
+      // The one-event history's stop is its first event (F305).
       const nodeStop = {
         sequence: 2,
-        eventIndex: 1,
+        eventIndex: 0,
         sourceAvailable: true,
         debuggerAvailable: true,
       }
@@ -1421,7 +1422,7 @@ async function check(page, options, collected) {
           inspectAfterSessionEnd.label === 'Inspect in native debugger' &&
           inspectAfterSessionEnd.disabled === false,
       })
-      // Value: protects=a selected stop whose values are not loaded offers Inspect in native debugger beside the hint and Show Variables (DS6), not only in the collapsed event list, and a press asks the host to select that stop; the control leaves with the hint once values load and is not offered for a stop whose captured source does not match; fails_when=the row has no Inspect, it stays after the values load or for a source mismatch, or its press sends another stop or nothing; why_new=F121: Inspect lived in the collapsed event list only; seam=none; no_claim=the host's selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
+      // Value: protects=a selected stop whose values are not loaded offers Inspect in native debugger beside the hint and Show Variables (DS6), not only in the collapsed event list, and a press asks the host to select that stop; the control leaves with the hint once values load and is not offered for a stop whose captured source does not match; fails_when=the row has no Inspect once the session ended, it shows an action while the debugger already shows the stop, it stays after the values load or for a source mismatch, or its press sends another stop or nothing; why_new=F121: Inspect lived in the collapsed event list only; why_changed=F348 (PR-2 /ship Step 11 Codex adversarial): the case published a state the host never sends (no debugger with values not loaded); the host's two states are now checked: the debugger showing the stop with values not loaded (pressed), and the session ended (offered); seam=none; no_claim=the host's selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
       // Arrange
       const rowInspect = page.locator('#node-history-inspect')
       const rowInspectState = async () => ({
@@ -1432,13 +1433,25 @@ async function check(page, options, collected) {
             button.previousElementSibling?.id === 'node-history-show-variables',
         ),
       })
-      // Act
+      // Act: the debugger shows the stop and its values are not loaded; then the learner ends the native session.
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          debuggerAvailable: true,
+          nativeValuesUninspected: true,
+        },
+      })
+      const rowInspectWhileShown = {
+        ...(await rowInspectState()),
+        pressed: await rowInspect.getAttribute('aria-pressed'),
+      }
       await publish({
         ...nodeReader,
         nodeHistoryPosition: {
           ...nodeStop,
           debuggerAvailable: false,
-          nativeValuesUninspected: true,
+          nativeValuesUninspected: false,
         },
       })
       const rowInspectOffered = await rowInspectState()
@@ -1451,7 +1464,11 @@ async function check(page, options, collected) {
       )
       await publish({
         ...nodeReader,
-        nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: false },
+        nodeHistoryPosition: {
+          ...nodeStop,
+          debuggerAvailable: true,
+          nativeValuesUninspected: false,
+        },
       })
       const rowInspectAfterValues = await rowInspectState()
       await publish({
@@ -1467,14 +1484,18 @@ async function check(page, options, collected) {
       const rowInspectForMismatch = await rowInspectState()
       // Assert
       cases.push({
-        name: 'a selected Node stop whose values are not loaded offers Inspect in native debugger beside Show Variables, and a press selects that stop',
+        name: 'a selected Node stop shows the debugger state beside Show Variables while its values are not loaded, and offers Inspect in native debugger once the session ended, whose press selects that stop (F348)',
         actual: {
+          rowInspectWhileShown,
           rowInspectOffered,
           rowInspectRequests,
           rowInspectAfterValues,
           rowInspectForMismatch,
         },
         passed:
+          rowInspectWhileShown.visible &&
+          rowInspectWhileShown.label === 'Debugger stop selected' &&
+          rowInspectWhileShown.pressed === 'true' &&
           rowInspectOffered.visible &&
           rowInspectOffered.label === 'Inspect in native debugger' &&
           rowInspectOffered.followsShowVariables &&
@@ -1482,6 +1503,54 @@ async function check(page, options, collected) {
           rowInspectRequests[0].sequence === 2 &&
           !rowInspectAfterValues.visible &&
           !rowInspectForMismatch.visible,
+      })
+      // Value: protects=the row's Inspect in native debugger follows the selected stop, not the page of the event list: once the learner pages the list away from the stop, the row still offers Inspect for that stop and a press selects it; fails_when=the row looks for the selected stop among the shown page's events, so it hides the control while another page of events shows; why_new=F353 (hosted CodeRabbit on #120); seam=none; no_claim=the host's paging and its selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
+      // Arrange: the selected stop is event 1 of 26; the event list shows the second page, which holds outputs only.
+      const laterPage = {
+        ...nodeReader,
+        nodeHistoryEventCount: 26,
+        nodeHistoryPage: 1,
+        nodeHistoryPageCount: 2,
+        nodeHistory: {
+          ...nodeReader.nodeHistory,
+          entries: [
+            {
+              type: 'output',
+              sequence: 27,
+              channel: 'stdout',
+              elapsedMs: 4800,
+              text: 'page two output',
+            },
+          ],
+        },
+        nodeHistoryUnverifiedStops: [],
+      }
+      // Act: the learner ended the native session, then pages the list away from the stop.
+      await publish({
+        ...laterPage,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          debuggerAvailable: false,
+          nativeValuesUninspected: false,
+        },
+      })
+      const rowInspectOnLaterPage = await rowInspectState()
+      await page.evaluate(() => {
+        window.sent.length = 0
+      })
+      if (rowInspectOnLaterPage.visible) await rowInspect.click()
+      const rowInspectOnLaterPageRequests = await page.evaluate(() =>
+        window.sent.filter((message) => message.type === 'node-history-stop'),
+      )
+      // Assert
+      cases.push({
+        name: 'the row offers Inspect in native debugger for the selected stop while the event list shows another page, and its press selects that stop (F353)',
+        actual: { rowInspectOnLaterPage, rowInspectOnLaterPageRequests },
+        passed:
+          rowInspectOnLaterPage.visible &&
+          rowInspectOnLaterPage.label === 'Inspect in native debugger' &&
+          rowInspectOnLaterPageRequests.length === 1 &&
+          rowInspectOnLaterPageRequests[0].sequence === 2,
       })
       // Act: the selected stop's captured source no longer matches its recorded hash.
       await publish({
@@ -2277,10 +2346,7 @@ async function check(page, options, collected) {
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
       // Value: protects=the keyboard's whole path through a test replay (DS17): Open the replay from Saved studies (the list's own key handling is the browser's), then Step details, a step, Next stop, Previous stop, a seek and Pause in the Study pane, and then the Application pane's output region, which the first Tab of the document reaches and a page key scrolls; fails_when=choosing the replay by keyboard asks the host for another entry or nothing, a step of the path is not reached by Tab presses (a control outside the tab order passes a script focus, F295), or the output region is no tab stop, has no name or does not scroll by keyboard; why_new=F122 (AC13 path): the keyboard case began after Open and never reached the output region; seam=none; no_claim=the host's answer to each request (the workspace tests) (stand-ins: the pane's sent messages and a document of the Application pane in a page of its own)
       // Arrange: a saved replay listed in Saved studies and none opened.
-      await publish({
-        ...options.message,
-        revision: revisionAt(5),
-        studies: [
+      const savedReplays = [
           {
             id: 'job-study',
             savedAt: '2026-10-22T06:00:00.000Z',
@@ -2300,10 +2366,22 @@ async function check(page, options, collected) {
             metadata: 'validated',
           },
         ],
-        nodeHistoryCatalog: [
+        savedReplayCatalog = [
           { studyId: 'job-study' },
           { studyId: 'other-replay' },
-        ],
+        ]
+      await publish({
+        ...options.message,
+        revision: revisionAt(5),
+        studies: savedReplays,
+        nodeHistoryCatalog: savedReplayCatalog,
+      })
+      // The replay chosen below, at a moment: Saved studies still lists both replays, and the history shown is the chosen one (F306).
+      const openedAt = (at) => ({
+        ...at,
+        studies: savedReplays,
+        nodeHistoryCatalog: savedReplayCatalog,
+        nodeHistory: { ...at.nodeHistory, header: { studyId: 'other-replay' } },
       })
       await page.evaluate(() => {
         window.sent = []
@@ -2319,7 +2397,8 @@ async function check(page, options, collected) {
       // The native list's own key handling is the browser's (it opens a popup on some systems); the choice is made as the list reports it.
       await page.selectOption('#studies', 'other-replay')
       const openRequests = await sentHistory()
-      const reachableControls = {}
+      const reachableControls = {},
+        listedWhileOpen = []
       for (const [name, selector, at] of [
         [
           'stepDetails',
@@ -2331,7 +2410,13 @@ async function check(page, options, collected) {
         ['playhead', '#node-history-playhead', atStop],
         ['pause', '#node-history-playback-toggle', atStop],
       ]) {
-        await publish(at)
+        await publish(openedAt(at))
+        listedWhileOpen.push({
+          listed: await page
+            .locator('#studies option')
+            .evaluateAll((choices) => choices.map((choice) => choice.value)),
+          chosen: await page.locator('#studies').inputValue(),
+        })
         // The press count that reaches the control by Tab from the replay chooser (0 when it is outside the tab order or beyond the limit), never a script focus: a control with tabindex -1 or one that is hidden is not reached (F295).
         await page.locator('#studies').focus()
         let presses = 0
@@ -2392,8 +2477,14 @@ async function check(page, options, collected) {
         }
       })
       await outputPage.keyboard.press('PageDown')
-      // The browser scrolls a key press smoothly.
-      await outputPage.waitForTimeout(400)
+      // The browser scrolls a key press smoothly: wait for the scroll itself, bounded, never a fixed time (F312); the case reads the outcome either way.
+      await outputPage
+        .waitForFunction(
+          () => document.getElementById('test-output').scrollTop > 0,
+          undefined,
+          { timeout: 5_000 },
+        )
+        .catch(() => undefined)
       const outputScrolledByKey = await outputPage.evaluate(
         () => document.getElementById('test-output').scrollTop > 0,
       )
@@ -2403,6 +2494,7 @@ async function check(page, options, collected) {
         name: 'the keyboard reaches a test replay from Open through Step details, Next stop, Previous stop, a seek and Pause to the Application pane’s output region (DS17)',
         actual: {
           openRequests,
+          listedWhileOpen,
           reachableControls,
           outputRegion,
           outputScrolledByKey,
@@ -2412,6 +2504,12 @@ async function check(page, options, collected) {
             JSON.stringify([
               { type: 'node-history', studyId: 'other-replay' },
             ]) &&
+          listedWhileOpen.every(
+            ({ listed, chosen }) =>
+              listed.includes('job-study') &&
+              listed.includes('other-replay') &&
+              chosen === 'other-replay',
+          ) &&
           Object.values(reachableControls).every(Boolean) &&
           outputRegion.focused &&
           outputRegion.role === 'region' &&
@@ -3291,6 +3389,159 @@ async function check(page, options, collected) {
           afterStaleAnswer.firstLine === afterLearnerScroll.firstLine &&
           afterStaleAnswer.lastReport?.follow === false,
       })
+      // Value: protects=a reading whose anchor line the view no longer holds (the kept output moved past it) opens the output at its start with Jump to latest, not where the document stood; fails_when=a missing anchor line leaves the region at the end the document followed, or follows again; why_new=F307 (PR-2 coverage audit): restoreAnchor's missing-line branch had no case; seam=none; no_claim=how the host chooses the anchor
+      // Act: the document at the result follows its end; the host's answer carries a reading not following, anchored at a line the view does not hold.
+      const missingAnchorPage = await openApplication(
+        options.html.applicationAtResult,
+      )
+      const beforeMissingAnchor = await readDocument(missingAnchorPage)
+      await postToDocument(missingAnchorPage, {
+        type: 'node-history-output',
+        generation: 4,
+        view: { ...resultView, generation: 4 },
+        reading: { follow: false, anchor: { line: 999_999, offsetPx: 7 } },
+      })
+      await settleFrames(missingAnchorPage)
+      const afterMissingAnchor = await readDocument(missingAnchorPage)
+      await missingAnchorPage.close()
+      // Assert
+      cases.push({
+        name: 'a reading anchored at a line the view no longer holds opens the output at its start, not where the document followed (F307)',
+        actual: { beforeMissingAnchor, afterMissingAnchor },
+        passed:
+          beforeMissingAnchor.atEnd &&
+          beforeMissingAnchor.scrollTop > 0 &&
+          afterMissingAnchor.scrollTop === 0 &&
+          !afterMissingAnchor.atEnd &&
+          afterMissingAnchor.jumpShown,
+      })
+      // Value: protects=a document that does not follow keeps the line the learner reads where it stood when a later moment's kept output drops its earliest lines (the kept tail slides), whatever the webview's own scroll anchoring does; fails_when=the update only records the scroll position, so the lines dropped above move the learner's line up and the region shows later lines than the learner read; why_new=F354 (hosted CodeRabbit on #120); seam=the browser's scroll anchoring is turned off in the region (`overflow-anchor: none`), so the case sees the document's own anchor and not Chromium's; no_claim=Chromium's scroll anchoring in VS Code's and Cursor's webviews
+      // Arrange: the learner reads line 20, 7 px into it, not following.
+      const slidingPage = await openApplication(
+        withReading(options.html.applicationAtResult, {
+          follow: false,
+          anchor: { line: 20, offsetPx: 7 },
+        }),
+      )
+      await slidingPage.evaluate(() => {
+        document.getElementById('test-output').style.overflowAnchor = 'none'
+      })
+      const beforeSlide = await readDocument(slidingPage)
+      // Act: the next moment keeps the output from line 10 on.
+      await postToDocument(slidingPage, {
+        type: 'node-history-output',
+        generation: 4,
+        view: {
+          ...resultView,
+          generation: 4,
+          lines: resultView.lines.filter((value) => value.number >= 10),
+        },
+      })
+      await settleFrames(slidingPage)
+      const afterSlide = await readDocument(slidingPage)
+      await slidingPage.close()
+      // Assert
+      cases.push({
+        name: 'a document that does not follow keeps the line the learner reads in place when the next moment drops the earliest kept lines (F354)',
+        actual: { beforeSlide, afterSlide },
+        passed:
+          beforeSlide.firstLine === 20 &&
+          beforeSlide.offsetPx === 7 &&
+          afterSlide.firstLine === 20 &&
+          afterSlide.offsetPx === 7 &&
+          !afterSlide.atEnd &&
+          afterSlide.jumpShown,
+      })
+      // Value: protects=the document draws only the host's output updates: a message of another kind, or an update without a numeric generation or a view, changes nothing, and a later valid update still draws; fails_when=a malformed update is drawn (a string generation compares as a number and replaces the shown moment) or throws so that later updates stop; why_new=F308 (PR-2 coverage audit): the message filter (F304's isOutputUpdate) had no case; seam=none; no_claim=the host's own filter of the document's reports (readNodeTestOutputReport's unit test)
+      // Act: foreign and malformed messages, then a valid newer update.
+      const malformedPage = await openApplication(options.html.application)
+      const beforeMalformed = await readDocument(malformedPage)
+      for (const data of [
+        null,
+        { type: 'node-history-output-state', follow: true },
+        { type: 'node-history-output', view: resultView },
+        {
+          type: 'node-history-output',
+          generation: '9',
+          view: { ...resultView, time: 'Recorded test output · forged' },
+        },
+        { type: 'node-history-output', generation: 9, view: null },
+      ])
+        await postToDocument(malformedPage, data)
+      await settleFrames(malformedPage)
+      const afterMalformed = await readDocument(malformedPage)
+      await postToDocument(malformedPage, {
+        type: 'node-history-output',
+        generation: 2,
+        view: { ...resultView, generation: 2 },
+      })
+      await settleFrames(malformedPage)
+      const afterValid = await readDocument(malformedPage)
+      await malformedPage.close()
+      // Assert
+      cases.push({
+        name: 'messages that are not the host’s output update leave the Application document as it is, and a valid update after them is drawn (F308)',
+        actual: { beforeMalformed, afterMalformed, afterValid },
+        passed:
+          beforeMalformed.time === 'Recorded test output · 0.10 s' &&
+          afterMalformed.time === 'Recorded test output · 0.10 s' &&
+          afterValid.time === 'Recorded test output · 0.90 s',
+      })
+      // Value: protects=the cost of drawing a moment in the Application document: an update compares each kept line with the line the document drew, with no document query per line, and an unchanged line keeps its node; fails_when=each frame queries every kept line's text node (a `querySelector` per line, the cost F314 removed) or draws an unchanged line again; why_new=F314 (PR-2 /ship Step 9 performance): every frame walked the output and queried each line's text; seam=the page's Element.prototype.querySelector and querySelectorAll, counted while the update draws; no_claim=wall-clock time
+      // Act: the result's document with its first line's node marked; a newer view that changes only its last line, drawn while the document's queries are counted.
+      const queryCountPage = await openApplication(
+        options.html.applicationAtResult,
+      )
+      await queryCountPage.evaluate(() => {
+        document.getElementById(
+          'test-output',
+        ).firstElementChild.dataset.marked = 'kept'
+        window.queries = 0
+        for (const method of ['querySelector', 'querySelectorAll']) {
+          const before = Element.prototype[method]
+          Element.prototype[method] = function (...input) {
+            window.queries++
+            return Reflect.apply(before, this, input)
+          }
+        }
+      })
+      const lastLineNumber = resultView.lines.at(-1).number
+      await postToDocument(queryCountPage, {
+        type: 'node-history-output',
+        generation: 6,
+        view: {
+          ...resultView,
+          generation: 6,
+          lines: resultView.lines.map((line) =>
+            line.number === lastLineNumber
+              ? { ...line, text: `${line.text} changed` }
+              : line,
+          ),
+        },
+      })
+      await settleFrames(queryCountPage)
+      const drawnWithoutQueries = await queryCountPage.evaluate(() => {
+        // The count is read before anything else here can query.
+        const queries = window.queries
+        const output = document.getElementById('test-output')
+        return {
+          queries,
+          firstLineKept: output.firstElementChild.dataset.marked === 'kept',
+          lastLine: output.lastElementChild.textContent,
+          lines: output.children.length,
+        }
+      })
+      await queryCountPage.close()
+      // Assert
+      cases.push({
+        name: 'a newer moment is drawn in the Application document without a query per kept line, keeping the unchanged lines’ nodes (F314)',
+        actual: { drawnWithoutQueries, lines: resultView.lines.length },
+        passed:
+          drawnWithoutQueries.queries === 0 &&
+          drawnWithoutQueries.firstLineKept &&
+          drawnWithoutQueries.lastLine.endsWith(' changed\n') &&
+          drawnWithoutQueries.lines === resultView.lines.length,
+      })
       // Value: protects=following is decided by the scroll position alone: a scroll to the end that moves nothing (a view of the same height) leaves no mark that swallows the learner's next scroll up, so Jump to latest shows, following is reported off and the next moment does not pull the output back to its end; fails_when=the document's scroll that moved nothing is remembered, the learner's scroll up is read as the document's own, and the next moment scrolls to the end (DS20); why_new=F106: `scrolledByDocument` stayed set when the scroll to the end caused no scroll event; seam=none; no_claim=a clamp to a shorter output, which the in-place case below pins
       // Act: the result's output followed to its end; a view of the same height arrives (no scroll to make); the learner scrolls up; another view arrives.
       const sameHeightPage = await openApplication(
@@ -4040,6 +4291,14 @@ async function check(page, options, collected) {
           },
         },
       }
+      // The golden below pins the diagram's markup, not a system's fonts: while this sample is drawn every character measures 6 px, so its labels break where they break on every system (F350: Chrome on CI's Linux measured "1. Observed submission" wider than its 144 px box and wrapped it, while the Mac's font fits it).
+      const measureText = await page.evaluateHandle(() => {
+        const measured = CanvasRenderingContext2D.prototype.measureText
+        CanvasRenderingContext2D.prototype.measureText = function (value) {
+          return { width: [...value].length * 6 }
+        }
+        return measured
+      })
       await publish(learning)
       await page.locator('#learning-material').scrollIntoViewIfNeeded()
       const diagram = await page.evaluate(() => ({
@@ -4071,7 +4330,12 @@ async function check(page, options, collected) {
       const sequenceMarkup = await page.evaluate(
         () => document.getElementById('learning-sequence').innerHTML,
       )
-      // Value: protects=the browser summary's sequence renders the markup of the golden fixture, so a change of the shared renderer shows as a change of this fixture with a reason; fails_when=the shared renderer changes the diagram's elements or attributes without the fixture and its reason changing together (the fixture changed once, for F206: a loop's label is centered on its lifeline); why_new=PR-B1 shared the renderer with test replays (Design 5, AC14); seam=none; no_claim=how the diagram looks (native pixels)
+      // The diagrams after this one are measured in the page's own font again.
+      await page.evaluate((measured) => {
+        CanvasRenderingContext2D.prototype.measureText = measured
+      }, measureText)
+      await measureText.dispose()
+      // Value: protects=the browser summary's sequence renders the markup of the golden fixture, so a change of the shared renderer shows as a change of this fixture with a reason; fails_when=the shared renderer changes the diagram's elements or attributes without the fixture and its reason changing together (the fixture changed once, for F206: a loop's label is centered on its lifeline); why_new=PR-B1 shared the renderer with test replays (Design 5, AC14); seam=none; why_changed=F350 (required CI on #120): the label's break followed the runner's default font, so the fixture held only where the Mac's font fits the label; the sample is now drawn with every character measured 6 px; no_claim=how the diagram looks (native pixels) and where the page's own fonts break its labels (the F206 and F293 cases measure those)
       cases.push({
         name: 'the saved learning sequence of a browser replay renders the markup of its golden fixture: the same elements and attributes as before the renderer was shared with test replays, with a loop label centered on its lifeline',
         actual: sequenceMarkup,
@@ -4107,7 +4371,19 @@ async function check(page, options, collected) {
       await page.locator('.sequence-diagram').focus()
       for (let index = 0; index < 40; index++)
         await page.keyboard.press('ArrowRight')
-      await page.waitForTimeout(400)
+      // The key presses scroll smoothly: wait until the diagram reaches its end, bounded, never a fixed time (F312); the case reads the outcome either way.
+      await page
+        .waitForFunction(
+          () => {
+            const region = document.querySelector('.sequence-diagram')
+            return (
+              region.scrollLeft + region.clientWidth >= region.scrollWidth - 1
+            )
+          },
+          undefined,
+          { timeout: 5_000 },
+        )
+        .catch(() => undefined)
       const scrolledDiagram = await page
         .locator('.sequence-diagram')
         .evaluate((element) => ({
@@ -4288,7 +4564,21 @@ async function check(page, options, collected) {
       await page.locator('#learning-sequence .sequence-diagram').focus()
       for (let index = 0; index < 40; index++)
         await page.keyboard.press('ArrowRight')
-      await page.waitForTimeout(400)
+      // The key presses scroll smoothly: wait until the diagram reaches its end, bounded, never a fixed time (F312); the case reads the outcome either way.
+      await page
+        .waitForFunction(
+          () => {
+            const region = document.querySelector(
+              '#learning-sequence .sequence-diagram',
+            )
+            return (
+              region.scrollLeft + region.clientWidth >= region.scrollWidth - 1
+            )
+          },
+          undefined,
+          { timeout: 5_000 },
+        )
+        .catch(() => undefined)
       const namedDiagramScrolled = await page
         .locator('#learning-sequence .sequence-diagram')
         .evaluate((region) => ({
@@ -5333,7 +5623,6 @@ async function check(page, options, collected) {
           revision: revisionAt(13),
           nodeHistoryPosition: {
             ...nodeStop,
-            eventIndex: 0,
             nativeValuesUninspected: true,
           },
           nodeHistoryPlayback: {
@@ -5348,7 +5637,7 @@ async function check(page, options, collected) {
         nodeWithNativeValues = {
           ...nodeWithoutNativeValues,
           revision: revisionAt(14),
-          nodeHistoryPosition: { ...nodeStop, eventIndex: 0 },
+          nodeHistoryPosition: nodeStop,
         }
       await publish(nodeWithoutNativeValues)
       await page.locator('#node-history-show-variables').focus()
@@ -5443,14 +5732,13 @@ async function check(page, options, collected) {
         ...singleEvent,
         nodeHistoryPosition: {
           ...nodeStop,
-          eventIndex: 0,
           nativeValuesUninspected: true,
         },
       })
       await page.locator('#node-history-show-variables').focus()
       await publish({
         ...singleEvent,
-        nodeHistoryPosition: { ...nodeStop, eventIndex: 0 },
+        nodeHistoryPosition: nodeStop,
       })
       const focusWithSingleEvent = await page.evaluate(() => ({
         transportDisabled: [
@@ -9113,8 +9401,7 @@ async function check(page, options, collected) {
     )
   const layoutNotice =
       'Error: Existing editor groups were preserved because the editor did not retain the requested Codebook layout.',
-    controlRefusal =
-      'Error: Close browser replay before opening a separate Node test history.'
+    controlRefusal = 'Error: Close browser replay before opening a test replay.'
   await library([shownStudy], shownStudy.id, {
     errors: [layoutNotice],
     unretryableErrorCount: 1,
