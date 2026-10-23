@@ -84,6 +84,7 @@ import {
   SUMMARY_PLACEMENT_ACTION,
   FOREIGN_PREVIEW_ACTION,
   MOVE_VIEWS_COMMAND,
+  REFUSAL_REPORT_GROUP_TABS,
   SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
   SUMMARY_BESIDE_CHAT_MOVED_KEY,
   SUMMARY_PLACEMENT_ANSWERED_KEY,
@@ -294,7 +295,6 @@ import { parseRecordedStudyGroups } from './utils/parseRecordedStudyGroups'
 import {
   describePlacementRefusal,
   PlacementEventLog,
-  REFUSAL_REPORT_TABS_PER_GROUP,
   type RefusalGroupView,
 } from './utils/placementRefusalReport'
 import { plannedStopLine } from './utils/plannedStopLine'
@@ -8774,14 +8774,12 @@ export class StudyWorkspace {
       } catch (error) {
         if (this.closing || this.disposed) throw error
         // The line begins with one error name, which the report adds: the cause's own is taken off.
-        this.report(
-          'layout',
-          new Error(
-            withoutErrorName(
-              error instanceof StudyError ? error.causeDetail : String(error),
-            ),
-          ),
+        const cause = withoutErrorName(
+          error instanceof StudyError ? error.causeDetail : String(error),
         )
+        // A refusal the presentation reason already shows (the status line outside the controls) is not told a second time as an error row; both are retired together by {@link retireRefusalLines} (F400).
+        if (this.presentationReason?.includes(cause)) this.publish()
+        else this.report('layout', new Error(cause))
       }
     }
     if (action === 'current-file') {
@@ -11328,8 +11326,10 @@ export class StudyWorkspace {
     )
       return
     // A learner's preview tab that blocks the open is answered with a choice and a retry, not a toast (F158).
-    if (await this.resolveForeignPreviewRefusal(state.reason))
-      return this.openLearningReplay(studyId)
+    const answer = await this.resolveForeignPreviewRefusal(state.reason)
+    if (answer === 'retry') return this.openLearningReplay(studyId)
+    // The keep-open refusal has told the learner already; a second notice would repeat it.
+    if (answer === 'told') return
     // The controller keeps a failure as its string form, which starts with the error's name.
     void showPlainNotice(
       vscode.window,
@@ -11355,12 +11355,14 @@ export class StudyWorkspace {
    * Answers an Open replay that a learner's preview tab refused with a modal warning that names the file, in both hosts (a toast is cut to one line in Cursor), and carries out the learner's choice; called by {@link openLearningReplay} and {@link openNodeHistoryFromHost} before they tell a failure (F158, D33).
    * Keep Tab Open pins the tab (it stops being a preview) and Close Tab closes it; each is followed by a retry of the open.
    * @param cause - The failure's words; only a {@link foreignPreviewObstacle} sentence in it is answered here.
-   * @returns `true` when the learner chose a way out and the open is to be retried; `false` when the cause is another failure or the dialog was dismissed.
-   * @example if (await this.resolveForeignPreviewRefusal(cause)) return this.openLearningReplay(studyId)
+   * @returns `retry` when the learner chose a way out and the open is to be retried; `told` when Keep Tab Open could not keep a non-text tab and has shown its own notice, so the caller adds none (F394); `unhandled` when the cause is another failure or the dialog was dismissed.
+   * @example if ((await this.resolveForeignPreviewRefusal(cause)) === 'retry') return this.openLearningReplay(studyId)
    */
-  private async resolveForeignPreviewRefusal(cause: string): Promise<boolean> {
+  private async resolveForeignPreviewRefusal(
+    cause: string,
+  ): Promise<'retry' | 'told' | 'unhandled'> {
     const obstacle = parseForeignPreviewObstacle(cause)
-    if (!obstacle) return false
+    if (!obstacle) return 'unhandled'
     const choice = await vscode.window.showWarningMessage(
       `Codebook cannot open the replay: "${obstacle.tabName}" is open as a preview tab in editor group ${obstacle.viewColumn}.`,
       {
@@ -11370,7 +11372,7 @@ export class StudyWorkspace {
       FOREIGN_PREVIEW_ACTION.keepOpen,
       FOREIGN_PREVIEW_ACTION.close,
     )
-    if (!choice) return false
+    if (!choice) return 'unhandled'
     const group = vscode.window.tabGroups.all.find(
       (candidate) =>
         candidate.viewColumn === obstacle.viewColumn &&
@@ -11382,11 +11384,11 @@ export class StudyWorkspace {
       this.isNamedPreview(candidate, obstacle.tabName),
     )
     // The tab may be gone by now; the retry then decides.
-    if (!group || !tab) return true
+    if (!group || !tab) return 'retry'
     // Only Close Tab closes the learner's tab; Keep Tab Open never does (F363).
     if (choice === FOREIGN_PREVIEW_ACTION.close) {
       await vscode.window.tabGroups.close([tab])
-      return true
+      return 'retry'
     }
     if (tab.input instanceof vscode.TabInputText) {
       await vscode.window.showTextDocument(tab.input.uri, {
@@ -11394,7 +11396,7 @@ export class StudyWorkspace {
         preview: false,
         preserveFocus: true,
       })
-      return true
+      return 'retry'
     }
     return this.keepNonTextPreview(group, tab, obstacle.tabName)
   }
@@ -11416,14 +11418,14 @@ export class StudyWorkspace {
    * @param group - The tab's group.
    * @param tab - The preview tab.
    * @param tabName - The tab's name, for the notice.
-   * @returns `true` when the tab is no longer a preview and the open is to be retried; `false` when it is still one.
-   * @example if (await this.keepNonTextPreview(group, tab, 'diagram.png')) retry()
+   * @returns `retry` when the tab is no longer a preview and the open is to be retried; `told` when it is still one and the learner has been told how to keep it.
+   * @example if ((await this.keepNonTextPreview(group, tab, 'diagram.png')) === 'retry') retry()
    */
   private async keepNonTextPreview(
     group: vscode.TabGroup,
     tab: vscode.Tab,
     tabName: string,
-  ): Promise<boolean> {
+  ): Promise<'retry' | 'told'> {
     const focusCommand = focusEditorGroupCommand(group.viewColumn)
     if (focusCommand && group.activeTab === tab) {
       await vscode.commands.executeCommand(focusCommand)
@@ -11436,13 +11438,13 @@ export class StudyWorkspace {
       .filter((candidate) => candidate.viewColumn === group.viewColumn)
       .flatMap((candidate) => candidate.tabs)
       .some((candidate) => this.isNamedPreview(candidate, tabName))
-    if (!stillPreview) return true
+    if (!stillPreview) return 'retry'
     void showPlainNotice(
       vscode.window,
       'warning',
       `Codebook could not keep "${tabName}" open. Double-click its tab to keep it, then choose Open replay again.`,
     )
-    return false
+    return 'told'
   }
 
   /**
@@ -11502,8 +11504,10 @@ export class StudyWorkspace {
     const roots = this.service?.causeRoots ?? { storage: [] }
     const cause = sanitizeCause(outcome.error, roots)
     // A learner's preview tab that blocks the open is answered with a choice and a retry (F158).
-    if (await this.resolveForeignPreviewRefusal(cause))
-      return this.openNodeHistoryFromHost(studyId)
+    const answer = await this.resolveForeignPreviewRefusal(cause)
+    if (answer === 'retry') return this.openNodeHistoryFromHost(studyId)
+    // The keep-open refusal has told the learner already; a second notification and Output entry would repeat it.
+    if (answer === 'told') return
     await this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
   }
 
@@ -12709,20 +12713,32 @@ export class StudyWorkspace {
   }
 
   /**
-   * Waits, for at most {@link NODE_HISTORY_POSITION_DRAIN_MS}, until the reader position writes that Play and the selections started have returned, so a close does not leave a write running into storage that is being removed (F197); called by {@link close}.
+   * Waits, for at most {@link NODE_HISTORY_POSITION_DRAIN_MS}, until no reader position write runs, so a close does not leave a write running into storage that is being removed (F197); called by {@link close}.
+   * A loop that {@link runNodeHistoryPositionWrites} restarts from its own end (F366) is not in the writes seen at the first look, so the wait looks again after each round until none runs or the bound is reached (F395).
    * @example await this.drainNodeHistoryPositionWrites()
    */
   private async drainNodeHistoryPositionWrites(): Promise<void> {
-    const running = [...this.nodeHistoryPositionWrites.values()].flatMap(
-      (writer) => (writer.running ? [writer.running] : []),
-    )
-    if (!running.length) return
+    const runningWrites = (): Promise<void>[] =>
+      [...this.nodeHistoryPositionWrites.values()].flatMap((writer) =>
+        writer.running ? [writer.running] : [],
+      )
+    if (!runningWrites().length) return
     let cancel = (): void => {}
+    let bounded = false
     const bound = new Promise<void>((resolve) => {
-      cancel = this.slotTimers.set(resolve, NODE_HISTORY_POSITION_DRAIN_MS)
+      cancel = this.slotTimers.set(() => {
+        bounded = true
+        resolve()
+      }, NODE_HISTORY_POSITION_DRAIN_MS)
     })
     try {
-      await Promise.race([Promise.allSettled(running), bound])
+      // Each round waits for the writes running now; a loop restarted at their end shows in the next round.
+      for (
+        let running = runningWrites();
+        running.length && !bounded;
+        running = runningWrites()
+      )
+        await Promise.race([Promise.allSettled(running), bound])
     } finally {
       cancel()
     }
@@ -21592,8 +21608,9 @@ export class StudyWorkspace {
 
   /**
    * Notes the moment and the editor groups a placement guard starts waiting at, so {@link refusePlacement} can say what changed; called by each of the three placement guards when it is armed.
+   * The groups are kept raw and cheap (labels are not sanitized here): a guard is armed far more often than it refuses, and {@link refusePlacement} sanitizes the snapshot only when it reports.
    * @param guard - The guard's name, as the report names it.
-   * @returns The arm time and the groups then, sanitized and bounded.
+   * @returns The arm time and the groups then, with raw labels and bounded.
    * @example const armed = this.armPlacementReport('retainPresentationPlacement')
    */
   private armPlacementReport(guard: string): {
@@ -21609,18 +21626,17 @@ export class StudyWorkspace {
   }
 
   /**
-   * Describes the editor groups as a refusal report shows them: column, active flag and each tab's label (sanitized, cut) and input kind; called by {@link armPlacementReport} and {@link refusePlacement}.
-   * @returns One view per group.
+   * Describes the editor groups as a refusal report keeps them: column, active flag and each tab's raw label (bounded in count) and input kind; called by {@link armPlacementReport} and {@link refusePlacement}.
+   * @returns One view per group; the labels still need {@link sanitizeRefusalGroups} before they are shown.
    * @example this.refusalGroupViews() // => [{ viewColumn: 1, isActive: true, tabs: [{ label: 'auth.ts', kind: 'text' }] }]
    */
   private refusalGroupViews(): RefusalGroupView[] {
-    const roots = this.service?.causeRoots ?? { storage: [] }
     const active = vscode.window.tabGroups.activeTabGroup
     return vscode.window.tabGroups.all.map((group) => ({
       viewColumn: group.viewColumn,
       isActive: group === active,
-      tabs: group.tabs.slice(0, REFUSAL_REPORT_TABS_PER_GROUP).map((tab) => ({
-        label: sanitizeCause(tab.label, roots),
+      tabs: group.tabs.slice(0, REFUSAL_REPORT_GROUP_TABS).map((tab) => ({
+        label: tab.label,
         kind:
           tab.input instanceof vscode.TabInputText
             ? 'text'
@@ -21629,6 +21645,25 @@ export class StudyWorkspace {
               : tab.input instanceof vscode.TabInputTextDiff
                 ? 'diff'
                 : 'other',
+      })),
+    }))
+  }
+
+  /**
+   * Sanitizes the tab labels of a refusal snapshot (home, storage and repository paths and control characters removed) for the Output entry; called by {@link refusePlacement} for the groups before and after, and by nothing else, so a guard that does not refuse sanitizes nothing.
+   * @param groups - Groups from {@link refusalGroupViews}.
+   * @returns The same groups with sanitized labels.
+   * @example this.sanitizeRefusalGroups(this.refusalGroupViews())
+   */
+  private sanitizeRefusalGroups(
+    groups: readonly RefusalGroupView[],
+  ): RefusalGroupView[] {
+    const roots = this.service?.causeRoots ?? { storage: [] }
+    return groups.map((group) => ({
+      ...group,
+      tabs: group.tabs.map((tab) => ({
+        ...tab,
+        label: sanitizeCause(tab.label, roots),
       })),
     }))
   }
@@ -21650,8 +21685,8 @@ export class StudyWorkspace {
         guard: 'main editor focus report',
         armedAtMs: armed.atMs,
         nowMs: performance.now(),
-        before: armed.before,
-        after: this.refusalGroupViews(),
+        before: this.sanitizeRefusalGroups(armed.before),
+        after: this.sanitizeRefusalGroups(this.refusalGroupViews()),
         events: this.placementEvents.since(armed.atMs),
       }),
     })
@@ -21677,8 +21712,8 @@ export class StudyWorkspace {
       guard: armed.guard,
       armedAtMs: armed.armedAtMs,
       nowMs,
-      before: armed.before,
-      after: this.refusalGroupViews(),
+      before: this.sanitizeRefusalGroups(armed.before),
+      after: this.sanitizeRefusalGroups(this.refusalGroupViews()),
       events: this.placementEvents.since(armed.armedAtMs),
     })
     this.diagnostics?.log({ surface: 'presentation:placement-refused', cause })
@@ -24649,13 +24684,25 @@ export class StudyWorkspace {
   /**
    * Brings the recorded-source slot's tab to the front of its group with the keyboard in it, the stop's line as the slot already shows it; called by the Study pane's Focus source action ({@link receive}) while a test replay is selected.
    * Nothing is shown when the replay has no slot yet (it is still opening or was retired); the slot's own selection draws its line and label, and this only fronts the tab that already holds them.
-   * @returns Once the editor showed the slot tab, or at once when no slot exists.
+   * It waits as a selection's show does (F392): for the leave settle of a stop that was left ({@link NODE_HISTORY_LEAVE_SETTLE_MS}), so the tab fronted is not the left stop's bytes beside the native views; and for the close of its own address ({@link nodeSourceSlotCloses}, F196), so that close never closes the tab it shows. The slot is read again after each wait: a slot retired meanwhile (the reader closed, the replay left) shows nothing, and a tab shown after the slot was retired or renamed is closed when no newer slot owns its address ({@link settleLateSlotShow} does the same for a selection's show).
+   * @returns Once the editor showed the slot tab, or at once when no slot exists or it ended meanwhile.
    * @example await this.focusNodeSourceSlot() // the Captured-data.ts tab in front of the Welcome tab, with the keyboard
    */
   private async focusNodeSourceSlot(): Promise<void> {
+    if (!this.nodeSourceSlot) return
+    const retirementsAtStart = this.nodeSourceSlotRetirements
+    // The slot of a stop that was left keeps its earlier bytes for the leave settle; the selection that left it shows the next moment's slot right after, which is the one to front.
+    await this.nodeLeaveSettle?.done
     const slot = this.nodeSourceSlot
-    if (!slot) return
+    if (!slot || this.nodeSourceSlotRetirements !== retirementsAtStart) return
     const address = slot.uri.toString()
+    // The slot named by this call is still the reader's slot, and no retirement happened since the call began.
+    const isCurrent = (): boolean =>
+      this.nodeSourceSlotRetirements === retirementsAtStart &&
+      this.nodeSourceSlot?.uri.toString() === address
+    // A close of this address that an earlier selection issued must end first, or it would close the tab shown below (F196).
+    await this.nodeSourceSlotCloses.get(address)?.catch(() => undefined)
+    if (!isCurrent()) return
     // The group that holds the slot's tab now; a slot closed by hand opens again where its column rule puts it.
     const holder = vscode.window.tabGroups.all.find((group) =>
       group.tabs.some(
@@ -24665,13 +24712,22 @@ export class StudyWorkspace {
       ),
     )
     const document = await vscode.workspace.openTextDocument(slot.uri)
+    if (!isCurrent()) return
     await vscode.window.showTextDocument(document, {
       viewColumn:
         holder?.viewColumn ?? this.nodeSourceSlotColumn(slot.uri, undefined),
       preserveFocus: false,
       preview: false,
     })
-    this.decorateNodeSourceSlot()
+    if (isCurrent()) {
+      this.decorateNodeSourceSlot()
+      return
+    }
+    // The slot ended or was renamed while the editor showed its tab: the tab belongs to no moment, so it is closed unless a newer slot shows the same address.
+    if (this.nodeSourceSlot?.uri.toString() !== address)
+      void this.closeNodeSourceSlotTabs(undefined, slot.uri).catch(
+        () => undefined,
+      )
   }
 
   /**

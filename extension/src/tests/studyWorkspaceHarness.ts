@@ -564,6 +564,8 @@ export async function workspaceHarness(
   const visibleEditorListeners = new Set<() => void>()
   /** What the listeners of `onDidChangeVisibleTextEditors` threw: the extension host logs a listener's error and goes on with the other listeners, so the fake keeps it here instead of letting it end the editor operation that announced the change; see `visibleEditorListenerErrors`. */
   const visibleEditorListenerErrors: unknown[] = []
+  /** Whether the test announced that a listener of `onDidChangeVisibleTextEditors` throws on purpose; see `expectVisibleEditorListenerErrors`. Without it `close` fails the test whose operation made a listener throw. */
+  let visibleEditorListenerErrorsExpected = false
   /**
    * Tells the listeners of `onDidChangeVisibleTextEditors` that a tab opened, closed or came to the front of its group.
    * The fake delivers inside the operation that caused the change, where the extension host delivers after a hop; a listener that throws is isolated like the host's and its error is kept.
@@ -3432,6 +3434,10 @@ export async function workspaceHarness(
   }
   /** Whether the fake recorded viewport has a required frame queued behind one in flight, which makes it drop preview frames; see `holdRequiredFramePending`. */
   let requiredFramePending = false
+  /** Whether the fake recorded viewport has a pause image pinned, which makes its delivery refuse preview frames; see `holdPausePinned`. */
+  let pausePinned = false
+  /** Whether the fake recorded viewport has no renderer epoch (the renderer was suspended and has not shaken hands again), which makes its delivery refuse every frame; see `holdRendererEpochMissing`. */
+  let rendererEpochMissing = false
   const viewportEvents: string[] = [],
     viewportInstances: WorkspaceViewport[] = []
   /** Models the leased renderer contract so workspace tests fail when retirement precedes transfer. @example reader.presentation.createViewport('run', record, fail, 'normal') */
@@ -3605,7 +3611,7 @@ export async function workspaceHarness(
     }
     /**
      * Shows the next recorded frame at once and clears nothing, as the real viewport's non-required preview frame does; the later required frame follows with the receipt.
-     * The frame is dropped under the real viewport's conditions: the viewport is not a recording, is closed or historical, or a required frame is pending (see `holdRequiredFramePending`); the pane then keeps what it showed.
+     * The frame is dropped under the conditions of the real viewport and {@link FrameDelivery.accepts}: the viewport is not a recording, is closed or historical, the delivery has no renderer epoch (see `holdRendererEpochMissing`), a pause image is pinned (see `holdPausePinned`), or a required frame is pending (see `holdRequiredFramePending`); the pane then keeps what it showed.
      * @returns `true` when the frame was shown; `false` when it was dropped.
      * @example viewport.previewRecorded(png.toString('base64'), 'Recorded · 1.50 s')
      */
@@ -3614,6 +3620,8 @@ export async function workspaceHarness(
         this.mode !== 'recording' ||
         this.closed ||
         this.historical ||
+        rendererEpochMissing ||
+        pausePinned ||
         requiredFramePending
       )
         return false
@@ -5079,11 +5087,14 @@ export async function workspaceHarness(
   let preferenceFailure = false
   let nextPreference: { wait: Promise<void>; entered(): void } | undefined
   const workspaceState = {
-    get: <Value>(key: string, defaultValue?: Value) =>
-      ((key === APPLICATION_GROUP_MARKER_KEY
-        ? applicationGroupMarkers.get(key)
-        : presentationPreferences.get(key)) ?? defaultValue) as
-        Value | undefined,
+    get: <Value>(key: string, defaultValue?: Value) => {
+      const stored =
+        key === APPLICATION_GROUP_MARKER_KEY
+          ? applicationGroupMarkers.get(key)
+          : presentationPreferences.get(key)
+      // The Memento answers the default only for a key whose value is `undefined`; a stored `null` is a value.
+      return (stored === undefined ? defaultValue : stored) as Value | undefined
+    },
     update: async (key: string, value: unknown): Promise<void> => {
       if (key === APPLICATION_GROUP_MARKER_KEY) {
         applicationGroupMarkers.set(key, toMementoValue(value))
@@ -5701,6 +5712,8 @@ export async function workspaceHarness(
     moveViewsCalls: () => [...moveViewsCalls],
     /** What the listeners of `onDidChangeVisibleTextEditors` threw; the fake isolates a throwing listener as the extension host does and keeps its error here. @example assert.deepEqual(harness.visibleEditorListenerErrors, []) */
     visibleEditorListenerErrors,
+    /** The fake `workspaceState` of the extension context, as the reader gets it: values are kept as JSON and only a missing or `undefined` value answers the default. @example harness.workspaceState.get('key', false) */
+    workspaceState,
     /** The fake `globalState` of the extension context, as the reader gets it: values are kept as JSON and a missing key answers the default. @example harness.globalState.get('key', false) */
     globalState,
     /** The fake profile-wide state (`globalState`) of the extension context. @example harness.profileState.get('codebook.summaryBesideChatMoved.v1') */
@@ -7587,6 +7600,22 @@ export async function workspaceHarness(
     holdRequiredFramePending(isPending: boolean): void {
       requiredFramePending = isPending
     },
+    /**
+     * Makes the fake recorded viewport drop its preview frames, as the real one does while a pause image is pinned (`FrameDelivery.accepts` takes only required frames when frozen), until the test lifts it.
+     * @param isPinned - `true` while a pause image is pinned; `false` lifts it.
+     * @example harness.holdPausePinned(true)
+     */
+    holdPausePinned(isPinned: boolean): void {
+      pausePinned = isPinned
+    },
+    /**
+     * Makes the fake recorded viewport drop its preview frames, as the real one does while its delivery has no renderer epoch (`FrameDelivery.accepts` is false after a suspended renderer and before the next handshake), until the test lifts it.
+     * @param isMissing - `true` while the renderer has no epoch; `false` lifts it.
+     * @example harness.holdRendererEpochMissing(true)
+     */
+    holdRendererEpochMissing(isMissing: boolean): void {
+      rendererEpochMissing = isMissing
+    },
     holdNextImage() {
       let release = (): void => {},
         entered = (): void => {}
@@ -7743,6 +7772,19 @@ export async function workspaceHarness(
       pendingEditorTimers.clear()
       pendingDisposedTabCloses.length = 0
       await harness.close()
+      // The host only logs a throwing listener; the fake keeps the error, so the test that caused it fails here, after every resource is released.
+      if (
+        !visibleEditorListenerErrorsExpected &&
+        visibleEditorListenerErrors.length > 0
+      )
+        throw new AggregateError(
+          visibleEditorListenerErrors,
+          `A listener of onDidChangeVisibleTextEditors threw ${visibleEditorListenerErrors.length} time(s) during the test: ${visibleEditorListenerErrors.map(String).join('; ')}`,
+        )
+    },
+    /** Declares that the test makes a listener of `onDidChangeVisibleTextEditors` throw on purpose (the fidelity test of the isolation), so `close` does not fail it. @example harness.expectVisibleEditorListenerErrors() */
+    expectVisibleEditorListenerErrors(): void {
+      visibleEditorListenerErrorsExpected = true
     },
     /** Counts the fake editor's own timers that have not run yet: every later change it still owes ({@link runEditorChangeLater}), for example a disposed pane's tab close or a late reveal that waits for {@link DISPOSED_TAB_CLOSE_DELAY_MS}. @example harness.pendingEditorTimerCount() // => 2 right after a reader with two panes was closed in an editor that closes tabs later */
     pendingEditorTimerCount: (): number => pendingEditorTimers.size,

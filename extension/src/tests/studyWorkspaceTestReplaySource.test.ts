@@ -667,6 +667,68 @@ test('a reader position queued as the position write loop ends is still written'
   }
 })
 
+// Value: protects=closing the reader waits for a reader position that was queued as the write loop ended and written by the loop the end restarted, so no save runs after the close resolved; fails_when=the close waits only for the writes running when it began, returns while the restarted loop still saves, and the save then lands in storage that is being removed; why_new=Cycle 0050 F395 (the drain snapshotted the running writes once, and the F366 restart is not in the snapshot); seam=the history store's position write, answered by a held thenable whose continuation queues the next position behind the loop's own, and a second write that ends after 300 ms; no_claim=the bound NODE_HISTORY_POSITION_DRAIN_MS on a write that never returns
+test('closing the reader waits for the position write that the write loop restarted at its end', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const order: string[] = []
+  let releaseFirstWrite = (): void => {}
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await openReplayAt(harness, history.studyId, 2)
+    const selected = harness.reader['selectedNodeHistory']!
+    // Wait for the open's own position write to end, so only the two writes of this test remain.
+    await waitUntil(
+      () => harness.reader['nodeHistoryPositionWrites'].size === 0,
+      'the open’s position write ends',
+      READER_RESULT_BOUND_MS,
+    )
+    const firstWriteHeld = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    context.mock.method(
+      store,
+      'saveReaderPosition',
+      (...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>) => {
+        if (args[1] === 2)
+          // The loop awaits this thenable: once released, the next position is queued right behind the loop's own continuation, before the run's end is announced.
+          return {
+            then(onFulfilled: () => void): void {
+              void firstWriteHeld.then(() => {
+                onFulfilled()
+                queueMicrotask(() =>
+                  harness.reader['queueNodeHistoryPositionWrite'](selected, 3),
+                )
+              })
+            },
+          } as unknown as Promise<void>
+        return new Promise<void>((resolve) => {
+          setTimeout(() => {
+            order.push('second position saved')
+            resolve()
+          }, 300)
+        })
+      },
+    )
+    harness.reader['queueNodeHistoryPositionWrite'](selected, 2)
+
+    // Act
+    const closing = harness.reader.close().then(() => {
+      order.push('reader closed')
+    })
+    releaseFirstWrite()
+    await closing
+
+    // Assert
+    assert.deepEqual(order, ['second position saved', 'reader closed'])
+  } finally {
+    releaseFirstWrite()
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the failure of a moment's presentation reaching the learner as itself when the return to the committed moment fails too, so the Study names why the moment did not open and not a secondary slot error; fails_when=the return's error replaces the presentation's error; why_new=F368 (the return was awaited inside the catch, so its throw hid the original); seam=the workspace harness's held historical debug presentation, rejected, and the return to the committed moment made to throw; no_claim=what the return would have shown
 test('a failed presentation is reported as itself when the return to the committed moment fails too', async (context) => {
   // Arrange
@@ -2083,6 +2145,148 @@ test('Focus source brings the recorded-source slot to the front of its group and
     await harness.close()
   }
 })
+
+// Value: protects=Focus source pressed while a stop selection is leaving its stop not fronting the left stop's bytes beside the native views, but waiting for the leave settle and then bringing the slot the selection shows, with the keyboard; fails_when=Focus source shows the earlier slot tab at once (a tab with the left stop's bytes and no label) or ignores the slot the selection renamed; why_new=Cycle 0050 F392 (focusNodeSourceSlot read the slot, opened and showed it without the leave settle F385); seam=the workspace harness's hand-driven slot clock, the Study pane's source action and the editor's text document shows; no_claim=the native tab strip
+test('Focus source pressed while a stop selection is leaving its stop waits for the leave and fronts the slot of the next stop', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    const showsBefore = harness.textDocumentShows().length
+    harness.useManualSlotClock()
+    startMomentSelection(harness, history.studyId, 4)
+    await waitUntil(
+      () =>
+        harness.historicalDebugInvalidationLabels().length >
+        invalidationsBefore,
+      'the debugger leaves the first stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act
+    const focusing = harness.reader.action('source')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    harness.elapseSlotClock(299)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const showsBeforeSettle = harness.textDocumentShows().length
+    harness.elapseSlotClock(1)
+    await focusing
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the second stop commits',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(showsBeforeSettle, showsBefore)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.path.endsWith(
+        'Captured-theme-next.ts',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Focus source pressed while the close of the slot's own address is still pending (an earlier selection's close of the tab a newer selection shows again) not showing that tab, which the pending close would then close under the learner; fails_when=Focus source shows the tab whose close is in flight, so the keyboard lands on a tab that disappears; why_new=Cycle 0050 F392 (focusNodeSourceSlot did not await nodeSourceSlotCloses, F196); seam=the workspace harness's held tab close, the Study pane's source action and the editor's text document shows; no_claim=the native tab strip
+test('Focus source pressed while the close of the slot’s own tab is in flight shows the tab only after that close', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let heldClose: ReturnType<Harness['holdNextTabCloseEffect']> | undefined
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.service.nodeHistoryStore!.saveReaderPosition(
+      history.studyId,
+      3,
+    )
+    await openReplayAt(harness, history.studyId, 3)
+    const firstFileSlot = slotTabs(harness)[0]!
+    heldClose = harness.holdNextTabCloseEffect()
+    startMomentSelection(harness, history.studyId, 4)
+    await heldClose.started
+    startMomentSelection(harness, history.studyId, 2)
+    // The newer selection runs as far as it can while the older close is pending: it names the first file's slot again.
+    for (let turn = 0; turn < 10; turn++)
+      await new Promise((resolve) => setImmediate(resolve))
+    const showsBefore = harness.textDocumentShows().length
+
+    // Act
+    const focusing = harness.reader.action('source')
+    for (let turn = 0; turn < 10; turn++)
+      await new Promise((resolve) => setImmediate(resolve))
+    const showsWhileClosing = harness.textDocumentShows().length
+    heldClose.release()
+    await focusing
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the newer selection commits',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(showsWhileClosing, showsBefore)
+    assert.deepEqual(slotTabs(harness), [firstFileSlot])
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document.uri.toString(),
+      firstFileSlot,
+    )
+  } finally {
+    heldClose?.release()
+    await harness.close()
+  }
+})
+
+// Value: protects=Focus source pressed while the reader closes (its document still opening, or its tab still being shown) leaving no recorded-source tab behind and giving no keyboard to a slot that no longer exists; fails_when=the command shows the retired slot's tab after the close, or leaves the tab it showed after the retirement; why_new=Cycle 0050 F392 (focusNodeSourceSlot checked neither the slot nor the retirements after its awaits); seam=the workspace harness's held document open and held text document show, the Study pane's source action and the reader's close; no_claim=the native tab strip
+for (const stage of [
+  'the slot’s document is still opening',
+  'the editor is still showing the slot’s tab',
+] as const)
+  test(`Focus source pressed while ${stage} when the reader closes leaves no recorded-source tab`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    let release = (): void => {}
+    try {
+      const history = await saveOneStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      const slot = slotTabs(harness)[0]!
+      const held =
+        stage === 'the slot’s document is still opening'
+          ? harness.holdNextSource({ uri: slot })
+          : harness.holdNextTextDocumentShow({ uri: slot })
+      release = held.release
+      const focusing = harness.reader.action('source')
+      await held.started
+      await harness.reader.close()
+      assert.deepEqual(slotTabs(harness), [])
+
+      // Act
+      release()
+      await focusing
+      for (let turn = 0; turn < 10; turn++)
+        await new Promise((resolve) => setImmediate(resolve))
+
+      // Assert
+      assert.deepEqual(slotTabs(harness), [])
+    } finally {
+      release()
+      await harness.close()
+    }
+  })
 
 // Value: protects=the stopped line is revealed once, at a selection's commit: returning to the slot tab redraws its line and label but does not scroll the learner back to the stop; fails_when=every redraw reveals the stopped line again, so the learner's scroll in the slot is lost whenever the tab comes back; why_new=F161 (decorateNodeSourceSlot revealed on every redraw); seam=the workspace harness's reveal log of the slot's editor and its fake onDidChangeVisibleTextEditors; no_claim=the native scroll position itself
 test('returning to the slot tab redraws the stop but does not scroll back to its line', async () => {

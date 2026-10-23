@@ -1,3 +1,9 @@
+import {
+  REFUSAL_REPORT_EVENTS,
+  REFUSAL_REPORT_GROUP_TABS,
+  REFUSAL_REPORT_LABEL_CHARS,
+} from '../constants'
+
 /** One editor group as a refusal report names it. */
 export type RefusalGroupView = {
   viewColumn: number
@@ -11,13 +17,6 @@ export type RefusalEvent = {
   what: string
 }
 
-/** The most tabs of one group a refusal report lists. */
-export const REFUSAL_REPORT_TABS_PER_GROUP = 8
-/** The longest tab label a refusal report shows, in characters. */
-const REFUSAL_REPORT_LABEL_CHARACTERS = 48
-/** The most editor events a log keeps and a report lists. */
-const REFUSAL_REPORT_EVENT_LIMIT = 24
-
 /**
  * Keeps the last editor events (tab-group changes and active text editor changes) with their time, so a placement refusal can say what the editor reported while its guard waited; fed by {@link StudyWorkspace}'s group listener and read by {@link describePlacementRefusal}.
  * @example
@@ -27,10 +26,10 @@ const REFUSAL_REPORT_EVENT_LIMIT = 24
 export class PlacementEventLog {
   private readonly events: RefusalEvent[] = []
 
-  /** Adds one event, dropping the oldest beyond {@link REFUSAL_REPORT_EVENT_LIMIT}. @example log.record(performance.now(), 'groups opened [3]') */
+  /** Adds one event, dropping the oldest beyond {@link REFUSAL_REPORT_EVENTS}. @example log.record(performance.now(), 'groups opened [3]') */
   record(atMs: number, what: string): void {
     this.events.push({ atMs, what })
-    if (this.events.length > REFUSAL_REPORT_EVENT_LIMIT) this.events.shift()
+    if (this.events.length > REFUSAL_REPORT_EVENTS) this.events.shift()
   }
 
   /** Lists the events at or after a time. @example log.since(armedAtMs) // => [{ atMs: 12, what: 'groups closed [2]' }] */
@@ -48,10 +47,10 @@ export class PlacementEventLog {
 function describeRefusalGroups(groups: readonly RefusalGroupView[]): string[] {
   return groups.map((group) => {
     const shown = group.tabs
-      .slice(0, REFUSAL_REPORT_TABS_PER_GROUP)
+      .slice(0, REFUSAL_REPORT_GROUP_TABS)
       .map(
         (tab) =>
-          `${Array.from(tab.label).slice(0, REFUSAL_REPORT_LABEL_CHARACTERS).join('')} (${tab.kind})`,
+          `${Array.from(tab.label).slice(0, REFUSAL_REPORT_LABEL_CHARS).join('')} (${tab.kind})`,
       )
     const more = group.tabs.length - shown.length
     return `${group.viewColumn}${group.isActive ? '*' : ''} [${shown.join(', ')}${more > 0 ? `, +${more} more` : ''}]`

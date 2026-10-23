@@ -1444,3 +1444,12 @@ export const TRANSIENT_SEAL_ERROR_CODES: readonly string[] =
 
 /** How many listed test histories keep the map of their citable events for the fast path of a changed learning material; the others read their journal again when it changes ({@link NodeTestHistoryStore.summarize}). */
 export const NODE_HISTORY_CITABLE_MEMO_LIMIT = 8
+
+/** The most tabs of one editor group a placement refusal report lists ({@link describePlacementRefusal}), in tabs. */
+export const REFUSAL_REPORT_GROUP_TABS = 8
+
+/** The longest tab label a placement refusal report shows, in characters. */
+export const REFUSAL_REPORT_LABEL_CHARS = 48
+
+/** The most editor events a {@link PlacementEventLog} keeps and a placement refusal report lists, in events. */
+export const REFUSAL_REPORT_EVENTS = 24

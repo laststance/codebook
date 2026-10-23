@@ -31,6 +31,7 @@ test('the fake editor tells every visible-editors listener of a Close Editor and
   // Arrange
   const harness = await workspaceHarness(false)
   try {
+    harness.expectVisibleEditorListenerErrors()
     harness.focusMutableDraft('closing.txt', 1)
     let laterListenerCalls = 0
     const throwing = harness.editor.window.onDidChangeVisibleTextEditors(() => {
@@ -101,6 +102,48 @@ test('the hand-driven slot clock fires a timer that a firing timer sets inside t
 
     // Assert
     assert.deepEqual(fired, ['first', 'second'])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a throwing visible-editors listener of the product failing the workspace test whose editor operation made it throw, as the extension host would log it and leave a stale slot decoration; fails_when=the harness keeps a listener error without ever failing the test (the error is only readable by a test that asks), or fails a test that declared the error with expectVisibleEditorListenerErrors; why_new=Cycle 0050 F391 (every tab close now fires the event while the catch hid a throwing listener from all but one test); seam=the harness's close and its visible-editors listener isolation; no_claim=the extension host's log of the error
+test('a visible-editors listener that throws fails the test whose close caused it unless the test declared it', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.focusMutableDraft('closing.txt', 1)
+  const throwing = harness.editor.window.onDidChangeVisibleTextEditors(() => {
+    throw new Error('Listener failed.')
+  })
+
+  // Act
+  await harness.editor.commands.executeCommand(
+    'workbench.action.closeActiveEditor',
+  )
+  throwing.dispose()
+
+  // Assert
+  await assert.rejects(
+    harness.close(),
+    /onDidChangeVisibleTextEditors threw 1 time\(s\) during the test: Error: Listener failed\./,
+  )
+})
+
+// Value: protects=the fake workspace state answering a stored null as the editor's Memento does, so a reader that stores null is tested against the real answer and not the default; fails_when=the fake treats a stored null like a missing key and answers the default; why_new=Cycle 0050 F399 (workspaceState.get used ?? defaultValue); seam=the harness's fake workspaceState; no_claim=the persistence of the real Memento across restarts
+test('the fake workspace state answers a stored null and the default only for a missing key', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  try {
+    const { workspaceState } = harness
+
+    // Act
+    await workspaceState.update('stored-null', null)
+    await workspaceState.update('stored-zero', 0)
+
+    // Assert
+    assert.equal(workspaceState.get('stored-null', 'fallback'), null)
+    assert.equal(workspaceState.get('stored-zero', 'fallback'), 0)
+    assert.equal(workspaceState.get('missing', 'fallback'), 'fallback')
   } finally {
     await harness.close()
   }
