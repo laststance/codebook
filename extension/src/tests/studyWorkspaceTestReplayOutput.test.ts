@@ -941,7 +941,7 @@ test('publishing a test replay into a disposed Application panel does not throw'
   }
 })
 
-// Value: protects=a view the Application webview did not take (it answered `false`, as a webview that is reloading does) is posted again at the next publish, so the pane does not stay on an older moment until the moment changes; fails_when=the generation is recorded as shown before the post settles and never cleared, so no later publish posts the view again; why_new=F152: presentNodeHistoryApplication ignored the result of postMessage; seam=the pane's postMessage, answering false once; no_claim=a hidden pane, which reloads from its restore copy and asks for the view itself
+// Value: protects=a view the Application webview did not take (it answered `false`, as a webview that is reloading does) is posted again at the next publish, so the pane does not stay on an older moment until the moment changes; fails_when=the generation is recorded as shown before the post settles and never cleared, so no later publish posts the view again; why_new=F152: presentNodeHistoryApplication ignored the result of postMessage; why_changed=F300: the reader's own publishes (its refresh, the selection's commit) may post the refused view again before the test publishes, so the waits accept a second post that already happened instead of waiting for exactly one post, which a poll could miss for good; seam=the pane's postMessage, answering false once; no_claim=a hidden pane, which reloads from its restore copy and asks for the view itself
 test('a view the Application webview did not take is posted again at the next publish', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -983,14 +983,16 @@ test('a view the Application webview did not take is posted again at the next pu
       sequence: 5,
     })
     await waitUntil(
-      () => attempts.length === 1,
+      () => attempts.length >= 1,
       'the view is posted',
       READER_RESULT_BOUND_MS,
     )
+    // The reader's own publishes may already have posted the refused view again; otherwise the refusal is forgotten first.
     await waitUntil(
       () =>
+        attempts.length >= 2 ||
         harness.reader['shownNodeHistoryApplicationGeneration'] === undefined,
-      'the refused view is forgotten',
+      'the refused view is forgotten or posted again',
       READER_RESULT_BOUND_MS,
     )
     harness.reader['publish']()
@@ -1324,7 +1326,7 @@ test('a move to a stop or event that does not exist is refused by name and keeps
   }
 })
 
-// Value: protects=opening another test replay never shows the learner a stale or false pane: while it opens, the Application pane never claims that no output was recorded and never empties the replay before (F150; the opening replay's own loading line is pinned by the test on F143), and the opened replay starts on its own first stop with that stop's first step, not the step the learner chose in the replay before even though both replays use the same step ids; fails_when=the pane empties the earlier replay or says no output was recorded while the replay opens, the opened replay shows the step chosen in the replay before (its explanation and its same-moment marks swap), or the pane does not end on the new replay's first moment; why_new=PR-B1 keeps the learner's chosen step in the workspace (DS21) and takes the pane's loading state from the workspace's opening flag (DS7), which the projection's own test passes by hand; seam=none; no_claim=the loading line's drawing in the document (the Reader DOM check) or a replay opened while a browser replay is shown, which the host refuses
+// Value: protects=opening another test replay never shows the learner a stale or false pane: while it opens, the Application pane never claims that no output was recorded and never empties the replay before (F150; the opening replay's own loading line is pinned by the test on F143), and the opened replay starts on its own first stop with that stop's first step, not the step the learner chose in the replay before even though both replays use the same step ids; fails_when=the pane empties the earlier replay or says no output was recorded while the replay opens, the opened replay shows the step chosen in the replay before (its explanation and its same-moment marks swap), or the pane does not end on the new replay's first moment; why_new=PR-B1 keeps the learner's chosen step in the workspace (DS21) and takes the pane's loading state from the workspace's opening flag (DS7), which the projection's own test passes by hand; why_changed=F301: a publish between the open's steps (the reader's refresh) posts the opening replay's loading line into that replay's own document, which the case counted as the earlier replay emptied, so it now tells each view by the document that received it and opens the replay while the reader publishes at every millisecond; seam=a publish timer standing for the reader's refresh, and the pane's postMessage, which records the replay of the document each view reached; no_claim=the loading line's drawing in the document (the Reader DOM check) or a replay opened while a browser replay is shown, which the host refuses
 test('opening another test replay starts on its own first step, not the step chosen before, and files its document under itself', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1358,9 +1360,33 @@ test('opening another test replay starts on its own first step, not the step cho
       READER_RESULT_BOUND_MS,
     )
     const updatesBeforeOpening = harness.applicationOutputs().length
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+    // Each view the pane receives is recorded with the replay whose document it reached, as that document's options name it.
+    const received: {
+      document: string | undefined
+      lines: number
+      placeholder: string | undefined
+    }[] = []
+    const postMessage = application.webview.postMessage
+    application.webview.postMessage = (message) => {
+      if (message.type === 'node-history-output')
+        received.push({
+          document: /"history":"([^"]+)"/.exec(application.webview.html)?.[1],
+          lines: message.view.lines.length,
+          placeholder: message.view.placeholder,
+        })
+      return postMessage(message)
+    }
 
-    // Act
-    await harness.reader.openLearningReplay(second.studyId)
+    // Act: the reader publishes at every millisecond while the second replay opens, as its refresh can between any two steps of the open.
+    const refresh = setInterval(() => harness.reader['publish'](), 1)
+    try {
+      await harness.reader.openLearningReplay(second.studyId)
+    } finally {
+      clearInterval(refresh)
+    }
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistory?.header.studyId === second.studyId &&
@@ -1372,15 +1398,22 @@ test('opening another test replay starts on its own first step, not the step cho
     const whileOpening = harness
       .applicationOutputs()
       .slice(updatesBeforeOpening)
-    const application = harness
-      .nativePanels()
-      .find((panel) => panel.kind === 'codebook.scopedBrowser')
 
     // Assert
-    // The replay still shown is not emptied while the second opens (F150).
-    assert.ok(
-      whileOpening.every((update) => update.view.lines.length > 0),
-      'no view posted while the second replay opens is empty',
+    // The replay still shown is not emptied while the second opens (F150); the second replay's own document may read its loading line.
+    assert.deepEqual(
+      received.filter(
+        (update) => update.document === first.studyId && update.lines === 0,
+      ),
+      [],
+    )
+    // No document says that no output was recorded while the replay opens.
+    assert.deepEqual(
+      received.filter(
+        (update) =>
+          update.placeholder === 'No test output recorded up to this moment.',
+      ),
+      [],
     )
     // The document is written again for the second replay, so the learner's follow choice and kept moment are filed under it, not the first (DS20).
     assert.ok(
