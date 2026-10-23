@@ -5634,6 +5634,10 @@ export async function workspaceHarness(
       activeTabGroup = group
       for (const listener of tabChangeListeners) listener()
     },
+    /** Gives every tab of the fake tab model a new Tab object now, as Cursor's extension host does when the editor sends a whole new tab model (the model of `rebuildTabObjectsAtGroupRemoval`, without a group removal); the tab listeners hear nothing, as at a removed group's rebuild. @example harness.rebuildTabObjectsNow() */
+    rebuildTabObjectsNow(): void {
+      rebuildTabObjects()
+    },
     /** Closes one tab the way the learner does with the tab's close button: the tab leaves its group, the group shows its neighbour, a pane whose tab it is ends, and the editor tells its tab listeners which tab closed. The reader's own closes go through `tabGroups.close`, and a pane the reader disposes closes its tab without an event in this fake. @example harness.closeTabByHand(sourceTab) */
     closeTabByHand(tab: Tab): void {
       const group = groups.find((candidate) => candidate.tabs.includes(tab))

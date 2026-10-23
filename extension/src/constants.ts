@@ -1271,10 +1271,79 @@ export const DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS = 500
 export const DEVELOPMENT_PORT_RELEASE_WAIT_MS = 5_000
 /** The pause between two checks while {@link DEVELOPMENT_PORT_RELEASE_WAIT_MS} runs. */
 export const DEVELOPMENT_PORT_RELEASE_POLL_MS = 100
-/** Bounds how deep the `dev` script reader descends (a count, not a duration): every step into another command line grows the same depth, whether it is a quoted command (`concurrently "…"`, `sh -c "…"`, `cmd /c "…"`, `cross-env-shell "…"`) or another script (`npm run x`, `pnpm x`, `bun dev`, `concurrently npm:x`). The `dev` script is depth 0; no step is taken from depth {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}, so a delegation cycle stops there and the segment is reported as unread. */
+/** Bounds how deep the `dev` script reader descends (a count, not a duration): every step into another command line grows the same depth, whether it is a quoted `concurrently` command or another script (`npm run x`, `pnpm x`). The `dev` script is depth 0; no step is taken from depth {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}, so a delegation cycle stops there and the script is reported as unread. */
 export const DEVELOPMENT_SCRIPT_NESTING_LIMIT = 2
-/** Bounds the part of an unread `dev` script segment that `applicationPortSource` quotes (code points, not bytes). */
+/** Bounds the part of an unread `dev` script that `applicationPortSource` quotes (code points, not bytes). */
 export const DEVELOPMENT_SCRIPT_UNREAD_SEGMENT_MAX_CHARS = 120
+/** Bounds a `package.json` script name that `applicationPortSource` quotes (code points). */
+export const DEVELOPMENT_SCRIPT_NAME_SHOWN_MAX_CHARS = 40
+/** The only characters a `dev` script may hold for the reader to assert a port from it (D72): letters, digits, blanks, `_ . , : / @ % + = -`, quotes, `&` and `;`. Any other character is shell syntax the reader does not model (`|`, `(`, `{`, `$`, a backtick, `<`, `>`, `!`, `#`, a backslash, a line break, a glob), so the script is unread. */
+export const DEVELOPMENT_SCRIPT_ALLOWED_CHARACTERS = /^[\w \t.,:/@%+='"&;-]*$/
+/** The words of the `dev` script grammar that the quoted unread segment may show (D72 rule 2): launchers, delegations, wrappers and their subcommands. */
+export const DEVELOPMENT_SCRIPT_SHOWN_WORDS: ReadonlySet<string> = new Set([
+  'next',
+  'dev',
+  'npx',
+  'bunx',
+  'npm',
+  'pnpm',
+  'yarn',
+  'bun',
+  'run',
+  'run-script',
+  'exec',
+  'cross-env',
+  'env',
+  'concurrently',
+  'export',
+])
+/** The flags the quoted unread segment may show by name (D72 rule 2): Next's `dev` options and the options of the delegation commands. */
+export const DEVELOPMENT_SCRIPT_SHOWN_FLAGS: ReadonlySet<string> = new Set([
+  '-p',
+  '--port',
+  '-H',
+  '--hostname',
+  '--turbo',
+  '--turbopack',
+  '--webpack',
+  '--experimental-https',
+  '--experimental-https-key',
+  '--experimental-https-cert',
+  '--experimental-https-ca',
+  '--silent',
+  '-s',
+  '--if-present',
+  '--',
+])
+/** The flags of `next dev` that take no value (D72). */
+export const DEVELOPMENT_SCRIPT_VALUELESS_NEXT_FLAGS: ReadonlySet<string> =
+  new Set(['--turbo', '--turbopack', '--webpack', '--experimental-https'])
+/** The `pnpm` and `yarn` commands that run before a script of the same name, so `pnpm <name>` is no delegation to a script of that name (D72). */
+export const DEVELOPMENT_SCRIPT_PACKAGE_MANAGER_COMMANDS: ReadonlySet<string> =
+  new Set([
+    'add',
+    'create',
+    'dlx',
+    'exec',
+    'i',
+    'init',
+    'install',
+    'link',
+    'list',
+    'ls',
+    'pack',
+    'publish',
+    'remove',
+    'rm',
+    'run',
+    'store',
+    'up',
+    'update',
+    'why',
+  ])
+/** Variables whose assignment before or beside a `next dev` command can change which program runs, what it loads or which port it takes, so the reader does not read past one (D72): the loader and path variables, `NODE_OPTIONS` (preloads), and the `npm_config_*` settings. */
+export const DEVELOPMENT_SCRIPT_UNSAFE_ASSIGNMENT_NAME =
+  /^(?:NODE_OPTIONS|NODE_PATH|PATH|ENV|SHELLOPTS|IFS|npm_config_.*|LD_.*|DYLD_.*|BASH_.*)$/i
 /** The only variables the owned `next dev` inherits from the extension host. */
 export const DEVELOPMENT_SERVER_INHERITED_ENVIRONMENT_NAMES = [
   'PATH',
