@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 
 import { formatEventSeconds } from './formatEventSeconds'
+import { stripTerminalControls } from './stripTerminalControls'
 
 /**
  * The fixed words of a test replay's recorded-source slot and its debugger thread, the String catalog of plan version 7 (DS5, DS14); words that hold a value are worded by {@link describeNodeRecordedSource}.
@@ -43,6 +44,7 @@ export type NodeRecordedSourceMessage =
 
 /**
  * Words one recorded-source message of a test replay; {@link StudyWorkspace} calls it for the slot's label and tab, the replay debugger's thread and the slot's open failure.
+ * A recorded path is shown without terminal and bidirectional controls ({@link stripTerminalControls}), so a control in a file name never reorders the label, the tab title or the thread name around it; the real path stays with the caller for the slot's URI hash and the source identity (F286).
  * @param message - The surface and its values; `stop` is 1-based.
  * @returns The catalog's sentence with the values filled in.
  * @example
@@ -55,14 +57,14 @@ export function describeNodeRecordedSource(
 ): string {
   switch (message.kind) {
     case 'label':
-      return `Recorded: ${message.path}:${message.line} · ${formatEventSeconds(message.elapsedMs)} s`
+      return `Recorded: ${stripTerminalControls(message.path)}:${message.line} · ${formatEventSeconds(message.elapsedMs)} s`
     case 'thread':
-      return `Recorded test stop ${message.stop} · ${message.path}:${message.line}`
+      return `Recorded test stop ${message.stop} · ${stripTerminalControls(message.path)}:${message.line}`
     case 'open-failed':
       return message.stop === undefined
         ? `Codebook could not open the recorded source: ${message.cause}. Details: Output › Codebook.`
         : `Codebook could not open the recorded source of stop ${message.stop}: ${message.cause}. Details: Output › Codebook.`
     case 'tab-title':
-      return `Captured-${basename(message.path)}`
+      return `Captured-${basename(stripTerminalControls(message.path))}`
   }
 }
