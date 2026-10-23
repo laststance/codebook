@@ -290,6 +290,12 @@ import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
 import { paneKeyboardTimeoutMessage } from './utils/paneKeyboardTimeoutMessage'
 import { parseRecordedStudyGroups } from './utils/parseRecordedStudyGroups'
+import {
+  describePlacementRefusal,
+  PlacementEventLog,
+  REFUSAL_REPORT_TABS_PER_GROUP,
+  type RefusalGroupView,
+} from './utils/placementRefusalReport'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import {
@@ -944,6 +950,8 @@ export class StudyWorkspace {
   private liveComposition = false
   /** `true` while {@link openNodeHistoryFromHost} enters the Study composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   private hostOpeningTestReplay = false
+  /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
+  private readonly placementEvents = new PlacementEventLog()
   /**
    * The explicit Live intent {@link returnCurrentSelection} records for an open reader, so Open and cold reentry, also after a Close, prepare the chat layout before a runtime starts: the record that was current then, and whether it had stopped. A Close keeps it, and so does a Return that arranged nothing, since the selection either leaves follows the current run in Live; a run that starts after it and the stop of the current run end it ({@link isLiveCompositionRequested}, Cycle 0046 OCR1-8).
    */
@@ -3758,6 +3766,10 @@ export class StudyWorkspace {
       }),
       vscode.window.tabGroups.onDidChangeTabGroups(sample),
       vscode.window.onDidChangeActiveTextEditor((editor) => {
+        this.placementEvents.record(
+          performance.now(),
+          `active text editor ${editor ? `column ${editor.viewColumn}` : 'none'}`,
+        )
         sample()
         this.noteLearnersSignAtFrame(this.isLearnersEditor(editor))
         this.endSourceKeyboardPlacementAtLearnersMove(editor)
@@ -6501,6 +6513,7 @@ export class StudyWorkspace {
     retainFocus = true,
     acceptWikiGroupReturn = false,
   ): () => void {
+    const armed = this.armPlacementReport('retainPresentationPlacement')
     const transition = this.presentationTransition,
       lifetime = this.lifetime
     const panes = this.studyPanePositions(),
@@ -6607,9 +6620,7 @@ export class StudyWorkspace {
         lifetime === this.lifetime
       )
         this.yieldFocusToLearner()
-      throw new Error(
-        'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
-      )
+      throw this.refusePlacement(armed)
     }
   }
 
@@ -8689,7 +8700,11 @@ export class StudyWorkspace {
       return
     }
     if (action === 'return-current') await this.returnCurrentSelection()
-    if (action === 'source') await this.renderSelection(false)
+    if (action === 'source') {
+      // A test replay's source is its recorded-source slot; the Study's own selection shows no article source (F156), so Focus source fronts the slot (F383).
+      if (this.testReplayHoldsComposition()) await this.focusNodeSourceSlot()
+      else await this.renderSelection(false)
+    }
     if (action === 'focus-app') await this.focusApplication()
     if (action === 'focus-context') {
       if (this.summaryComposition) await this.showLearningSummary()
@@ -11449,7 +11464,17 @@ export class StudyWorkspace {
       await this.returnCurrentSelection('learner')
       if (this.recordingActive) return
     }
-    await this.enterStudyCompositionForReplay()
+    try {
+      await this.enterStudyCompositionForReplay()
+    } catch (error) {
+      // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
+      const cause = sanitizeCause(
+        error,
+        this.service?.causeRoots ?? { storage: [] },
+      )
+      await this.tellTestReplayOpenFailure(studyId, error, cause)
+      return
+    }
     const outcome = await this.openNodeHistory(studyId, this.revision)
     if (outcome.status !== 'failed') {
       // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
@@ -11465,11 +11490,13 @@ export class StudyWorkspace {
   }
 
   /**
-   * Opens the Study composition for a test replay that is about to open: a closed reader opens, and the Live composition (which has no Study pane) gives way to it (F208); called by {@link openNodeHistoryFromHost}.
+   * Opens the Study composition for a test replay that is about to open: a closed reader opens, the Live composition (which has no Study pane) gives way to it (F208), and a reader that stands in the Study composition without its Study pane gets the pane again; called by {@link openNodeHistoryFromHost}.
+   * An earlier entry that failed after it left the Live composition leaves exactly that state (open, not live, no Study pane); skipping the open then showed the Application, the slot and the debugger with no transport (F384).
+   * @throws What {@link open} throws; the caller tells it.
    * @example await this.enterStudyCompositionForReplay()
    */
   private async enterStudyCompositionForReplay(): Promise<void> {
-    if (this.opened && !this.liveComposition) return
+    if (this.opened && !this.liveComposition && this.contextPanel) return
     this.hostOpeningTestReplay = true
     try {
       await this.open()
@@ -15947,6 +15974,9 @@ export class StudyWorkspace {
     assertUnchanged(): void
     dispose(): void
   } {
+    const armed = this.armPlacementReport(
+      'watchLearnerViewDuringApplicationMove',
+    )
     const noEditor = textEditorFocusState(undefined)
     let editorBefore = textEditorFocusState(vscode.window.activeTextEditor)
     const groupsBefore = new Map(
@@ -15993,10 +16023,7 @@ export class StudyWorkspace {
     return {
       assertUnchanged: (): void => {
         check()
-        if (changed)
-          throw new Error(
-            'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
-          )
+        if (changed) throw this.refusePlacement(armed)
       },
       dispose: (): void => {
         for (const subscription of subscriptions) subscription.dispose()
@@ -16093,6 +16120,9 @@ export class StudyWorkspace {
       vscode.window.tabGroups.all.map((candidate) =>
         this.editorGroupIdentities.get(candidate),
       )
+    const armed = this.armPlacementReport(
+      'followRemovalOfGroupLeftByApplication',
+    )
     const othersBefore = shownGroups().filter(
       (candidate) => candidate !== identity,
     )
@@ -16121,9 +16151,7 @@ export class StudyWorkspace {
       othersAfter.length !== othersBefore.length ||
       othersAfter.some((candidate, index) => candidate !== othersBefore[index])
     )
-      throw new Error(
-        'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
-      )
+      throw this.refusePlacement(armed)
   }
 
   /**
@@ -19131,6 +19159,7 @@ export class StudyWorkspace {
     this.watchKeyboardOutsideEditors()
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabGroups((event) => {
+        this.notePlacementGroupEvent(event)
         this.invalidateClosedContextCreation(event)
         this.observeEditorGroups(event)
         this.bindPendingContextCreation()
@@ -21506,6 +21535,90 @@ export class StudyWorkspace {
       await vscode.commands.executeCommand('vscode.setEditorLayout', pixels)
       return true
     }
+  }
+
+  /**
+   * Notes the moment and the editor groups a placement guard starts waiting at, so {@link refusePlacement} can say what changed; called by each of the three placement guards when it is armed.
+   * @param guard - The guard's name, as the report names it.
+   * @returns The arm time and the groups then, sanitized and bounded.
+   * @example const armed = this.armPlacementReport('retainPresentationPlacement')
+   */
+  private armPlacementReport(guard: string): {
+    guard: string
+    armedAtMs: number
+    before: RefusalGroupView[]
+  } {
+    return {
+      guard,
+      armedAtMs: performance.now(),
+      before: this.refusalGroupViews(),
+    }
+  }
+
+  /**
+   * Describes the editor groups as a refusal report shows them: column, active flag and each tab's label (sanitized, cut) and input kind; called by {@link armPlacementReport} and {@link refusePlacement}.
+   * @returns One view per group.
+   * @example this.refusalGroupViews() // => [{ viewColumn: 1, isActive: true, tabs: [{ label: 'auth.ts', kind: 'text' }] }]
+   */
+  private refusalGroupViews(): RefusalGroupView[] {
+    const roots = this.service?.causeRoots ?? { storage: [] }
+    const active = vscode.window.tabGroups.activeTabGroup
+    return vscode.window.tabGroups.all.map((group) => ({
+      viewColumn: group.viewColumn,
+      isActive: group === active,
+      tabs: group.tabs.slice(0, REFUSAL_REPORT_TABS_PER_GROUP).map((tab) => ({
+        label: sanitizeCause(tab.label, roots),
+        kind:
+          tab.input instanceof vscode.TabInputText
+            ? 'text'
+            : tab.input instanceof vscode.TabInputWebview
+              ? `webview ${tab.input.viewType}`
+              : tab.input instanceof vscode.TabInputTextDiff
+                ? 'diff'
+                : 'other',
+      })),
+    }))
+  }
+
+  /**
+   * Writes one Output › Codebook entry that names the refusing guard and what it saw, and returns the refusal the guard throws; called by the three placement guards in place of their bare error (F382).
+   * The sentence the learner reads is unchanged; the entry carries the groups before and after, the editor's events since the guard was armed and, when it was the cause, the active text editor change.
+   * @param armed - What {@link armPlacementReport} noted.
+   * @returns The error with the refusal sentence.
+   * @example throw this.refusePlacement(armed)
+   */
+  private refusePlacement(armed: {
+    guard: string
+    armedAtMs: number
+    before: RefusalGroupView[]
+  }): Error {
+    const nowMs = performance.now()
+    const cause = describePlacementRefusal({
+      guard: armed.guard,
+      armedAtMs: armed.armedAtMs,
+      nowMs,
+      before: armed.before,
+      after: this.refusalGroupViews(),
+      events: this.placementEvents.since(armed.armedAtMs),
+    })
+    this.diagnostics?.log({ surface: 'presentation:placement-refused', cause })
+    return new Error(
+      'Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
+    )
+  }
+
+  /**
+   * Notes one tab-group change for the refusal report, as columns opened, closed and changed; called by the group listener {@link installReaders} registers.
+   * @param event - The editor's change.
+   * @example this.notePlacementGroupEvent(event) // records 'groups closed [2]'
+   */
+  private notePlacementGroupEvent(event: vscode.TabGroupChangeEvent): void {
+    const columns = (groups: readonly vscode.TabGroup[]): string =>
+      `[${groups.map((group) => group.viewColumn).join(',')}]`
+    this.placementEvents.record(
+      performance.now(),
+      `groups opened ${columns(event.opened)} closed ${columns(event.closed)} changed ${columns(event.changed)}`,
+    )
   }
 
   /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */
@@ -24420,6 +24533,34 @@ export class StudyWorkspace {
     } finally {
       deadline.cancel()
     }
+  }
+
+  /**
+   * Brings the recorded-source slot's tab to the front of its group with the keyboard in it, the stop's line as the slot already shows it; called by the Study pane's Focus source action ({@link receive}) while a test replay is selected.
+   * Nothing is shown when the replay has no slot yet (it is still opening or was retired); the slot's own selection draws its line and label, and this only fronts the tab that already holds them.
+   * @returns Once the editor showed the slot tab, or at once when no slot exists.
+   * @example await this.focusNodeSourceSlot() // the Captured-data.ts tab in front of the Welcome tab, with the keyboard
+   */
+  private async focusNodeSourceSlot(): Promise<void> {
+    const slot = this.nodeSourceSlot
+    if (!slot) return
+    const address = slot.uri.toString()
+    // The group that holds the slot's tab now; a slot closed by hand opens again where its column rule puts it.
+    const holder = vscode.window.tabGroups.all.find((group) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputText &&
+          tab.input.uri.toString() === address,
+      ),
+    )
+    const document = await vscode.workspace.openTextDocument(slot.uri)
+    await vscode.window.showTextDocument(document, {
+      viewColumn:
+        holder?.viewColumn ?? this.nodeSourceSlotColumn(slot.uri, undefined),
+      preserveFocus: false,
+      preview: false,
+    })
+    this.decorateNodeSourceSlot()
   }
 
   /**
