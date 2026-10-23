@@ -3633,3 +3633,71 @@ test('the Study pane names the covered recorded source while the learner’s fil
     await harness.close()
   }
 })
+
+// Value: protects=Restore Study workspace layout with a test replay selected in Cursor, after the learner's file covered the slot and Focus source brought it back, while the article's captured-source tab stands in the same group: the slot stays in front, the article's tab is never fronted, and the layout reads confirmed; fails_when=Restore runs the article's source placement and fronts the article's captured source over the slot (Cursor 3.26.16: Captured-overview.mts over Captured-data.ts); why_new=F413 second native result (candidate 3773701); seam=the workspace harness named Cursor with a test replay opened through Open replay and the article's captured source shown in the slot's group
+test('Restore Study workspace layout with a confirmed test replay layout leaves the slot in front of the article’s captured source in Cursor', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useHostAppName('Cursor')
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slotUri = slotTabs(harness)[0]!
+    const slotColumn = harness.groups.find((group) =>
+      group.tabs.some(
+        (tab) =>
+          (
+            tab.input as { uri?: { toString(): string } } | undefined
+          )?.uri?.toString() === slotUri,
+      ),
+    )!.viewColumn
+    const slot = harness.reader['nodeSourceSlot']!.uri
+    const articleUri = (
+      slot.constructor as unknown as { from(value: object): typeof slot }
+    ).from({
+      scheme: slot.scheme,
+      authority: slot.authority,
+      path: '/article/Captured-overview.mts',
+    })
+    harness.reader['documents'].set(
+      articleUri.toString(),
+      '// Configured source is unavailable.',
+    )
+    // The article's captured source was shown earlier in the slot's group; the learner's file then covered the slot and Focus source brought it back.
+    const articleDocument =
+      await harness.editor.workspace.openTextDocument(articleUri)
+    await harness.editor.window.showTextDocument(articleDocument, {
+      viewColumn: slotColumn,
+      preview: false,
+    })
+    await harness.reader.action('source')
+    const frontBefore = frontOfGroup(harness, slotColumn)
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(frontBefore, slotUri)
+    assert.equal(frontOfGroup(harness, slotColumn), slotUri)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(JSON.stringify(lastView(harness)?.errors), '[]')
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Reads the address of the tab in front of a group.
+ * @param harness - The workspace harness.
+ * @param column - The group's view column.
+ * @returns The front tab's document address, `undefined` for a tab with no document.
+ * @example frontOfGroup(harness, 2) // => 'codebook-source://…/node-history-slot/…/Captured-data.ts'
+ */
+function frontOfGroup(harness: Harness, column: number): string | undefined {
+  const input = harness.groups.find((group) => group.viewColumn === column)
+    ?.activeTab?.input as { uri?: { toString(): string } } | undefined
+  return input?.uri?.toString()
+}
