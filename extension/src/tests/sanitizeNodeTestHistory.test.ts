@@ -109,3 +109,57 @@ test('a replay’s recorded texts come without bidirectional and terminal contro
     'pass‮ed \u001b[3',
   )
 })
+
+/** A history whose only stop carries a right-to-left override (U+202E) in the field under test. */
+function historyWithStop(
+  field: 'source.path' | 'frame.name' | 'fact.path',
+): NodeTestHistoryIndex {
+  const history = forgedHistory()
+  const entries = history.entries.map((entry) =>
+    entry.type !== 'stop'
+      ? entry
+      : {
+          ...entry,
+          source: {
+            ...entry.source,
+            path: field === 'source.path' ? 'src/‮a.ts' : entry.source.path,
+          },
+          frame: {
+            ...entry.frame,
+            name: field === 'frame.name' ? 'ru‮n' : entry.frame.name,
+          },
+          facts: entry.facts.map((fact) => ({
+            ...fact,
+            path: field === 'fact.path' ? 'na‮me' : fact.path,
+          })),
+        },
+  )
+  return { ...history, entries }
+}
+
+// Value: protects=the Study section's event rows print source.path, frame.name and facts[].path, so each loses a bidirectional control like facts[].display does; fails_when=a U+202E survives in the stop's source path, frame name or fact path; why_new=F287 (only fact displays were stripped); seam=none; no_claim=the stop still verifies (the host verifies the stored history)
+for (const [field, expected] of [
+  ['source.path', 'src/a.ts'],
+  ['frame.name', 'run'],
+  ['fact.path', 'name'],
+] as const) {
+  test(`a stop's ${field} comes without bidirectional controls`, () => {
+    // Arrange
+    const history = historyWithStop(field)
+
+    // Act
+    const stop = sanitizeNodeTestHistory(history).entries[2]
+
+    // Assert
+    assert.equal(stop?.type, 'stop')
+    const shown =
+      stop?.type !== 'stop'
+        ? undefined
+        : field === 'source.path'
+          ? stop.source.path
+          : field === 'frame.name'
+            ? stop.frame.name
+            : stop.facts[0]?.path
+    assert.equal(shown, expected)
+  })
+}

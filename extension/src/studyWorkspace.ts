@@ -12286,6 +12286,8 @@ export class StudyWorkspace {
     if (!history) return {}
     // The recorded texts the surfaces print come without terminal and bidirectional controls (F131).
     const shown = this.shownNodeHistory(history)
+    // A stop verifies against the recorded source path, which the shown history may have stripped (F287).
+    const selectedAsRecorded = selected
     selected = selected && shown.entries[history.entries.indexOf(selected)]
     history = shown
     if (this.selectedNodeHistoryOutputIndex?.history !== history)
@@ -12330,7 +12332,8 @@ export class StudyWorkspace {
         history,
         ...(selected ? { selected } : {}),
         selectedStopVerified:
-          selected?.type === 'stop' && nodeStopSourceMatches(selected),
+          selectedAsRecorded?.type === 'stop' &&
+          nodeStopSourceMatches(selectedAsRecorded),
         ...(learning ? { learning } : {}),
         ...(this.selectedNodeHistoryStepId
           ? { chosenStepId: this.selectedNodeHistoryStepId }
