@@ -1304,7 +1304,7 @@ export const REPOSITORY_PAUSE_URL_LIMIT_CHARS = 512
 export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
 /** How many pauses away from the expected stop (and how many idle `continued` events) one run journals; past it only their count is kept, so a hook that pauses in a loop cannot use up the journal. */
 export const REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT = 100
-/** How many `stop.module-parsed`, `stop.instance-sealed` and `stop.instance-refused` entries one run journals, each type up to it; past it only their count is kept. Next's HMR announces every layer's script again after each save, so a long session must not use up the evidence budget. */
+/** How many `stop.module-parsed`, `stop.instance-sealed` and `stop.instance-refused` entries one run journals, each type up to it; past it only their count is kept, except the first entry of each type for every stop and script address, which is always journaled (the instance's hashes are the evidence). Next's HMR announces every layer's script again after each save, so a long session must not use up the evidence budget. */
 export const REPOSITORY_STOP_MODULE_JOURNAL_LIMIT = 100
 /** The longest the run waits for the text of a script that may be another webpack layer's instance of a declared server stop's module (`Debugger.getScriptSource`); past it the instance is refused with that reason, and a pause held in it fails with a sentence naming it. It is shorter than the wait for a stop's own pause, so the sentence is ready when that wait ends. */
 export const REPOSITORY_STOP_INSTANCE_READ_MS = 2_000

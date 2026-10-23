@@ -700,3 +700,89 @@ test('a pause in an instance is the stop’s at the column that instance’s map
   // Assert
   assert.deepEqual([genuine, otherStatement], [true, false])
 })
+
+// Value: protects=a pause held in an accepted instance being judged by that instance's own map and text after a newer script of the same address (HMR) is sealed, until the pause is gone; fails_when=the older instance is deleted at once, so the held pause falls back to the sealed module and the run fails with another sentence (a sealed-map line judgement, "differs from its sealed bundle", or a bare timeout); why_new=F460 (OCR medium of the review of 6bc9eab2..ef03b741: F438's replacement ignores a held pause); seam=announceModuleInAnotherLayer twice for one layer, pauseInScript at a place the first instance maps to another line, holdSourceBoundWait; no_claim=that js-debug pauses in a replaced script after HMR
+test('a pause held in an instance is still judged by that instance when a newer script of the same address is sealed', async (context) => {
+  // Arrange: the first instance maps its generated line 3 to source line 2, which is not the declared line.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  const wait = harness.holdSourceBoundWait()
+  await startActionWithoutPause(harness)
+  harness.announceModuleInAnotherLayer(
+    'server',
+    'save-1',
+    'middleware',
+    ';AAAA;AACA',
+  )
+  await waitUntil(
+    () => journaled(harness, 'stop.instance-sealed').length === 1,
+    'the first script accepted',
+  )
+  harness.pauseInScript('server', 'save-1', 2, 0)
+  await settle()
+  // Act: HMR seals a newer script of the same address while the pause is held, then the wait for the stop's own pause ends.
+  harness.announceModuleInAnotherLayer(
+    'server',
+    'save-2',
+    'middleware',
+    ';AAAA',
+  )
+  await waitUntil(
+    () => journaled(harness, 'stop.instance-sealed').length === 2,
+    'the newer script accepted',
+  )
+  wait.release()
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the held pause refused',
+  )
+  await harness.run.stop()
+  // Assert: judged by the first instance's own map, as when no HMR happened.
+  assert.deepEqual(
+    [...harness.run.view().failures],
+    ['Error: Generated location does not match exact DAP source position'],
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+// Value: protects=the first instance sealing of each script address of a stop being journaled although HMR churn of another layer's module used up the cap of stop.instance-sealed entries; fails_when=the cap counts every sealing of the run, so the evidence (the instance's hashes) of a layer first sealed late is left out; why_new=F467 (OCR low of the review of 6bc9eab2..ef03b741: the cap is per event type for the whole run); seam=announceModuleInAnotherLayer 110 times for the middleware layer then once for the rsc layer; no_claim=the evidence budget's own size
+test('HMR churn of one layer’s module does not keep the first sealing of another layer out of the journal', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  // Act: 110 saves, more than the cap of 100 entries.
+  for (let save = 0; save < 110; save++) {
+    harness.announceModuleInAnotherLayer(
+      'server',
+      `save-${save}`,
+      'middleware',
+      ';AAAA',
+    )
+    await waitUntil(
+      () =>
+        harness.scriptSourceReads.some(
+          (read) => read.scriptId === `save-${save}`,
+        ),
+      `the run read save ${save}`,
+    )
+    await settle()
+  }
+  harness.announceModuleInAnotherLayer('server', 'first-rsc', 'rsc', ';AAAA')
+  await waitUntil(
+    () =>
+      journaled(harness, 'stop.instance-sealed').filter(
+        (entry) => (entry as { scriptId: string }).scriptId === 'first-rsc',
+      ).length === 1,
+    'the other layer’s first sealing journaled',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(journaled(harness, 'stop.instance-sealed').length, 101)
+  assert.deepEqual(journaled(harness, 'stop.module-events-not-journaled'), [
+    { count: 10, journalLimit: 100 },
+  ])
+})
