@@ -1850,6 +1850,46 @@ async function check(page, options, collected) {
           nodePlayheadAfterStep.value === '198630' &&
           nodePlayheadAfterStep.valueText === '198.63 s of recorded test time',
       })
+      // Value: protects=while the selection is going to a moment that has not committed (F388), the transport's time readout and the slider's spoken time end with the catalog's loading words beside the requested time, and the commit takes them away; fails_when=the readout names the requested time with no loading cue while the native views still show the left moment, or the words stay after the commit; why_new=F388 (native frames paired Recorded test time · 120.64 s with the left stop's Call Stack and CodeLens for about 230 ms); seam=none; no_claim=the host's timing of the commit (studyWorkspace tests) (stand-ins: the Study messages the host posts)
+      // Arrange
+      const loadingReadout = () =>
+        page.evaluate(() => ({
+          readout: document.querySelector('#node-history-playback-position')
+            ?.textContent,
+          spoken: document
+            .querySelector('#node-history-playhead')
+            ?.getAttribute('aria-valuetext'),
+        }))
+      // Act
+      await publish({
+        ...nodeTimeline,
+        nodeHistoryPlayback: {
+          ...nodeTimeline.nodeHistoryPlayback,
+          positionMs: 120640,
+          pending: true,
+        },
+      })
+      const readoutWhilePending = await loadingReadout()
+      await publish({
+        ...nodeTimeline,
+        nodeHistoryPlayback: {
+          ...nodeTimeline.nodeHistoryPlayback,
+          positionMs: 120640,
+        },
+      })
+      const readoutCommitted = await loadingReadout()
+      // Assert
+      cases.push({
+        name: 'the test time readout and its spoken time say loading beside the requested time until the moment commits',
+        actual: { readoutWhilePending, readoutCommitted },
+        passed:
+          readoutWhilePending.readout ===
+            'Recorded test time · 120.64 s · loading…' &&
+          readoutWhilePending.spoken ===
+            '120.64 s of recorded test time · loading…' &&
+          readoutCommitted.readout === 'Recorded test time · 120.64 s' &&
+          readoutCommitted.spoken === '120.64 s of recorded test time',
+      })
       // Arrange: the thumb of the Node playhead is moved and the host has not answered yet (SD-5).
       await publish(nodeTimeline)
       await page.locator('#node-history-playhead').evaluate((playhead) => {
