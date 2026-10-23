@@ -27,6 +27,7 @@ import {
 import type * as ReadWikiRegularFileModule from '../utils/readWikiRegularFile'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
@@ -203,7 +204,7 @@ test('a manifest that is a symbolic link is not read where the system’s open c
 test(
   'a manifest that is a named pipe is refused at once where the system’s open cannot refuse a link, instead of holding the read',
   {
-    timeout: 2_000,
+    timeout: 30_000,
     skip:
       process.platform === 'win32'
         ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
@@ -227,9 +228,9 @@ test(
     })
 
     // Act
-    const read = await readWikiRegularFile(
-      pipePath,
-      OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    const read = await answeredAtOnce(
+      readWikiRegularFile(pipePath, OPEN_FLAGS_WITHOUT_NOFOLLOW),
+      'the read',
     )
 
     // Assert

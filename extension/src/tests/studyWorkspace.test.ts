@@ -28,6 +28,7 @@ import {
   resetFakeClock,
 } from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { shownTestOutput } from './utils/shownTestOutput'
 
 /**
@@ -61,6 +62,7 @@ test('restored Observed moments leaves its loading state after workspace initial
   }
 })
 
+// Value: protects=an unreadable test history folder being reported on the archive line while the saved-study reader still opens; fails_when=the reader fails to open or the failure is silent; why_new=the history store reads beside the library; seam=a folder made unreadable by the test; no_claim=the folder's real permissions
 test('an unreadable Node history folder is reported while the saved-study reader still opens', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -244,7 +246,7 @@ test('saved Node history is selectable in the reader without entering browser pl
             ),
         ),
       'Node history appears in Saved studies',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert: the library lists the journal as a test replay with its verdict, capture and explained stops (DS14).
@@ -257,7 +259,6 @@ test('saved Node history is selectable in the reader without entering browser pl
       libraryEntry.outcome,
       'Test replay · Test passed · exit code 0 · capture complete · 0 of 2 stops explained',
     )
-    assert.doesNotMatch(libraryEntry.outcome, /replay (is |are )?unavailable/i)
     assert.equal(libraryEntry.metadata, 'validated')
 
     // Act: selecting the catalog entry routes to the Node journal while preserving browser-study selection.
@@ -268,7 +269,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistory?.header.studyId ===
           header.studyId && !harness.postedMessages().slice(-1)[0]?.loading,
       'selected Node history is verified and displayed',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const message = harness.postedMessages().slice(-1)[0]!
 
@@ -326,7 +327,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryLearningDecision
           ?.understood === true,
       'learner understanding is saved',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const decisionMessage = harness.postedMessages().slice(-1)[0]!
     const reopenMessageIndex = harness.postedMessages().length
@@ -342,7 +343,7 @@ test('saved Node history is selectable in the reader without entering browser pl
           .slice(reopenMessageIndex)
           .some((view) => view.loading),
       'reopening the Node history enters its loading state',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     await waitUntil(
       () => {
@@ -355,7 +356,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         )
       },
       'learner choice and saved event are restored when the history reopens',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const restoredDecisionMessage = harness.postedMessages().slice(-1)[0]!
 
@@ -384,7 +385,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         20,
       'last event on the first page is selected',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receive({
       type: 'node-history-step',
@@ -397,7 +398,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         21,
       'next event crosses into the second page',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const pageBoundaryMessage = harness.postedMessages().slice(-1)[0]!
 
@@ -425,7 +426,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           23,
       'first historical Node stop reaches the native debugger and reader',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const firstPresentation = recordedStopPresentations(harness)[0]!
     assert.equal(firstPresentation.snapshot?.variables[0]?.name, 'nextTheme')
@@ -498,7 +499,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryLearningMaterial
           ?.revision === 1,
       'saved Node learning material refreshes the open reader',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const materialMessage = harness.postedMessages().slice(-1)[0]!
 
@@ -530,7 +531,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           25,
       'second historical Node stop replaces the selected native and reader state',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const secondPresentation = recordedStopPresentations(harness)[1]!
     assert.equal(secondPresentation.snapshot?.variables[0]?.name, 'themeName')
@@ -559,7 +560,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         24,
       'inter-stop output event is selected',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const interStopMessage = harness.postedMessages().slice(-1)[0]!
 
@@ -593,7 +594,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         25,
       'next recorded stop is restored',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receive({
       type: 'node-history-step',
@@ -606,7 +607,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         24,
       'backward navigation restores the output gap',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const invalidationsBeforeResult = harness.historicalDebugInvalidations()
     harness.receive({
@@ -620,7 +621,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         26,
       'terminal result event is selected',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -651,7 +652,13 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           25,
       'second stop is selected in the reader before reopening its history',
-      1_000,
+      READER_RESULT_BOUND_MS,
+    )
+    // The reader writes the chosen stop to its store after the commit; the new store reads it from disk, so the reopen waits for that write (F231).
+    await waitUntil(
+      async () => (await store.readReaderPosition(header.studyId)) === 25,
+      'the chosen stop written to the history store',
+      READER_RESULT_BOUND_MS,
     )
     const library = await harness.reader.learningStorage()
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
@@ -671,7 +678,7 @@ test('saved Node history is selectable in the reader without entering browser pl
           25 &&
         !harness.postedMessages().slice(-1)[0]?.loading,
       'a new history store restores the saved stop and its native snapshot',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -714,7 +721,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
         24,
       'output-only position replaces the saved stop',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const outputPositionMessage = harness.postedMessages().slice(-1)[0]!
     assert.equal(outputPositionMessage.nodeHistoryPosition?.type, 'output')
@@ -726,6 +733,12 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     const presentationsBeforeOutputRestore =
       recordedStopPresentations(harness).length
+    // As above: the output-only position reaches the disk after its commit (F231).
+    await waitUntil(
+      async () => (await store.readReaderPosition(header.studyId)) === 24,
+      'the output-only position written to the history store',
+      READER_RESULT_BOUND_MS,
+    )
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
       library.directory,
       header.workspaceKey,
@@ -744,7 +757,7 @@ test('saved Node history is selectable in the reader without entering browser pl
           24 &&
         !harness.postedMessages().slice(-1)[0]?.loading,
       'a fresh history store restores the output-only cursor',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -773,7 +786,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     await waitUntil(
       () => Boolean(harness.reader.inspect().view?.errors.length),
       'browser playback refusal is reported to the reader',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     assert.match(
       harness.reader.inspect().view!.errors.at(-1)!,
@@ -792,7 +805,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     await waitUntil(
       () => harness.postedMessages().slice(-1)[0]?.nodeHistoryPage === 1,
       'next Node history page',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     const lastPage = harness.postedMessages().slice(-1)[0]!
 
@@ -832,7 +845,7 @@ test('saved Node history is selectable in the reader without entering browser pl
         harness.reader.inspect().view?.model.selection.studyId ===
           browserStudy.id && !harness.reader.inspect().view?.loading,
       'browser study replaces the selected Node history',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert: learner-pinned, edited and unrelated tabs remain available.
@@ -1063,6 +1076,7 @@ test('Node journal time seeking restores exact stops and clears debugger across 
   }
 })
 
+// Value: protects=a time seek in the second opened test history presenting its own stop; fails_when=the seek reports a changed history or presents the first history's stop; why_new=the playback controller is rebuilt per opened history; seam=TestReplayDebugger; no_claim=Play's pacing
 test('time seeking in a second opened Node history presents its own stop instead of reporting a changed history', async () => {
   // Arrange: two sealed one-stop histories whose captured values differ.
   const harness = await workspaceHarness()
@@ -1176,6 +1190,7 @@ test('time seeking in a second opened Node history presents its own stop instead
   }
 })
 
+// Value: protects=reopening a test history restoring native values after the learner stopped the historical debugger; fails_when=the reopen leaves the debugger stopped or without values; why_new=the learner can end the historical session; seam=TestReplayDebugger; no_claim=the real debug session
 test('reopening a Node history after the learner stops its historical debugger restores native values', async () => {
   // Arrange: a sealed one-stop history presented once through the native debugger.
   const harness = await workspaceHarness()
@@ -1246,7 +1261,7 @@ test('reopening a Node history after the learner stops its historical debugger r
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           1 && !harness.postedMessages().slice(-1)[0]?.loading,
       'the sealed Node history is loaded',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-stop',
@@ -1257,10 +1272,19 @@ test('reopening a Node history after the learner stops its historical debugger r
     await waitUntil(
       () => recordedStopPresentations(harness).length === 1,
       'the recorded stop reaches the native debugger',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     // The learner ends the "Codebook · Recorded learning" session from the native debugger.
     harness.historicalDebuggers[0]!.available = false
+    // The reopen restores the saved stop from disk, which the reader writes after its commit (F231).
+    await waitUntil(
+      async () =>
+        (await harness.service.nodeHistoryStore!.readReaderPosition(
+          history.studyId,
+        )) === 2,
+      'the chosen stop written to the history store',
+      READER_RESULT_BOUND_MS,
+    )
 
     // Act: reopening the same history is the documented recovery.
     harness.receiveContext({
@@ -1273,7 +1297,7 @@ test('reopening a Node history after the learner stops its historical debugger r
         recordedStopPresentations(harness).length === 2 &&
         !harness.postedMessages().slice(-1)[0]?.loading,
       'the reopened history presents its saved stop through a fresh historical debugger',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -1291,6 +1315,7 @@ test('reopening a Node history after the learner stops its historical debugger r
   }
 })
 
+// Value: protects=Return to the current run leaving a selected test history, so its missing-video notice no longer masks the live application; fails_when=the notice stays over the live view; why_new=a test history has no application video; seam=none; no_claim=the live application's drawing
 test('returning to the current run leaves a selected Node history so its missing-video notice no longer masks the live application', async () => {
   // Arrange: the learner is reading a saved Node stop in the historical debugger; the application pane explains that no video exists.
   const harness = await workspaceHarness()
@@ -1407,6 +1432,7 @@ test('an agent returning the reader to the current run leaves a selected Node hi
   }
 })
 
+// Value: protects=selecting a stop after the learner stopped the debugger restarting it; fails_when=the selection freezes the reader on the stopped debugger; why_new=an explicit selection restarts what seek and Play only report; seam=TestReplayDebugger; no_claim=the real debug session
 test('selecting a Node stop after the learner stops its historical debugger restarts it instead of freezing the reader', async () => {
   // Arrange: the stop was presented, then the learner ended "Codebook · Recorded learning" and stepped back to output.
   const harness = await workspaceHarness()
@@ -1493,6 +1519,7 @@ test('selecting a Node stop after the learner stops its historical debugger rest
   }
 })
 
+// Value: protects=a seek onto a stop after the learner stopped the debugger explaining how to restart it; fails_when=the seek restarts silently or fails without the restart hint; why_new=seeks must not restart a debugger the learner stopped; seam=TestReplayDebugger; no_claim=the real debug session
 test('seeking a Node history onto a stop after the learner stops its historical debugger explains how to restart it', async () => {
   // Arrange: the learner ended "Codebook · Recorded learning" while the output event was selected.
   const harness = await workspaceHarness()
@@ -1581,6 +1608,7 @@ test('seeking a Node history onto a stop after the learner stops its historical 
   }
 })
 
+// Value: protects=moving to another event while a stop still loads its values reporting no failure for the abandoned stop; fails_when=the abandoned presentation's supersession shows as an error; why_new=a newer selection supersedes the native presentation; seam=a held historical presentation; no_claim=the real debug session
 test('moving to another Node history event while a stop still loads its native values reports no failure for the abandoned stop', async () => {
   // Arrange: native Run and Debug is still loading the recorded stop when the learner moves on.
   const harness = await workspaceHarness()
@@ -1648,6 +1676,7 @@ test('moving to another Node history event while a stop still loads its native v
   }
 })
 
+// Value: protects=a failing native presentation of the selected stop being reported while the previous event stays; fails_when=the failure is silent or the selection moves; why_new=only the current request reports presentation failures; seam=a rejected historical presentation; no_claim=the real debug session
 test('a Node history stop whose native presentation fails while still selected reports the failure and keeps the previous event', async () => {
   // Arrange: native Run and Debug is loading the only selected stop.
   const harness = await workspaceHarness()
@@ -1712,7 +1741,7 @@ test('a Node history stop whose native presentation fails while still selected r
   }
 })
 
-// Value: protects=a saved Node stop committed without native values names where to load them, and the hint leaves once they load; fails_when=the Node position omits the hint, or keeps it after Run and Debug loads values; why_new=Node stops share the soft inspection gate; seam=TestReplayDebugger models the native load notification
+// Value: protects=a saved Node stop committed without native values names where to load them, and the hint leaves once they load; fails_when=the Node position omits the hint, or keeps it after Run and Debug loads values; why_new=Node stops share the soft inspection gate; seam=TestReplayDebugger models the native load notification; no_claim=the real debug session (TestReplayDebugger stands in)
 test('a saved Node stop whose values Run and Debug has not loaded tells the learner where to load them until they load', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1770,7 +1799,7 @@ test('a saved Node stop whose values Run and Debug has not loaded tells the lear
   }
 })
 
-// Value: protects=opening a browser recording while a Node stop still loads its native values; fails_when=the abandoned Node presentation reports its supersession as a Study error; why_new=openRecording now supersedes pending Node selections; seam=none
+// Value: protects=opening a browser recording while a Node stop still loads its native values; fails_when=the abandoned Node presentation reports its supersession as a Study error; why_new=openRecording now supersedes pending Node selections; seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('opening a recording while a Node history stop still loads its native values reports no failure for the abandoned stop', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true, true)
@@ -1826,7 +1855,7 @@ test('opening a recording while a Node history stop still loads its native value
   }
 })
 
-// Value: protects=a reopened reader never tells the learner to load values from a native session that closing disposed; fails_when=closing keeps the Node stop's Run and Debug hint; why_new=the session-end notification is ignored while the reader closes; seam=none
+// Value: protects=a reopened reader never tells the learner to load values from a native session that closing disposed; fails_when=closing keeps the Node stop's Run and Debug hint; why_new=the session-end notification is ignored while the reader closes; seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('closing the reader drops the Run and Debug hint of a saved Node stop', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -2214,7 +2243,7 @@ test('Show Variables on a reader that is closed while the press waits for Variab
   }
 })
 
-// Value: protects=no enabled Inspect on a Node stop that can never be shown natively; fails_when=the reader is told about a source mismatch only for the selected stop, so an unselected stop with edited captured text keeps an Inspect that fails on every press; why_new=Cycle 0044 (0033-F3a / 0034-C3); seam=the loaded journal entry replaced in memory by one with edited captured text
+// Value: protects=no enabled Inspect on a Node stop that can never be shown natively; fails_when=the reader is told about a source mismatch only for the selected stop, so an unselected stop with edited captured text keeps an Inspect that fails on every press; why_new=Cycle 0044 (0033-F3a / 0034-C3); seam=the loaded journal entry replaced in memory by one with edited captured text; no_claim=the real debug session (TestReplayDebugger stands in)
 test('a shown Node stop whose captured text no longer matches its hash is reported to the reader even while another event is selected', async () => {
   // Arrange: a loaded Node history whose first event (test output) is selected.
   const harness = await workspaceHarness()
@@ -2281,7 +2310,7 @@ test('a shown Node stop whose captured text no longer matches its hash is report
   }
 })
 
-// Value: protects=Inspect offered again for a saved Node stop after closing disposed its native session; fails_when=close() keeps the stop's debugger availability, so the reopened reader hides Inspect although no session shows the stop; why_new=Cycle 0044 (0032-T6d / 0033-S7c); seam=none
+// Value: protects=Inspect offered again for a saved Node stop after closing disposed its native session; fails_when=close() keeps the stop's debugger availability, so the reopened reader hides Inspect although no session shows the stop; why_new=Cycle 0044 (0032-T6d / 0033-S7c); seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('a saved Node stop shown in Run and Debug before the reader closed offers Inspect again after the reader reopens', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -2341,7 +2370,7 @@ test('a saved Node stop shown in Run and Debug before the reader closed offers I
   }
 })
 
-// Value: protects=the two debugger notifications keeping their own meaning for a saved Node stop; fails_when=a values-loaded notification is handled like an ended session, so the stop that Run and Debug now shows is marked unavailable and offers Inspect again; why_new=Cycle 0044 (0032-T6h, "the reason mapping": only the session-ended branch had a failing control); seam=TestReplayDebugger models the native load notification
+// Value: protects=the two debugger notifications keeping their own meaning for a saved Node stop; fails_when=a values-loaded notification is handled like an ended session, so the stop that Run and Debug now shows is marked unavailable and offers Inspect again; why_new=Cycle 0044 (0032-T6h, "the reason mapping": only the session-ended branch had a failing control); seam=TestReplayDebugger models the native load notification; no_claim=the real debug session (TestReplayDebugger stands in)
 test('native values loading for a saved Node stop drops its Run and Debug hint and keeps the stop shown in the native debugger', async () => {
   // Arrange: a selected Node stop committed without native values.
   const harness = await workspaceHarness()
@@ -2398,7 +2427,7 @@ test('native values loading for a saved Node stop drops its Run and Debug hint a
   }
 })
 
-// Value: protects=a refused recording open leaves a Node stop that is still loading its native values to finish; fails_when=openRecording abandons the Node selection before its own admission checks pass; why_new=the supersede test only covers an admitted recording; seam=none
+// Value: protects=a refused recording open leaves a Node stop that is still loading its native values to finish; fails_when=openRecording abandons the Node selection before its own admission checks pass; why_new=the supersede test only covers an admitted recording; seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('a refused recording open lets a loading Node history stop finish its selection', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -2985,6 +3014,14 @@ test('live entry preserves a learner document sharing the former explanation gro
     await [...harness.service.records.values()][0]!.preparation
     // Act
     await harness.reader.open()
+    // The entry hands the keyboard back to the learner's draft after the open resolves; a loaded machine brings that later (F232).
+    await waitUntil(
+      () =>
+        harness.focusedSource()?.document.uri.toString() ===
+        draft.document.uri.toString(),
+      'the keyboard back on the learner’s draft',
+      READER_RESULT_BOUND_MS,
+    )
     // Assert
     assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
     assert.equal(harness.groups.length, 3)
@@ -3655,6 +3692,7 @@ test('disposed bottom playback documents cannot move the selected recorded momen
   }
 })
 
+// Value: protects=Inspect refusing native debugging for a stop whose captured source differs from its recorded position; fails_when=Inspect presents a stop whose source does not verify; why_new=the match is checked before the native presentation; seam=an edited captured text; no_claim=the real debug session
 test('inspecting a Node stop whose captured source differs from its recorded position refuses native debugging', async () => {
   // Arrange: a sealed one-stop history whose debugger snapshot carries another source text.
   const harness = await workspaceHarness()
@@ -3752,7 +3790,7 @@ test('inspecting a Node stop whose captured source differs from its recorded pos
   }
 })
 
-// Value: protects=the reader still saying "captured source unavailable" for a Node stop whose captured source really differs; fails_when=the reader payload reports every selected stop's source as available, for example once it stops using the verified match; why_new=Cycle 0033 T1 workspace tests assert only matching stops, and the mismatch is covered only in the helper and the renderer; seam=none
+// Value: protects=the reader still saying "captured source unavailable" for a Node stop whose captured source really differs; fails_when=the reader payload reports every selected stop's source as available, for example once it stops using the verified match; why_new=Cycle 0033 T1 workspace tests assert only matching stops, and the mismatch is covered only in the helper and the renderer; seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('a Node stop selected on the timeline whose captured source differs from its recorded position is reported with unavailable captured source', async () => {
   // Arrange: a sealed one-stop history whose debugger snapshot carries another source text.
   const harness = await workspaceHarness()
@@ -3847,7 +3885,7 @@ test('a Node stop selected on the timeline whose captured source differs from it
   }
 })
 
-// Value: protects=a truthful Run and Debug hint once browser replay takes the shared historical debugger; fails_when=opening a recording keeps the Node stop's hint and disabled Inspect although the stop no longer owns Run and Debug; why_new=Cycle 0032 H1; seam=none
+// Value: protects=a truthful Run and Debug hint once browser replay takes the shared historical debugger; fails_when=opening a recording keeps the Node stop's hint and disabled Inspect although the stop no longer owns Run and Debug; why_new=Cycle 0032 H1; seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('opening a recording drops the Run and Debug hint of a saved Node stop and re-enables its Inspect', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true, true)
@@ -3904,7 +3942,7 @@ test('opening a recording drops the Run and Debug hint of a saved Node stop and 
   }
 })
 
-// Value: protects=the Node timeline and its selected event agreeing after browser replay supersedes a loading stop; fails_when=the abandoned Node presentation later commits its event in the Node timeline only; why_new=Cycle 0032 H1 (typed supersession deferred as D4); seam=none
+// Value: protects=the Node timeline and its selected event agreeing after browser replay supersedes a loading stop; fails_when=the abandoned Node presentation later commits its event in the Node timeline only; why_new=Cycle 0032 H1 (typed supersession deferred as D4); seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('a Node stop still loading when a recording opens never becomes the Node timeline position', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true, true)
@@ -3955,7 +3993,7 @@ test('a Node stop still loading when a recording opens never becomes the Node ti
   }
 })
 
-// Value: protects=a reopened reader after Node Play; fails_when=Node Play keeps ticking while close() drains, starts another Node stop and leaves its hint for the reopen; why_new=Cycle 0032 H2; seam=none
+// Value: protects=a reopened reader after Node Play; fails_when=Node Play keeps ticking while close() drains, starts another Node stop and leaves its hint for the reopen; why_new=Cycle 0032 H2; seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('closing the reader stops Node Play at once, so no Node stop starts while closing drains', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -4040,7 +4078,7 @@ test('closing the reader stops Node Play at once, so no Node stop starts while c
   }
 })
 
-// Value: protects=restarting native inspection of a Node stop after the learner stopped Codebook's session; fails_when=Inspect stays disabled because the ended session is only reported when a hint was showing; why_new=Cycle 0032 H3 and review clarification CQ1; seam=none
+// Value: protects=restarting native inspection of a Node stop after the learner stopped Codebook's session; fails_when=Inspect stays disabled because the ended session is only reported when a hint was showing; why_new=Cycle 0032 H3 and review clarification CQ1; seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('ending the historical session re-enables Inspect for the selected Node stop, and Inspect restarts the session', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -4113,7 +4151,7 @@ test('ending the historical session re-enables Inspect for the selected Node sto
   }
 })
 
-// Value: protects=no historical session starting on a closed reader; fails_when=a Node stop selection that waited for the old debugger's disposal creates a new owner without checking that it is still current; why_new=Cycle 0034 O1 adds a wait before creation (plan review P2); seam=TestReplayDebugger models a held disposal
+// Value: protects=no historical session starting on a closed reader; fails_when=a Node stop selection that waited for the old debugger's disposal creates a new owner without checking that it is still current; why_new=Cycle 0034 O1 adds a wait before creation (plan review P2); seam=TestReplayDebugger models a held disposal; no_claim=the real debug session (TestReplayDebugger stands in)
 test('a Node stop selection that was waiting for the stopped historical debugger when the reader closed starts no new session', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -4182,7 +4220,7 @@ test('a Node stop selection that was waiting for the stopped historical debugger
   }
 })
 
-// Value: protects=the selected Node stop's label after the reader was closed and opened again; fails_when=the reopened reader forgets that the stop's captured source matches and labels it "captured source unavailable"; why_new=Cycle 0034 T4 (Cycle 0033 plan partial T1); seam=none
+// Value: protects=the selected Node stop's label after the reader was closed and opened again; fails_when=the reopened reader forgets that the stop's captured source matches and labels it "captured source unavailable"; why_new=Cycle 0034 T4 (Cycle 0033 plan partial T1); seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('a Node stop selected before the reader closed keeps its matching captured source when its history is selected again', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -4247,7 +4285,7 @@ test('a Node stop selected before the reader closed keeps its matching captured 
   }
 })
 
-// Value: protects=Inspect pressed twice while the editor is still stopping the ended historical session; fails_when=the second press creates the next owner while the first press's disposal still holds the debug type; why_new=Cycle 0034 O1 tests cover the browser route and a closed reader only; seam=none
+// Value: protects=Inspect pressed twice while the editor is still stopping the ended historical session; fails_when=the second press creates the next owner while the first press's disposal still holds the debug type; why_new=Cycle 0034 O1 tests cover the browser route and a closed reader only; seam=none; no_claim=the real debug session (TestReplayDebugger stands in)
 test('pressing Inspect again while the editor is still stopping the ended historical session shows the Node stop through one new session', async () => {
   // Arrange: the learner ended the historical session, and the first Inspect press is waiting for the editor to stop it.
   const harness = await workspaceHarness()

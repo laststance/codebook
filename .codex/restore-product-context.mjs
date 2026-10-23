@@ -10,25 +10,24 @@ const RESTORED_SECTIONS = ['## Mandatory entry', '## Owner directions in force']
  * Returns one `## ` section of AGENTS.md, from its heading to the next `## ` heading.
  *
  * Why: the restored context carries only the sections that order the re-entry and keep the owner's scope, so it stays within the hosts' context limits.
+ * Lines are split on LF or CRLF (a Git for Windows checkout) and a heading matches despite trailing spaces or tabs; the section's own lines keep their trailing spaces, so a Markdown hard break is restored verbatim (F268).
  * Caller: {@link restoreProductContext}.
  *
  * @param instructions - The current AGENTS.md text.
- * @param heading - The exact `## ` heading line.
- * @returns The section text without trailing blank lines.
- * @throws When the heading is missing, so that a renamed section never restores silently without it.
+ * @param heading - The `## ` heading line.
+ * @returns The section text without trailing blank lines, or `undefined` when the heading is missing (renamed or removed).
  * @example
- * sectionOf('# A\n\n## Mandatory entry\n\nRead.\n\n## Next\n', '## Mandatory entry') // => '## Mandatory entry\n\nRead.'
+ * sectionOf('# A\r\n\r\n## Mandatory entry \r\n\r\nRead.\r\n\r\n## Next\r\n', '## Mandatory entry') // => '## Mandatory entry\n\nRead.'
  */
 function sectionOf(instructions, heading) {
-  const lines = instructions.split('\n')
-  const start = lines.indexOf(heading)
-  if (start === -1)
-    throw new Error(`AGENTS.md is missing its ${heading.slice(3)} section.`)
+  const lines = instructions.split(/\r?\n/)
+  // Only the heading is compared without its trailing spaces; the section's lines are restored as they are, a Markdown hard break included.
+  const start = lines.findIndex((line) => line.trimEnd() === heading)
+  if (start === -1) return undefined
   const next = lines.findIndex(
     (line, index) => index > start && line.startsWith('## '),
   )
-  return lines
-    .slice(start, next === -1 ? lines.length : next)
+  return [heading, ...lines.slice(start + 1, next === -1 ? lines.length : next)]
     .join('\n')
     .trimEnd()
 }
@@ -57,11 +56,23 @@ async function restoreProductContext() {
     "The owner's most important rule: before any other work after this compaction, whatever the task, read PRODUCT_GOAL.md in full, every line, and open the approved PNG (docs/designs/assets/codebook-product-spec-v9.png) with an image-viewing tool and check its identity against PRODUCT_GOAL.md's Design target; then read the active cycle Issue (the open Issue with the label `cycle`) with its comments and AGENTS.md in full from disk. A compacted summary or this reminder is not evidence of those reads or of the image inspection.",
     'Reconcile the current source and affected acceptance gaps, then resume the latest owner-authorized task. Preserve pending owner instructions and any explicit pause; this reminder grants no additional work scope.',
   ]
-  const sections = RESTORED_SECTIONS.map((heading) =>
-    sectionOf(instructions, heading),
+  const found = RESTORED_SECTIONS.map((heading) => ({
+    heading,
+    text: sectionOf(instructions, heading),
+  }))
+  const missing = found.filter((section) => section.text === undefined)
+  const sections = found.flatMap((section) =>
+    section.text === undefined ? [] : [section.text],
   )
+  // A renamed or removed section must never leave the owner's rule unprinted: the rule goes out, with the sections that were found, and names what is missing.
+  const missingNote = missing.length
+    ? [
+        `AGENTS.md has no ${missing.map((section) => section.heading.slice(3)).join(' or ')} section under that exact heading; read AGENTS.md in full on disk now.`,
+      ]
+    : []
   const full = [
     ...rule,
+    ...missingNote,
     'These AGENTS.md sections follow verbatim; read the whole file on disk and resolve its relative links from the repository root:',
     ...sections,
   ].join('\n\n')
@@ -71,8 +82,13 @@ async function restoreProductContext() {
       ? full
       : [
           ...rule,
+          ...missingNote,
           `AGENTS.md's ${RESTORED_SECTIONS.map((heading) => heading.slice(3)).join(' and ')} sections exceed this reminder's ${MAX_CONTEXT_CHARS}-character limit; read them in AGENTS.md on disk now.`,
         ].join('\n\n')
+  if (missing.length)
+    process.stderr.write(
+      `Codebook context restoration: AGENTS.md is missing its ${missing.map((section) => section.heading.slice(3)).join(' and ')} section.\n`,
+    )
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {

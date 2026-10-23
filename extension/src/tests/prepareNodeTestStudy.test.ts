@@ -3,10 +3,12 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { nodeTestConfigSchema } from '../nodeTestConfigSchemas'
 import { RepositoryBookStore } from '../repositoryBook'
 import type { BookDocument } from '../repositorySchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { prepareNodeTestStudy } from '../utils/prepareNodeTestStudy'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
@@ -208,3 +210,107 @@ test('a Node test start on a node id its selected revision does not have is refu
   })
   assert.equal(acquisitions, 0)
 })
+
+// Value: protects=the citation-position refusal of a node-test start naming the stop, its anchor, the cited path and lines, the failed condition and what to send, one sentence per condition; fails_when=the refusal goes back to "Configured position differs from its selected citation" for every condition, or names the wrong stop or condition; why_new=the refusal named neither the stop, the anchor, the cited range nor the failed condition, and the chat guessed three times (F205, D17, inventory row 14); seam=the article and its sources are real, the stops are changed one condition at a time; no_claim=the browser profile's refusal (unchanged)
+for (const scenario of [
+  {
+    condition: 'the anchor does not exist',
+    stop: (
+      configuration: Awaited<
+        ReturnType<typeof nodeStudyHarness>
+      >['configuration'],
+    ) => ({
+      ...configuration,
+      additionalStops: [
+        {
+          anchorIndex: 5,
+          path: 'src/mode.ts',
+          hash: sha256('export const mode = "display";\n'),
+          line: 1,
+          column: 1,
+          inspections: [
+            { path: 'mode', mode: 'value' as const, required: true },
+          ],
+        },
+      ],
+    }),
+    message:
+      'node-test preparation refused: additionalStops[0] uses anchorIndex 5, but the article node cites 2 source ranges (anchorIndex 0 to 1). Send the anchorIndex of the citation that covers the stop.',
+  },
+  {
+    condition: 'the path differs from the anchor’s',
+    stop: (
+      configuration: Awaited<
+        ReturnType<typeof nodeStudyHarness>
+      >['configuration'],
+    ) => ({
+      ...configuration,
+      source: {
+        ...configuration.source,
+        path: 'src/mode.ts',
+        hash: sha256('export const mode = "display";\n'),
+      },
+    }),
+    message:
+      'node-test preparation refused: source cites src/mode.ts, but anchorIndex 0 cites src/theme.ts lines 1 to 1. Send src/theme.ts, or the anchorIndex of the citation of src/mode.ts.',
+  },
+  {
+    condition: 'the hash differs from the anchor’s',
+    stop: (
+      configuration: Awaited<
+        ReturnType<typeof nodeStudyHarness>
+      >['configuration'],
+    ) => ({
+      ...configuration,
+      source: { ...configuration.source, hash: 'b'.repeat(64) },
+    }),
+    message: `node-test preparation refused: source sends SHA-256 ${'b'.repeat(64)} for src/theme.ts, but anchorIndex 0 cites src/theme.ts lines 1 to 1 with SHA-256 ${sha256('const nextTheme = "dark";\n')}. Read the file with codebook_source and send its current hash; publish the article again if the file changed.`,
+  },
+  {
+    condition: 'the line lies outside the cited range',
+    stop: (
+      configuration: Awaited<
+        ReturnType<typeof nodeStudyHarness>
+      >['configuration'],
+    ) => ({
+      ...configuration,
+      source: { ...configuration.source, line: 2 },
+    }),
+    message:
+      'node-test preparation refused: source sends line 2, but anchorIndex 0 cites src/theme.ts lines 1 to 1 only. Send a line from 1 to 1.',
+  },
+  {
+    condition: 'the column lies past the end of its line',
+    stop: (
+      configuration: Awaited<
+        ReturnType<typeof nodeStudyHarness>
+      >['configuration'],
+    ) => ({
+      ...configuration,
+      source: { ...configuration.source, column: 100 },
+    }),
+    message:
+      'node-test preparation refused: source sends column 100 on line 1 of src/theme.ts, but that line has 25 characters, so the last column is 26. Send a column from 1 to 26.',
+  },
+] as const)
+  test(`a Node test stop is refused with its own sentence when ${scenario.condition}`, async (context) => {
+    // Arrange
+    const { books, configuration, control } = await nodeStudyHarness(context)
+
+    // Act
+    const refusal = await prepareNodeTestStudy(
+      scenario.stop(configuration),
+      books,
+      control,
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.deepEqual(
+      { code: refusal.code, message: refusal.message },
+      { code: 'INVALID_CONFIGURATION', message: scenario.message },
+    )
+  })

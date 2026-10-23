@@ -1,7 +1,7 @@
 import { sanitizeCause, type CauseRoots } from './sanitizeCause'
 
 /**
- * Gives a thrown error's stack for the Output › Codebook channel without the private paths its frames name, one sanitized line per frame; called by {@link StudyService} and {@link NodeLearningSave} beside the sanitized cause of an unexpected failure ({@link formatCodebookDiagnostic}).
+ * Gives a thrown error's stack for the Output › Codebook channel without the private paths its frames name, one sanitized line per frame; called by {@link StudyService}, {@link NodeLearningSave} and {@link StudyWorkspace} beside the sanitized cause of an unexpected failure ({@link formatCodebookDiagnostic}).
  * The stack's first line repeats the message, which the entry's cause already holds, so it is left out.
  * @param error - What was thrown.
  * @param roots - The private roots of this window.

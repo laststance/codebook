@@ -86,6 +86,8 @@ import {
   UNRETRYABLE_READER_ERROR_KINDS,
   UNSAVED_STUDY_HANDED_OVER_REASON,
   UNSAVED_UNDERSTANDING_WAITS_MESSAGE,
+  OPEN_LEARNING_REPLAY_COMMAND,
+  SAVE_LEARNING_REPLAY_COMMAND,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
 import { StudyError, StudyRemovedWithItsRecordingError } from './errors'
@@ -204,10 +206,14 @@ import {
 } from './utils/capturedSourceNotShownReason'
 import { capturedSourceUriPath } from './utils/capturedSourceUriPath'
 import { captureStudy } from './utils/captureStudy'
+import { causeRootsFor } from './utils/causeRootsFor'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
 import { createRecordingObserver } from './utils/createRecordingObserver'
-import { describeNodeLearningSave } from './utils/describeNodeLearningSave'
+import {
+  describeNodeLearningSave,
+  NODE_LEARNING_SAVE_ACTION,
+} from './utils/describeNodeLearningSave'
 import {
   describeNodeRecordedSource,
   NODE_RECORDED_SOURCE_TEXT,
@@ -644,6 +650,8 @@ export interface UnsavedStudyArchive {
 export class StudyWorkspace {
   private service?: StudyService
   private learningSaveItem?: vscode.StatusBarItem
+  /** The text and tooltip {@link learningSaveItem} shows now, or `undefined` while it is hidden; {@link showLearningSaveItem} and {@link hideLearningSaveItem} touch the item only when this changes, because each assignment is a message to the status bar and the refresh publishes every 250 ms. */
+  private learningSaveShown?: { text: string; tooltip: string }
   /** The command and study of the object last assigned to {@link learningSaveItem}'s `command`; {@link publishLearningSave} assigns a new object only when they change, because the host disposes the previous object's internal command at every assignment. */
   private learningSaveCommandKey?: string
   private learningSave?: {
@@ -663,6 +671,9 @@ export class StudyWorkspace {
       vscode.window.showWarningMessage(text, { modal: true }, ...actions),
     notify: async (severity, text, actions) =>
       showPlainNotice(vscode.window, severity, text, ...actions),
+    materialRevision: (studyId) =>
+      this.nodeHistoryCatalog.find((history) => history.studyId === studyId)
+        ?.materialRevision,
     open: (studyId) => this.openLearningReplay(studyId),
     log: (entry) => this.diagnostics?.log(entry),
     changed: () => this.publish(),
@@ -7667,6 +7678,9 @@ export class StudyWorkspace {
     this.service = service
     service.recordings = this.recordings
     service.nodeHistoryStore = this.nodeHistoryStore!
+    // A summary's reason names no private path of this window (F15).
+    this.nodeHistoryStore!.describeCause = (error) =>
+      sanitizeCause(error, service.causeRoots)
     service.playbackController = this.playback
     service.presentationController = this
     if (!this.timer) {
@@ -8748,7 +8762,10 @@ export class StudyWorkspace {
       const history = this.selectedNodeHistory,
         sequence = this.selectedNodeHistorySequence
       if (history && sequence !== undefined && !this.recordingActive) {
-        await this.selectNodeHistoryEvent(history, sequence)
+        // A debugger that fails to start again updates its own row instead of failing the Retry.
+        await this.selectNodeHistoryEvent(history, sequence, {
+          keepOpenWithoutDebugger: true,
+        })
         return
       }
       await this.renderSelection(true, true)
@@ -10824,6 +10841,16 @@ export class StudyWorkspace {
     return this.service && [...this.service.records.values()].at(-1)
   }
 
+  /**
+   * Words a failure for a notice the learner reads, without the private paths it can carry: the service's roots once it is attached, else the home directory alone (F264); called by the extension's Save Learning Replay command when the save fails.
+   * @param error - What the command threw.
+   * @returns The sanitized cause.
+   * @example workspace.describeFailure(new Error("ENOSPC: write '/Users/ada/Library/…/globalStorage/x/a.json'")) // => "ENOSPC: write '<storage>/a.json'"
+   */
+  describeFailure(error: unknown): string {
+    return sanitizeCause(error, this.service?.causeRoots ?? causeRootsFor([]))
+  }
+
   /** Finishes the explicitly selected capture and verifies matching durable learning; called by the status-bar command. @example await workspace.saveLearningReplay(studyId) */
   async saveLearningReplay(expectedStudyId?: string): Promise<void> {
     const service = this.service,
@@ -10947,14 +10974,14 @@ export class StudyWorkspace {
     if (record?.profile === NODE_TEST_PROFILE) {
       const view = this.nodeLearningSave.item(record)
       if (!view || !studyId) {
-        this.learningSaveItem?.hide()
+        this.hideLearningSaveItem()
         return
       }
       this.showLearningSaveItem(view.text, view.tooltip, view.command, studyId)
       return
     }
     if (!record?.recording || !studyId || record.historyExcluded) {
-      this.learningSaveItem?.hide()
+      this.hideLearningSaveItem()
       return
     }
     const text =
@@ -10979,8 +11006,8 @@ export class StudyWorkspace {
               ? 'Open learning replay'
               : 'Save learning replay',
             command: opensReplay
-              ? 'codebook.openLearningReplay'
-              : 'codebook.saveLearningReplay',
+              ? OPEN_LEARNING_REPLAY_COMMAND
+              : SAVE_LEARNING_REPLAY_COMMAND,
             arguments: [studyId],
           }
     this.showLearningSaveItem(text, tooltip, command, studyId)
@@ -11009,15 +11036,28 @@ export class StudyWorkspace {
       this.disposables.push(this.learningSaveItem)
     }
     const item = this.learningSaveItem
-    item.text = text
-    item.tooltip = tooltip
+    const shown = this.learningSaveShown
+    // Each assignment, show and hide is a message to the status bar: touch the item only for what changed.
+    if (shown?.text !== text) item.text = text
+    if (shown?.tooltip !== tooltip) item.tooltip = tooltip
     const commandKey = JSON.stringify([command?.command, studyId])
     // The host makes a new internal command of every assigned object and disposes the one before, so an entry still drawn with the earlier one fails on a click ("Actual command not found"): assign only a changed command or study.
     if (commandKey !== this.learningSaveCommandKey) {
       this.learningSaveCommandKey = commandKey
       item.command = command
     }
-    item.show()
+    if (!shown) item.show()
+    this.learningSaveShown = { text, tooltip }
+  }
+
+  /**
+   * Hides the status bar's learning replay item when it is shown; called by {@link publishLearningSave} for a run with nothing to save, so the 250 ms refresh sends no hide for an item that is already hidden.
+   * @example this.hideLearningSaveItem()
+   */
+  private hideLearningSaveItem(): void {
+    if (!this.learningSaveShown) return
+    this.learningSaveItem?.hide()
+    this.learningSaveShown = undefined
   }
 
   /** Opens a validated local recording through the same revisioned controller used by MCP; no application operation is dispatched. @example await workspace.openRecording(studyId) */
@@ -11066,8 +11106,10 @@ export class StudyWorkspace {
    * {@link OPEN_REPLAY_RESULT_WAIT_MS}, for the load to end and shows a failed load's reason as an editor notification, which the
    * editor keeps on screen until its window has the focus again.
    *
-   * @param studyId - The saved study whose recording the entry names.
-   * @returns Once the recording is presented and its study's selection written to the ledger, its load failed and the notification was shown, another recording took its place, or the bound passed (a ledger write still pending then goes on in the background).
+   * A study id that names a test replay (a sealed test history, or a test run of this window) takes the other branch: the Study pane opens when it is closed and {@link openNodeHistoryFromHost} opens the replay, with its own refusal during a browser replay and its own failure notification; the bounded wait above belongs to the browser path only.
+   *
+   * @param studyId - The saved study whose recording the entry names, or a test replay's study id.
+   * @returns Once the recording is presented and its study's selection written to the ledger, its load failed and the notification was shown, another recording took its place, or the bound passed (a ledger write still pending then goes on in the background); for a test replay, once it is shown, the learner declined to close a browser replay, or its failure was told.
    * @throws Whatever {@link openRecording} throws before the load is admitted.
    * @example await workspace.openLearningReplay(studyId)
    */
@@ -11137,7 +11179,7 @@ export class StudyWorkspace {
         refusal.text,
         ...(refusal.actions ?? []),
       )
-      if (action !== 'Close browser replay') return
+      if (action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay) return
       await this.returnCurrentSelection('learner')
       if (this.recordingActive) return
     }
@@ -11170,7 +11212,8 @@ export class StudyWorkspace {
       failure.text,
       ...(failure.actions ?? []),
     )
-    if (action === 'Show details') this.diagnostics?.show()
+    if (action === NODE_LEARNING_SAVE_ACTION.showDetails)
+      this.diagnostics?.show()
   }
 
   /**
@@ -11251,11 +11294,13 @@ export class StudyWorkspace {
         })),
         initialSequence,
       )
-      if (positionError) this.report('history-position', positionError)
+      if (positionError)
+        this.reportTestReplayFailure('history-position', positionError)
       if (initialSequence !== undefined)
         await this.selectNodeHistoryEvent(history, initialSequence, {
           publish: false,
           alignPlayback: false,
+          keepOpenWithoutDebugger: true,
         })
       if (this.historyOpenSuperseded(request, revision))
         return { status: 'superseded' }
@@ -11268,7 +11313,7 @@ export class StudyWorkspace {
         return { status: 'superseded' }
       this.endNodeHistoryOpening(request)
       this.loading = false
-      this.report('archive', error)
+      this.reportTestReplayFailure('archive', error)
       this.publish()
       return { status: 'failed', error }
     } finally {
@@ -11282,6 +11327,26 @@ export class StudyWorkspace {
         this.publish()
       }
     }
+  }
+
+  /**
+   * Shows a failure of a test replay's open on the Study pane's line of its kind with the cause sanitized, as the notification beside it words it: the pane never shows the storage folder, the repository root or the home directory; called by {@link openNodeHistory} and {@link readNodeHistoryOpening}.
+   * @param kind - The line the failure replaces.
+   * @param error - The failure.
+   * @param wording - Words the sanitized cause into the line; the cause alone when omitted.
+   * @example this.reportTestReplayFailure('archive', error) // the line reads "… <storage>/…" instead of the learner's folder
+   */
+  private reportTestReplayFailure(
+    kind: ReaderErrorKind,
+    error: unknown,
+    wording: (cause: string) => string = (cause) => cause,
+  ): void {
+    this.report(
+      kind,
+      wording(
+        sanitizeCause(error, this.service?.causeRoots ?? { storage: [] }),
+      ),
+    )
   }
 
   /**
@@ -11327,14 +11392,14 @@ export class StudyWorkspace {
     const learningDecision = await store
       .readLearningDecision(studyId)
       .catch((error: unknown) => {
-        this.report('progress', error)
+        this.reportTestReplayFailure('progress', error)
         return undefined
       })
     if (this.historyOpenSuperseded(request, revision)) return undefined
     const learningMaterial = await store
       .readLearningMaterial(studyId)
       .catch((error: unknown) => {
-        this.report('history-learning', error)
+        this.reportTestReplayFailure('history-learning', error)
         return undefined
       })
     if (this.historyOpenSuperseded(request, revision)) return undefined
@@ -11538,6 +11603,20 @@ export class StudyWorkspace {
     })
     this.replayDebuggerRetirement = retirement
     return retirement
+  }
+
+  /**
+   * Waits for a historical debugger still being disposed before a moment without a recorded stop presents the debugger, and tells whether the selection is still current: the disposed owner's descriptor factory stays registered until its disposal ends, so an owner made meanwhile would register the same debug type twice (F275). Only a retirement in progress is waited for; an owner the learner stopped is not replaced, so it stays stopped. Called by {@link presentNodeHistoryDebugger}.
+   * @param request - The selection's request token.
+   * @returns `true` when no retirement runs or the selection is still current after it; `false` when a newer selection took over meanwhile.
+   * @example if (!(await this.isCurrentAfterReplayDebuggerRetirement(request))) return false
+   */
+  private async isCurrentAfterReplayDebuggerRetirement(
+    request: number,
+  ): Promise<boolean> {
+    if (!this.replayDebuggerRetirement) return true
+    await this.replayDebuggerRetired()
+    return request === this.selectedNodeHistoryRequest
   }
 
   /**
@@ -23249,11 +23328,13 @@ export class StudyWorkspace {
       publish = true,
       alignPlayback = true,
       stepChoice,
+      keepOpenWithoutDebugger = false,
     }: {
       requireDebugger?: boolean
       publish?: boolean
       alignPlayback?: boolean
       stepChoice?: { stepId: string | undefined }
+      keepOpenWithoutDebugger?: boolean
     } = {},
   ): Promise<void> {
     const request = ++this.selectedNodeHistoryRequest
@@ -23282,7 +23363,12 @@ export class StudyWorkspace {
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
     } else if (
-      !(await this.presentNodeHistoryDebugger(verifiedStop, slot, request))
+      !(await this.presentNodeHistoryDebuggerOrKeepOpen(
+        verifiedStop,
+        slot,
+        request,
+        keepOpenWithoutDebugger,
+      ))
     )
       return
     // The slot's stopped line and label commit with the moment.
@@ -23315,6 +23401,51 @@ export class StudyWorkspace {
       )
     } catch (error) {
       this.report('history-position', error)
+    }
+  }
+
+  /**
+   * Presents a moment in the replay debugger as {@link presentNodeHistoryDebugger} does; when the debugger cannot start and the selection is the open's landing, the open still completes on that moment and the failure goes to the `replay-debugger` row with its restart hint (D13); called by {@link selectNodeHistoryEvent}.
+   * A declined workspace trust or the capture timeout used to fail the whole open while the pane already showed the replay, and every retry of the open failed the same way. Now the pane stays open and Retry (or Select this stop, or Inspect) presents the debugger again.
+   * @param verifiedStop - The stop whose source verifies, or `undefined`.
+   * @param slotUri - The slot the stop's frames open.
+   * @param request - The selection's request token.
+   * @param keepOpenWithoutDebugger - `true` for the open's landing selection.
+   * @returns `true` once the moment is presented, or kept without the debugger; `false` when a newer selection took over.
+   * @throws The debugger's failure when `keepOpenWithoutDebugger` is `false`.
+   * @example await this.presentNodeHistoryDebuggerOrKeepOpen(stop, slotUri, request, true) // => true, with the failure on the replay-debugger row
+   */
+  private async presentNodeHistoryDebuggerOrKeepOpen(
+    verifiedStop: NodeTestHistoryStop | undefined,
+    slotUri: vscode.Uri,
+    request: number,
+    keepOpenWithoutDebugger: boolean,
+  ): Promise<boolean> {
+    try {
+      const presented = await this.presentNodeHistoryDebugger(
+        verifiedStop,
+        slotUri,
+        request,
+      )
+      // A presentation that worked retires the row of an earlier failure to start.
+      if (presented) this.errors.delete('replay-debugger')
+      return presented
+    } catch (error) {
+      if (!keepOpenWithoutDebugger) throw error
+      // The owner that failed to start is retired and waited for, so the next presentation (Retry) creates a new one and starts it instead of finding this object, invalidating it and reporting success.
+      if (this.replayDebugger)
+        await this.retireReplayDebugger(this.replayDebugger)
+      // A newer selection (another event, Retry) or a close took over while the owner was disposed: only the current selection reports the failure and commits.
+      if (request !== this.selectedNodeHistoryRequest) return false
+      this.selectedNodeHistoryDebugAvailable = false
+      this.selectedNodeHistoryValuesUninspected = false
+      this.reportTestReplayFailure(
+        'replay-debugger',
+        error,
+        (cause) =>
+          `The replay debugger could not start: ${cause.replace(/\.$/, '')}. Select this stop or use Inspect in native debugger to restart it.`,
+      )
+      return true
     }
   }
 
@@ -23462,6 +23593,8 @@ export class StudyWorkspace {
     request: number,
   ): Promise<boolean> {
     if (!verifiedStop) {
+      if (!(await this.isCurrentAfterReplayDebuggerRetirement(request)))
+        return false
       // A debugger that has not started yet starts on the "Not recorded" thread; a running one is emptied even when this moment is the committed one, since a newer selection may have presented its stop meanwhile (4A); one the learner stopped stays stopped.
       if (!this.replayDebugger)
         await this.presentReplayDebuggerFor(request, async (debuggerView) => {

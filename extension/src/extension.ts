@@ -34,6 +34,8 @@ import {
   WIKI_UPDATE_WATCH_POLL_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
   WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
+  OPEN_LEARNING_REPLAY_COMMAND,
+  SAVE_LEARNING_REPLAY_COMMAND,
 } from './constants'
 import {
   deployCursorSkill,
@@ -194,17 +196,28 @@ export function activate(
   })
   if (output) context.subscriptions.push(output)
   const diagnostics = {
+    // The channel is disposed with the extension's subscriptions: a failure reported while the window closes must not throw out of the stop that reports it (F99).
     log: (entry: CodebookDiagnostic): void => {
-      output?.error(
-        formatCodebookDiagnostic(entry, {
-          extensionVersion: EXTENSION_VERSION,
-          apiVersion: API_VERSION,
-          hostName: vscode.env?.appName ?? 'unknown host',
-          hostVersion: vscode.version ?? 'unknown version',
-        }),
-      )
+      try {
+        output?.error(
+          formatCodebookDiagnostic(entry, {
+            extensionVersion: EXTENSION_VERSION,
+            apiVersion: API_VERSION,
+            hostName: vscode.env?.appName ?? 'unknown host',
+            hostVersion: vscode.version ?? 'unknown version',
+          }),
+        )
+      } catch {
+        // A disposed channel has nowhere to write; the failure is already in the run's own answer.
+      }
     },
-    show: (): void => output?.show(true),
+    show: (): void => {
+      try {
+        output?.show(true)
+      } catch {
+        // A disposed channel cannot be shown.
+      }
+    },
   }
   const isCursorHost =
     vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
@@ -2126,13 +2139,14 @@ export function activate(
     registerCommand(WIKI_CHAT_WATCH_CANCEL_COMMAND, () => {
       cancelShownWikiChatWatch?.()
     }),
-    registerCommand('codebook.saveLearningReplay', async (studyId?: string) => {
+    registerCommand(SAVE_LEARNING_REPLAY_COMMAND, async (studyId?: string) => {
       try {
         await workspace().saveLearningReplay(studyId)
       } catch (error) {
+        // The learner reads the notice: a storage failure names the folder, which it shows as <storage> (F264).
         void showNotice(
           'error',
-          `Codebook could not save learning: ${String(error)}`,
+          `Codebook could not save learning: ${workspace().describeFailure(error)}`,
         )
         throw error
       }
@@ -2143,7 +2157,7 @@ export function activate(
     registerCommand('codebook.moveLearningSummary', () =>
       workspace().moveLearningSummary(),
     ),
-    registerCommand('codebook.openLearningReplay', (studyId: string) =>
+    registerCommand(OPEN_LEARNING_REPLAY_COMMAND, (studyId: string) =>
       workspace().openLearningReplay(studyId),
     ),
     registerCommand('codebook.closeRepositoryWiki', () =>

@@ -22,7 +22,7 @@ test('the boot is the kernel’s boot id where the system publishes one', async 
   assert.deepEqual(boot, { id: '0c1d7a52-6f0e-4d3b-9a57-3f6f0a1b2c3d' })
 })
 
-// Value: protects=on a system without a kernel boot id (macOS, Windows) a storage owner still records which boot it ran under; fails_when=no boot is recorded there, so a lock from before a restart is judged by its reused process id; why_new=the boot identity is new; seam=the clock and the uptime
+// Value: protects=on a system without a kernel boot id (macOS, Windows) a storage owner still records which boot it ran under; fails_when=no boot is recorded there, so a lock from before a restart is judged by its reused process id; why_new=the boot identity is new; seam=the clock and the uptime; no_claim=macOS, which the next test covers
 test('without a kernel boot id the boot is the time the machine started: the clock minus the uptime', async (context) => {
   // Arrange: no boot id file on a system that names its boot by no id (Windows; macOS is the next test); the clock reads 1 790 000 600 000 ms and the machine has been up for 600 s.
   context.mock.method(Date, 'now', () => 1_790_000_600_000)

@@ -20,6 +20,7 @@ import { z } from 'zod'
 import { readRecordedOwner } from '../utils/readRecordedOwner'
 import { withStorageLock } from '../utils/withStorageLock'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
@@ -154,7 +155,7 @@ test('a Mac lock’s boot, its session id with the boot time beside it, is read 
 test(
   'an owner record whose path holds a link to a named pipe is not waited on: the read answers at once and names no owner',
   {
-    timeout: 2_000,
+    timeout: 30_000,
     skip:
       process.platform === 'win32'
         ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
@@ -180,7 +181,10 @@ test(
     await symlink(pipePath, recordPath)
 
     // Act
-    const owner = await readRecordedOwner(recordPath)
+    const owner = await answeredAtOnce(
+      readRecordedOwner(recordPath),
+      'the owner read',
+    )
 
     // Assert
     assert.equal(owner, undefined)

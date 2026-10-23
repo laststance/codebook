@@ -23,6 +23,7 @@ import { findWikiUpdateStartBlock } from '../utils/findWikiUpdateStartBlock'
 import type * as lookModule from '../utils/isFolderOfItsOwn'
 import type * as listingModule from '../utils/listFolderTreeWithoutFollowing'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { fileSystemWhoseRealPathFails } from './utils/fileSystemWhoseRealPathFails'
 import { loadModule } from './utils/loadModule'
@@ -357,7 +358,7 @@ test('a generated page replaced by a link is named and is not read through the l
 
 test(
   'a published page replaced by a link to a named pipe is reported at once instead of holding the start',
-  { timeout: 2_000 },
+  { timeout: 30_000 },
   async (context) => {
     // Arrange
     const wiki = await publishedWikiFixture()
@@ -376,9 +377,9 @@ test(
     })
 
     // Act
-    const block = await findWikiUpdateStartBlock(
-      wiki.outputDirectory,
-      wiki.projectRoot,
+    const block = await answeredAtOnce(
+      findWikiUpdateStartBlock(wiki.outputDirectory, wiki.projectRoot),
+      'the start check',
     )
 
     // Assert

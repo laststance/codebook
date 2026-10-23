@@ -2646,6 +2646,8 @@ test('a chat that shows a first sign after 5 seconds and completes its reply aft
     clock.advance(35_000)
     request.end({})
     const ended = await waitForEnd(wiki.status)
+    // The window ends its update before it removes its marker beside the Wiki (F5).
+    await waitForMarkerAnswer(wiki, true)
     const markerAfterTheEnd = await access(
       `${wiki.outputDirectory}.update-run.json`,
     ).then(
@@ -3457,6 +3459,8 @@ test('a Cancel pressed while the watch reads a site the chat has published stops
     wiki.setFreshness(CURRENT)
     read.release()
     const ended = await waitForEnd(wiki.status)
+    // The run's end is published before its marker change, which runs under the marker's claim and finishes later on a loaded machine (F82): wait for that change's answer, whichever it is; a reservation it keeps fails the assertion below.
+    await waitForMarkerAnswer(wiki, true)
     // Another window reads a reservation from this marker file.
     const isReservedForOtherWindows = await access(
       `${wiki.outputDirectory}.update-run.json`,
@@ -3803,6 +3807,8 @@ test('a second window’s Update is refused with the sentence of another window�
     await wiki.clickUpdate()
     progress[0]!.cancel()
     await waitForEnd(wiki.status)
+    // The window ends its update before it settles its marker beside the Wiki; another window that acts before the settle reads the update as still running (F5).
+    await waitForMarkerAnswer(wiki, true)
 
     // Act: the second window's press before the first window's chat published, and its press after that publish.
     await secondWindow.clickUpdate()
@@ -3848,6 +3854,8 @@ test('a second window’s Update is refused while the first window’s stopped w
     await wiki.clickUpdate()
     progress[0]!.cancel()
     await waitForEnd(wiki.status)
+    // The window ends its update before it settles its marker beside the Wiki; another window that acts before the settle reads the update as still running (F5).
+    await waitForMarkerAnswer(wiki, true)
 
     // Act: the second window's press is refused; its next press takes the override.
     await secondWindow.clickUpdate()
@@ -3900,12 +3908,17 @@ test('a press that finds another window’s stopped watch and this window’s ow
     await wiki.clickUpdate()
     progress[0]!.cancel()
     await waitForEnd(wiki.status)
+    // The window ends its update before it settles its marker beside the Wiki; another window that acts before the settle reads the update as still running (F5).
+    await waitForMarkerAnswer(wiki, true)
     await secondWindow.clickUpdate()
-    const deadline = Date.now() + 2_000
+    // A loaded machine can take longer than a second or two for the takeover to run (F5): the waits below end on what they wait for, with a bound only against a hang.
+    const deadline = Date.now() + 10_000
     while (secondWindow.status().state !== 'running' && Date.now() < deadline)
       await new Promise((resolveWait) => setTimeout(resolveWait, 20))
     progress[1]!.cancel()
     await waitForEnd(secondWindow.status)
+    // The window ends its update before it settles its marker beside the Wiki; another window that acts before the settle reads the update as still running (F5).
+    await waitForMarkerAnswer(secondWindow, true)
     const requestsBefore = wiki.chatRequests.length
     const refusalsBefore = wiki.offeredActions.length
 
@@ -3913,7 +3926,7 @@ test('a press that finds another window’s stopped watch and this window’s ow
     isOverrideChosen = true
     await wiki.clickUpdate()
     isOverrideChosen = false
-    const refusalDeadline = Date.now() + 2_000
+    const refusalDeadline = Date.now() + 10_000
     while (
       wiki.offeredActions.length < refusalsBefore + 2 &&
       wiki.status().state !== 'running' &&
@@ -3963,9 +3976,13 @@ test('a stopped watch’s reservation leaves the disk when its window closes, an
     await closedAlone.clickUpdate()
     progress[0]!.cancel()
     await waitForEnd(closedAlone.status)
+    // The window ends its update before it settles its marker beside the Wiki; another window that acts before the settle reads the update as still running (F5).
+    await waitForMarkerAnswer(closedAlone, true)
     await takenOver.clickUpdate()
     progress[1]!.cancel()
     await waitForEnd(takenOver.status)
+    // The window ends its update before it settles its marker beside the Wiki; another window that acts before the settle reads the update as still running (F5).
+    await waitForMarkerAnswer(takenOver, true)
     await takingOver.clickUpdate()
     const deadline = Date.now() + 2_000
     while (takingOver.status().state !== 'running' && Date.now() < deadline)

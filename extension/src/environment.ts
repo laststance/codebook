@@ -25,15 +25,19 @@ import type {
 } from './runtime'
 import type { BrowserViewportFactory } from './runtimeSupport/browserViewport'
 import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
 import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
+import { causeRootsFor } from './utils/causeRootsFor'
 import { checkNodeTestFiles } from './utils/checkNodeTestFiles'
 import { configuredStops } from './utils/configuredStops'
 import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { readVitestPrerequisite } from './utils/readVitestPrerequisite'
+import { requireOwnedVitest } from './utils/requireOwnedVitest'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
+import { sanitizeCause } from './utils/sanitizeCause'
 
 export interface StudyPresentation {
   createViewport: BrowserViewportFactory
@@ -274,7 +278,8 @@ export async function createEnvironment(
           // node-test runs the root Vitest: a missing or older one is named before any start (X9).
           readVitestPrerequisite(workspace).catch((error: unknown) => ({
             ready: false as const,
-            reason: `node-test could not read the repository's root Vitest: ${String(error)}`,
+            // The reason reaches the agent in codebook_status, so it names no private path (F10).
+            reason: `node-test could not read the repository's root Vitest: ${sanitizeCause(error, causeRootsFor([], workspace))}`,
           })),
         ])
       // A preparing run may have created its lock before it has sealed ownership; never label that interval foreign.
@@ -370,8 +375,16 @@ export async function createEnvironment(
     },
     async checkNodeTestFiles(
       configuration: NodeTestConfiguration,
+      citedSources: ConfiguredDescriptor['sources'],
     ): Promise<void> {
-      await checkNodeTestFiles(workspace, configuration)
+      // The owned run's own checks, made before the history begins: a refusal leaves no zero-entry history behind (F57).
+      assertConfiguredSourceDocuments(
+        workspace,
+        citedSources,
+        vscode.workspace.textDocuments,
+      )
+      const { root } = await checkNodeTestFiles(workspace, configuration)
+      await requireOwnedVitest(root)
     },
     async createNodeTestRun(
       configuration: NodeTestConfiguration,

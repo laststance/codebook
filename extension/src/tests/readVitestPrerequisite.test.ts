@@ -85,7 +85,7 @@ test('an older root Vitest and a missing one are named with what to ask the lear
   }
 })
 
-// Value: protects=the agent's first answer from text a package's version field carries; fails_when=an instruction-like or overlong version is printed into codebook_status; why_new=prepareNodeTestLaunch printed the version verbatim (prepareNodeTestLaunch.ts:132-135, EN11); seam=none; no_claim=other package metadata
+// Value: protects=the agent's first answer from text a package's version field carries; fails_when=an instruction-like or overlong version is printed into codebook_status; why_new=prepareNodeTestLaunch printed the version verbatim (prepareNodeTestLaunch's version line, EN11); seam=none; no_claim=other package metadata
 test('a version that is no short semantic version is reported as an unreadable version', async () => {
   // Arrange
   const { root, cleanup } = await repository()
@@ -110,8 +110,8 @@ test('a version that is no short semantic version is reported as an unreadable v
   }
 })
 
-// Value: protects=realpath containment of the Vitest package read; fails_when=a node_modules/vitest link that leaves the repository is read as the repository's Vitest; why_new=the prerequisite reads a file outside the editor's control (EN11); seam=a symlink in a temporary folder; no_claim=Windows junctions
-test('a node_modules/vitest link that leaves the repository counts as no root Vitest', async (context) => {
+// Value: protects=realpath containment of the Vitest package read, and the status sentence for a link that leaves the repository; fails_when=a node_modules/vitest link that leaves the repository is read as the repository's Vitest, or is reported as "none" when it is there but outside (pnpm's global virtual store); why_new=the prerequisite reads a file outside the editor's control (EN11); the sentence is Decision D15 of Cycle 0050 (F101); seam=a symlink in a temporary folder; no_claim=Windows junctions
+test('a node_modules/vitest link that leaves the repository is named as linking outside it, not as missing', async (context) => {
   // Arrange
   const { root, cleanup } = await repository()
   const outside = await repository()
@@ -133,13 +133,82 @@ test('a node_modules/vitest link that leaves the repository counts as no root Vi
     const prerequisite = await readVitestPrerequisite(root)
 
     // Assert
-    assert.equal(prerequisite.ready, false)
-    assert.ok(
-      !prerequisite.ready &&
-        prerequisite.reason.includes('none at node_modules/vitest'),
-    )
+    assert.deepEqual(prerequisite, {
+      ready: false,
+      reason:
+        'node-test needs Vitest 4 or later inside the repository; node_modules/vitest at the repository root links outside it, which Codebook does not run. Ask the learner to install Vitest in the repository, then call codebook_status again.',
+    })
   } finally {
     await cleanup()
     await outside.cleanup()
+  }
+})
+
+// Value: protects=codebook_status from a package that pads its version field with digits; fails_when=a version with a 70,000-digit number is printed or read as ready; why_new=PRINTABLE_VITEST_VERSION bounded no numeric segment, so about 64 KiB of digits reached the agent (F47); seam=none; no_claim=the 64 KiB file cap, tested separately
+test('a version whose number is padded with digits is reported as an unreadable version', async () => {
+  // Arrange
+  const { root, cleanup } = await repository()
+  try {
+    await writeVitestPackage(root, `${'9'.repeat(20)}.0.0`)
+
+    // Act
+    const prerequisite = await readVitestPrerequisite(root)
+
+    // Assert
+    assert.deepEqual(prerequisite, {
+      ready: false,
+      reason:
+        'node-test needs Vitest 4 or later at the repository root; this repository has an unreadable version (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.',
+    })
+  } finally {
+    await cleanup()
+  }
+})
+
+// Value: protects=the three guards of the version read: size cap, JSON syntax, and a string version; fails_when=a package file above 64 KiB is parsed, a non-JSON file throws out of the read, or a numeric version field is accepted; why_new=the guards were untested (F34); seam=none; no_claim=a version string that is merely unusual
+test('an oversized package file, a non-JSON one and a non-string version each read as an unreadable version', async () => {
+  // Arrange
+  const oversized = await repository()
+  const notJson = await repository()
+  const numeric = await repository()
+  try {
+    await mkdir(join(oversized.root, 'node_modules', 'vitest'), {
+      recursive: true,
+    })
+    await writeFile(
+      join(oversized.root, 'node_modules', 'vitest', 'package.json'),
+      JSON.stringify({
+        name: 'vitest',
+        version: '4.1.11',
+        pad: 'x'.repeat(70_000),
+      }),
+    )
+    await mkdir(join(notJson.root, 'node_modules', 'vitest'), {
+      recursive: true,
+    })
+    await writeFile(
+      join(notJson.root, 'node_modules', 'vitest', 'package.json'),
+      'not json {',
+    )
+    await writeVitestPackage(numeric.root, 4)
+
+    // Act
+    const results = await Promise.all([
+      readVitestPrerequisite(oversized.root),
+      readVitestPrerequisite(notJson.root),
+      readVitestPrerequisite(numeric.root),
+    ])
+
+    // Assert
+    const unreadable = {
+      ready: false,
+      reason:
+        'node-test needs Vitest 4 or later at the repository root; this repository has an unreadable version (node_modules/vitest/package.json). Ask the learner to upgrade it, then call codebook_status again.',
+    }
+    assert.deepEqual(results, [unreadable, unreadable, unreadable])
+  } finally {
+    await oversized.cleanup()
+    await notJson.cleanup()
+    await numeric.cleanup()
   }
 })

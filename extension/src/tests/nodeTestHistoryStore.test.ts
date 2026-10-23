@@ -14,7 +14,10 @@ import { join } from 'node:path'
 import { before, mock, test, type TestContext } from 'node:test'
 
 import { NODE_TEST_HISTORY_DIRECTORY } from '../constants'
-import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import {
+  NodeTestHistoryStore,
+  type NodeTestHistoryWriter,
+} from '../nodeTestHistoryStore'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { citationContext } from '../utils/citationContext'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
@@ -64,6 +67,24 @@ function holdHeaderCreation(
     },
   )
   return { folderMade, letGoOn }
+}
+
+/**
+ * Records one output line and seals the history as the learner's stop, so the history has something to replay: a history sealed with no entry is removed when it seals (Decision D6 of Cycle 0050).
+ * @param writer - The writer of a started history.
+ * @returns The sealed journal's hash.
+ * @example await sealWithOneOutput(writer)
+ */
+async function sealWithOneOutput(
+  writer: NodeTestHistoryWriter,
+): Promise<string | undefined> {
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  return writer.finish('partial', 'The learner stopped this run.')
 }
 
 test('Node history remains a readable interrupted prefix after extension restart and rejects foreign workspace access', async () => {
@@ -249,6 +270,7 @@ test('stepping through an opened Node history saves each reader position without
   }
 })
 
+// Value: protects=the learner's understanding decision of a test history being an explicit private record that survives a store restart; fails_when=the decision is lost on restart or readable without the learner's choice; why_new=the decision file moved with the test history store; seam=a real store on a temporary folder; no_claim=the Study pane's drawing of it
 test('Node history understanding is an explicit private decision that survives store restart', async () => {
   // Arrange
   const directory = await mkdtemp(
@@ -579,7 +601,7 @@ test('a stray file and a stray folder in the Node history directory take no plac
   try {
     // Act: the first test starts beside the stray entries; the second meets a store that holds its one history.
     const writer = await store.start(first)
-    await writer.finish('partial', 'The learner stopped this run.')
+    await sealWithOneOutput(writer)
     const secondStart = await store.start(second).then(
       () => 'admitted',
       (error: unknown) => String(error),
@@ -665,11 +687,7 @@ test('a Node test whose history cannot be started leaves no folder behind, and t
   const startRefusedByDisk = await outcomeOf(store.start(refusedByDisk))
   const foldersAfterTheRefusedFile = await readdir(historyDirectory)
   const nextStart = await outcomeOf(
-    store
-      .start(admitted)
-      .then((writer) =>
-        writer.finish('partial', 'The learner stopped this run.'),
-      ),
+    store.start(admitted).then((writer) => sealWithOneOutput(writer)),
   )
   // Assert
   assert.equal(
@@ -714,11 +732,7 @@ test('a folder without a header and one whose header cannot be read take no plac
   // Act: the first test starts beside the two folders; the second meets a store whose list holds its one history.
   const listedBefore = (await store.list()).map((entry) => entry.studyId)
   const firstStart = await outcomeOf(
-    store
-      .start(first)
-      .then((writer) =>
-        writer.finish('partial', 'The learner stopped this run.'),
-      ),
+    store.start(first).then((writer) => sealWithOneOutput(writer)),
   )
   const secondStart = await outcomeOf(store.start(second))
   // Assert
@@ -956,7 +970,7 @@ test('a Node test history start whose storage lock cannot be released after it m
   ): Promise<string> =>
     starting.then(
       async (writer) => {
-        await writer.finish('partial', 'The learner stopped this run.')
+        await sealWithOneOutput(writer)
         return 'started and sealed'
       },
       (error: unknown) => String(error),
@@ -1045,7 +1059,7 @@ test('a Node test asked for under a study id that already has a history is refus
   const header = nodeTestHistoryHeader(workspaceKey)
   try {
     const writer = await store.start(header)
-    await writer.finish('partial', 'The learner stopped this run.')
+    await sealWithOneOutput(writer)
 
     // Act
     const secondStart = await store.start(header).then(
@@ -1241,6 +1255,136 @@ test('a failing Node test result can be sealed only as partial history', async (
       history.entries.map((entry) => entry.type),
       ['output', 'stop', 'result'],
     )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reason an interrupted test history is read with after a broken journal line, which Saved studies and the agent's node-history resource show: worded by the store's describer, which hides private paths, and cut whole to the index's 1,024-character bound (F243); fails_when=the raw parse or schema failure is kept, so a quoted path reaches the agent, or a long failure makes the read itself fail on the index's bound; why_new=the read wrote String(error) unbounded and no test read a broken unsealed journal's reason; seam=none (describeCause is the store's own field the Study workspace sets); no_claim=what the describer hides, which sanitizeCause.test.ts pins
+test("an interrupted history's broken journal line is read with a reason the store's describer words, cut to the index's bound", async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-broken-'),
+  )
+  const header = nodeTestHistoryHeader(sha256('broken-line-workspace'))
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey)
+  const writer = await store.start(header)
+  try {
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 4,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    await appendFile(
+      join(
+        directory,
+        NODE_TEST_HISTORY_DIRECTORY,
+        header.studyId,
+        'events.jsonl',
+      ),
+      '{"type":"output",broken}\n',
+    )
+    const restarted = new NodeTestHistoryStore(directory, header.workspaceKey)
+    restarted.describeCause = () => 'x'.repeat(5_000)
+
+    // Act
+    const history = await restarted.read(header.studyId)
+
+    // Assert
+    const prefix = 'Interrupted Node history after its verified prefix: '
+    assert.equal(history.status, 'interrupted')
+    assert.equal(history.entries.length, 1)
+    assert.equal(
+      history.reason,
+      `${prefix}${'x'.repeat(1_024 - prefix.length - '… [cut]'.length)}… [cut]`,
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reason of a test history that is still being recorded and whose journal gained a broken line, as the catalog of saved studies lists it: worded by the store's describer and cut to the index's 1,024-character bound (F243); fails_when=the recording branch of the summary shows the scan's reason uncut, so a long failure that quotes test output reaches Saved studies and the agent's node-history catalog whole; why_new=the sealed-read test reaches the read's own cut only, and the scan's reason is cut in a different place when the summary shows it; seam=none (describeCause is the store's own field the Study workspace sets); no_claim=what the describer hides, which sanitizeCause.test.ts pins
+test("a recording history's broken journal line is listed with a reason cut to the index's bound", async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-recording-broken-'),
+  )
+  const header = nodeTestHistoryHeader(sha256('recording-broken-workspace'))
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey)
+  const writer = await store.start(header)
+  try {
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 4,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    await appendFile(
+      join(
+        directory,
+        NODE_TEST_HISTORY_DIRECTORY,
+        header.studyId,
+        'events.jsonl',
+      ),
+      '{"type":"output",broken}\n',
+    )
+    store.describeCause = () => 'x'.repeat(5_000)
+
+    // Act
+    const [listed] = await store.list()
+
+    // Assert
+    const prefix = 'Interrupted Node history after its verified prefix: '
+    assert.equal(listed?.status, 'recording')
+    assert.equal(
+      listed?.reason,
+      `${prefix}${'x'.repeat(1_024 - prefix.length - '… [cut]'.length)}… [cut]`,
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a history's reason cut to its 1,024-character bound between characters, never inside a surrogate pair, with the cut marker (F265); fails_when=the cut leaves a lone surrogate that a renderer shows as a replacement character; why_new=PR-1's /ship Claude adversarial review, cycle 3: the store's reasons were cut at UTF-16 code units; seam=the store's describer, which gives a long reason with an emoji across the bound; no_claim=the service's 8,192-character cut (causeSanitizing tests)
+test('a broken journal line read with a long reason is cut between characters with the cut marker', async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-reason-cut-'),
+  )
+  const header = nodeTestHistoryHeader(sha256('reason-cut-workspace'))
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey)
+  const writer = await store.start(header)
+  try {
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 4,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    await appendFile(
+      join(
+        directory,
+        NODE_TEST_HISTORY_DIRECTORY,
+        header.studyId,
+        'events.jsonl',
+      ),
+      '{"type":"output",broken}\n',
+    )
+    const restarted = new NodeTestHistoryStore(directory, header.workspaceKey)
+    const prefix = 'Interrupted Node history after its verified prefix: '
+    restarted.describeCause = () =>
+      `${'x'.repeat(1_024 - prefix.length - 1)}😀 and the rest`
+
+    // Act
+    const history = await restarted.read(header.studyId)
+
+    // Assert
+    assert.doesNotMatch(
+      history.reason ?? '',
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/,
+    )
+    assert.equal(history.reason?.endsWith('… [cut]'), true)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

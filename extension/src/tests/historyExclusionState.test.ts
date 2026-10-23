@@ -11,3 +11,10 @@ test('a run without an exclusion keeps its history, one awaiting admission waits
   assert.equal(historyExclusionState('refused-at-admission'), 'ended')
   assert.equal(historyExclusionState('removed-by-learner'), 'ended')
 })
+
+// Value: protects=a node-test run refused during its preparation or stopped before its history began reads ended, so its slot is evicted first and its history is not offered; fails_when=either exclusion reads kept or awaiting (the run keeps a retained-run slot and read-history); why_new=the state's doc and test named only the admission and removal exclusions (F55); seam=none; no_claim=the start key (a refused run frees it, a stopped one keeps it: the lifecycle tests)
+test('a test run refused during its preparation or stopped before its history began has ended', () => {
+  // Arrange / Act / Assert
+  assert.equal(historyExclusionState('refused-at-preparation'), 'ended')
+  assert.equal(historyExclusionState('stopped-before-history'), 'ended')
+})

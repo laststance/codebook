@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { StudyError } from '../errors'
 import { nodeTestConfigSchema } from '../nodeTestConfigSchemas'
 import type {
   ListVitestTestFilesRequest,
@@ -422,6 +423,7 @@ test('a retired testName or a missing test identity is refused before any Vitest
   }
 })
 
+// Value: protects=a repository whose Vitest is older than 4 being refused before any Vitest process starts; fails_when=an old Vitest is launched or the refusal comes after a process started; why_new=the Vitest prerequisite is checked at preparation; seam=a repository fixture with an old Vitest; no_claim=other package metadata
 test('a repository whose Vitest is older than 4 is refused before any Vitest process starts', async () => {
   // Arrange
   const { root, sourceHash, testHash } = await createVitestRepository('3.2.4')
@@ -536,6 +538,69 @@ test('a changed source or a symlink escaping the repository cannot start a Node 
     await rm(outside, { recursive: true, force: true })
   }
 })
+
+for (const scenario of [
+  { name: 'is missing', link: false },
+  { name: 'is a link that leaves the repository', link: true },
+] as const)
+  // Value: protects=the typed refusal when the root Vitest program is not a file of the repository; fails_when=a repository whose node_modules/vitest/vitest.mjs is missing or links outside it reaches the Vitest listing, or the refusal loses its code or its reinstall advice; why_new=the PREREQUISITE_MISSING branch of prepareNodeTestLaunch was untested (F29); seam=none; no_claim=Vitest's own behavior
+  test(`a repository whose node_modules/vitest/vitest.mjs ${scenario.name} is refused as a missing prerequisite before Vitest is asked anything`, async () => {
+    // Arrange
+    const { root, sourceHash, testHash } = await createVitestRepository('5.0.2')
+    const outside = await mkdtemp(join(tmpdir(), 'codebook-node-program-'))
+    await rm(join(root, 'node_modules', 'vitest', 'vitest.mjs'))
+    if (scenario.link) {
+      await writeFile(join(outside, 'vitest.mjs'), 'export {}\n')
+      await symlink(
+        join(outside, 'vitest.mjs'),
+        join(root, 'node_modules', 'vitest', 'vitest.mjs'),
+      )
+    }
+    const vitest = scriptedVitestList([])
+    const configuration = nodeTestConfigSchema.parse({
+      version: 1,
+      adapter: 'vitest-node',
+      book: {
+        bookId: 'subscription',
+        revision: 1,
+        nodeId: 'subscribe',
+        anchorIndex: 0,
+      },
+      testFile: 'src/subscribable.test.ts',
+      testTitles: ['subscribes once'],
+      testHash,
+      source: {
+        path: 'src/subscribable.ts',
+        hash: sourceHash,
+        line: 1,
+        column: 1,
+      },
+      inspections: [{ path: 'listener', mode: 'value', required: true }],
+    })
+    try {
+      // Act
+      const refusal = await prepareNodeTestLaunch(
+        root,
+        configuration,
+        vitest.list,
+      ).then(
+        () => undefined,
+        (thrown: unknown) => thrown,
+      )
+
+      // Assert
+      assert.ok(refusal instanceof StudyError)
+      assert.equal(refusal.code, 'PREREQUISITE_MISSING')
+      assert.equal(
+        refusal.message,
+        'node-test needs the root Vitest program node_modules/vitest/vitest.mjs inside the opened repository; reinstall Vitest at the repository root, then call codebook_status again.',
+      )
+      assert.equal(vitest.requests.length, 0)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
 
 // Value: protects=every declared stop checked against its own hash before a process is acquired; fails_when=a changed second stop is not refused or the refusal does not name stop 2; why_new=the refusal's words changed with the shared checks (EN1, X7); seam=none; no_claim=the debugger binding of each stop
 test('a Node test seals every declared source stop before acquiring a process', async () => {

@@ -7,10 +7,10 @@ import { withoutErrorName } from './withoutErrorName'
 export type CauseRoots = {
   /** The extension's storage folders (the service's storage root, the learning directory); each reads `<storage>`. */
   storage: readonly string[]
-  /** The opened repository's root; it reads `<workspace>`. */
-  workspace?: string
-  /** The user's home directory; it reads `~`. */
-  home?: string
+  /** The opened repository's root, as reported and by its real path when they differ (a symlinked workspace); each reads `<workspace>`. */
+  workspace?: string | readonly string[]
+  /** The user's home directory, as reported and by its real path when they differ; each reads `~`. */
+  home?: string | readonly string[]
 }
 
 /** C0 and C1 control characters, DEL, and the bidirectional controls that can reorder what a reader sees. */
@@ -22,6 +22,21 @@ const REALPATH_ALIASES: readonly (readonly [string, string])[] = [
   ['/private/var/', '/var/'],
   ['/private/tmp/', '/tmp/'],
 ]
+
+/**
+ * Measures a root as its macOS realpath alias's short form spells it, so that a root named by both spellings sorts as one root.
+ * Why: {@link sanitizeCause} replaces the longest root first; the long spelling (`/private/var/…`) would otherwise outrank a storage folder inside the same root (F214).
+ * Called by {@link sanitizeCause} when it orders its roots.
+ * @param root - A root as a cause's roots name it.
+ * @returns Its length, less the extra characters of a long alias spelling.
+ * @example shortSpellingLength('/private/var/folders/ab') // => 15, the length of '/var/folders/ab'
+ */
+function shortSpellingLength(root: string): number {
+  for (const [long, short] of REALPATH_ALIASES)
+    if (`${root}/`.startsWith(long))
+      return root.length - (long.length - short.length)
+  return root.length
+}
 
 /** A Windows root: a drive letter, optionally behind the `\\?\` prefix, with either separator. */
 const WINDOWS_ROOT = /^(?:\\\\\?\\)?[A-Za-z]:[\\/]/
@@ -47,7 +62,8 @@ function rootPatterns(root: string): RegExp[] {
   if (!trimmed) return []
   // A root must begin and end where a path segment does, so /Users/ada never matches inside /Users/adam, nor /var inside /private/var.
   const start = '(?<![A-Za-z0-9._-])'
-  const boundary = '(?![A-Za-z0-9._-])'
+  // A period ends a root when a sentence does (`… in /Users/ada/code.`); a period before a name character (`.ts`, `.d`) continues the name.
+  const boundary = '(?![A-Za-z0-9_-]|\\.[A-Za-z0-9_-])'
   if (WINDOWS_ROOT.test(`${trimmed}\\`)) {
     const bare = trimmed.replace(/^\\\\\?\\/, '')
     const pattern = bare
@@ -75,7 +91,7 @@ function rootPatterns(root: string): RegExp[] {
 }
 
 /**
- * Words a failure's cause for a tooltip, a notification, the run resource, an MCP message and the Output › Codebook channel without the private paths it can carry, at the moment the cause is assigned, so every surface shows the same value; called by {@link StudyService} for a test history's failure, the test run's recording reason and the `HISTORY_SEAL_FAILED` cause, and by {@link NodeLearningSave} for the save's causes.
+ * Words a failure's cause for a tooltip, a notification, the run resource, an MCP message and the Output › Codebook channel without the private paths it can carry, at the moment the cause is assigned, so every surface shows the same value; called by {@link StudyService} for a test history's failure, the test run's recording reason and the `HISTORY_SEAL_FAILED` cause, by {@link NodeLearningSave} for the save's causes, by {@link StudyWorkspace} for the causes it reports, and by {@link NodeTestHistoryStore} for an unavailable history's reason.
  * The extension's storage roots read `<storage>`, the opened repository's root `<workspace>` and the home directory `~`, in POSIX and Windows forms (either separator, the `\\?\` prefix, any case on Windows) and through the macOS realpath aliases `/var` and `/private/var`. A {@link StudyError} reads as its message naming its cause ({@link messageNamingCause}); any other error loses its leading error name ({@link withoutErrorName}). Control characters, bidirectional ones included, become spaces. The whole text is returned; a surface cuts it for display ({@link cutCauseForDisplay}).
  * @param error - What was thrown, or a cause already in words.
  * @param roots - The private roots of this window.
@@ -87,21 +103,31 @@ function rootPatterns(root: string): RegExp[] {
  * // => 'EACCES <workspace>\\a.ts'
  */
 export function sanitizeCause(error: unknown, roots: CauseRoots): string {
-  let text =
+  const replacements: [string, string][] = roots.storage.map(
+    (root): [string, string] => [root, '<storage>'],
+  )
+  for (const root of [roots.workspace ?? []].flat())
+    replacements.push([root, '<workspace>'])
+  for (const root of [roots.home ?? []].flat()) replacements.push([root, '~'])
+  // The longest root first, so a storage folder inside the home directory reads <storage>, not ~/…; an alias spelling counts as its short form, so /private/var/… does not outrank a folder inside it (F214).
+  replacements.sort(
+    (left, right) =>
+      shortSpellingLength(right[0]) - shortSpellingLength(left[0]),
+  )
+  const hideRoots = (text: string): string => {
+    let hidden = text
+    for (const [root, words] of replacements)
+      for (const pattern of rootPatterns(root))
+        hidden = hidden.replace(pattern, words)
+    return hidden
+  }
+  // A domain error's message and cause lose their roots before they are joined and cut, so a cut never leaves part of a root behind (F263).
+  const text =
     error instanceof StudyError
-      ? messageNamingCause(error.message, error.causeDetail)
-      : withoutErrorName(String(error))
-  const replacements: [string, string][] = [
-    ...roots.storage.map((root): [string, string] => [root, '<storage>']),
-    ...(roots.workspace
-      ? [[roots.workspace, '<workspace>'] as [string, string]]
-      : []),
-    ...(roots.home ? [[roots.home, '~'] as [string, string]] : []),
-  ]
-  // The longest root first, so a storage folder inside the home directory reads <storage>, not ~/….
-  replacements.sort((left, right) => right[0].length - left[0].length)
-  for (const [root, words] of replacements)
-    for (const pattern of rootPatterns(root))
-      text = text.replace(pattern, words)
+      ? messageNamingCause(
+          hideRoots(error.message),
+          hideRoots(error.causeDetail),
+        )
+      : hideRoots(withoutErrorName(String(error)))
   return text.replace(CONTROL_CHARACTERS, ' ').replace(/ {2,}/g, ' ').trim()
 }

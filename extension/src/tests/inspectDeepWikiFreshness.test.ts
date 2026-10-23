@@ -22,6 +22,7 @@ import { gitExecutablePath } from '../utils/gitExecutablePath'
 import type * as freshnessModule from '../utils/inspectDeepWikiFreshness'
 import { inspectDeepWikiFreshness } from '../utils/inspectDeepWikiFreshness'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import { childProcessThatNotesPrograms } from './utils/childProcessThatNotesPrograms'
 import { loadModule } from './utils/loadModule'
 
@@ -803,7 +804,7 @@ test('a freshness check reads several indexed sources at once and still names ch
 
 test(
   'an indexed source replaced by a named pipe is named as the file that could not be checked, at once instead of holding the freshness check',
-  { timeout: 2_000 },
+  { timeout: 30_000 },
   async (context) => {
     // Arrange
     const directory = await mkdtemp(
@@ -822,11 +823,14 @@ test(
     })
 
     // Act
-    const freshness = await inspectDeepWikiFreshness(
-      root,
-      [{ path: 'source.ts', sha256: 'a'.repeat(64) }],
-      undefined,
-      [],
+    const freshness = await answeredAtOnce(
+      inspectDeepWikiFreshness(
+        root,
+        [{ path: 'source.ts', sha256: 'a'.repeat(64) }],
+        undefined,
+        [],
+      ),
+      'the freshness check',
     )
 
     // Assert

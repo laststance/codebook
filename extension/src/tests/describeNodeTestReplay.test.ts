@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { describeNodeTestReplay } from '../utils/describeNodeTestReplay'
 import { formatCodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 
-// Value: protects=the Saved studies rows of test replays: complete, partial and interrupted name their verdict, capture and explained stops, a recording history reads recording, and one that fails verification reads unavailable; fails_when=a row reads otherwise than the String catalog or calls a sealed history's replay unavailable; why_new=the rows said "application video and synchronized replay unavailable" (studyWorkspace.ts:11862, DS14, AC8); seam=none; no_claim=the row's place in the list
+// Value: protects=the Saved studies rows of test replays: complete, partial and interrupted name their verdict, capture and explained stops, a recording history reads recording, and one that fails verification reads unavailable; fails_when=a row reads otherwise than the String catalog or calls a sealed history's replay unavailable; why_new=the rows said "application video and synchronized replay unavailable" (the test replay row's wording in the Study workspace, DS14, AC8); seam=none; no_claim=the row's place in the list
 test('Saved studies rows of test replays name their verdict, capture and explained stops', () => {
   // Arrange
   const sealed = {

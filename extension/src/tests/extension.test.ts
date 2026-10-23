@@ -1508,6 +1508,7 @@ test('a released study with failed evidence can retire its dead connection and e
   }
 })
 
+// Value: protects=an owner whose physical release failed staying owned, so a dead endpoint is neither started on nor copied until an explicit cleanup succeeds; fails_when=the owner is dropped after the failed release or a start or copy is accepted on the dead endpoint; why_new=release failure left a half-owned endpoint; seam=the release fails by a stand-in; no_claim=a real process group
 test('a failed physical release keeps its owner and rejects starting or copying a dead endpoint until explicit cleanup succeeds', async () => {
   // Arrange
   const harness = await createHarness(),
@@ -1637,8 +1638,13 @@ test('activation gives the service and the Study reader one sink that writes une
     }[] = [],
     commands = new Map<string, () => Promise<string | void>>(),
     subscriptions: { dispose(): void }[] = [],
-    channels: { name: string; log: boolean | undefined; dispose(): void }[] =
-      [],
+    channels: {
+      name: string
+      log: boolean | undefined
+      error: (text: string) => void
+      show: (preserveFocus?: boolean) => void
+      dispose(): void
+    }[] = [],
     entries: string[] = [],
     shows: (boolean | undefined)[] = []
   const boundary = await loadModule<typeof ExtensionModule>(
@@ -1761,6 +1767,22 @@ test('activation gives the service and the Study reader one sink that writes une
       ),
       "EACCES: permission denied, open '<storage>/state.json'",
     )
+
+    // The channel is disposed with the extension: writing to it throws, and the sinks must not (F99).
+    channels[0]!.error = (): void => {
+      throw new Error('Channel has been closed')
+    }
+    channels[0]!.show = (): void => {
+      throw new Error('Channel has been closed')
+    }
+    assert.doesNotThrow(() => {
+      service.diagnostics?.({
+        surface: 'HISTORY_SEAL_FAILED',
+        cause: 'EIO: i/o error',
+      })
+      reader.diagnostics?.log({ surface: 'open:test-replay', cause: 'x' })
+      reader.diagnostics?.show()
+    })
   } finally {
     await boundary.deactivate()
     await harness.close()
@@ -3059,6 +3081,7 @@ test('a failed Update LLM Wiki whose error quotes a command link shows no clicka
 })
 
 test('a failed Save Learning Replay whose error quotes a command link shows no clickable link', async () => {
+  // Value: protects=the Save Learning Replay command's error notice shows the workspace's described cause as plain text, so a cause quoting a Markdown command link cannot become a clickable link; fails_when=the notice passes the cause to the editor unescaped, or the command reports nothing because describing the failure throws; why_changed=F264 words the notice through StudyWorkspace.describeFailure, so the stand-in describes a failure as the real workspace does (F277); seam=the StudyWorkspace stand-in; no_claim=which private roots the real workspace hides (studyWorkspaceTestReplay.test.ts)
   // Arrange
   const commands = new Map<string, () => Promise<void>>(),
     errors: string[] = []
@@ -3095,6 +3118,9 @@ test('a failed Save Learning Replay whose error quotes a command link shows no c
               "EACCES: permission denied, open '/library/[Open](command:x).json'",
             )
           }
+          describeFailure(error: unknown): string {
+            return sanitizeCause(error, { storage: [] })
+          }
           async dispose(): Promise<void> {}
         },
       },
@@ -3112,7 +3138,7 @@ test('a failed Save Learning Replay whose error quotes a command link shows no c
 
     // Assert
     assert.deepEqual(errors, [
-      "Codebook could not save learning: Error: EACCES: permission denied, open '/library/[Open] (command:x).json'",
+      "Codebook could not save learning: EACCES: permission denied, open '/library/[Open] (command:x).json'",
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {

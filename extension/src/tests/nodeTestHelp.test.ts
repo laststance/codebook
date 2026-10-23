@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod'
 
 import { nodeTestConfigSchema } from '../nodeTestConfigSchemas'
-import { NODE_TEST_HELP_EXAMPLE, readResource } from '../resources'
+import { readResource } from '../resources'
 import { startSchema } from '../schemas'
 import { startServer } from '../server'
 
@@ -27,12 +27,21 @@ async function servedNodeTestHelp() {
   }
 }
 
+/** The example as the served help carries it: the parsed JSON, so the test reads what an agent reads. */
+type ServedHelpExample = {
+  configuration: {
+    book: Record<string, unknown>
+    source: Record<string, unknown>
+    additionalStops: Record<string, unknown>[]
+  } & Record<string, unknown>
+} & Record<string, unknown>
+
 /** Fills every placeholder of the help's example with a value of the answer it names. */
-function exampleWithValues() {
+function exampleWithValues(example: ServedHelpExample) {
   const hash = 'c'.repeat(64)
-  const configuration = NODE_TEST_HELP_EXAMPLE.configuration
+  const configuration = example.configuration
   return {
-    ...NODE_TEST_HELP_EXAMPLE,
+    ...example,
     instanceId: '6f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f',
     configuration: {
       ...configuration,
@@ -52,18 +61,33 @@ function exampleWithValues() {
   }
 }
 
+// Value: protects=the Vitest version the help names, which must follow NODE_TEST_MINIMUM_VITEST_MAJOR; fails_when=one of the three sentences keeps a hard-coded major when the supported major changes; why_new=the help hard-coded 4 in three sentences (F43); seam=none; no_claim=the status sentence of readVitestPrerequisite
+test('the node-test help names the minimum Vitest major in each of its three sentences', async () => {
+  // Arrange
+  const { text } = await servedNodeTestHelp()
+
+  // Act
+  const sentences = [
+    'its missing list names a root Vitest that is missing or older than 4, or the count and the limit',
+    'PREREQUISITE_MISSING when the root Vitest is missing or older than 4, or when the saved studies',
+    'node-test runs the Vitest 4 or later installed at the repository root',
+  ]
+
+  // Assert
+  for (const sentence of sentences) assert.ok(text.includes(sentence), sentence)
+})
+
 // Value: protects=the node-test help's complete start example, which an agent copies the shape of; fails_when=the example no longer parses once its placeholders are replaced, or a placeholder does not name the answer it comes from; why_new=the help had no complete example (X9, AC18); seam=none; no_claim=that the example's lines run in any repository
 test('the node-test help’s example parses as a start once its placeholders are replaced', async () => {
   // Arrange
   const { body } = await servedNodeTestHelp()
-  const filled = exampleWithValues()
+  const filled = exampleWithValues(body.example)
 
   // Act
   const configuration = nodeTestConfigSchema.safeParse(filled.configuration)
   const start = startSchema.safeParse(filled)
 
   // Assert
-  assert.deepEqual(body.example, NODE_TEST_HELP_EXAMPLE)
   assert.equal(configuration.success, true, configuration.error?.message)
   assert.equal(start.success, true, start.error?.message)
   assert.match(
@@ -125,7 +149,7 @@ test('the node-test help’s walkthrough names every call in order', async () =>
   )
 })
 
-// Value: protects=the help's statements an agent needs at the edges: refusals at preparation, the root-Vitest limit, failing tests and the replay's contents; fails_when=one of them is missing, or a removed sentence that calls the replay unavailable is served; why_new=the help said a test history was no replay (resources.ts:194, Design 6, AC8, AC18); seam=none; no_claim=other help resources
+// Value: protects=the help's statements an agent needs at the edges: refusals at preparation, the root-Vitest limit, failing tests and the replay's contents; fails_when=one of them is missing, or a removed sentence that calls the replay unavailable is served; why_new=the help said a test history was no replay (the node-test help's replay sentence, Design 6, AC8, AC18); seam=none; no_claim=other help resources
 test('the node-test help tells refusals, the root-Vitest limit, failing tests and what a test replay holds, and calls no replay unavailable', async () => {
   // Arrange / Act
   const { text, body } = await servedNodeTestHelp()

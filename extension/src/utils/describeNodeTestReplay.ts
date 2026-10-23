@@ -100,13 +100,6 @@ export type NodeTestReplayTestName = {
   testTitles?: readonly string[]
 }
 
-/** The capture word of a sealed or interrupted history. */
-const CAPTURE_WORDS = {
-  complete: 'complete',
-  partial: 'partial',
-  interrupted: 'interrupted',
-} as const
-
 /**
  * Words what a test replay shows the learner outside its Save, so Saved studies, the Study pane and the Application pane read as the String catalog writes them; called by the Study workspace for each Saved studies row, by {@link projectNodeTestSection} for the Study pane's test replay section, and by {@link projectNodeTestApplication} for the Application pane.
  * `<t>` is the event's time since the run started, paused time included, in seconds with two decimals.
@@ -196,10 +189,10 @@ function positionWords(
  */
 function studyStatus(
   summary: Omit<NodeTestReplayMessageSummary, 'verification' | 'status'> & {
-    status: keyof typeof CAPTURE_WORDS
+    status: Exclude<NodeTestHistorySummary['status'], 'recording'>
   },
 ): string {
-  return `${summary.verdict} · capture ${CAPTURE_WORDS[summary.status]} · ${summary.explainedStopCount} of ${summary.stopCount} stops explained`
+  return `${summary.verdict} · capture ${summary.status} · ${summary.explainedStopCount} of ${summary.stopCount} stops explained`
 }
 
 /**

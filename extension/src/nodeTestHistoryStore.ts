@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import {
   chmod,
   mkdir,
@@ -10,9 +11,11 @@ import {
 import { join } from 'node:path'
 
 import {
+  NODE_HISTORY_CITABLE_MEMO_LIMIT,
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_LIMIT_BYTES,
+  NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
   NODE_TEST_HISTORY_MAX_ENTRIES,
   NODE_TEST_LEARNING_DECISION_LIMIT_BYTES,
   NODE_TEST_LEARNING_DECISION_VERSION,
@@ -23,7 +26,11 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
 } from './constants'
-import { StudyError } from './errors'
+import {
+  NodeLearningRevisionChangedError,
+  SavedStudyStorageFullError,
+  StudyError,
+} from './errors'
 import {
   nodeTestHistoryEntrySchema,
   nodeTestHistoryHeaderSchema,
@@ -44,10 +51,15 @@ import {
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { causeRootsFor } from './utils/causeRootsFor'
+import { cutTextToFit } from './utils/cutTextToFit'
 import {
   describeNodeTestResult,
   type NodeTestVerdict,
 } from './utils/describeNodeTestResult'
+import { holdsLearnerFiles } from './utils/holdsLearnerFiles'
+import { isSealedEmptyHistory } from './utils/isSealedEmptyHistory'
+import { isTransientFileError } from './utils/isTransientFileError'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import {
   listMissingNodeExplanations,
@@ -64,6 +76,15 @@ import {
   nodeTestResultKind,
   type NodeTestResultKind,
 } from './utils/nodeTestResultKind'
+import {
+  acceptJournalEntry,
+  advanceRecordingScan,
+  citableEventOf,
+  newJournalProgress,
+  type CitableEvent,
+  type RecordingScan,
+} from './utils/recordingJournalScan'
+import { sanitizeCause } from './utils/sanitizeCause'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 type NodeTestHistoryEntryInput = NodeTestHistoryEntry extends infer Entry
@@ -80,14 +101,21 @@ const LEARNING_DECISION_FILE = 'learning-decision.json'
 const LEARNING_MATERIAL_FILE = 'learning-material.json'
 const HEADER_LIMIT_BYTES = 8_388_608
 const REASON_LIMIT_CHARS = 1_024
+
+/**
+ * Cuts a history's reason to {@link REASON_LIMIT_CHARS} between characters, never inside a surrogate pair, saying it was cut, so every reason fits the seal's and the index's bound (F265); called wherever the store words a reason.
+ * @param reason - The whole reason.
+ * @returns The reason itself when it fits, else its beginning with the cut marker.
+ * @example cutReason('x'.repeat(2_000)).length // => 1_024
+ */
+function cutReason(reason: string): string {
+  return cutTextToFit(
+    reason,
+    (candidate) => candidate.length <= REASON_LIMIT_CHARS,
+  )
+}
 /** The name of a history's folder: its study id. Any other entry of the history directory (a `.DS_Store`, a stray folder) is nobody's history. */
 const HISTORY_IDENTITY = /^[0-9a-f-]{36}_[0-9a-f-]{36}$/
-
-/** A journal event a learning step can cite, as the store keeps it to check a learning material without reading the journal again. */
-type CitableEvent =
-  | { type: 'stop'; sourceHash: string; path: string; line: number }
-  | { type: 'output'; channel: 'stdout' | 'stderr' }
-  | { type: 'result' }
 
 /**
  * One test history as Saved studies, the `codebook://node-history` resources and Save read it: one projection per history, so the three agree (plan version 7, Design 13).
@@ -107,7 +135,6 @@ export type NodeTestHistorySummary = {
   testResult: NodeTestResultKind
   stopCount: number
   explainedStopCount: number
-  hasResult: boolean
   learningCoverage: NodeLearningCoverage
   learningMissing: NodeLearningExplanationPart[]
   captureMissing: NodeLearningCapturePart[]
@@ -117,7 +144,7 @@ export type NodeTestHistorySummary = {
 
 /** What {@link NodeTestHistoryStore.summarize} remembers of one history, so a refresh that finds its files unchanged reads none of them. */
 type SummaryMemo = {
-  /** The size, time and identity of the journal and seal files, and whether this window writes the history: when any changes, the history is read again. */
+  /** The size, time and identity of the header, journal and seal files, and whether this window writes the history: when any changes, the history is read again. */
   historySignal: string
   /** The same of the learning material file: when only it changes, only the material is read again. */
   materialSignal: string
@@ -125,6 +152,20 @@ type SummaryMemo = {
   /** Present for a verified history: what a material may cite, and what it is asked to explain. */
   citable?: Map<number, CitableEvent>
   needs?: NodeLearningNeeds
+  /** Present for a history this window still writes: what the next refresh continues from. */
+  scan?: RecordingScan
+  /** Set when a transient file error (a busy file, too many open files) shaped the summary: the summary is shown but not remembered, so the next refresh reads again. */
+  transient?: boolean
+}
+
+/** A history as a summary counts it: its header, entries (a recording keeps only its stops and result), status and reason, with its citable events and, for a recording, the scan to continue from. */
+type LoadedHistory = {
+  history: Pick<
+    NodeTestHistoryIndex,
+    'header' | 'entries' | 'status' | 'reason'
+  >
+  citable: Map<number, CitableEvent>
+  scan?: RecordingScan
 }
 
 /**
@@ -138,19 +179,7 @@ function citableEvents(
 ): Map<number, CitableEvent> {
   const events = new Map<number, CitableEvent>()
   for (const entry of history.entries)
-    events.set(
-      entry.sequence,
-      entry.type === 'stop'
-        ? {
-            type: 'stop',
-            sourceHash: entry.source.hash,
-            path: entry.source.path,
-            line: entry.source.line,
-          }
-        : entry.type === 'output'
-          ? { type: 'output', channel: entry.channel }
-          : { type: 'result' },
-    )
+    events.set(entry.sequence, citableEventOf(entry))
   return events
 }
 
@@ -169,15 +198,37 @@ function describeCitedEvent(event: CitableEvent | undefined): string {
 }
 
 /**
+ * Words the start of a step refusal on a read path (the history resource, a summary), where nobody called a tool.
+ * @param stepId - The step's id.
+ * @returns The start of the sentence.
+ * @example neutralStepLead('s1') // => 'Saved learning step s1'
+ */
+function neutralStepLead(stepId: string): string {
+  return `Saved learning step ${stepId}`
+}
+
+/**
+ * Words the start of a step refusal on the save path, where the agent called `codebook_explain_node_history` and reads which tool refused.
+ * @param stepId - The step's id.
+ * @returns The start of the sentence.
+ * @example saveStepLead('s1') // => 'codebook_explain_node_history refused step s1'
+ */
+function saveStepLead(stepId: string): string {
+  return `codebook_explain_node_history refused step ${stepId}`
+}
+
+/**
  * Refuses a learning material whose step cites an event the sealed history does not hold as cited, naming the step, the sequence, what that sequence is and what the step claims (X19), so the agent can correct the one step; called by {@link NodeTestHistoryStore} for every material it saves or reads.
  * @param content - The material's content.
  * @param citable - The history's citable events ({@link citableEvents}).
+ * @param lead - Words the start of the refusal for a step id: {@link saveStepLead} on the save path, where the agent called the tool, {@link neutralStepLead} on read paths.
  * @throws An `INVALID_REFERENCE` {@link StudyError} for the first step whose reference does not match.
- * @example assertLearningCitations(content, citableEvents(history)) // returns for a material whose every reference matches
+ * @example assertLearningCitations(content, citableEvents(history), neutralStepLead) // returns for a material whose every reference matches
  */
 function assertLearningCitations(
   content: NodeTestLearningMaterialContent,
   citable: ReadonlyMap<number, CitableEvent>,
+  lead: (stepId: string) => string = neutralStepLead,
 ): void {
   for (const step of content.steps) {
     const reference = step.reference
@@ -191,7 +242,7 @@ function assertLearningCitations(
         : ''
     throw new StudyError(
       'INVALID_REFERENCE',
-      `codebook_explain_node_history refused step ${step.id}: sequence ${reference.sequence} is ${describeCitedEvent(event)} in the sealed history, but the step claims ${describeCitationClaim(reference)}${expectedHash}. Read the history's events again and cite each event by its sequence, type and source hash.`,
+      `${lead(step.id)}: sequence ${reference.sequence} is ${describeCitedEvent(event)} in the sealed history, but the step claims ${describeCitationClaim(reference)}${expectedHash}. Read the history's events again and cite each event by its sequence, type and source hash.`,
     )
   }
 }
@@ -254,7 +305,6 @@ function emptySummary(header: NodeTestHistoryHeader): NodeTestHistorySummary {
     testResult: 'none',
     stopCount: 0,
     explainedStopCount: 0,
-    hasResult: false,
     learningCoverage: 'none',
     learningMissing: [],
     captureMissing: [],
@@ -273,6 +323,34 @@ export class NodeTestHistoryStore {
   >()
   /** The last summary of each listed history with the file signals it was made from ({@link summarize}). */
   private readonly summaries = new Map<string, SummaryMemo>()
+  /** The summary read in flight for each history: a recording's scan is continued by one read at a time (F216). */
+  private readonly summaryReads = new Map<
+    string,
+    Promise<NodeTestHistorySummary | undefined>
+  >()
+  /** How a failure's cause is worded for a reason ({@link describeCause}). */
+  private causeDescriber: (error: unknown) => string = (error) =>
+    sanitizeCause(error, causeRootsFor([this.learningDirectory]))
+  /** The study ids whose memo still holds its citable events ({@link rememberSummary}). */
+  private readonly citableOrder = new Set<string>()
+
+  /**
+   * Words a failure's cause for a summary's `reason` without the private paths it can carry; the Study workspace sets it to the service's roots when it attaches the service, until then it hides the storage folder and the home directory.
+   * @example store.describeCause(new Error("ENOENT: open '/Users/ada/…/events.jsonl'")) // => "ENOENT: open '<storage>/…/events.jsonl'"
+   */
+  get describeCause(): (error: unknown) => string {
+    return this.causeDescriber
+  }
+
+  /**
+   * Replaces how reasons are worded, and forgets the summaries the earlier wording made: the Study workspace lists the histories before it attaches the service, and a memo would otherwise keep those reasons, which do not hide the repository, until a file changed (F267).
+   * @example store.describeCause = (error) => sanitizeCause(error, service.causeRoots)
+   */
+  set describeCause(describe: (error: unknown) => string) {
+    this.causeDescriber = describe
+    this.summaries.clear()
+    this.citableOrder.clear()
+  }
 
   constructor(
     /** The learning directory the histories live in; a private storage root that no cause shown to the learner or the agent names ({@link sanitizeCause}). */
@@ -303,6 +381,34 @@ export class NodeTestHistoryStore {
   }
 
   /**
+   * Says whether the saved study limit has room for one more test history, and how many places the saved studies and the listed histories take; called by {@link reserve} under the storage lock and by {@link StudyService.status} to read the node-test profile's readiness.
+   * @returns `admits` when the listed histories leave a place, `taken` as the saved studies plus the listed histories (the histories counted up to the places they may take), and the `limit` in force.
+   * @throws When the limit setting is invalid, the library cannot be counted or the history directory cannot be read.
+   * @example await store.admission() // => { admits: false, taken: 77, limit: 64 }
+   */
+  async admission(): Promise<{
+    admits: boolean
+    taken: number
+    limit: number
+  }> {
+    const limit = this.capacity()
+    const savedStudies = await this.savedArtifactCount()
+    // The histories may take the places the saved studies leave of the limit.
+    const places = limit - savedStudies
+    const histories = await this.listedHistoryCount(places).catch(
+      (error: unknown) => {
+        if (systemErrorCode(error) === 'ENOENT') return 0
+        throw error
+      },
+    )
+    return {
+      admits: histories < places,
+      taken: savedStudies + histories,
+      limit,
+    }
+  }
+
+  /**
    * Admits one history under the saved study limit and makes its folder with its first files; the body of {@link start}, run while the storage lock is held.
    * @param header - The validated header of this workspace.
    * @returns The writer of the reserved history.
@@ -318,11 +424,9 @@ export class NodeTestHistoryStore {
     })
     await chmod(this.directory, PRIVATE_DIRECTORY_MODE)
     // The histories may take the places the saved studies leave of the limit.
-    const places = this.capacity() - (await this.savedArtifactCount())
-    if ((await this.listedHistoryCount(places)) >= places)
-      throw new Error(
-        'Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
-      )
+    const admission = await this.admission()
+    if (!admission.admits)
+      throw new SavedStudyStorageFullError(admission.taken, admission.limit)
     // The header's size is checked before the history's folder is made, so a header above its limit leaves nothing behind.
     const headerBytes = Buffer.from(JSON.stringify(header))
     if (headerBytes.byteLength > HEADER_LIMIT_BYTES)
@@ -406,6 +510,19 @@ export class NodeTestHistoryStore {
   }
 
   /**
+   * Removes the folder of a history sealed with no entry (one written before D6) when it is met by the list or the count, so that it holds no place of the saved study limit that the learner can neither see nor delete; the one rule behind {@link list} and {@link listedHistoryCount} for such a history.
+   * @param studyId - The name of an entry of the history directory.
+   * @returns `true` for a sealed empty history ({@link isSealedEmptyHistory}), also when its folder could not be removed (it is then neither listed nor counted); `false` for any other.
+   * @example if (await this.dropSealedEmpty(name)) return undefined
+   */
+  private async dropSealedEmpty(studyId: string): Promise<boolean> {
+    const folder = this.path(studyId)
+    if (!(await isSealedEmptyHistory(folder))) return false
+    await rm(folder, { recursive: true, force: true }).catch(() => undefined)
+    return true
+  }
+
+  /**
    * Counts the histories the list shows, so that nothing takes a place of the saved study limit that no list shows; called by {@link reserve} for every start, under the storage lock.
    * A history counts when {@link listedHeader} reads its header: a folder without one (made by hand, or left by a failed start of an earlier build), one whose header cannot be read, and any entry not named like a study id count nothing. A history that is being started is never met without its header here: its start holds the storage lock until the header is written.
    * It costs one read and one parse of a header for each folder named like a study id, one after another, so one header is in memory at a time; a header is some kilobytes as a rule and {@link HEADER_LIMIT_BYTES} at most. The count stops at `places`, because a start only needs to know whether they are taken.
@@ -418,6 +535,9 @@ export class NodeTestHistoryStore {
     let listed = 0
     for (const name of await readdir(this.directory)) {
       if (listed >= places) break
+      // A history sealed with no entry (written before D6) is removed when met and counts nothing, as the list shows nothing of it (D28, F213); so is one whose header a removal at its seal took before it failed (F266).
+      if (HISTORY_IDENTITY.test(name) && (await this.dropSealedEmpty(name)))
+        continue
       if (await this.listedHeader(name)) listed += 1
     }
     return listed
@@ -461,9 +581,10 @@ export class NodeTestHistoryStore {
       throw error
     })
     const studyIds = names.filter((name) => HISTORY_IDENTITY.test(name))
-    // A memo of a history whose folder is gone would keep a summary nobody lists.
-    for (const studyId of this.summaries.keys())
-      if (!studyIds.includes(studyId)) this.summaries.delete(studyId)
+    // A memo of a history whose folder is gone would keep a summary nobody lists; a set lookup keeps the prune linear (F77).
+    const present = new Set(studyIds)
+    for (const studyId of [...this.summaries.keys()])
+      if (!present.has(studyId)) this.forgetSummary(studyId)
     const summaries = await mapWithConcurrencyLimit(
       studyIds,
       NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
@@ -487,35 +608,119 @@ export class NodeTestHistoryStore {
   }
 
   /**
-   * Summarizes one history for Saved studies, the history resource and Save, reading its files only when they changed since its last summary; called by {@link list} for each history and by {@link StudyService} and {@link NodeLearningSave} for one.
+   * Says whether this workspace's history directory holds a folder for a study id, listed or not, without reading its files; read by {@link StudyService.playback}, so a test replay of an earlier session is refused before this window has listed it (F9).
+   * Synchronous on purpose: {@link StudyService.playback} answers synchronously, and this one existence check of the editor's local storage, made once per agent playback command, takes about a microsecond (F246).
+   * @param studyId - A study id an agent sent.
+   * @returns `true` for a study id named like a history whose folder exists.
+   * @example store.holdsHistoryFolder(earlierSessionStudyId) // => true before any list of this window
+   */
+  holdsHistoryFolder(studyId: string): boolean {
+    return HISTORY_IDENTITY.test(studyId) && existsSync(this.path(studyId))
+  }
+
+  /**
+   * Summarizes one history for Saved studies, the history resource and Save, reading its files only when they changed since its last summary; called by {@link list} for each history, by the `codebook://node-history` resource ({@link readResource}) for one, and by {@link NodeLearningSave} for one.
    * A sealed journal is immutable, so an unchanged journal and seal keep their summary; a changed learning material alone is read and checked against the citable events the summary keeps, without reading the journal again.
    * @param studyId - The history's study id.
    * @returns The history's summary, or `undefined` for a folder that holds no history of this workspace.
    * @example await store.summarize(studyId) // => { status: 'complete', learningCoverage: 'complete', learningMissing: [], … }
    */
-  async summarize(
+  summarize(studyId: string): Promise<NodeTestHistorySummary | undefined> {
+    // One read per history at a time, as the material writes are: two reads of a recording would continue its shared scan from one offset and apply the same entries twice (F216). A later call finds the memo the earlier one made.
+    const previous = this.summaryReads.get(studyId) ?? Promise.resolve()
+    const operation = previous
+      .catch(() => undefined)
+      .then(() => this.summarizeOnce(studyId))
+    this.summaryReads.set(studyId, operation)
+    return operation.finally(() => {
+      if (this.summaryReads.get(studyId) === operation)
+        this.summaryReads.delete(studyId)
+    })
+  }
+
+  /**
+   * Makes or reuses the summary of one history; the body of {@link summarize}, run for one history at a time.
+   * @param studyId - The history's study id.
+   * @returns The history's summary, or `undefined` for a folder that holds no history of this workspace.
+   * @example await this.summarizeOnce(studyId)
+   */
+  private async summarizeOnce(
     studyId: string,
   ): Promise<NodeTestHistorySummary | undefined> {
-    const [historySignal, materialSignal] = await this.fileSignals(studyId)
+    const signals = await this.fileSignals(studyId)
+    const { history: historySignal, material: materialSignal } = signals
     const memo = this.summaries.get(studyId)
     if (memo?.historySignal === historySignal) {
       if (memo.materialSignal === materialSignal) return memo.summary
       // Only the material changed: its citations are checked against the kept events.
       if (memo.citable && memo.needs) {
-        const summary = await this.summaryWithMaterial(
+        const counted = await this.summaryWithMaterial(
           studyId,
           memo.summary,
           memo.citable,
           memo.needs,
         )
-        this.summaries.set(studyId, { ...memo, materialSignal, summary })
-        return summary
+        // A material that could not be read for a transient reason is shown as none but not remembered (F63).
+        if (!counted.transient)
+          this.rememberSummary(studyId, {
+            ...memo,
+            materialSignal,
+            summary: counted.summary,
+          })
+        return counted.summary
       }
     }
-    const next = await this.readSummary(studyId, historySignal, materialSignal)
-    if (next) this.summaries.set(studyId, next)
-    else this.summaries.delete(studyId)
-    return next?.summary
+    const next = await this.readSummary(
+      studyId,
+      signals,
+      memo?.scan,
+      memo?.summary,
+    )
+    if (!next) {
+      this.forgetSummary(studyId)
+      return undefined
+    }
+    // A read that failed for a transient reason (EBUSY, EMFILE, EIO …) is not remembered until a file changes: the next refresh and Save's Retry read again (F63).
+    if (!next.transient) this.rememberSummary(studyId, next)
+    return next.summary
+  }
+
+  /**
+   * Keeps a history's memo and bounds the memory of the citable maps: only the {@link NODE_HISTORY_CITABLE_MEMO_LIMIT} newest histories (by creation time, then study id) keep theirs, so a changed material of an older history reads its journal again instead of every listed history holding a map of all its events (F77).
+   * The history that loses its map is always the same one for the same set, so a list that reads one history again never makes another lose its map.
+   * @param studyId - The history's study id.
+   * @param memo - Its new memo.
+   * @example this.rememberSummary(studyId, memo)
+   */
+  private rememberSummary(studyId: string, memo: SummaryMemo): void {
+    this.summaries.set(studyId, memo)
+    if (memo.citable) this.citableOrder.add(studyId)
+    else this.citableOrder.delete(studyId)
+    while (this.citableOrder.size > NODE_HISTORY_CITABLE_MEMO_LIMIT) {
+      const creation = (id: string): string =>
+        `${this.summaries.get(id)?.summary.createdAt ?? ''}|${id}`
+      const oldest = [...this.citableOrder].reduce((left, right) =>
+        creation(left) <= creation(right) ? left : right,
+      )
+      this.citableOrder.delete(oldest)
+      const older = this.summaries.get(oldest)
+      if (older)
+        this.summaries.set(oldest, {
+          ...older,
+          citable: undefined,
+          needs: undefined,
+        })
+    }
+  }
+
+  /**
+   * Drops a history's memo with its place in the citable order; called when its folder is gone or its header no longer reads.
+   * @param studyId - The history's study id.
+   * @example this.forgetSummary(studyId)
+   */
+  private forgetSummary(studyId: string): void {
+    this.summaries.delete(studyId)
+    this.citableOrder.delete(studyId)
   }
 
   /**
@@ -524,53 +729,57 @@ export class NodeTestHistoryStore {
    * @returns The history signal (journal, seal, whether this window writes it) and the material signal.
    * @example await this.fileSignals(studyId) // => ['812:1792590603000:44|none|active', '1203:1792590700000:45']
    */
-  private async fileSignals(studyId: string): Promise<[string, string]> {
+  private async fileSignals(
+    studyId: string,
+  ): Promise<{ history: string; material: string; header: string }> {
     const directory = this.path(studyId)
     const signal = (file: string): Promise<string> =>
       lstat(join(directory, file)).then(
         (entry) => `${entry.size}:${entry.mtimeMs}:${entry.ino}`,
-        (error: unknown) => `missing:${systemErrorCode(error) ?? 'unknown'}`,
+        (error: unknown) => `missing:${systemErrorCode(error) || 'unknown'}`,
       )
-    const [journal, seal, material] = await Promise.all([
+    const [header, journal, seal, material] = await Promise.all([
+      signal(HEADER_FILE),
       signal(JOURNAL_FILE),
       signal(SEAL_FILE),
       signal(LEARNING_MATERIAL_FILE),
     ])
-    return [
-      `${journal}|${seal}|${this.active.has(studyId) ? 'active' : 'closed'}`,
+    return {
+      // The header is part of the history signal: a corrupt or removed header makes a history that cannot open, and the memo must notice (F102).
+      history: `${header}|${journal}|${seal}|${this.active.has(studyId) ? 'active' : 'closed'}`,
       material,
-    ]
+      header,
+    }
   }
 
   /**
    * Reads a history and its learning material into a new memo; the slow path of {@link summarize}.
    * @param studyId - The history's study id.
-   * @param historySignal - The history signal the read belongs to.
-   * @param materialSignal - The material signal the read belongs to.
-   * @returns The memo, an unavailable summary for a journal that does not verify, or `undefined` without a header of this workspace.
-   * @example await this.readSummary(studyId, historySignal, materialSignal)
+   * @param signals - The file signals the read belongs to; the history and material signals go into the memo.
+   * @param previousScan - The scan of the last refresh of a history this window still writes, which this read continues.
+   * @returns The memo, an unavailable summary for a journal that does not verify, or `undefined` without a header of this workspace or for a history sealed with no entry (D6). A memo marked `transient` is shown but not remembered.
+   * @example await this.readSummary(studyId, signals, undefined, undefined)
    */
   private async readSummary(
     studyId: string,
-    historySignal: string,
-    materialSignal: string,
+    signals: { history: string; material: string; header: string },
+    previousScan: RecordingScan | undefined,
+    previousSummary: NodeTestHistorySummary | undefined,
   ): Promise<SummaryMemo | undefined> {
-    let history: NodeTestHistoryIndex
+    const { history: historySignal, material: materialSignal } = signals
+    let loaded: LoadedHistory | undefined
     try {
-      history = await this.read(studyId)
+      loaded = await this.loadHistory(studyId, signals.header, previousScan)
     } catch (error) {
-      const header = await this.listedHeader(studyId)
-      if (!header) return undefined
-      const summary: NodeTestHistorySummary = {
-        ...emptySummary(header),
-        status: 'partial',
-        reason: `History integrity check failed: ${String(error).slice(0, REASON_LIMIT_CHARS)}`,
-        verification: 'unavailable',
-      }
-      return { historySignal, materialSignal, summary }
+      return this.unavailableMemo(studyId, signals, error, previousSummary)
     }
-    const citable = citableEvents(history)
-    const material = await this.readCitedLearningMaterial(studyId, citable)
+    // A history sealed with no entry holds nothing to replay: it is listed nowhere (D6, F85).
+    if (!loaded) return undefined
+    const { history, citable, scan } = loaded
+    const { material, transient } = await this.readCitedLearningMaterial(
+      studyId,
+      citable,
+    )
     const missing = listMissingNodeLearning(history, material?.content)
     const result = history.entries.find((entry) => entry.type === 'result')
     const stops = history.entries.filter((entry) => entry.type === 'stop')
@@ -589,13 +798,135 @@ export class NodeTestHistoryStore {
       explainedStopCount:
         stops.length -
         missing.explanations.filter((part) => part.kind === 'stop').length,
-      hasResult: result !== undefined,
       learningCoverage: missing.coverage,
       learningMissing: missing.explanations,
       captureMissing: missing.capture,
       materialRevision: material?.revision ?? 0,
     }
-    return { historySignal, materialSignal, summary, citable, needs }
+    return {
+      historySignal,
+      materialSignal,
+      summary,
+      citable,
+      needs,
+      ...(scan ? { scan } : {}),
+      ...(transient ? { transient: true } : {}),
+    }
+  }
+
+  /**
+   * Loads the history a summary counts: a history this window still writes continues from the bytes its last refresh consumed, any other is verified whole; the first step of {@link readSummary}.
+   * @param studyId - The history's study id.
+   * @param headerSignal - The header file's signal as read now.
+   * @param previousScan - The scan of the last refresh, if any.
+   * @returns The history, its citable events and, for a recording, its scan; `undefined` for a history sealed with no entry (D6, F85).
+   * @throws What {@link read} or the recording scan throws for a history that does not verify.
+   * @example const { history, citable } = (await this.loadHistory(studyId, signals.header, undefined))!
+   */
+  private async loadHistory(
+    studyId: string,
+    headerSignal: string,
+    previousScan: RecordingScan | undefined,
+  ): Promise<LoadedHistory | undefined> {
+    if (this.active.has(studyId)) {
+      // The bytes appended since the last refresh are all it reads (F64).
+      const scan = await this.scanRecording(studyId, headerSignal, previousScan)
+      return {
+        history: {
+          header: scan.header,
+          entries: scan.kept,
+          status: 'recording',
+          ...(scan.brokenReason
+            ? { reason: cutReason(scan.brokenReason) }
+            : {}),
+        },
+        citable: scan.citable,
+        scan,
+      }
+    }
+    const verified = await this.read(studyId)
+    if (verified.seal && verified.entries.length === 0) {
+      await this.dropSealedEmpty(studyId)
+      return undefined
+    }
+    return { history: verified, citable: citableEvents(verified) }
+  }
+
+  /**
+   * Makes the memo of a history that did not verify: an unavailable summary with its header's identity and a reason without private paths (F15), not remembered when a transient file error caused it (F63).
+   * @param studyId - The history's study id.
+   * @param signals - The file signals the read belongs to.
+   * @param error - Why the history did not verify.
+   * @param previousSummary - The history's earlier summary, if it had one.
+   * @returns The memo; the earlier summary as a transient memo when a transient error also stops the header read; `undefined` when no header of this workspace can be read otherwise.
+   * @example return this.unavailableMemo(studyId, signals, error, previousSummary)
+   */
+  private async unavailableMemo(
+    studyId: string,
+    signals: { history: string; material: string },
+    error: unknown,
+    previousSummary: NodeTestHistorySummary | undefined,
+  ): Promise<SummaryMemo | undefined> {
+    const header = await this.listedHeader(studyId)
+    if (!header) {
+      // A header that cannot be read for a transient reason does not make the history vanish: its earlier summary stays, not remembered, and the next refresh reads again (F217).
+      return previousSummary && isTransientFileError(error)
+        ? {
+            historySignal: signals.history,
+            materialSignal: signals.material,
+            summary: previousSummary,
+            transient: true,
+          }
+        : undefined
+    }
+    const summary: NodeTestHistorySummary = {
+      ...emptySummary(header),
+      status: 'partial',
+      reason: cutReason(
+        `History integrity check failed: ${this.describeCause(error)}`,
+      ),
+      verification: 'unavailable',
+    }
+    // A transient file error is not the history's state: it is shown now and read again at the next refresh (F63).
+    return {
+      historySignal: signals.history,
+      materialSignal: signals.material,
+      summary,
+      ...(isTransientFileError(error) ? { transient: true } : {}),
+    }
+  }
+
+  /**
+   * Continues the scan of a history this window still writes up to its journal's current end; the recording branch of {@link readSummary}.
+   * @param studyId - The history's study id.
+   * @param headerSignal - The header file's signal as read now; the header is read again only when it changed.
+   * @param previous - The scan of the last refresh, if any.
+   * @returns The scan, with only the appended bytes read.
+   * @throws When the history's folder, header or journal is not what a history of this workspace holds.
+   * @example scan = await this.scanRecording(studyId, signals.header, memo?.scan)
+   */
+  private async scanRecording(
+    studyId: string,
+    headerSignal: string,
+    previous: RecordingScan | undefined,
+  ): Promise<RecordingScan> {
+    const directory = this.path(studyId)
+    const directoryStat = await lstat(directory)
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink())
+      throw new Error(
+        'Node history directory is not a private regular directory.',
+      )
+    const header =
+      previous?.headerSignal === headerSignal
+        ? previous.header
+        : await this.readHeader(studyId)
+    return advanceRecordingScan(
+      previous,
+      header,
+      headerSignal,
+      join(directory, JOURNAL_FILE),
+      (error) => this.describeCause(error),
+    )
   }
 
   /**
@@ -604,7 +935,7 @@ export class NodeTestHistoryStore {
    * @param summary - The history's last summary, made from its verified journal.
    * @param citable - The journal's citable events, kept with that summary.
    * @param needs - The stops and the result the journal asks the material to explain.
-   * @returns The summary with the new material's coverage; a material that does not parse or cites what the journal does not hold counts as none.
+   * @returns The summary with the new material's coverage (a material that does not parse or cites what the journal does not hold counts as none), and whether a transient file error made the material read as none.
    * @example await this.summaryWithMaterial(studyId, memo.summary, memo.citable, memo.needs)
    */
   private async summaryWithMaterial(
@@ -612,20 +943,26 @@ export class NodeTestHistoryStore {
     summary: NodeTestHistorySummary,
     citable: ReadonlyMap<number, CitableEvent>,
     needs: NodeLearningNeeds,
-  ): Promise<NodeTestHistorySummary> {
-    const material = await this.readCitedLearningMaterial(studyId, citable)
+  ): Promise<{ summary: NodeTestHistorySummary; transient: boolean }> {
+    const { material, transient } = await this.readCitedLearningMaterial(
+      studyId,
+      citable,
+    )
     const { missing, coverage } = listMissingNodeExplanations(
       needs,
       material?.content,
     )
     return {
-      ...summary,
-      explainedStopCount:
-        summary.stopCount -
-        missing.filter((part) => part.kind === 'stop').length,
-      learningCoverage: coverage,
-      learningMissing: missing,
-      materialRevision: material?.revision ?? 0,
+      summary: {
+        ...summary,
+        explainedStopCount:
+          summary.stopCount -
+          missing.filter((part) => part.kind === 'stop').length,
+        learningCoverage: coverage,
+        learningMissing: missing,
+        materialRevision: material?.revision ?? 0,
+      },
+      transient,
     }
   }
 
@@ -633,19 +970,46 @@ export class NodeTestHistoryStore {
    * Reads a history's learning material for its summary and keeps it only when every step cites an event the journal holds; called by {@link readSummary} and {@link summaryWithMaterial}.
    * @param studyId - The history's study id.
    * @param citable - The journal's citable events.
-   * @returns The material, or `undefined` for none, one that does not parse, or one that cites what the journal does not hold, which explains nothing.
-   * @example await this.readCitedLearningMaterial(studyId, citableEvents(history)) // => the saved material, or undefined
+   * @returns The material, or none for no file, one that does not parse, or one that cites what the journal does not hold, which explains nothing; `transient` is set when a transient file error (EBUSY, EMFILE, EIO …) stopped the read, so the caller does not remember "no material".
+   * @example await this.readCitedLearningMaterial(studyId, citableEvents(history)) // => { material: the saved material, transient: false }
    */
-  private readCitedLearningMaterial(
+  private async readCitedLearningMaterial(
     studyId: string,
     citable: ReadonlyMap<number, CitableEvent>,
-  ): Promise<NodeTestLearningMaterial | undefined> {
-    return this.readLearningMaterialFile(studyId)
-      .then((saved) => {
-        if (saved) assertLearningCitations(saved.content, citable)
-        return saved
-      })
-      .catch(() => undefined)
+  ): Promise<{
+    material: NodeTestLearningMaterial | undefined
+    transient: boolean
+  }> {
+    try {
+      const saved = await this.readLearningMaterialFile(studyId)
+      if (saved) assertLearningCitations(saved.content, citable)
+      return { material: saved, transient: false }
+    } catch (error) {
+      return { material: undefined, transient: isTransientFileError(error) }
+    }
+  }
+
+  /**
+   * Reads and checks the header of a history of this workspace; called by {@link read} and by the recording scan of {@link readSummary}.
+   * @param studyId - The history's study id.
+   * @returns The header.
+   * @throws When the header is no bounded regular file, does not parse, or names another workspace or run.
+   * @example const header = await this.readHeader(studyId)
+   */
+  private async readHeader(studyId: string): Promise<NodeTestHistoryHeader> {
+    const header = nodeTestHistoryHeaderSchema.parse(
+      JSON.parse(
+        (
+          await this.readPrivateFile(
+            join(this.path(studyId), HEADER_FILE),
+            HEADER_LIMIT_BYTES,
+          )
+        ).toString('utf8'),
+      ),
+    )
+    if (header.studyId !== studyId || header.workspaceKey !== this.workspaceKey)
+      throw new Error('Node history belongs to another workspace or run.')
+    return header
   }
 
   /** Verifies a sealed journal or returns only its valid crash-recovery prefix. @example await store.read(studyId) */
@@ -656,25 +1020,14 @@ export class NodeTestHistoryStore {
       throw new Error(
         'Node history directory is not a private regular directory.',
       )
-    const header = nodeTestHistoryHeaderSchema.parse(
-      JSON.parse(
-        (
-          await this.readPrivateFile(
-            join(directory, HEADER_FILE),
-            HEADER_LIMIT_BYTES,
-          )
-        ).toString('utf8'),
-      ),
-    )
-    if (header.studyId !== studyId || header.workspaceKey !== this.workspaceKey)
-      throw new Error('Node history belongs to another workspace or run.')
+    const header = await this.readHeader(studyId)
     const journal = await this.readPrivateFile(
       join(directory, JOURNAL_FILE),
       NODE_TEST_HISTORY_LIMIT_BYTES,
     )
     const sealBytes = await this.readPrivateFile(
       join(directory, SEAL_FILE),
-      16_384,
+      NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
     ).catch((error) => {
       if (error.code === 'ENOENT') return undefined
       throw error
@@ -692,36 +1045,19 @@ export class NodeTestHistoryStore {
     const lines = journal.toString('utf8').split('\n'),
       incomplete = lines.pop()
     const entries: NodeTestHistoryEntry[] = []
-    let lastElapsed = 0,
-      stopCount = 0,
-      hasResult = false,
-      passingResult = false,
-      reason: string | undefined
+    const progress = newJournalProgress()
+    let reason: string | undefined
     for (const line of lines) {
       try {
         const entry = nodeTestHistoryEntrySchema.parse(JSON.parse(line))
-        if (
-          entry.sequence !== entries.length + 1 ||
-          entry.elapsedMs < lastElapsed ||
-          hasResult
-        )
-          throw new Error('Node history order or receipt time changed.')
-        if (entry.type === 'stop') {
-          if (entry.index !== stopCount)
-            throw new Error(
-              'Node history source stops are missing or reordered.',
-            )
-          stopCount++
-        }
-        if (entry.type === 'result') {
-          hasResult = true
-          passingResult = entry.exitCode === 0 && entry.signal === null
-        }
-        lastElapsed = entry.elapsedMs
+        acceptJournalEntry(progress, entry)
         entries.push(entry)
       } catch (error) {
         if (seal) throw error
-        reason = `Interrupted Node history after its verified prefix: ${String(error)}`
+        // The failure can quote the line, which holds test output: its words lose private paths, and the whole reason keeps the index's bound (F243).
+        reason = cutReason(
+          `Interrupted Node history after its verified prefix: ${this.describeCause(error)}`,
+        )
         break
       }
     }
@@ -730,9 +1066,9 @@ export class NodeTestHistoryStore {
       (incomplete ||
         seal.entryCount !== entries.length ||
         (seal.status === 'complete' &&
-          (!hasResult ||
-            !passingResult ||
-            stopCount !==
+          (!progress.hasResult ||
+            !progress.passingResult ||
+            progress.stopCount !==
               1 + (header.configuration.additionalStops?.length ?? 0))))
     )
       throw new Error(
@@ -914,11 +1250,12 @@ export class NodeTestHistoryStore {
     const current = await this.readLearningMaterial(studyId)
     const currentRevision = current?.revision ?? 0
     if (expectedRevision !== currentRevision)
-      throw new Error(
-        `Node learning material revision changed; expected ${expectedRevision}, current ${currentRevision}.`,
+      throw new NodeLearningRevisionChangedError(
+        expectedRevision,
+        currentRevision,
       )
     const parsedContent = nodeTestLearningMaterialContentSchema.parse(content)
-    assertLearningCitations(parsedContent, citableEvents(history))
+    assertLearningCitations(parsedContent, citableEvents(history), saveStepLead)
     const material = nodeTestLearningMaterialSchema.parse({
       version: NODE_TEST_LEARNING_MATERIAL_VERSION,
       studyId,
@@ -1134,6 +1471,21 @@ export class NodeTestHistoryWriter {
           'Node history journal has bytes its writer never confirmed; it remains an interrupted prefix.',
         )
       }
+      // A history that ends with no entry holds nothing to replay: its folder is removed when it seals, so it is listed nowhere, takes no place of the saved study limit and agrees with a run that reads `replayAvailable: false` (D6, F85). A folder that cannot be removed is sealed as any other.
+      if (
+        this.entries === 0 &&
+        // Learning material or understanding marks saved before the first entry keep the folder, sealed as any other (F274).
+        !(await holdsLearnerFiles(this.directory)) &&
+        (await rm(this.directory, { recursive: true, force: true }).then(
+          () => true,
+          () => false,
+        ))
+      ) {
+        this.sealedHash = sha256(journal)
+        this.closed = true
+        this.onClosed()
+        return this.sealedHash
+      }
       const seal = nodeTestHistorySealSchema.parse({
         version: 1,
         studyId: this.header.studyId,
@@ -1142,9 +1494,13 @@ export class NodeTestHistoryWriter {
         journalHash: sha256(journal),
         status,
         endedAt: new Date().toISOString(),
-        reason: reason?.slice(0, REASON_LIMIT_CHARS),
+        reason: reason === undefined ? undefined : cutReason(reason),
       })
-      await atomicPrivateWrite(join(this.directory, SEAL_FILE), seal, 16_384)
+      await atomicPrivateWrite(
+        join(this.directory, SEAL_FILE),
+        seal,
+        NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
+      )
       this.sealedHash = seal.journalHash
       this.closed = true
       this.onClosed()

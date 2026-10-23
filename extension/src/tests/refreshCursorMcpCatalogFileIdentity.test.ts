@@ -26,6 +26,7 @@ import type {
 import type * as CatalogModule from '../utils/refreshCursorMcpCatalog'
 import { systemErrorCode } from '../utils/systemErrorCode'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
@@ -459,7 +460,7 @@ test('a config another window publishes first is refreshed as that window’s fi
 test(
   'a named pipe at the Cursor MCP config path is refused at once as no regular file, instead of holding the refresh and its storage lock',
   {
-    timeout: 2_000,
+    timeout: 30_000,
     skip:
       process.platform === 'win32'
         ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
@@ -486,11 +487,14 @@ test(
     const catalog = await loadCatalog({})
 
     // Act
-    const refresh = await outcomeOf(
-      catalog.refreshCursorMcpCatalog(
-        join(cursorDirectory, 'storage'),
-        cursorDirectory,
+    const refresh = await answeredAtOnce(
+      outcomeOf(
+        catalog.refreshCursorMcpCatalog(
+          join(cursorDirectory, 'storage'),
+          cursorDirectory,
+        ),
       ),
+      'the refresh',
     )
 
     // Assert

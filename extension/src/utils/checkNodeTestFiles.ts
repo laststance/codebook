@@ -85,16 +85,26 @@ export async function checkNodeTestFiles(
     source: stop.source,
     inspections: stop.inspections,
   }))
+  // One concurrent read per distinct file: a file cited twice (two stops in one file, or a stop in the test file) is read and hashed once.
+  const hashes = new Map<string, Promise<string>>()
+  for (const file of [...stops.map((stop) => stop.file), testFile])
+    if (!hashes.has(file))
+      hashes.set(
+        file,
+        readFile(file).then((content) => sha256(content)),
+      )
+  // A refusal on an earlier stop leaves later reads unawaited; their failures must not surface as unhandled rejections.
+  for (const pending of hashes.values()) pending.catch(() => undefined)
   // Each stop's source first: a changed source is fixed in the article, a changed test in the start alone.
   for (const [index, stop] of stops.entries()) {
-    const current = sha256(await readFile(stop.file))
+    const current = await hashes.get(stop.file)
     if (current !== stop.source.hash)
       throw new StudyError(
         'SOURCE_CHANGED',
         `node-test preparation refused: declared stop ${index + 1} cites ${stop.source.path} with SHA-256 ${stop.source.hash}, but the file now has ${current}. Read it with codebook_source, publish the article with the current source, then start with a new key.`,
       )
   }
-  const testHash = sha256(await readFile(testFile))
+  const testHash = await hashes.get(testFile)
   if (testHash !== configuration.testHash)
     throw new StudyError(
       'INVALID_CONFIGURATION',

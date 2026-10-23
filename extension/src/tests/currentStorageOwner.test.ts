@@ -109,7 +109,7 @@ test('a failed read of this process’s start is made again after 60 s, and a st
   })
 })
 
-// Value: protects=the lock of a live window on a system without a kernel boot id whose start query fails; fails_when=such a window records the boot time it computes, so a clock set forward by 90 s makes its own record one of an earlier boot and another window takes its lock (Cycle 0046 row 9); why_new=a record without a start is judged by its boot (ER-1, ER-13); seam=the kernel boot id file, the clock, the uptime and the injected start reader
+// Value: protects=the lock of a live window on a system without a kernel boot id whose start query fails; fails_when=such a window records the boot time it computes, so a clock set forward by 90 s makes its own record one of an earlier boot and another window takes its lock (Cycle 0046 row 9); why_new=a record without a start is judged by its boot (ER-1, ER-13); seam=the kernel boot id file, the clock, the uptime and the injected start reader; no_claim=a real Windows start query (the platform is passed in)
 test('while the start of this process cannot be read its record carries no computed boot time, and a clock set forward by 90 s does not make it stale', async (context) => {
   // Arrange: no kernel boot id, as on macOS and Windows; the machine has been up for 600 s; the start query fails.
   answerKernelBootId(context, undefined)
@@ -187,7 +187,7 @@ test('the host-name digest follows the host name, and a window without an editor
   )
 })
 
-// Value: protects=two windows of one machine without a kernel boot id never take each other's locks because the clock was corrected between their starts; fails_when=a window keeps the boot time it computed first, so after a correction of more than the tolerance it disagrees for good with every window opened later, and each takes the other's live lock for one of an earlier boot; why_new=the boot identity is new (engineering review ER-20); seam=the kernel boot id file, the clock, the uptime and the injected start reader
+// Value: protects=two windows of one machine without a kernel boot id never take each other's locks because the clock was corrected between their starts; fails_when=a window keeps the boot time it computed first, so after a correction of more than the tolerance it disagrees for good with every window opened later, and each takes the other's live lock for one of an earlier boot; why_new=the boot identity is new (engineering review ER-20); seam=the kernel boot id file, the clock, the uptime and the injected start reader; no_claim=a real Linux boot (the platform is passed in)
 test('on a system without a kernel boot id the boot time is computed again at every look and follows a corrected clock', async (context) => {
   // Arrange: no kernel boot id; the machine has been up for 600 s and the clock reads 1 790 000 600 000 ms. The start of this process can be read, so the boot time is recorded for the windows of 0.2.29.0.
   answerKernelBootId(context, undefined)

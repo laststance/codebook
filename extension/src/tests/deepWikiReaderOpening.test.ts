@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { promisify } from 'node:util'
 
+import { answeredAtOnce } from './utils/answeredAtOnce'
 import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
@@ -193,7 +194,7 @@ async function replaceByLinkToPipe(
 test(
   'Open LLM Wiki on a Wiki whose manifest path holds a link to a named pipe ends at once with a sentence that names the file, and no reader starts',
   {
-    timeout: 2_000,
+    timeout: 30_000,
     skip:
       process.platform === 'win32'
         ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
@@ -218,7 +219,10 @@ test(
     if (!isLinked) return context.skip(LINK_NOT_ALLOWED)
 
     // Act
-    await window.open().catch(() => undefined)
+    await answeredAtOnce(
+      window.open().catch(() => undefined),
+      'Open LLM Wiki',
+    )
 
     // Assert
     assert.deepEqual(
@@ -237,7 +241,7 @@ test(
 test(
   'Open LLM Wiki on a Wiki whose entry page path holds a link to a named pipe ends at once with a sentence that names the file, and no reader starts',
   {
-    timeout: 2_000,
+    timeout: 30_000,
     skip:
       process.platform === 'win32'
         ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
@@ -262,7 +266,10 @@ test(
     if (!isLinked) return context.skip(LINK_NOT_ALLOWED)
 
     // Act
-    await window.open().catch(() => undefined)
+    await answeredAtOnce(
+      window.open().catch(() => undefined),
+      'Open LLM Wiki',
+    )
 
     // Assert
     assert.deepEqual(

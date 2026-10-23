@@ -15,7 +15,6 @@ import {
   NUMBERED_SOURCE_LINES_HELP,
   REFERENCE_LENGTH_LIMIT,
 } from './constants'
-import { domainError } from './errors'
 import { playbackCommandSchema, playbackToolSchema } from './playbackSchemas'
 import {
   presentationCommandSchema,
@@ -44,8 +43,9 @@ import {
 } from './schemas'
 import type { StudyService } from './service'
 
-/** Encodes domain outcomes as MCP tool results without turning a failure into successful text. @example await toolResult(() => service.status()) */
+/** Encodes domain outcomes as MCP tool results without turning a failure into successful text; an unexpected failure's cause loses its private paths ({@link StudyService.unexpectedFailure}). @example await toolResult(service, () => service.status()) */
 async function toolResult(
+  service: StudyService,
   action: () => object | Promise<object>,
 ): Promise<CallToolResult> {
   try {
@@ -55,7 +55,7 @@ async function toolResult(
       structuredContent: { ok: true, data },
     }
   } catch (error) {
-    const failure = domainError(error).describe()
+    const failure = service.unexpectedFailure(error).describe()
     return {
       isError: true,
       content: [{ type: 'text', text: JSON.stringify(failure) }],
@@ -94,7 +94,7 @@ async function stopToolResult(
       structuredContent: { ok: false, error: failure, state },
     }
   } catch (error) {
-    const failure = domainError(error).describe()
+    const failure = service.unexpectedFailure(error).describe()
     return {
       isError: true,
       content: [{ type: 'text', text: JSON.stringify(failure) }],
@@ -168,7 +168,7 @@ async function resourceToolResult(
       }
     return textResourceToolResult(resource)
   } catch (error) {
-    const failure = domainError(error).describe()
+    const failure = service.unexpectedFailure(error).describe()
     return {
       isError: true,
       content: [{ type: 'text', text: JSON.stringify(failure) }],
@@ -209,7 +209,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: z.strictObject({}),
       annotations: readOnly,
     },
-    () => toolResult(() => service.status()),
+    () => toolResult(service, () => service.status()),
   )
   server.registerTool(
     'codebook_read_resource',
@@ -231,7 +231,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: presentationCommandSchema,
       annotations: mutation,
     },
-    (input) => toolResult(() => service.selectPresentation(input)),
+    (input) => toolResult(service, () => service.selectPresentation(input)),
   )
   server.registerTool(
     'codebook_return_current',
@@ -241,7 +241,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: returnCurrentCommandSchema,
       annotations: mutation,
     },
-    (input) => toolResult(() => service.returnToCurrent(input)),
+    (input) => toolResult(service, () => service.returnToCurrent(input)),
   )
   server.registerTool(
     'codebook_sources',
@@ -251,7 +251,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: sourceListSchema,
       annotations: readOnly,
     },
-    (input) => toolResult(() => service.sources(input)),
+    (input) => toolResult(service, () => service.sources(input)),
   )
   server.registerTool(
     'codebook_source',
@@ -260,7 +260,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: sourceReadSchema,
       annotations: readOnly,
     },
-    (input) => toolResult(() => service.source(input)),
+    (input) => toolResult(service, () => service.source(input)),
   )
   server.registerTool(
     'codebook_publish_book',
@@ -271,7 +271,7 @@ export function createProtocol(service: StudyService): McpServer {
       annotations: { ...mutation, idempotentHint: true },
     },
     (input, extra) =>
-      toolResult(() => service.publishBook(input, extra.signal)),
+      toolResult(service, () => service.publishBook(input, extra.signal)),
   )
   server.registerTool(
     'codebook_open_book',
@@ -281,7 +281,8 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: openBookSchema,
       annotations: { ...mutation, idempotentHint: true },
     },
-    (input, extra) => toolResult(() => service.openBook(input, extra.signal)),
+    (input, extra) =>
+      toolResult(service, () => service.openBook(input, extra.signal)),
   )
   server.registerTool(
     'codebook_start',
@@ -291,7 +292,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: startSchema,
       annotations: { ...execution, idempotentHint: true },
     },
-    (input) => toolResult(() => service.startOnStoredBook(input)),
+    (input) => toolResult(service, () => service.startOnStoredBook(input)),
   )
   server.registerTool(
     'codebook_action',
@@ -301,7 +302,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: actionSchema,
       annotations: { ...execution, idempotentHint: true },
     },
-    (input) => toolResult(() => service.action(input)),
+    (input) => toolResult(service, () => service.action(input)),
   )
   server.registerTool(
     'codebook_continue',
@@ -312,7 +313,9 @@ export function createProtocol(service: StudyService): McpServer {
       annotations: execution,
     },
     (input, extra) =>
-      toolResult(() => service.continueToNextState(input, extra.signal)),
+      toolResult(service, () =>
+        service.continueToNextState(input, extra.signal),
+      ),
   )
   server.registerTool(
     'codebook_stop',
@@ -331,7 +334,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: explainSchema,
       annotations: { ...mutation, idempotentHint: true },
     },
-    (input) => toolResult(() => service.explain(input)),
+    (input) => toolResult(service, () => service.explain(input)),
   )
   server.registerTool(
     'codebook_explain_node_history',
@@ -340,7 +343,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: explainNodeHistorySchema,
       annotations: { ...mutation, idempotentHint: false },
     },
-    (input) => toolResult(() => service.explainNodeHistory(input)),
+    (input) => toolResult(service, () => service.explainNodeHistory(input)),
   )
   server.registerTool(
     'codebook_reveal',
@@ -350,7 +353,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: revealSchema,
       annotations: { ...mutation, idempotentHint: true },
     },
-    (input) => toolResult(() => service.reveal(input)),
+    (input) => toolResult(service, () => service.reveal(input)),
   )
   server.registerTool(
     'codebook_playback',
@@ -361,7 +364,9 @@ export function createProtocol(service: StudyService): McpServer {
       annotations: mutation,
     },
     (input) =>
-      toolResult(() => service.playback(playbackCommandSchema.parse(input))),
+      toolResult(service, () =>
+        service.playback(playbackCommandSchema.parse(input)),
+      ),
   )
   const read = async (uri: URL) => {
     try {
@@ -379,7 +384,7 @@ export function createProtocol(service: StudyService): McpServer {
         ],
       }
     } catch (error) {
-      const failure = domainError(error).describe()
+      const failure = service.unexpectedFailure(error).describe()
       throw new McpError(
         ProtocolErrorCode.InvalidParams,
         failure.message,

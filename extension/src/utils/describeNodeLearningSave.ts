@@ -33,6 +33,7 @@ export type NodeLearningSaveMessage =
       explanations: readonly NodeLearningExplanationPart[]
       capture: readonly NodeLearningCapturePart[]
     }
+  | { kind: 'nothing-yet' }
   | { kind: 'open-refused' }
   | { kind: 'open-failed'; title: string; cause: string }
 
@@ -42,6 +43,14 @@ export type NodeLearningSaveText = {
   tooltip?: string
   actions?: readonly string[]
 }
+
+/** The labels of the actions a Save question or notification offers; the one set the catalog, {@link NodeLearningSave} and the Study workspace read, so no consumer retypes a label. The question's Cancel is the modal dialog's own and is not an action here. */
+export const NODE_LEARNING_SAVE_ACTION = {
+  saveNow: 'Save now',
+  openReplay: 'Open replay',
+  closeBrowserReplay: 'Close browser replay',
+  showDetails: 'Show details',
+} as const
 
 /** Where every failed stage of a Save points for its details. */
 const DETAILS = 'Details: Output › Codebook.'
@@ -156,20 +165,27 @@ export function describeNodeLearningSave(
     case 'question':
       return {
         text: `Saving ends the test run before its result (${message.reached} of ${message.declared} stops reached). Save now?`,
-        actions: ['Save now', 'Cancel'],
+        actions: [NODE_LEARNING_SAVE_ACTION.saveNow],
       }
     case 'partial-notice':
-      return { text: partialNotice(message), actions: ['Open replay'] }
+      return {
+        text: partialNotice(message),
+        actions: [NODE_LEARNING_SAVE_ACTION.openReplay],
+      }
+    case 'nothing-yet':
+      return {
+        text: 'Nothing to save yet: the test run has not reached its first stop.',
+      }
     case 'open-refused':
       return {
         text: 'Codebook shows one replay at a time. Close the browser replay to open this test replay.',
-        actions: ['Close browser replay'],
+        actions: [NODE_LEARNING_SAVE_ACTION.closeBrowserReplay],
       }
     case 'open-failed':
       return {
         // A cause that ends its own sentence is not given a second full stop.
         text: `Codebook could not open the test replay "${message.title}": ${cutCauseForDisplay(message.cause).replace(/\.$/, '')}. The saved history is unchanged; open it again from Saved studies.`,
-        actions: ['Show details'],
+        actions: [NODE_LEARNING_SAVE_ACTION.showDetails],
       }
   }
 }

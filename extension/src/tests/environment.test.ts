@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -19,6 +20,8 @@ import { z } from 'zod'
 import type { ConfiguredBrowserRun } from '../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../configuredStudySchemas'
 import type * as EnvironmentModule from '../environment'
+import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
@@ -51,7 +54,7 @@ test('untrusted, remote and virtual workspaces reject execution before creating 
   assert.equal(boundary.requireWorkspace(), '/workspace')
 })
 
-// Value: protects=Codebook on VS Code or Cursor for Windows opened on a repository in WSL; fails_when=a WSL remote file workspace is refused like any other remote, so Set Up AI Chat and status answer "not supported"; why_new=the boundary test only proved that every remote is refused (Cycle 0044 row N-1); seam=none
+// Value: protects=Codebook on VS Code or Cursor for Windows opened on a repository in WSL; fails_when=a WSL remote file workspace is refused like any other remote, so Set Up AI Chat and status answer "not supported"; why_new=the boundary test only proved that every remote is refused (Cycle 0044 row N-1); seam=none; no_claim=the host's real workspace-trust prompt
 test('a trusted file workspace opened in WSL is accepted and its prerequisites answer ready', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-wsl-'))
@@ -204,6 +207,213 @@ test('a workspace whose root Vitest is older than 4 makes the node-test profile 
     !prerequisites.profiles?.['repository-browser']?.missing.some((sentence) =>
       sentence.includes('Vitest'),
     ),
+  )
+})
+
+/**
+ * Creates the real environment over a temporary repository that holds a scheduler source and test, for the node-test profile and the preparation check.
+ * @param context - The test, which removes the folder and disposes the environment when it ends.
+ * @param options - The root Vitest's version (none writes no package), or a replacement for the prerequisite read that fails.
+ * @returns The environment, the repository's folder and the scheduler's test configuration citing both files by their current hashes.
+ * @example const { environment, directory } = await createNodeTestEnvironment(context, { vitestVersion: '4.1.11' })
+ */
+async function createNodeTestEnvironment(
+  context: TestContext,
+  options: {
+    vitestVersion?: string
+    readVitestPrerequisite?: () => Promise<never>
+  },
+): Promise<{
+  environment: Awaited<ReturnType<typeof EnvironmentModule.createEnvironment>>
+  directory: string
+  configuration: NodeTestConfiguration
+}> {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-node-env-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
+  )
+  await mkdir(join(directory, 'dist'))
+  await writeFile(
+    join(directory, 'dist/build.json'),
+    JSON.stringify({
+      revision: 'fixture',
+      dirty: false,
+      sourceHash: 'fixture',
+    }),
+  )
+  if (options.vitestVersion) {
+    await mkdir(join(directory, 'node_modules', 'vitest'), { recursive: true })
+    await writeFile(
+      join(directory, 'node_modules', 'vitest', 'package.json'),
+      JSON.stringify({ name: 'vitest', version: options.vitestVersion }),
+    )
+    // The preparation check also needs the root Vitest's program file (F57).
+    await writeFile(
+      join(directory, 'node_modules', 'vitest', 'vitest.mjs'),
+      'export {}\n',
+    )
+  }
+  const sourceText = 'export const nextRun = schedule(job, 5_000)\n'
+  const testText = 'test("runs a delayed job after its timer", () => {})\n'
+  await mkdir(join(directory, 'src'))
+  await writeFile(join(directory, 'src', 'scheduler.ts'), sourceText)
+  await writeFile(join(directory, 'src', 'scheduler.test.ts'), testText)
+  const chromeExecutable = join(directory, 'chrome')
+  await writeFile(chromeExecutable, '#!/bin/sh\n', { mode: 0o755 })
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': {},
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/external/node',
+      },
+      ...(options.readVitestPrerequisite
+        ? {
+            './utils/readVitestPrerequisite': {
+              readVitestPrerequisite: options.readVitestPrerequisite,
+            },
+          }
+        : {}),
+      'node:util': {
+        promisify: () => async () => ({ stdout: 'Google Chrome 140.0' }),
+      },
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          // No cited source is open in the editor, so the preparation check compares nothing with the editor's text (F57).
+          textDocuments: [],
+          getConfiguration: () => ({
+            get: (key: string, fallback: string) =>
+              key === 'chromeExecutable' ? chromeExecutable : fallback,
+          }),
+        },
+        env: {
+          appRoot: directory,
+          appName: 'Visual Studio Code',
+          remoteName: 'wsl',
+        },
+        version: '1.140.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: () => disposable,
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+  )
+  const environment = await boundary.createEnvironment({
+    extensionPath: directory,
+  })
+  context.after(() => environment.dispose())
+  return {
+    environment,
+    directory,
+    configuration: {
+      version: 1,
+      adapter: 'vitest-node',
+      book: {
+        bookId: 'scheduler',
+        revision: 1,
+        nodeId: 'timer',
+        anchorIndex: 0,
+      },
+      testFile: 'src/scheduler.test.ts',
+      testHash: sha256(testText),
+      testTitles: ['job scheduler', 'runs a delayed job after its timer'],
+      source: {
+        path: 'src/scheduler.ts',
+        hash: sha256(sourceText),
+        line: 1,
+        column: 1,
+      },
+      inspections: [{ path: 'nextRun', mode: 'value', required: true }],
+    },
+  }
+}
+
+// Value: protects=the node-test profile's ready path for a supported root Vitest; fails_when=Vitest 4 at the root leaves the profile not ready, or its missing list is not empty; why_new=only the older-Vitest row existed (F67); seam=the editor and its settings are fakes, the repository's node_modules is real; no_claim=package-root Vitest
+test('a workspace whose root Vitest is 4 or later makes the node-test profile ready with nothing missing', async (context) => {
+  // Arrange
+  const { environment } = await createNodeTestEnvironment(context, {
+    vitestVersion: '4.1.11',
+  })
+
+  // Act
+  const prerequisites = await environment.prerequisites()
+
+  // Assert
+  const nodeTest = prerequisites.profiles?.['node-test']
+  assert.deepEqual(
+    { ready: nodeTest?.ready, missing: [...(nodeTest?.missing ?? [])] },
+    { ready: true, missing: [] },
+  )
+})
+
+// Value: protects=codebook_status from naming this machine's paths when the root Vitest cannot be read; fails_when=the reason carries the repository's absolute path, or the read failure is not reported as a not-ready node-test profile; why_new=the catch printed String(error) (F10) and was untested (F67); seam=the prerequisite read throws as a file system would; no_claim=other read errors
+test('a root Vitest that cannot be read is reported without the repository path', async (context) => {
+  // Arrange
+  let directoryOfRead = ''
+  const { environment, directory } = await createNodeTestEnvironment(context, {
+    readVitestPrerequisite: async () => {
+      throw new Error(
+        `EACCES: permission denied, open '${directoryOfRead}/node_modules/vitest/package.json'`,
+      )
+    },
+  })
+  directoryOfRead = directory
+
+  // Act
+  const prerequisites = await environment.prerequisites()
+
+  // Assert
+  const nodeTest = prerequisites.profiles?.['node-test']
+  assert.deepEqual(
+    { ready: nodeTest?.ready, missing: [...(nodeTest?.missing ?? [])] },
+    {
+      ready: false,
+      missing: [
+        "node-test could not read the repository's root Vitest: EACCES: permission denied, open '<workspace>/node_modules/vitest/package.json'",
+      ],
+    },
+  )
+})
+
+// Value: protects=the environment's own wiring of the preparation check that service tests replace with fakes; fails_when=checkNodeTestFiles is not reached with the opened repository, so a changed test file starts a run, or a matching configuration is refused; why_new=the optional member was exercised only through fakes (F30); seam=real files, real environment; no_claim=Vitest's selection of the test
+test('the environment refuses a node-test configuration whose test file changed and accepts one that still matches', async (context) => {
+  // Arrange
+  const { environment, directory, configuration } =
+    await createNodeTestEnvironment(context, { vitestVersion: '4.1.11' })
+  const unchanged = await environment
+    .checkNodeTestFiles?.(configuration, [])
+    .then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    )
+  await writeFile(
+    join(directory, 'src', 'scheduler.test.ts'),
+    'test.skip("x")\n',
+  )
+
+  // Act
+  const changed = await environment
+    .checkNodeTestFiles?.(configuration, [])
+    .then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    )
+
+  // Assert
+  assert.equal(unchanged, 'accepted')
+  assert.match(
+    changed ?? '',
+    /node-test preparation refused: testHash [0-9a-f]{64} does not match src\/scheduler\.test\.ts/,
   )
 })
 

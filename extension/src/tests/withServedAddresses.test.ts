@@ -37,8 +37,8 @@ const WARM_UP_PAGE = '<p><a href="x">warm</a></p>'.repeat(2_000)
 const READER_SCRIPT_TAG = '<script src="/w/t/codebook-qa.js"></script>'
 
 /**
- * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers how long each took, or `unfinished` for the pages left when a deadline passed: {@link FILTER_DEADLINE_MS} until the ordinary page's time is known, then {@link PAGE_DEADLINE_RATIO} times that time for each crafted page. The reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
- * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`, so that each crafted page is compared with an ordinary page in the same thread under the same load, served by the same call.
+ * Serves pages in a worker thread with a compiled function of the reader, called as `serve(page, 'cursor')`, or as `serve(page, 'cursor', tagAtBodyEnd)` when a tag is given, and answers how long each took, or `unfinished` for the pages left when a deadline passed: {@link FILTER_DEADLINE_MS} until the ordinary page's time is known, then twice {@link PAGE_DEADLINE_RATIO} times that time for each crafted page. The reader's functions run synchronously, so only a worker can be stopped while one runs. Called by the timing tests.
+ * The worker first serves {@link WARM_UP_PAGE}, then {@link ORDINARY_PAGE} twice, and answers the shorter time as `ordinary`; it serves each crafted page twice as well and answers the shorter time, so that each crafted page is compared with an ordinary page in the same thread, served by the same call, and a moment of load on a busy machine lengthens neither measurement alone (Cycle 0049 F6: one run of a crafted page took 830 ms against the ordinary page's 184 ms under nine concurrent runs).
  * @param moduleName - The compiled module under `dist/utils`, without `.js`.
  * @param exportName - The function it exports.
  * @param pages - The crafted pages, by name.
@@ -69,7 +69,7 @@ const timeOf = (page) => {
 timeOf(workerData.warmUp)
 parentPort.postMessage(['ordinary', Math.min(timeOf(workerData.ordinary), timeOf(workerData.ordinary))])
 for (const [name, page] of Object.entries(workerData.pages)) {
-  parentPort.postMessage([name, timeOf(page)])
+  parentPort.postMessage([name, Math.min(timeOf(page), timeOf(page))])
 }`,
     {
       eval: true,
@@ -90,11 +90,11 @@ for (const [name, page] of Object.entries(workerData.pages)) {
     let deadline = setTimeout(stop, FILTER_DEADLINE_MS)
     worker.on('message', ([name, milliseconds]: [string, number]) => {
       times[name] = milliseconds
-      // Each crafted page gets its own deadline, a multiple of the ordinary page's time on this machine, so a slow runner measures every page.
+      // Each crafted page gets its own deadline, a multiple of the ordinary page's time on this machine for each of its two runs, so a slow runner measures every page.
       clearTimeout(deadline)
       deadline = setTimeout(
         stop,
-        PAGE_DEADLINE_RATIO * (times.ordinary as number),
+        2 * PAGE_DEADLINE_RATIO * (times.ordinary as number),
       )
     })
     worker.on('exit', () => {

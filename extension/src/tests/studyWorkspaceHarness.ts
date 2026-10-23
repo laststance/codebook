@@ -115,6 +115,9 @@ export async function workspaceHarness(
   let answerWarningDialog: (
     items: string[],
   ) => Promise<string | undefined> = async () => undefined
+  let answerErrorDialog: (
+    items: string[],
+  ) => Promise<string | undefined> = async () => undefined
   const informationMessages: { message: string; items: string[] }[] = []
   let answerInformationMessage: (
     items: string[],
@@ -188,10 +191,26 @@ export async function workspaceHarness(
   /** Builds one fake status bar item. It counts the assignments of its command, because the editor turns every assigned command object into a new internal command and disposes the one before. @example createStatusItem().commandAssignments // => 0 */
   const createStatusItem = () => {
     let assignedCommand: unknown
+    let shownText = ''
+    let shownTooltip = ''
     return {
       name: '',
-      text: '',
-      tooltip: '',
+      /** Every text or tooltip assignment, and every show or hide call: each one is a message to the status bar. */
+      redraws: 0,
+      get text(): string {
+        return shownText
+      },
+      set text(value: string) {
+        this.redraws++
+        shownText = value
+      },
+      get tooltip(): string {
+        return shownTooltip
+      },
+      set tooltip(value: string) {
+        this.redraws++
+        shownTooltip = value
+      },
       commandAssignments: 0,
       get command(): unknown {
         return assignedCommand
@@ -202,9 +221,11 @@ export async function workspaceHarness(
       },
       visible: false,
       show(): void {
+        this.redraws++
         this.visible = true
       },
       hide(): void {
+        this.redraws++
         this.visible = false
       },
       dispose(): void {
@@ -1032,6 +1053,8 @@ export async function workspaceHarness(
   let panelMaximized = false
   /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
   const pendingDisposedTabCloses: (() => void)[] = []
+  /** Says that the fake editor runs no pending close of a disposed panel's tab, neither by itself nor at a layout read, until `closePendingDisposedPanelTabs`; see `holdDisposedPanelTabCloses`. */
+  let disposedTabClosesHeld = false
   /** The fake editor's own timers that have not run yet (a disposed pane's tab close, a late reveal, an emptied group's removal, the name of the focused group after a maximization ended, a late report of the active text editor, a late load of the Variables view); {@link runEditorChangeLater} puts each of them here. The harness's `close` clears them, so no fake editor changes its groups or calls a listener after its test ended. */
   const pendingEditorTimers = new Set<ReturnType<typeof setTimeout>>()
   /**
@@ -1043,6 +1066,8 @@ export async function workspaceHarness(
    */
   function applyByItselfLater(change: () => void): void {
     runEditorChangeLater(() => {
+      // A held close waits for `closePendingDisposedPanelTabs`.
+      if (disposedTabClosesHeld) return
       const index = pendingDisposedTabCloses.indexOf(change)
       if (index < 0) return
       pendingDisposedTabCloses.splice(index, 1)
@@ -4064,7 +4089,9 @@ export async function workspaceHarness(
               await new Promise<void>((resolve) => setImmediate(resolve))
             if (hideGridWhileMaximized && maximizedEditorGroup) return undefined
             // The disposed panels' tabs close one task after this read is answered.
-            const dueTabCloses = pendingDisposedTabCloses.splice(0)
+            const dueTabCloses = disposedTabClosesHeld
+              ? []
+              : pendingDisposedTabCloses.splice(0)
             if (
               dueTabCloses.length &&
               (closeDisposedPanelTabsDuringLayoutRead ||
@@ -4361,10 +4388,13 @@ export async function workspaceHarness(
           informationMessages.push({ message, items })
           return answerInformationMessage(items)
         },
-        // An error notification of the reader has no button; it stays until the learner dismisses it.
-        showErrorMessage: async (message: string): Promise<undefined> => {
+        // An error notification stays until the learner dismisses it or answers one of its buttons ({@link answerErrorDialogs}).
+        showErrorMessage: async (
+          message: string,
+          ...items: string[]
+        ): Promise<string | undefined> => {
           errorMessages.push(message)
-          return undefined
+          return answerErrorDialog(items)
         },
         createTextEditorDecorationType: (options: { after?: unknown }) => ({
           ...disposable(),
@@ -4994,6 +5024,12 @@ export async function workspaceHarness(
     ): void {
       answerWarningDialog = answer
     },
+    /** Decides how the learner answers the buttons of the reader's next native error notifications; unanswered ones are dismissed. @example harness.answerErrorDialogs(async ([button]) => button) */
+    answerErrorDialogs(
+      answer: (items: string[]) => Promise<string | undefined>,
+    ): void {
+      answerErrorDialog = answer
+    },
     /** Every path the reader moved to the editor's Trash, with the options it passed. @example harness.trashMoves.map((move) => move.path) */
     trashMoves,
     /** Every text the reader wrote to the editor's clipboard, in order. @example harness.clipboardTexts.at(-1) */
@@ -5563,8 +5599,16 @@ export async function workspaceHarness(
      * @example harness.closePendingDisposedPanelTabs() // the disposed Application tab leaves its group
      */
     closePendingDisposedPanelTabs(): void {
+      disposedTabClosesHeld = false
       // Take each pending change before delivery so its later automatic timer cannot repeat it.
       for (const close of pendingDisposedTabCloses.splice(0)) close()
+    },
+    /**
+     * Makes the fake editor keep every pending close of a disposed panel's tab, neither closing it by itself nor at a layout read, until {@link closePendingDisposedPanelTabs}: an editor that closes the tab only after the reader began its next arrangement, which a test needs to reach the arrangement's wait for that close (Cycle 0050 F240).
+     * @example harness.holdDisposedPanelTabCloses() // the disposed Study context tab stays until closePendingDisposedPanelTabs()
+     */
+    holdDisposedPanelTabCloses(): void {
+      disposedTabClosesHeld = true
     },
     /**
      * Makes the fake editor close a disposed panel's tab a moment after the disposal ({@link DISPOSED_TAB_CLOSE_DELAY_MS}), and the group that tab left empty while the next layout read is pending, as Cursor 3.23.12 was seen to at a live entry from the three-pane Study layout (Cycle 0045, owed check 2, take o2b: the context pane's tab closed about 100 ms after the entry began, at +440 ms, and its group at +451 ms, each with new objects for every group). A layout read that arrives before the tab closed is interrupted by both closes. The reader's listeners see a close before the read it interrupts is answered. That the group's close falls into a layout read is the model's choice of moment: the trace gives the order of the two closes and their distance of 11 ms, not what the reader awaited.

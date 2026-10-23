@@ -132,7 +132,36 @@ export class NewerStudyFormatError extends Error {
   }
 }
 
-/** Normalizes unexpected boundary failures without pretending they succeeded; called by protocol handlers. @example domainError(new Error('disk')).code */
+/**
+ * Marks the refusal of a test history's start because the saved studies and the test histories together fill the Saved Study Limit; the typed signal {@link NodeTestHistoryStore.start} gives {@link StudyService}, which words the refusal for the agent through {@link fullLibraryMessage} instead of matching this text.
+ *
+ * @example throw new SavedStudyStorageFullError(77, 64) // taken 77 of limit 64
+ */
+export class SavedStudyStorageFullError extends Error {
+  constructor(
+    readonly taken: number,
+    readonly limit: number,
+  ) {
+    super(
+      'Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
+    )
+  }
+}
+
+/**
+ * Marks the save of learning material whose expected revision is no longer the saved one; the typed signal {@link NodeTestHistoryStore.saveLearningMaterial} gives {@link StudyService.explainNodeHistory}, which answers `IDEMPOTENCY_CONFLICT`, so a cited path that happens to contain the words "revision changed" is never taken for it.
+ *
+ * @example throw new NodeLearningRevisionChangedError(0, 1)
+ */
+export class NodeLearningRevisionChangedError extends Error {
+  constructor(expectedRevision: number, currentRevision: number) {
+    super(
+      `Node learning material revision changed; expected ${expectedRevision}, current ${currentRevision}.`,
+    )
+  }
+}
+
+/** Normalizes unexpected failures without pretending they succeeded; called by {@link StudyService} where a failure becomes a run's error. The MCP answers use {@link StudyService.unexpectedFailure}, which also hides private paths in the cause. @example domainError(new Error('disk')).code */
 export function domainError(error: unknown): StudyError {
   return error instanceof StudyError
     ? error
