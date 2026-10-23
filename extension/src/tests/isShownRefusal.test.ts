@@ -27,11 +27,15 @@ test('a refusal that is only a part of the presentation reason is not shown by i
   assert.equal(shown, false)
 })
 
-// Value: protects=an empty cause never hiding the error row of a refusal; fails_when=the empty string, which every text contains, suppresses the row; why_new=F406
+// Value: protects=an empty cause never hiding the error row of a refusal; fails_when=the empty string, which every text contains, suppresses the row, also when no reason is shown (an empty cause would equal an absent reason); why_new=F406
 test('an empty refusal cause is never shown by any presentation reason', () => {
   // Act
-  const shown = isShownRefusal('Error: Close that tab.', '')
+  const shownBySentence = isShownRefusal('Error: Close that tab.', '')
+  const shownByNoReason = isShownRefusal(undefined, '')
+  const shownByEmptyReason = isShownRefusal('', '')
 
   // Assert
-  assert.equal(shown, false)
+  assert.equal(shownBySentence, false)
+  assert.equal(shownByNoReason, false)
+  assert.equal(shownByEmptyReason, false)
 })
