@@ -201,15 +201,14 @@ test('a client that half-closes after sending still gets the reply through [::1]
   assert.equal(Buffer.concat(client.chunks).toString(), 'reply:hi')
 })
 
-/** The size of the reply that the large-reply test sends; far more than the loopback socket buffers hold. */
-const LARGE_REPLY_BYTES = 67_108_864
+/** The size of the reply that the large-reply test sends (16 MiB): more than the send and receive buffers of a loopback pair hold together (a few MiB at most), yet small enough to allocate once without memory pressure on CI. */
+const LARGE_REPLY_BYTES = 16_777_216
 
-// Value: protects=a large reply that the upstream sends and then closes arrives whole at a slow client (F448: a socket's close destroyed the other and dropped the buffered tail); fails_when=the client receives fewer bytes than the upstream wrote; why_new=OCR medium of the review of 944a4d25..6bc9eab2; seam=a real forwarder, an upstream that writes 64 MiB and ends, and a client that pauses reading for 300 ms; no_claim=a real browser
+// Value: protects=a large reply that the upstream sends and then closes arrives whole at a slow client (F448: a socket's close destroyed the other and dropped the buffered tail); fails_when=the client receives fewer bytes than the upstream wrote; why_new=OCR medium of the review of 944a4d25..6bc9eab2; seam=a real forwarder, an upstream that writes one 16 MiB buffer and ends, and a client that pauses reading for 300 ms; no_claim=a real browser
 test('a large reply that the upstream closes right after sending arrives whole through [::1]', async (context) => {
   // Arrange
-  const port = await startUpstream(context, (socket) =>
-    socket.end(Buffer.alloc(LARGE_REPLY_BYTES, 'x')),
-  )
+  const reply = Buffer.alloc(LARGE_REPLY_BYTES, 'x')
+  const port = await startUpstream(context, (socket) => socket.end(reply))
   const forwarder = await startIpv6LoopbackForwarder(port)
   if (!forwarder) return context.skip('[::1] is not available on this host')
   context.after(() => forwarder.close())
@@ -224,10 +223,14 @@ test('a large reply that the upstream closes right after sending arrives whole t
 
   // Assert
   assert.equal(outcome, undefined)
-  assert.equal(Buffer.concat(client.chunks).length, LARGE_REPLY_BYTES)
+  // The lengths are summed, so the 16 MiB reply is not copied again into one buffer.
+  assert.equal(
+    client.chunks.reduce((total, chunk) => total + chunk.length, 0),
+    LARGE_REPLY_BYTES,
+  )
 })
 
-// Value: protects=closing the forwarder while a connection is open resolves and ends that connection, so the run's cleanup never hangs on a browser connection (D66); fails_when=close never resolves or the open client stays connected; why_new=F455 (close with open connections was untested); seam=a real forwarder with one idle connection through to an echo upstream; no_claim=a real browser
+// Value: protects=closing the forwarder while a connection is open resolves and ends that connection, so the run's cleanup never hangs on a browser connection (D66); fails_when=close never resolves, the open client stays connected, or the first reply never arrives (bounded by 3 s, no hang until the runner's silence limit); why_new=F455 (close with open connections was untested); seam=a real forwarder with one idle connection through to an echo upstream; no_claim=a real browser
 test('closing the forwarder while a connection is open ends that connection', async (context) => {
   // Arrange
   const port = await startUpstream(context, (socket) =>
@@ -239,13 +242,17 @@ test('closing the forwarder while a connection is open ends that connection', as
   const client = connectIpv6(context, port)
   await client.connected
   client.socket.write('ping')
-  await new Promise((resolve) => client.socket.once('data', resolve))
+  // The first reply is awaited within a bound, so a forwarder that carries nothing fails here and not at the runner's silence limit.
+  const firstReply = await withinTimeout(
+    new Promise<void>((resolve) => client.socket.once('data', () => resolve())),
+  )
 
   // Act
   const closing = await withinTimeout(forwarder.close())
   const clientEnd = await withinTimeout(client.closed)
 
   // Assert
+  assert.equal(firstReply, undefined)
   assert.equal(closing, undefined)
   assert.equal(clientEnd, undefined)
 })

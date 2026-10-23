@@ -383,6 +383,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private unjournaledAdapterEvents = 0
   /** How many `stop.module-parsed`, `stop.instance-sealed` and `stop.instance-refused` entries were journaled, by type, against {@link REPOSITORY_STOP_MODULE_JOURNAL_LIMIT}. */
   private readonly stopModuleJournaled = new Map<string, number>()
+  /** The entries ({@link ConfiguredBrowserRun.journalStopModule}) already journaled once for an entry type, stop and script address, so the first of each is journaled past the cap. */
+  private readonly stopModuleFirstJournaled = new Set<string>()
   /** How many of those entries past the cap were only counted; cleanup journals the count. */
   private unjournaledStopModuleEvents = 0
   /** The reads of script texts in flight, by participant and script id, so the stops of one module share a read ({@link instanceTextOf}). */
@@ -2793,7 +2795,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         return
       }
       stop.script = event
-      // The journal lists only the first scripts a runtime parses; the sealed module's own announcement is kept under a cap of its own ({@link journalStopModule}), so a run that never pauses shows which script it was waiting in.
+      // The journal lists only the first scripts a runtime parses; the first announcement of each stop's module is always journaled and repeats are capped ({@link journalStopModule}), so a run that never pauses shows which script it was waiting in.
       this.journalStopModule('stop.module-parsed', {
         participant: name,
         source: stop.source.path,
@@ -2842,7 +2844,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Reads another layer's instance of a declared server stop's module and, when its own source map puts it on the frozen original, accepts it as a script the stop's line may run in; called by {@link bindParsedScript} for each such script the runtime announces.
-   * Next compiles a source file once per webpack layer, so the sealed `(action-browser)` instance is not the only script that can hold a declared line (the `authorized` callback of `auth.config.ts` runs in the `(middleware)` one). The instance's generated code differs from the sealed one, so it is placed by the map in its own text, never by the sealed map. The text is read once for all stops of the module and within {@link REPOSITORY_STOP_INSTANCE_READ_MS}; an instance whose map names another original or whose text cannot be read in time is journaled as refused (cut and without private paths) and never takes a pause for the stop, and a pause held in it fails with a sentence naming it ({@link unusableInstanceFailure}). A script announced again for the same address (HMR) replaces the older instance. A run that ended or failed while the text was read records and judges nothing. When a pause in the script arrived before the read ended, it is judged now ({@link readmitHeldPause}).
+   * Next compiles a source file once per webpack layer, so the sealed `(action-browser)` instance is not the only script that can hold a declared line (the `authorized` callback of `auth.config.ts` runs in the `(middleware)` one). The instance's generated code differs from the sealed one, so it is placed by the map in its own text, never by the sealed map. The text is read once for all stops of the module and within {@link REPOSITORY_STOP_INSTANCE_READ_MS}; an instance whose map names another original or whose text cannot be read in time is journaled as refused (cut and without private paths) and never takes a pause for the stop, and a pause held in it fails with a sentence naming it ({@link unusableInstanceFailure}). A script announced again for the same address (HMR) replaces the older instance, unless a pause is held or captured in the older one ({@link holdsPauseInScript}). A run that ended or failed while the text was read records and judges nothing. When a pause in the script arrived before the read ended, it is judged now ({@link readmitHeldPause}).
    * @param stop - The declared server stop.
    * @param name - The participant whose runtime announced the script.
    * @param event - The announced script.
@@ -2857,9 +2859,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.ScriptParsedEvent,
   ): Promise<void> {
     if (!this.participants[name].cdp || !this.isRunOpen()) return
-    // A newer script of the same address replaces the older one that is still being read or was refused.
-    for (const [scriptId, other] of stop.unusableInstances)
-      if (other.url === event.url) stop.unusableInstances.delete(scriptId)
+    // A newer script of the same address replaces the older one that is still being read or was refused, unless a pause is held or captured in the older one (F460).
+    this.forgetSupersededScripts(
+      stop.unusableInstances.entries(),
+      name,
+      event.url,
+      (scriptId) => stop.unusableInstances.delete(scriptId),
+      (other) => other.url,
+    )
     stop.unusableInstances.set(event.scriptId, {
       url: event.url,
       reason: 'its text had not been read yet',
@@ -2897,14 +2904,69 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     stop.unusableInstances.delete(event.scriptId)
-    for (const [scriptId, other] of stop.instances)
-      if (other.script.url === event.url) stop.instances.delete(scriptId)
+    this.forgetSupersededScripts(
+      stop.instances.entries(),
+      name,
+      event.url,
+      (scriptId) => stop.instances.delete(scriptId),
+      (other) => other.script.url,
+    )
     stop.instances.set(event.scriptId, instance)
     this.journalStopModule('stop.instance-sealed', {
       ...journaled,
       hashes: instance.verifier.hashes,
     })
     this.readmitHeldPause(stop, name, event.scriptId)
+  }
+
+  /**
+   * Forgets the older scripts of an address that a newer script of that address replaces, except one a pause is held or captured in ({@link holdsPauseInScript}); for {@link adoptInstance}.
+   * @param entries - The older scripts by script id (a snapshot is taken, so deleting while reading is safe).
+   * @param name - The participant whose runtime announced the newer script.
+   * @param url - The address of the newer script.
+   * @param forget - Removes one script by id from its map.
+   * @param urlOf - Reads a script entry's address.
+   * @example
+   * ```ts
+   * this.forgetSupersededScripts(stop.instances.entries(), 'server', event.url, (id) => stop.instances.delete(id), (other) => other.script.url)
+   * ```
+   */
+  private forgetSupersededScripts<Entry>(
+    entries: IterableIterator<[string, Entry]>,
+    name: Participant,
+    url: string,
+    forget: (scriptId: string) => void,
+    urlOf: (entry: Entry) => string,
+  ): void {
+    for (const [scriptId, entry] of [...entries])
+      if (urlOf(entry) === url && !this.holdsPauseInScript(name, scriptId))
+        forget(scriptId)
+  }
+
+  /**
+   * Tells whether a participant holds a pause whose top frame is in a script: a captured stop, a stop being replayed or refreshed, or a pause held away from the expected stop.
+   * Why: {@link adoptInstance} keeps an older instance of a module while such a pause is in its script, so the pause is still judged by that instance's own map and text and not by the sealed module's (F460).
+   * Called by {@link adoptInstance} when a newer script of the same address replaces an older instance.
+   * @param name - The participant whose pauses are asked.
+   * @param scriptId - The script id.
+   * @returns `true` when a pause of the participant is in that script.
+   * @example
+   * ```ts
+   * this.holdsPauseInScript('server', '1904') // true while a pause in script 1904 awaits its stop's wait
+   * ```
+   */
+  private holdsPauseInScript(name: Participant, scriptId: string): boolean {
+    const participant = this.participants[name]
+    const pending =
+      this.pendingCdpStop?.participant === name
+        ? this.pendingCdpStop.event
+        : undefined
+    return [
+      participant.stopped?.event,
+      participant.refresh?.stopped.event,
+      participant.unannouncedPause?.event,
+      pending,
+    ].some((event) => event?.callFrames[0]?.location.scriptId === scriptId)
   }
 
   /**
@@ -2962,6 +3024,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Journals a `stop.module-parsed`, `stop.instance-sealed` or `stop.instance-refused` entry, each type up to {@link REPOSITORY_STOP_MODULE_JOURNAL_LIMIT}, the rest only counted ({@link cleanupOwned} journals the count), like the pauses a hook makes in a loop.
+   * The first entry of a type for each stop and script address is always journaled, past the cap too: it is the evidence (the instance's hashes) of that stop's module, and HMR churn of one module must not use it up for the others (F467). Those first entries are bounded by the stops and layers of the run.
    * @param type - The entry's type.
    * @param payload - The entry's fields.
    * @example
@@ -2975,10 +3038,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     payload: Record<string, unknown>,
   ): void {
     const journaled = this.stopModuleJournaled.get(type) ?? 0
-    if (journaled >= REPOSITORY_STOP_MODULE_JOURNAL_LIMIT) {
+    // One key per entry type, stop and script address: its first entry is never left out.
+    const firstKey = JSON.stringify([
+      type,
+      payload.participant,
+      payload.source,
+      payload.line,
+      payload.scriptUrl,
+    ])
+    const isFirst = !this.stopModuleFirstJournaled.has(firstKey)
+    if (journaled >= REPOSITORY_STOP_MODULE_JOURNAL_LIMIT && !isFirst) {
       this.unjournaledStopModuleEvents++
       return
     }
+    this.stopModuleFirstJournaled.add(firstKey)
     this.stopModuleJournaled.set(type, journaled + 1)
     this.evidence.record(type, payload)
   }
