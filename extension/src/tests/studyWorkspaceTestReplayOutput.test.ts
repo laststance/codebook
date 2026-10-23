@@ -238,7 +238,7 @@ test('stop moves skip outputs and a summary step’s action selects its event an
   }
 })
 
-// Value: protects=the Study pane's test replay section tells the truth about the Application pane: once the learner closes the pane by hand the section says it is closed, and moving to another event still works with nothing posted into the closed pane; fails_when=the section keeps saying the output is in the Application pane after the close, the close publishes no new section, or a move with the pane closed reports an error or posts a view into the gone pane; why_new=PR-B1 wires DS7's closed-pane line to the workspace's own pane (projectNodeTestSection's test passes the flag by hand), and presentNodeHistoryApplication must not touch a pane that is gone; seam=none; no_claim=Show recorded output's restoring of the pane, which needs the native layout and which neither this test nor the Reader DOM check drives (stand-ins: the workspace harness's closeTabByHand (it closes the Application tab and tells the tab listeners), its posted messages and its recorded Application updates)
+// Value: protects=the Study pane's test replay section tells the truth about the Application pane: once the learner closes the pane by hand the section says it is closed, and moving to another event still works with nothing posted into the closed pane; fails_when=the section keeps saying the output is in the Application pane after the close, the close publishes no new section, or a move with the pane closed reports an error or posts a view into the gone pane; why_new=PR-B1 wires DS7's closed-pane line to the workspace's own pane (projectNodeTestSection's test passes the flag by hand), and presentNodeHistoryApplication must not touch a pane that is gone; seam=none; no_claim=Show recorded output's restoring of the pane, which needs the native layout and which neither this test nor the Reader DOM check drives (stand-ins: the workspace harness's closeTabByHand (it closes the Application tab and tells the tab listeners), its posted messages and its recorded Application updates); why_changed=F388: the wait requires the move to commit, as the pending position line now ends with the loading words
 test('closing the Application pane makes the test replay section say so and moving on posts nothing into it', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -277,8 +277,10 @@ test('closing the Application pane makes the test replay section say so and movi
       unit: 'stop',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
-      'Next stop reaches the second stop',
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'Next stop commits the second stop',
       READER_RESULT_BOUND_MS,
     )
 
@@ -1248,7 +1250,7 @@ test('a background render while a test replay is selected keeps its Application 
   }
 })
 
-// Value: protects=a move to a stop or an event that does not exist (a press that raced ahead of the disabled button, or a keyboard repeat) is refused by name and changes nothing: Previous stop at the first stop and Next event at the result each leave one error line that names the move, and the selected moment, the step the learner chose and the Application pane stay as they were; fails_when=a refused move resets the chosen step (the explanation changes with no new moment), moves the selection, posts a view into the Application pane, says nothing, or names the wrong unit; why_new=PR-B1 adds the stop unit (DS12) and keeps the chosen step apart from the selected event (DS21), so the handler must refuse before it clears the choice; no test pressed a move past either end; seam=none; no_claim=the buttons' disabled state, which the Reader DOM check reads and which keeps a learner from pressing a move that does not exist
+// Value: protects=a move to a stop or an event that does not exist (a press that raced ahead of the disabled button, or a keyboard repeat) is refused by name and changes nothing: Previous stop at the first stop and Next event at the result each leave one error line that names the move, and the selected moment, the step the learner chose and the Application pane stay as they were; fails_when=a refused move resets the chosen step (the explanation changes with no new moment), moves the selection, posts a view into the Application pane, says nothing, or names the wrong unit; why_new=PR-B1 adds the stop unit (DS12) and keeps the chosen step apart from the selected event (DS21), so the handler must refuse before it clears the choice; no test pressed a move past either end; seam=none; no_claim=the buttons' disabled state, which the Reader DOM check reads and which keeps a learner from pressing a move that does not exist; why_changed=F388: the wait requires the result to commit, as the pending position line now ends with the loading words
 test('a move to a stop or event that does not exist is refused by name and keeps the moment, the chosen step and the Application pane', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1307,8 +1309,10 @@ test('a move to a stop or event that does not exist is refused by name and keeps
       sequence: 5,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
-      'the result is selected',
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 5 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the result is committed',
       READER_RESULT_BOUND_MS,
     )
     const updatesAtResult = harness.applicationOutputs().length

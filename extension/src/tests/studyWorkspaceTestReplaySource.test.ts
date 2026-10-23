@@ -412,7 +412,7 @@ test('a test replay that opens on its result shows the placeholder slot named af
   }
 })
 
-// Value: protects=the selection order (EN8): while the next stop's debugger presentation still loads, the slot already holds that stop's bytes with no stopped line or label and the Study position stays on the earlier moment; once the debugger shows the stop, the slot's label and the Study position commit together; fails_when=the slot keeps the earlier stop's label beside the next stop's debugger, or the Study position moves before the debugger shows the stop; why_new=Design 4's order (old moment left first, slot text confirmed before the debugger, commit after it; AC6); seam=the workspace harness's held historical debug presentation (a slow debugger); no_claim=the native frames of the transition, which N49 part 7 reviews
+// Value: protects=the selection order (EN8): while the next stop's debugger presentation still loads, the slot already holds that stop's bytes with no stopped line or label and the Study position stays on the earlier moment; once the debugger shows the stop, the slot's label and the Study position commit together; fails_when=the slot keeps the earlier stop's label beside the next stop's debugger, or the Study position moves before the debugger shows the stop; why_new=Design 4's order (old moment left first, slot text confirmed before the debugger, commit after it; AC6); seam=the workspace harness's held historical debug presentation (a slow debugger); no_claim=the native frames of the transition, which N49 part 7 reviews; why_changed=F388: the pending position line ends with the loading words
 test('while the next stop’s debugger still loads, the slot shows no earlier stop’s label and the Study position waits', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -500,7 +500,7 @@ test('while the next stop’s debugger presentation is held, the Study position 
 
     // Assert
     assert.equal(shownBefore?.position, 'Stop 1 of 2 · 0.20 s')
-    assert.equal(duringSection?.position, 'Stop 2 of 2 · 0.30 s')
+    assert.equal(duringSection?.position, 'Stop 2 of 2 · 0.30 s · loading…')
     assert.equal(duringSection?.explanation, undefined)
     assert.equal(duringSection?.selectedStepId, undefined)
     assert.equal(duringApplication?.time, 'Recorded test output')
@@ -3252,6 +3252,52 @@ test('the playback time follows the pending stop and returns to the committed mo
     assert.equal(playbackPending.positionMs, 300)
     assert.equal(playbackAfter.sequence, 2)
     assert.equal(playbackAfter.positionMs, 200)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=while a stop's selection is pending, the Study position line and the transport's time readout name the requested moment and say it is loading, and a failed presentation gives the committed moment's plain words back (F388); fails_when=a Study message pairs the requested moment's position with no loading cue while the native Call Stack and CodeLens still show the left stop, or the loading words stay after the selection failed; why_new=F388 (native frames at 30 fps paired Output · 120.64 s with Recorded: app/lib/utils.test.ts:147 · 20.62 s for about 230 ms); seam=the workspace harness's held historical debug presentation, the Study message's nodeHistorySection.position and nodeHistoryPlayback.pending; no_claim=how the Reader draws the words (the Reader DOM case) or the native views' repaint timing
+test('the position line and the playback readout say the requested moment is loading until it commits, and drop the words when the presentation fails', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const positionBefore = lastView(harness)?.nodeHistorySection?.position
+    const pendingBefore = lastView(harness)?.nodeHistoryPlayback?.pending
+    const held = harness.holdHistoricalDebugPresentation(true)
+    const selecting = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    const outcome = assert.rejects(selecting, {
+      message: 'The presentation failed.',
+    })
+    await held.started
+
+    // Act
+    const positionPending = lastView(harness)?.nodeHistorySection?.position
+    const playbackPending = lastView(harness)?.nodeHistoryPlayback?.pending
+    held.reject(new Error('The presentation failed.'))
+    await outcome
+    await waitUntil(
+      () => !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the committed moment is back',
+      READER_RESULT_BOUND_MS,
+    )
+    const positionAfter = lastView(harness)?.nodeHistorySection?.position
+    const pendingAfter = lastView(harness)?.nodeHistoryPlayback?.pending
+
+    // Assert
+    assert.equal(positionBefore?.endsWith('loading…'), false)
+    assert.equal(pendingBefore, undefined)
+    assert.equal(positionPending?.endsWith(' · 0.30 s · loading…'), true)
+    assert.equal(playbackPending, true)
+    assert.equal(positionAfter, positionBefore)
+    assert.equal(pendingAfter, undefined)
   } finally {
     await harness.close()
   }

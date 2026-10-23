@@ -400,7 +400,7 @@ test('a seek that is presenting when a newer seek arrives commits nothing before
   }
 })
 
-// Value: protects=a Play step that is presenting when a newer seek arrives commits nothing: while the newer seek loads, the Study position names the newer seek's stop and never the played event; the newer seek's moment shows when it ends; fails_when=the overtaken Play step commits its event before the newer seek has shown anything; why_new=F139 (the coordinator's review of PR-2 B): the same defect as the seek's, through Play; seam=the workspace harness's held historical debug presentation and the playback clock, moved by hand; no_claim=Play's pacing
+// Value: protects=a Play step that is presenting when a newer seek arrives commits nothing: while the newer seek loads, the Study position names the newer seek's stop and never the played event; the newer seek's moment shows when it ends; fails_when=the overtaken Play step commits its event before the newer seek has shown anything; why_new=F139 (the coordinator's review of PR-2 B): the same defect as the seek's, through Play; seam=the workspace harness's held historical debug presentation and the playback clock, moved by hand; no_claim=Play's pacing; why_changed=F388: the pending position line ends with the loading words
 test('a Play step that is presenting when a newer seek arrives commits nothing before the newer seek shows', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -430,7 +430,7 @@ test('a Play step that is presenting when a newer seek arrives commits nothing b
       sequence: 2,
       stepId: undefined,
       explanation: undefined,
-      position: 'Stop 1 of 2 · 0.20 s',
+      position: 'Stop 1 of 2 · 0.20 s · loading…',
     })
     assert.equal(before.position, 'Output · 0.25 s')
     assert.equal(shownMoment(harness).sequence, 2)

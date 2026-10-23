@@ -97,7 +97,9 @@ export function projectNodeTestSection(
   return {
     status: sectionStatus(history, stops, verdict, learning),
     ...captureReasonLine(history),
-    ...(selected ? { position: positionLine(selected, stops.length) } : {}),
+    ...(selected
+      ? { position: positionLine(selected, stops.length, pendingMoment) }
+      : {}),
     ...(explanation === undefined ? {} : { explanation }),
     // The 4A line stands at an output, the result and a stop whose source does not verify.
     ...(selected &&
@@ -206,11 +208,16 @@ function sectionStatus(
  * Words the selected event's locator; called by {@link projectNodeTestSection}.
  * @param selected - The selected event.
  * @param stopCount - How many stops the replay holds.
- * @returns `Stop <n> of <m> · <t> s`, `Output · <t> s` or `Result · <verdict> · <t> s`.
- * @example positionLine(stop, 2) // => 'Stop 1 of 2 · 0.42 s'
+ * @param pending - Whether the event is only the moment the selection is going to; the line then ends with the catalog's loading words, so no frame pairs its name with the left moment's native views (F388).
+ * @returns `Stop <n> of <m> · <t> s`, `Output · <t> s` or `Result · <verdict> · <t> s`, followed by ` · loading…` while pending.
+ * @example positionLine(stop, 2, false) // => 'Stop 1 of 2 · 0.42 s'
  */
-function positionLine(selected: HistoryEvent, stopCount: number): string {
-  return describeNodeTestReplay({
+function positionLine(
+  selected: HistoryEvent,
+  stopCount: number,
+  pending: boolean,
+): string {
+  const line = describeNodeTestReplay({
     kind: 'position',
     event:
       selected.type === 'stop'
@@ -220,6 +227,7 @@ function positionLine(selected: HistoryEvent, stopCount: number): string {
           : { type: 'output' },
     elapsedMs: selected.elapsedMs,
   })
+  return pending ? line + NODE_TEST_REPLAY_TEXT.loadingSuffix : line
 }
 
 /**

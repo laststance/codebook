@@ -13005,6 +13005,8 @@ export class StudyWorkspace {
         ...(pendingNodeHistoryEvent && {
           sequence: pendingNodeHistoryEvent.sequence,
           positionMs: pendingNodeHistoryEvent.elapsedMs,
+          // The readout says it is going there, not that it is there (F388).
+          pending: true,
         }),
       },
       nodeHistoryPosition: pendingNodeHistoryEvent

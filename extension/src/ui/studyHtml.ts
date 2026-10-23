@@ -126,6 +126,8 @@ export interface StudyViewMessage {
     startMs?: number
     endMs?: number
     loading: boolean
+    /** The shown time is the moment being selected, not yet committed: the readout says it is loading (F388). */
+    pending?: boolean
   }
   nodeHistoryPosition?: {
     sequence: number
@@ -2642,7 +2644,10 @@ function studyClient(
     nodePlayhead.max = String(range.endMs)
     if (nodeHistoryScrubbing) return
     nodePlayhead.value = String(range.positionMs)
-    describeTestReplayPlayhead(playbackState?.positionMs)
+    describeTestReplayPlayhead(
+      playbackState?.positionMs,
+      testReplayLoadingSuffix(playbackState),
+    )
   }
   /**
    * Reads the slider's range and position from a test replay's playback state; called by {@link renderTestReplayPlayhead}.
@@ -2672,22 +2677,35 @@ function studyClient(
     }
   }
   /**
+   * Words the end of the time readout: the loading words while the shown time is a moment the selection is still going to (F388); called by {@link renderTestReplayPlayhead}.
+   * @param playbackState - The test replay's playback state.
+   * @returns The catalog's loading suffix, or an empty string.
+   * @example testReplayLoadingSuffix({ pending: true, loading: false, mode: 'paused' }) // => ' · loading…'
+   */
+  const testReplayLoadingSuffix = (
+    playbackState: StudyViewMessage['nodeHistoryPlayback'],
+  ): string => (playbackState?.pending ? options.testReplay.loadingSuffix : '')
+  /**
    * Says the selected test time to assistive technology and beside the slider, never the raw millisecond value; called by {@link renderTestReplayPlayhead}.
    * @param positionMs - The selected time, if any.
-   * @example describeTestReplayPlayhead(420)
+   * @param suffix - What both texts end with: the loading words while the time is a moment still being selected, else nothing (F388).
+   * @example describeTestReplayPlayhead(420, ' · loading…')
    */
-  const describeTestReplayPlayhead = (positionMs: number | undefined): void => {
+  const describeTestReplayPlayhead = (
+    positionMs: number | undefined,
+    suffix: string,
+  ): void => {
     nodePlayhead.setAttribute(
       'aria-valuetext',
       positionMs === undefined
         ? 'No recorded test time selected'
-        : `${seconds(positionMs)} of recorded test time`,
+        : `${seconds(positionMs)} of recorded test time${suffix}`,
     )
     text(
       'node-history-playback-position',
       positionMs === undefined
         ? 'Test journal playback'
-        : `Recorded test time · ${(positionMs / options.secondMs).toFixed(2)} s`,
+        : `Recorded test time · ${(positionMs / options.secondMs).toFixed(2)} s${suffix}`,
     )
   }
   /**

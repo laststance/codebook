@@ -13,6 +13,8 @@ export const NODE_TEST_REPLAY_TEXT = {
   nothingYet: 'No test output recorded up to this moment.',
   noEntries: 'No test output recorded.',
   endedEarly: 'Recording ended before the test result.',
+  /** Ends the position line and the transport's time readout while the selection is going to a moment that has not committed yet (F388); the moment's own name stays in front of it. */
+  loadingSuffix: ' · loading…',
   jumpToLatest: 'Jump to latest',
   applicationFooter:
     'Historical test output. Reading it does not rerun the target.',
