@@ -8454,7 +8454,8 @@ test('Restore beside a kept image tab leaves the enlarged Study pane and names t
     // Act: the pane's Restore; then the step the refusal names, and Restore again.
     await harness.reader.action('arrange')
     const refused = {
-      lines: harness.reader.inspect().view!.errors.join(' | '),
+      lines: harness.reader.presentationState().reason,
+      errorRows: harness.reader.inspect().view!.errors.length,
       maximized: harness.maximizedEditorGroup(),
       maximizeCommands: maximizeCommands(),
     }
@@ -8469,6 +8470,7 @@ test('Restore beside a kept image tab leaves the enlarged Study pane and names t
     assert.deepEqual(refused, {
       lines:
         'Error: The tab "logo.png" is in front of the captured source in editor group 2. Close that tab or select the captured source\'s tab, then restore the layout again.',
+      errorRows: 0,
       maximized: false,
       maximizeCommands: 1,
     })
