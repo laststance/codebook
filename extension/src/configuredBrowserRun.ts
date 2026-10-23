@@ -2860,9 +2860,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<void> {
     if (!this.participants[name].cdp || !this.isRunOpen()) return
     // A newer script of the same address replaces the older one that is still being read or was refused, unless a pause is held or captured in the older one (F460).
-    for (const [scriptId, other] of stop.unusableInstances)
-      if (other.url === event.url && !this.holdsPauseInScript(name, scriptId))
-        stop.unusableInstances.delete(scriptId)
+    this.forgetSupersededScripts(
+      stop.unusableInstances.entries(),
+      name,
+      event.url,
+      (scriptId) => stop.unusableInstances.delete(scriptId),
+      (other) => other.url,
+    )
     stop.unusableInstances.set(event.scriptId, {
       url: event.url,
       reason: 'its text had not been read yet',
@@ -2900,18 +2904,43 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     stop.unusableInstances.delete(event.scriptId)
-    for (const [scriptId, other] of stop.instances)
-      if (
-        other.script.url === event.url &&
-        !this.holdsPauseInScript(name, scriptId)
-      )
-        stop.instances.delete(scriptId)
+    this.forgetSupersededScripts(
+      stop.instances.entries(),
+      name,
+      event.url,
+      (scriptId) => stop.instances.delete(scriptId),
+      (other) => other.script.url,
+    )
     stop.instances.set(event.scriptId, instance)
     this.journalStopModule('stop.instance-sealed', {
       ...journaled,
       hashes: instance.verifier.hashes,
     })
     this.readmitHeldPause(stop, name, event.scriptId)
+  }
+
+  /**
+   * Forgets the older scripts of an address that a newer script of that address replaces, except one a pause is held or captured in ({@link holdsPauseInScript}); for {@link adoptInstance}.
+   * @param entries - The older scripts by script id (a snapshot is taken, so deleting while reading is safe).
+   * @param name - The participant whose runtime announced the newer script.
+   * @param url - The address of the newer script.
+   * @param forget - Removes one script by id from its map.
+   * @param urlOf - Reads a script entry's address.
+   * @example
+   * ```ts
+   * this.forgetSupersededScripts(stop.instances.entries(), 'server', event.url, (id) => stop.instances.delete(id), (other) => other.script.url)
+   * ```
+   */
+  private forgetSupersededScripts<Entry>(
+    entries: IterableIterator<[string, Entry]>,
+    name: Participant,
+    url: string,
+    forget: (scriptId: string) => void,
+    urlOf: (entry: Entry) => string,
+  ): void {
+    for (const [scriptId, entry] of [...entries])
+      if (urlOf(entry) === url && !this.holdsPauseInScript(name, scriptId))
+        forget(scriptId)
   }
 
   /**

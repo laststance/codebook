@@ -42,6 +42,128 @@ const UNQUOTED_ESCAPABLE = /[\s"'`;&|()#$<>]/
 /** The characters a backslash escapes inside double quotes in a POSIX shell. */
 const DOUBLE_QUOTED_ESCAPABLE = /["$`\\\n]/
 
+/** Collects the words and commands of a line while {@link splitShellWords} scans it. */
+class WordCollector {
+  readonly commands: ShellWord[][] = []
+  private words: ShellWord[] = []
+  private word: string | undefined
+  private expanded = false
+
+  /** Whether a word is under way, so a `#` after it is no comment. */
+  get inWord(): boolean {
+    return this.word !== undefined
+  }
+
+  /** Adds text to the current word, starting one when none is under way; `expands` marks a `$` the outer shell expands. */
+  append(text: string, expands = false): void {
+    this.word = (this.word ?? '') + text
+    if (expands) this.expanded = true
+  }
+
+  /** Starts an empty word, so an empty quoted string (`""`) still is one. */
+  startWord(): void {
+    this.word ??= ''
+  }
+
+  /** Ends the current word, if any. */
+  endWord(): void {
+    if (this.word !== undefined)
+      this.words.push({
+        text: this.word,
+        expandedByOuterShell: this.expanded,
+      })
+    this.word = undefined
+    this.expanded = false
+  }
+
+  /** Ends the current word and adds a word of its own, such as a parenthesis. */
+  addSeparateWord(text: string): void {
+    this.endWord()
+    this.words.push({ text, expandedByOuterShell: false })
+  }
+
+  /** Ends the current word and command; empty commands are left out. */
+  endCommand(): void {
+    this.endWord()
+    if (this.words.length) this.commands.push(this.words)
+    this.words = []
+  }
+}
+
+/**
+ * Reads a POSIX backslash escape at `index`, for {@link splitShellWords}.
+ * @param quote - The quote the scan is inside, if any; none inside single quotes reach here.
+ * @returns The literal text the escape stands for (empty for an escaped line break, which joins the lines), or `undefined` when the backslash escapes nothing.
+ */
+function readEscape(
+  line: string,
+  index: number,
+  quote: '"' | undefined,
+): string | undefined {
+  const next = line[index + 1]
+  if (line[index] !== '\\' || next === undefined) return undefined
+  const escapable = quote === '"' ? DOUBLE_QUOTED_ESCAPABLE : UNQUOTED_ESCAPABLE
+  if (next !== '\n' && !escapable.test(next)) return undefined
+  return next === '\n' ? '' : next
+}
+
+/**
+ * Reads a backslash escape where the dialect and the quote allow one: POSIX text outside quotes and inside double quotes, never inside single quotes or in `cmd` text (F465).
+ * @returns As {@link readEscape}.
+ */
+function readEscapeIn(
+  line: string,
+  index: number,
+  quote: '"' | "'" | undefined,
+  dialect: ShellDialect,
+): string | undefined {
+  if (dialect !== 'posix' || quote === "'") return undefined
+  return readEscape(line, index, quote)
+}
+
+/**
+ * Applies a character inside quotes to the collector, for {@link splitShellWords}: it is part of the word until the matching quote; a `$` inside double quotes is one the outer shell expands.
+ * @returns The quote that is still open.
+ */
+function stepInQuote(
+  char: string,
+  quote: '"' | "'",
+  collector: WordCollector,
+): '"' | "'" | undefined {
+  if (char === quote) return undefined
+  collector.append(char, quote === '"' && char === '$')
+  return quote
+}
+
+/**
+ * Applies the unquoted character at `index` to the collector, for {@link splitShellWords}.
+ * @returns The index of the last character the step consumed (a comment consumes its whole line).
+ */
+function stepUnquoted(
+  line: string,
+  index: number,
+  dialect: ShellDialect,
+  collector: WordCollector,
+): number {
+  const char = line[index]!
+  switch (classifyUnquoted(line, index, collector.inWord, dialect)) {
+    case 'comment':
+      return lastIndexOfComment(line, index)
+    case 'parenthesis':
+      collector.addSeparateWord(char)
+      break
+    case 'command-end':
+      collector.endCommand()
+      break
+    case 'blank':
+      collector.endWord()
+      break
+    default:
+      collector.append(char)
+  }
+  return index
+}
+
 /**
  * Splits a shell command line into commands of words, keeping which words an outer shell expands.
  *
@@ -60,80 +182,25 @@ export function splitShellWords(
   line: string,
   dialect: ShellDialect = 'posix',
 ): ShellWord[][] {
-  const commands: ShellWord[][] = []
-  let words: ShellWord[] = []
-  let word: string | undefined
-  let expanded = false
+  const collector = new WordCollector()
   let quote: '"' | "'" | undefined
-  const endWord = (): void => {
-    if (word !== undefined)
-      words.push({ text: word, expandedByOuterShell: expanded })
-    word = undefined
-    expanded = false
-  }
-  const endCommand = (): void => {
-    endWord()
-    if (words.length) commands.push(words)
-    words = []
-  }
   for (let index = 0; index < line.length; index += 1) {
     const char = line[index]!
-    const next = line[index + 1]
-    // Inside quotes every character is part of the word until the matching quote; a backslash escapes only inside POSIX double quotes.
-    if (quote) {
-      if (char === quote) quote = undefined
-      else if (
-        quote === '"' &&
-        dialect === 'posix' &&
-        char === '\\' &&
-        next !== undefined &&
-        DOUBLE_QUOTED_ESCAPABLE.test(next)
-      ) {
-        // An escaped line break joins the lines; any other escaped character is kept literally.
-        if (next !== '\n') word += next
-        index += 1
-      } else {
-        if (quote === '"' && char === '$') expanded = true
-        word += char
-      }
-      continue
-    }
-    if (char === '"' || char === "'") {
-      quote = char
-      word ??= ''
-      continue
-    }
-    // Outside quotes a POSIX backslash makes the next special character an ordinary one (`\;`), and joins an escaped line break.
-    if (
-      dialect === 'posix' &&
-      char === '\\' &&
-      next !== undefined &&
-      (next === '\n' || UNQUOTED_ESCAPABLE.test(next))
-    ) {
-      if (next !== '\n') word = (word ?? '') + next
+    const escaped = readEscapeIn(line, index, quote, dialect)
+    if (escaped !== undefined) {
+      if (escaped) collector.append(escaped)
       index += 1
-      continue
-    }
-    switch (classifyUnquoted(line, index, word !== undefined, dialect)) {
-      case 'comment':
-        index = lastIndexOfComment(line, index)
-        break
-      case 'parenthesis':
-        endWord()
-        words.push({ text: char, expandedByOuterShell: false })
-        break
-      case 'command-end':
-        endCommand()
-        break
-      case 'blank':
-        endWord()
-        break
-      default:
-        word = (word ?? '') + char
+    } else if (quote) {
+      quote = stepInQuote(char, quote, collector)
+    } else if (char === '"' || char === "'") {
+      quote = char
+      collector.startWord()
+    } else {
+      index = stepUnquoted(line, index, dialect, collector)
     }
   }
-  endCommand()
-  return commands
+  collector.endCommand()
+  return collector.commands
 }
 
 /**

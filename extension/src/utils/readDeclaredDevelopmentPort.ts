@@ -338,6 +338,25 @@ type CommandPrefix = {
   programStart: number
 }
 
+/** Folds a `NAME=value` word of the prefix into what was found: only a `PORT=` matters. */
+function absorbAssignment(
+  prefix: CommandPrefix,
+  word: string,
+  expansion: PortEnv,
+): void {
+  if (!/^PORT=/.test(word)) return
+  const assigned = readPortValue(word.slice(5), expansion)
+  prefix.port = assigned.port ?? prefix.port
+  prefix.unresolved ||= assigned.unresolved === true
+}
+
+/** Folds what a `dotenv`-style wrapper's options gave (its `-v PORT=N` and its env files) into what was found. */
+function absorbDotenv(prefix: CommandPrefix, dotenv: DotenvOptions): void {
+  prefix.port = dotenv.port ?? prefix.port
+  prefix.unresolved ||= dotenv.unresolved
+  prefix.envFiles.push(...dotenv.envFiles)
+}
+
 /**
  * Separates a command's leading `NAME=value` words and wrappers from the program that runs.
  * @param expansion - The `PORT` a `${PORT:-N}` in the prefix expands against.
@@ -348,38 +367,33 @@ function splitCommandPrefix(
   scripts: Record<string, unknown> | undefined,
   expansion: PortEnv,
 ): CommandPrefix {
-  let port: number | undefined
-  let unresolved = false
-  let exported = false
-  const envFiles: string[] = []
+  const prefix: CommandPrefix = {
+    unresolved: false,
+    exported: false,
+    envFiles: [],
+    programStart: 0,
+  }
   let wrapper: string | undefined
   let index = 0
   while (index < words.length) {
     const word = words[index]!
     if (word === 'export' || word.toLowerCase() === 'set') {
-      exported = true
+      prefix.exported = true
       wrapper = undefined
       index += 1
     } else if (/^\w+=/.test(word)) {
-      const assigned = /^PORT=/.test(word)
-        ? readPortValue(word.slice(5), expansion)
-        : {}
-      port = assigned.port ?? port
-      unresolved ||= assigned.unresolved === true
+      absorbAssignment(prefix, word, expansion)
       index += 1
     } else {
       const step = readWrapperStep(words, index, wrapper, scripts, expansion)
       if (!step) break
-      if (step.dotenv) {
-        port = step.dotenv.port ?? port
-        unresolved ||= step.dotenv.unresolved
-        envFiles.push(...step.dotenv.envFiles)
-      }
+      if (step.dotenv) absorbDotenv(prefix, step.dotenv)
       index = step.next
       wrapper = step.wrapper
     }
   }
-  return { port, unresolved, exported, envFiles, programStart: index }
+  prefix.programStart = index
+  return prefix
 }
 
 /** A command line a wrapper runs, as it reads its quoted argument: the text, the shell dialect that reads it, and whether the shell around it has already expanded its `$` (a double-quoted argument). */
@@ -472,6 +486,29 @@ function readDelegation(
 }
 
 /**
+ * Reads the prefix of one statement, or notes it as unread: `setx` writes the user's stored environment, not the current shell's, and a subshell, a group or a command substitution is never interpreted.
+ * @returns The prefix, or `undefined` when the statement is not interpreted.
+ */
+function readStatementPrefix(
+  words: string[],
+  reader: Reader,
+  expansion: PortEnv,
+): CommandPrefix | undefined {
+  if (programName(words[0] ?? '') === 'setx' || hasUnreadableSyntax(words)) {
+    noteUnread(reader, words)
+    return undefined
+  }
+  const prefix = splitCommandPrefix(words, reader.scripts, expansion)
+  if (prefix.unresolved) noteUnread(reader, words)
+  return prefix
+}
+
+/** The `PORT` a program runs with: an assignment in front of it, else the shell's. */
+function assignedPortOf(prefix: CommandPrefix, env: PortEnv): PortEnv {
+  return prefix.port ?? (prefix.unresolved ? 'unknown' : env)
+}
+
+/**
  * Finds the `next dev` command in one script and the port it would use, as the shell would run it.
  * The first command that is `next dev` (or delegates to a script that runs it) decides; a command the reader cannot interpret is remembered in the reader and skipped.
  * @param scope - The `PORT` the outer line gave this one (`PORT=4000 sh -c "next dev"`), its shell dialect, and the `PORT` an outer shell expanded a double-quoted line against.
@@ -486,29 +523,16 @@ function readCommandLine(
   let env = scope.env
   for (const detailed of splitShellWords(line, scope.dialect)) {
     const words = detailed.map((word) => word.text)
-    // `setx` writes the user's stored environment, not the current shell's, so the port is not decided here.
-    if (programName(words[0] ?? '') === 'setx') {
-      noteUnread(reader, words)
-      continue
-    }
-    // A subshell, a group or a command substitution is never interpreted.
-    if (hasUnreadableSyntax(words)) {
-      noteUnread(reader, words)
-      continue
-    }
     const expansion = scope.frozenExpansion ? scope.frozenExpansion.env : env
-    const prefix = splitCommandPrefix(words, reader.scripts, expansion)
-    if (prefix.unresolved) noteUnread(reader, words)
+    const prefix = readStatementPrefix(words, reader, expansion)
+    if (!prefix) continue
     if (prefix.exported) {
-      env = prefix.port ?? (prefix.unresolved ? 'unknown' : env)
+      env = assignedPortOf(prefix, env)
       continue
     }
     const found = readProgram(
       detailed.slice(prefix.programStart),
-      {
-        assigned: prefix.port ?? (prefix.unresolved ? 'unknown' : env),
-        expansion,
-      },
+      { assigned: assignedPortOf(prefix, env), expansion },
       reader,
       depth,
     )
@@ -525,6 +549,25 @@ function readCommandLine(
   return undefined
 }
 
+/** Reads the command line a wrapper runs, one level deeper. */
+function readNested(
+  nested: NestedLine,
+  run: ProgramEnv,
+  reader: Reader,
+  depth: number,
+  words: string[],
+): DevelopmentCommand | undefined {
+  if (!mayDescend(reader, depth, words)) return undefined
+  return readCommandLine(nested.text, reader, depth + 1, {
+    env: run.assigned,
+    dialect: nested.dialect,
+    // A double-quoted line was expanded by the shell around it, before the assignment of this command (F463).
+    frozenExpansion: nested.expandedByOuterShell
+      ? { env: run.expansion }
+      : undefined,
+  })
+}
+
 /** Reads one program (after its prefix): a quoted command line, `next`, `concurrently`, or a package-manager delegation. */
 function readProgram(
   program: ShellWord[],
@@ -534,17 +577,7 @@ function readProgram(
 ): DevelopmentCommand | undefined {
   const words = program.map((word) => word.text)
   const nested = readNestedLine(program)
-  if (nested !== undefined)
-    return mayDescend(reader, depth, words)
-      ? readCommandLine(nested.text, reader, depth + 1, {
-          env: run.assigned,
-          dialect: nested.dialect,
-          // A double-quoted line was expanded by the shell around it, before the assignment of this command (F463).
-          frozenExpansion: nested.expandedByOuterShell
-            ? { env: run.expansion }
-            : undefined,
-        })
-      : undefined
+  if (nested !== undefined) return readNested(nested, run, reader, depth, words)
   const next = readNextProgram(words, run.expansion)
   if (next) {
     if (next.unresolved) noteUnread(reader, words)
