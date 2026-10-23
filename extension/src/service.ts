@@ -396,9 +396,6 @@ export class StudyService {
   private readonly startKeys = new Map<string, StudyRecord>()
   private readonly maintenance: ReturnType<typeof setInterval>
   private stopping = false
-  /** Waits before the seal's one retry; a test replaces it so no clock runs. */
-  sealRetryDelay: (milliseconds: number) => Promise<void> = (milliseconds) =>
-    new Promise((resolve) => setTimeout(resolve, milliseconds))
   private shutdownPromise?: Promise<void>
 
   /**
@@ -429,6 +426,18 @@ export class StudyService {
    */
   private sanitizedCause(error: unknown): string {
     return sanitizeCause(error, this.causeRoots).slice(0, MAX_UI_TEXT_CHARS)
+  }
+
+  /**
+   * Sanitizes a release failure before the run keeps or throws it, so `codebook_stop`, the run resource and a maintenance turn's error never name a private path (F218): a {@link StudyError} keeps its code, any other failure stays a plain error with sanitized words.
+   * @param failure - What the release threw, or its removal wording ({@link StudyService.releaseFailure}).
+   * @returns A sanitized {@link StudyError}, or a plain {@link Error} for a failure that was none.
+   * @example this.sanitizedFailure(new Error("close failed at '/Users/ada/.service/run'")).message // => "close failed at '<storage>/run'"
+   */
+  private sanitizedFailure(failure: unknown): unknown {
+    return failure instanceof StudyError
+      ? this.sanitizedError(failure)
+      : new Error(this.sanitizedCause(failure))
   }
 
   /**
@@ -486,6 +495,10 @@ export class StudyService {
     readonly environment: StudyEnvironment,
     readonly storageRoot: string,
     private readonly now = Date.now,
+    /** Waits before the seal's one retry ({@link StudyService.finishNodeHistory}); a test passes one that records the delay, so no clock runs. */
+    private readonly sealRetryDelay: (milliseconds: number) => Promise<void> = (
+      milliseconds,
+    ) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   ) {
     this.removalAvailability = initialStudyRemovalAvailability(
       environment.remoteName,
@@ -523,13 +536,14 @@ export class StudyService {
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */
   async status() {
     const [prerequisites, repository] = await Promise.all([
-      this.environment
-        .prerequisites()
-        .catch((error) => ({ ready: false, missing: [String(error)] })),
+      this.environment.prerequisites().catch((error) => ({
+        ready: false,
+        missing: [this.sanitizedCause(error)],
+      })),
       this.repository
         ? this.sources({ instanceId: this.instanceId }).then(
             () => ({ ready: true, reason: undefined }),
-            (error) => ({ ready: false, reason: String(error) }),
+            (error) => ({ ready: false, reason: this.sanitizedCause(error) }),
           )
         : Promise.resolve({
             ready: false,
@@ -1224,7 +1238,7 @@ export class StudyService {
       throw new StudyError(
         String(error).includes('conflict:') ? 'BUSY' : 'RUNTIME_FAILED',
         'The action was not accepted.',
-        String(error),
+        this.sanitizedCause(error),
       )
     }
     const receipt = {
@@ -1453,7 +1467,7 @@ export class StudyService {
       throw new StudyError(
         String(error).includes('conflict:') ? 'STALE_PAUSE' : 'RUNTIME_FAILED',
         'Continue was not confirmed.',
-        String(error),
+        this.sanitizedCause(error),
       )
     }
     return { accepted: true, runUri: this.uri(record.id) }
@@ -2101,7 +2115,9 @@ export class StudyService {
       )
     // A failed release is worded again, and so is the error it gave a run that ended without one.
     if (record.releaseError === undefined) return
-    const failure = this.releaseFailure(record, record.releaseError)
+    const failure = this.sanitizedFailure(
+      this.releaseFailure(record, record.releaseError),
+    )
     if (record.cleanupError) record.cleanupError = domainError(failure)
     if (source?.kind === 'release')
       record.error = studyErrorNamingCause(domainError(failure))
@@ -2235,7 +2251,7 @@ export class StudyService {
         record.recordingReceipt = {
           ...receipt,
           status: 'failed',
-          reason: String(error).slice(0, MAX_UI_TEXT_CHARS),
+          reason: this.sanitizedCause(error),
         }
     }
   }
@@ -2252,9 +2268,10 @@ export class StudyService {
    */
   private runEvidenceFailure(record: StudyRecord): string | undefined {
     if (isStudyRemovalExclusion(record.historyExcluded)) return undefined
-    return record.stopped
+    const failure = record.stopped
       ? record.evidenceFailureAtStop
       : record.runtime?.evidence.failure
+    return failure === undefined ? undefined : this.sanitizedCause(failure)
   }
 
   /**
@@ -2272,14 +2289,14 @@ export class StudyService {
     runtime: RuntimeView | undefined,
   ): string | undefined {
     const failure = runtime?.failures[0]
-    // Only a removed study's failure that names its evidence directory is worded again.
+    // Only a removed study's failure that names its evidence directory is worded again; any other is shown with its private roots replaced (F233).
     if (
       !runtime ||
       failure === undefined ||
       !isStudyRemovalExclusion(record.historyExcluded) ||
       !failure.includes(runtime.artifactDirectory)
     )
-      return failure
+      return failure === undefined ? undefined : this.sanitizedCause(failure)
     return this.writeFailureError(
       record,
       'Evidence buffering or persistence failed.',
@@ -2918,7 +2935,9 @@ export class StudyService {
    */
   private failByRelease(record: StudyRecord, error: unknown): void {
     if (record.error) return
-    record.error = studyErrorNamingCause(domainError(error))
+    record.error = studyErrorNamingCause(
+      domainError(this.sanitizedFailure(error)),
+    )
     record.errorSource = { kind: 'release' }
   }
 
@@ -3347,7 +3366,12 @@ export class StudyService {
         record.historyExcluded = await this.exclusionAfterEarlyFailure(record)
       // A stop cancelled this preparation: the run ends as stopped, with no error of its own and no refusal; a stop before the history began gives up its slot and keeps its start key (F97).
       if (record.profile === NODE_TEST_PROFILE && record.stopping) {
-        if (!record.nodeHistoryWriter)
+        // An exclusion that already explains the run (a refusal at the admission) stays (F222).
+        if (
+          !record.nodeHistoryWriter &&
+          (record.historyExcluded === undefined ||
+            record.historyExcluded === 'awaiting-admission')
+        )
           record.historyExcluded = 'stopped-before-history'
         record.nodePhase = 'failed'
         return
@@ -3355,9 +3379,7 @@ export class StudyService {
       // A test run refused before its history began recorded nothing: it gives up its slot and its start key (EN1).
       if (record.profile === NODE_TEST_PROFILE && !record.nodeHistoryWriter)
         record.historyExcluded = 'refused-at-preparation'
-      record.error = this.preparationError(record, error)
-      if (record.profile === NODE_TEST_PROFILE)
-        record.error = this.sanitizedError(record.error)
+      record.error = this.sanitizedError(this.preparationError(record, error))
       record.runtime?.fail(record.error.message)
       if (record.nodePhase) record.nodePhase = 'failed'
     }
@@ -3421,8 +3443,8 @@ export class StudyService {
         // The agent reads the code and message, not the cause, so the unreadable library is named there.
         throw new StudyError(
           'PREREQUISITE_MISSING',
-          `The study library could not be read, so no run was started: ${thrownMessage(error)}. Repair or remove the entry it names in the learning library, then start again. Existing learning was kept.`,
-          String(error),
+          `The study library could not be read, so no run was started: ${this.sanitizedCause(thrownMessage(error))}. Repair or remove the entry it names in the learning library, then start again. Existing learning was kept.`,
+          this.sanitizedCause(error),
         )
       },
     )
@@ -3568,7 +3590,7 @@ export class StudyService {
     } catch (error) {
       // The raw failure stays for the wording of a removal found later (row 700).
       record.releaseError = error
-      const failure = this.releaseFailure(record, error)
+      const failure = this.sanitizedFailure(this.releaseFailure(record, error))
       record.cleanupError = domainError(failure)
       record.stopPromise = undefined
       throw failure

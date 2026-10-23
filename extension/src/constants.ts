@@ -1383,14 +1383,12 @@ export const HTML_PARSER_HEADING_NAMES = new Set([
 /** How long a test history's seal waits before its one retry after a transient file-system failure ({@link TRANSIENT_SEAL_ERROR_CODES}). */
 export const SEAL_RETRY_DELAY_MS = 200
 
-/** The file-system error codes that may pass by themselves, so the seal of a test history is tried once more ({@link StudyService.sealNodeHistory}); any other code fails the seal at once. */
-export const TRANSIENT_SEAL_ERROR_CODES: readonly string[] = [
-  'EMFILE',
-  'ENFILE',
-  'EBUSY',
-  'EAGAIN',
-  'EPERM',
-]
+/**
+ * The file-system error codes that may pass by themselves, so the seal of a test history is tried once more ({@link StudyService.sealNodeHistory}); any other code fails the seal at once.
+ * It is {@link TRANSIENT_FILE_ERROR_CODES} without `EIO`: a disk error at the seal can leave a torn write, which waiting 200 ms does not repair, while a descriptor shortage or a busy file passes by itself.
+ */
+export const TRANSIENT_SEAL_ERROR_CODES: readonly string[] =
+  TRANSIENT_FILE_ERROR_CODES.filter((code) => code !== 'EIO')
 
 /** How many listed test histories keep the map of their citable events for the fast path of a changed learning material; the others read their journal again when it changes ({@link NodeTestHistoryStore.summarize}). */
 export const NODE_HISTORY_CITABLE_MEMO_LIMIT = 8

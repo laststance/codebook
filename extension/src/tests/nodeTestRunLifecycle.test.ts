@@ -38,6 +38,8 @@ type FakeRunSteps = {
   stops?: 1 | 2
   /** The service clock, moved by a test to reach a deadline. */
   now?: () => number
+  /** Replaces the wait before the seal's one retry. */
+  sealRetryDelay?: (milliseconds: number) => Promise<void>
   /** Records no output before the first stop, so a run stopped there seals a history with no entry. */
   silent?: boolean
   /** Holds the preparation's first stop until it settles, or until a stop cancels it. */
@@ -52,6 +54,8 @@ type FakeRunSteps = {
   complete?: () => ReturnType<NodeTestRuntime['complete']>
   /** How many releases fail before one succeeds. */
   releaseFailures?: number
+  /** Replaces the words of a failed release, which can name a path. */
+  releaseFailureText?: () => string
   /** The Saved Study Limit in force and how many saved studies the library holds; the history store counts both. */
   storage?: { limit: number; savedStudies: number }
 }
@@ -62,7 +66,10 @@ type FakeRunSteps = {
  * @returns The harness, its service, a start function and counters of the run's releases.
  */
 async function testRunHarness(steps: FakeRunSteps = {}) {
-  const harness = await createHarness({ now: steps.now }),
+  const harness = await createHarness({
+      now: steps.now,
+      sealRetryDelay: steps.sealRetryDelay,
+    }),
     { service } = harness
   const storage = steps.storage
   service.nodeHistoryStore = new NodeTestHistoryStore(
@@ -164,7 +171,8 @@ async function testRunHarness(steps: FakeRunSteps = {}) {
       releaseAttempts++
       if (releaseAttempts <= (steps.releaseFailures ?? 0))
         throw new Error(
-          `process group still running (release ${releaseAttempts})`,
+          steps.releaseFailureText?.() ??
+            `process group still running (release ${releaseAttempts})`,
         )
       releases++
     },
@@ -1588,11 +1596,12 @@ for (const scenario of [
 ] as const)
   test(`a test history seal that fails with ${scenario.name}`, async (context) => {
     // Arrange
-    const run = await testRunHarness()
     const delays: number[] = []
-    run.service.sealRetryDelay = async (milliseconds): Promise<void> => {
-      delays.push(milliseconds)
-    }
+    const run = await testRunHarness({
+      sealRetryDelay: async (milliseconds): Promise<void> => {
+        delays.push(milliseconds)
+      },
+    })
     const finish = failSealAttempts(context, scenario.code, scenario.failures)
     try {
       const { record } = await run.start()
@@ -1829,6 +1838,87 @@ test('the node-history resource summarizes only for the history page, not for it
     assert.equal(summaries.mock.callCount(), 1)
   } finally {
     context.mock.restoreAll()
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a run the library refused at its admission and that is then stopped while its preparation unwinds: it keeps refused-at-admission and its reason; fails_when=the stop overwrites the refusal with stopped-before-history, so the run reads "ended before its history began" and a repeat under its key is treated as a stop, not a refusal; why_new=the preparation catch assigned the stop's exclusion unconditionally (F222); seam=the exclusion is set on the record as the admission would set it, the file check is held and then rejects; no_claim=the admission itself (studyAdmission tests)
+test('a run refused at its admission and then stopped keeps refused-at-admission and its reason', async () => {
+  // Arrange
+  const run = await testRunHarness()
+  let checkIsHeld = false,
+    letCheckFail!: () => void
+  const checkMayFail = new Promise<void>((resolve) => {
+    letCheckFail = resolve
+  })
+  run.service.environment.checkNodeTestFiles = async (): Promise<void> => {
+    checkIsHeld = true
+    await checkMayFail
+    throw new Error('The operation was aborted.')
+  }
+  try {
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: 'refused-then-stopped',
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => checkIsHeld, 'the file check holds the preparation')
+    record.historyExcluded = 'refused-at-admission'
+
+    // Act
+    const stopping = run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    letCheckFail()
+    const state = await stopping
+
+    // Assert
+    assert.equal(record.historyExcluded, 'refused-at-admission')
+    assert.equal(
+      state.recording.reason,
+      'The run was refused before it started; nothing was saved.',
+    )
+  } finally {
+    letCheckFail()
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a test run whose release failed: the rejection of codebook_stop and the run resource's cleanupError name `<storage>` where the failure named the service's storage path; fails_when=the release error is stored and thrown raw, so the stop tool and the run resource carry the private path; why_new=stopRecord kept and threw the release failure unsanitized (F218); seam=the owned run's release throws a message with the storage root; no_claim=the removal rewording (studyRemoval tests)
+test('a failed release of a test run names no storage path in the stop rejection or the run resource', async () => {
+  // Arrange
+  let storageRoot = ''
+  const run = await testRunHarness({
+    releaseFailures: 1,
+    releaseFailureText: () =>
+      `process group still running in '${storageRoot}/x'`,
+  })
+  storageRoot = run.service.causeRoots.storage[0]!
+  try {
+    const { record } = await run.start()
+
+    // Act
+    const rejection = await run.service
+      .stop({ instanceId: run.service.instanceId, runId: record.id })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+    // Assert
+    assert.ok(rejection instanceof Error)
+    assert.equal(
+      rejection.message,
+      "process group still running in '<storage>/x'",
+    )
+    assert.equal(
+      run.service.state(record).cleanupError?.cause,
+      "Error: process group still running in '<storage>/x'",
+    )
+  } finally {
     await run.harness.close()
   }
 })

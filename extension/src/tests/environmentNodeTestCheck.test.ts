@@ -196,8 +196,9 @@ test('the preparation check of a test start passes when the editor agrees and th
   })
 
   // Act / Assert
+  const check = run.environment.checkNodeTestFiles
+  assert.equal(typeof check, 'function', 'the environment checks test starts')
   await assert.doesNotReject(
-    run.environment.checkNodeTestFiles?.(run.configuration, run.citedSources) ??
-      Promise.resolve(),
+    run.environment.checkNodeTestFiles!(run.configuration, run.citedSources),
   )
 })
