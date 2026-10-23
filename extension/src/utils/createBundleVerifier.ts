@@ -11,6 +11,7 @@ import { isCommentAt } from './isCommentAt'
 import { isSourcePosition } from './isSourcePosition'
 import { sourceMapGeneratedRange } from './sourceMapGeneratedRange'
 import { sourceMapMappedPositions } from './sourceMapMappedPositions'
+import { walkSourceMapSegments } from './walkSourceMapSegments'
 
 /** Seals one parsed map for {@link ConfiguredBrowserRun} before input, rejecting ambiguous originals without changing legacy verification. @example createBundleVerifier(bundle).hashes.sourceMap.length // 64 */
 export function createBundleVerifier(input: BundleSource) {
@@ -78,6 +79,28 @@ export function createBundleVerifier(input: BundleSource) {
         endLine,
         isCodeAt,
       )
+    },
+    /**
+     * Lists every column the sealed map puts code on, on one line of the cited source, so {@link boundColumnOfInstance} can tell which statement of a line another script's map means by a bound column.
+     * @param line - One-based line of the sealed original.
+     * @returns The distinct one-based original columns of the line's code mappings (a kept comment is no code), ascending; empty for a line the map does not reach.
+     * @example
+     * verifier.mappedColumnsOfLine(1) // => [1, 9] for a line with two mapped statements
+     */
+    mappedColumnsOfLine(line: number): number[] {
+      const columns = new Set<number>()
+      walkSourceMapSegments(
+        payload.mappings,
+        ({ generatedLine, generatedColumn, original }) => {
+          if (!original || original.sourceIndex !== matches[0]) return
+          if (
+            original.line + 1 === line &&
+            isCodeAt(generatedLine, generatedColumn)
+          )
+            columns.add(original.column + 1)
+        },
+      )
+      return [...columns].sort((left, right) => left - right)
     },
     /**
      * Gives the generated range that holds every place the sealed map puts on one line of the cited source, so {@link ConfiguredBrowserRun} asks the debugger for the break locations of that line instead of the whole module's.
