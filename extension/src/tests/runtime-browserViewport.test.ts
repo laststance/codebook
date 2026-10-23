@@ -1203,6 +1203,67 @@ test('a recorded preview posts one non-required frame and no clearing reset', as
   harness.viewport.close()
 })
 
+// Value: protects=previewRecorded telling its caller whether the frame was posted, so a dropped preview is answered by clearing the pane and not by leaving the earlier moment's pixels; fails_when=it returns true for a frame that no renderer will show (before the renderer is ready, in a live viewport, after close, or while a required frame is already pending) or false for one it posted; why_new=Cycle 0050 F374 (it returned nothing, so a drop was invisible to the workspace); seam=the viewport harness's renderer epoch and its two delivery slots; no_claim=the webview's decode and swap
+test('a recorded preview reports whether it was posted: yes with a renderer, no before one, after close or beside a pending required frame', async () => {
+  // Arrange
+  const recording = await viewportHarness(
+      'normal',
+      true,
+      undefined,
+      'recording',
+    ),
+    live = await viewportHarness('normal', true, undefined, 'live'),
+    epoch = '11111111-1111-1111-1111-111111111111',
+    beforeRenderer = recording.viewport.previewRecorded(
+      'b2xk',
+      'Recorded 0.10 s',
+    )
+  recording.ready(epoch)
+  live.ready(epoch)
+
+  // Act
+  const withRenderer = recording.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.10 s',
+  )
+  const inLiveViewport = live.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.10 s',
+  )
+  // The posted preview is still in flight, so a required frame waits behind it: the delivery takes no preview.
+  const queued = recording.viewport.present('bmV3', 'Recorded 0.30 s')
+  await delay(0)
+  const besideRequired = recording.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.40 s',
+  )
+  recording.viewport.close()
+  const afterClose = recording.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.50 s',
+  )
+  live.viewport.close()
+  await Promise.allSettled([queued])
+
+  // Assert
+  assert.deepEqual(
+    {
+      beforeRenderer,
+      withRenderer,
+      inLiveViewport,
+      besideRequired,
+      afterClose,
+    },
+    {
+      beforeRenderer: false,
+      withRenderer: true,
+      inLiveViewport: false,
+      besideRequired: false,
+      afterClose: false,
+    },
+  )
+})
+
 test('a recorded gap requires its own current renderer receipt and never certifies a PNG', async () => {
   // Arrange
   const harness = await viewportHarness('normal', true, undefined, 'recording'),

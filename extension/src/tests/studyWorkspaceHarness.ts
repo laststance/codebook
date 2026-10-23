@@ -3430,6 +3430,8 @@ export async function workspaceHarness(
     onDidDelete: disposable,
     dispose(): void {},
   }
+  /** Whether the fake recorded viewport has a required frame queued behind one in flight, which makes it drop preview frames; see `holdRequiredFramePending`. */
+  let requiredFramePending = false
   const viewportEvents: string[] = [],
     viewportInstances: WorkspaceViewport[] = []
   /** Models the leased renderer contract so workspace tests fail when retirement precedes transfer. @example reader.presentation.createViewport('run', record, fail, 'normal') */
@@ -3601,10 +3603,22 @@ export async function workspaceHarness(
       displayedImage = undefined
       this.abandonPaint?.(new Error('Pause display invalidated'))
     }
-    /** Shows the next recorded frame at once and clears nothing, as the real viewport's non-required preview frame does; the later required frame follows with the receipt. @example viewport.previewRecorded(png.toString('base64'), 'Recorded · 1.50 s') */
-    previewRecorded(image: string): void {
-      if (this.closed) return
+    /**
+     * Shows the next recorded frame at once and clears nothing, as the real viewport's non-required preview frame does; the later required frame follows with the receipt.
+     * The frame is dropped under the real viewport's conditions: the viewport is not a recording, is closed or historical, or a required frame is pending (see `holdRequiredFramePending`); the pane then keeps what it showed.
+     * @returns `true` when the frame was shown; `false` when it was dropped.
+     * @example viewport.previewRecorded(png.toString('base64'), 'Recorded · 1.50 s')
+     */
+    previewRecorded(image: string): boolean {
+      if (
+        this.mode !== 'recording' ||
+        this.closed ||
+        this.historical ||
+        requiredFramePending
+      )
+        return false
       displayedImage = image
+      return true
     }
     private abandonPaint?: (error: Error) => void
     /** Delays only the requested replay image so workspace tests can interrupt pending paints. @example await viewport.present(png) */
@@ -7564,6 +7578,14 @@ export async function workspaceHarness(
         else if (kind === 'duplicate') seededTabs = [tab, { ...tab }]
         group.tabs = seededTabs
       }
+    },
+    /**
+     * Makes the fake recorded viewport drop its preview frames, as the real one does while a required frame is queued behind one in flight (`FrameDelivery.offer` refuses a frame then), until the test lifts it.
+     * @param isPending - `true` while a required frame is pending; `false` lifts it.
+     * @example harness.holdRequiredFramePending(true)
+     */
+    holdRequiredFramePending(isPending: boolean): void {
+      requiredFramePending = isPending
     },
     holdNextImage() {
       let release = (): void => {},

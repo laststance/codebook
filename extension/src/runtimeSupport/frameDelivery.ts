@@ -76,6 +76,21 @@ export class FrameDelivery {
     this.invalidate('Pause display invalidated')
   }
 
+  /**
+   * Tells whether {@link offer} would take a frame now, without offering one: the same refusals, read at once instead of through the rejected promise; asked by {@link BrowserViewport.previewRecorded} to report whether its preview was posted.
+   * @param required - Whether the frame is a required one; a frozen delivery (a pause image) takes only those.
+   * @returns `false` when the delivery is closed or has no renderer epoch, when it is frozen and the frame is not required, and when a required frame is already pending; otherwise `true`.
+   * @example if (delivery.accepts(false)) void delivery.offer(frame)
+   */
+  accepts(required: boolean): boolean {
+    return (
+      !this.closed &&
+      this.epoch !== undefined &&
+      !(this.frozen && !required) &&
+      !this.pending?.message.required
+    )
+  }
+
   /** Queues one image with its own deadline; only disposable live pending images can be replaced. @example await delivery.offer({ ...frame, required: true }) */
   offer(
     frame: ViewFrame,

@@ -10402,12 +10402,15 @@ export class StudyWorkspace {
           this.lastSelectionKey = undefined
           // A reload of the displayed recording, the end of a stop's pause, or a Pause with no frame in flight keeps the frame on screen until the next moment paints.
           // The next moment's frame, already read, replaces the pixels at once; the pane never blanks between two moments (F3).
-          if (next)
+          const isPreviewPosted =
+            next !== undefined &&
             this.replayViewport?.previewRecorded(
               next.image.toString('base64'),
               recordedFrameLabel(next.positionMs),
-            )
-          else if (!keepPixels) this.replayViewport?.clearRecorded()
+            ) === true
+          // A preview the viewport dropped would leave the earlier moment's pixels beside the next moment's source and values, so the pane is cleared as when no frame was read (F374).
+          if (!isPreviewPosted && !keepPixels)
+            this.replayViewport?.clearRecorded()
         },
         changed: () => {
           const state = this.playback?.state()
