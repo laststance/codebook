@@ -3924,6 +3924,46 @@ test('a test replay opened in a saved layout with another source column reads it
   }
 })
 
+// Value: protects=a test replay's Restore that fails while it gives the grid its sizes back reading the layout as unconfirmed with the failure as the reason; fails_when=the failed Restore keeps the earlier confirmation and sets no reason, so the Study pane still reads a confirmed layout over a grid the Restore moved or failed to move; why_new=F433 (OCR L6: the Restore's failure path reset nothing); seam=the workspace harness's resized native layout and its next refused setEditorLayout command; no_claim=the wording of the editor's own error
+test('a test replay Restore whose layout command fails reads the layout as unconfirmed with the failure as its reason', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [
+        { size: 0.8, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.2 },
+      ],
+    })
+    const confirmedBefore = harness.reader.presentationState().layoutConfirmed
+    harness.failNextCommand('vscode.setEditorLayout')
+
+    // Act
+    const before = harness.reader.presentationState()
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: before.presentationId,
+        expectedRevision: before.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      }),
+    )
+
+    // Assert
+    assert.equal(confirmedBefore, true)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false)
+    assert.equal(typeof harness.reader.presentationState().reason, 'string')
+  } finally {
+    await harness.close()
+  }
+})
+
 /**
  * Reads the address of the tab in front of a group.
  * @param harness - The workspace harness.
