@@ -3689,6 +3689,241 @@ test('Restore Study workspace layout with a confirmed test replay layout leaves 
   }
 })
 
+// Value: protects=a Restore with a test replay selected that is still showing the slot when the reader closes ending with the close's error and raising no revision; fails_when=the Restore goes on after its Focus source show, raises the revision, publishes and answers `open` for a reader that is closed; why_new=F415 (OCR M2: restoreTestReplayArrangement checked no operation and no lifetime after its await); seam=the workspace harness's held text document show, the Study pane's Arrange control and the reader's close; no_claim=the native tab strip
+test('a Restore with a test replay selected whose slot show is held when the reader closes fails and raises no revision', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+    harness.closeTabByHand(slotTab)
+    const held = harness.holdNextTextDocumentShow({
+      uri: (slotTab.input as { uri: { toString(): string } }).uri.toString(),
+    })
+    release = held.release
+    const revisionBefore =
+      harness.reader.presentationState().presentationControlRevision
+    const restoring = harness.reader.action('arrange')
+    const outcome = assert.rejects(restoring, {
+      message:
+        'The study workspace was closed; repeat the action explicitly if needed.',
+    })
+    await held.started
+
+    // Act
+    // The close waits for the Restore it ends, so the editor's show is released after it began.
+    const closing = harness.reader.close()
+    release()
+    await closing
+    await outcome
+
+    // Assert
+    assert.equal(
+      harness.reader.presentationState().presentationControlRevision,
+      revisionBefore,
+    )
+    assert.deepEqual(slotTabs(harness), [])
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a second Restore pressed while the first one still waits for the slot's show being refused, so two Restores never raise the revision and publish in one turn; fails_when=the second Restore is admitted beside the first and both answer `open`; why_new=F415 (OCR M2: the path registered no presentation operation); seam=the workspace harness's held text document show and the Study pane's Arrange control; no_claim=which of two real clicks the editor delivers first
+test('a second Restore with a test replay selected is refused while the first waits for the slot', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+    harness.closeTabByHand(slotTab)
+    const held = harness.holdNextTextDocumentShow({
+      uri: (slotTab.input as { uri: { toString(): string } }).uri.toString(),
+    })
+    release = held.release
+    const first = harness.reader.action('arrange')
+    await held.started
+
+    // Act
+    const second = harness.reader.action('arrange')
+
+    // Assert
+    await assert.rejects(second, {
+      message:
+        'A presentation change or reader close is pending. Read its state before another control.',
+    })
+    release()
+    await first
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the Study pane reading the recorded source as opening, not as missing, while a test replay is only opening and has no slot yet; fails_when=the pane says "The recorded source of the test replay is not shown in its pane. Use Focus source to show it again." while the open is under way, replacing the opening line; why_new=F416 (OCR M3: an opening replay has no slot, so layoutSourceReady was false and the missing-slot line won); seam=the workspace harness's held text document show during Open replay and the posted Study message; no_claim=the wording the real pane draws for the line
+test('the Study pane says the recorded source is opening, not missing, while a test replay is opening', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const held = harness.holdNextTextDocumentShow()
+    release = held.release
+    const opening = harness.reader.openLearningReplay(history.studyId)
+    await held.started
+
+    // Act
+    const whileOpening = harness.reader.presentationState().reason
+    const shownByPane = lastView(harness)?.presentation?.reason
+    release()
+    await opening
+
+    // Assert
+    assert.equal(
+      whileOpening,
+      'The recorded source is opening in its native pane.',
+    )
+    assert.equal(
+      shownByPane,
+      'The recorded source is opening in its native pane.',
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=Restore with a test replay selected giving the grid the sizes of the last arrangement back after the learner resized it, and reading confirmed only then; fails_when=Restore confirms from the receipt without comparing the grid, so the learner's sizes stay and layoutConfirmed is true; why_new=F417 (CodeRabbit major: the receipt was confirmed without the grid's dimensions); seam=the workspace harness's native layout (getEditorLayout and setEditorLayout as the learner's resize and the Restore use them); no_claim=the native pixel sizes a real editor keeps
+test('Restore with a test replay selected gives the grid back the sizes the learner resized', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const arranged = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [
+        { size: 0.8, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.2 },
+      ],
+    })
+    const resized = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+
+    // Act
+    await harness.reader.action('arrange')
+    const restored = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+
+    // Assert
+    assert.notDeepEqual(resized, arranged)
+    assert.deepEqual(restored, arranged)
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Restore with a test replay selected leaving the keyboard where it was (the learner's file, or the chat) while the slot comes back in front; fails_when=Restore shows the slot with the keyboard (preserveFocus false) and moves the keyboard to the source; why_new=F418 (CodeRabbit minor: Restore always called Focus source's show); seam=the workspace harness's covered slot, the keyboard in another group and the Study pane's Arrange control; no_claim=a native chat input's own focus
+test('Restore with a test replay selected fronts the slot and leaves the keyboard in the other group', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slotColumn = await coverSlot(harness)
+    const keyboardColumn =
+      harness.editor.window.tabGroups.activeTabGroup.viewColumn
+
+    const before = harness.reader.presentationState()
+
+    // Act
+    // An agent's Restore: the Study pane's Arrange control gives that pane the keyboard first, which this test is not about.
+    await harness.reader.changePresentation(
+      {
+        presentationId: before.presentationId,
+        expectedRevision: before.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      },
+      'agent',
+    )
+
+    // Assert
+    assert.notEqual(keyboardColumn, slotColumn)
+    assert.equal(
+      frontOfGroup(harness, slotColumn)?.includes('/node-history-slot/'),
+      true,
+    )
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      keyboardColumn,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay opened in a saved layout whose source column is not the Study workspace's (Living book: the third column) reading its layout as confirmed once the slot stands at that column; fails_when=layoutSourceReady looks for the slot in the Study workspace's second column whatever the mode, so the layout can never confirm; why_new=F424 (OCR L5: layoutSourceReady hardcoded the study-workspace source column while matchingColumns no longer checked it); seam=the workspace harness with a saved Living book preference and a test replay opened through Open replay; no_claim=a native Living book arrangement, which is retired and selectable by no command
+test('a test replay opened in a saved layout with another source column reads its layout as confirmed', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.workspaceState.update('codebook.presentation.v1', {
+      version: 1,
+      mode: 'living-book',
+    })
+    harness.reader['readPresentationPreference']()
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+
+    // Act
+    await openReplayAt(harness, history.studyId, 2)
+
+    // Assert
+    assert.equal(harness.reader.presentationState().mode, 'living-book')
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
+
 /**
  * Reads the address of the tab in front of a group.
  * @param harness - The workspace harness.
