@@ -260,6 +260,8 @@ export async function nativeParticipantsHarness(
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )
+  // The text the runtime holds for further scripts of a participant's module, by script id ({@link announceModuleInAnotherLayer}); a script without an entry is the sealed module.
+  const instanceSources = new Map<string, string>()
   let failedRegistration = false,
     badSource = false,
     unboundPause = false,
@@ -566,6 +568,7 @@ export async function nativeParticipantsHarness(
       parameters?: {
         expression?: string
         type?: string
+        scriptId?: string
         start?: ScriptPlace
         end?: ScriptPlace
       },
@@ -637,7 +640,8 @@ export async function nativeParticipantsHarness(
         return {
           scriptSource: badSource
             ? 'different module'
-            : bundle(name).javascript,
+            : (instanceSources.get(parameters?.scriptId ?? '') ??
+              bundle(name).javascript),
         }
       if (method === 'Debugger.evaluateOnCallFrame')
         return {
@@ -1167,6 +1171,59 @@ export async function nativeParticipantsHarness(
         url,
         executionContextId: 1,
       })
+    },
+    /**
+     * Announces a participant's stop module as another webpack layer parses it, as Next does for one source file imported by several layers: a script of its own whose generated code differs from the sealed one (an extra leading line shifts every generated line by one), with its own inline source map.
+     * @param name - The participant whose runtime parses the script.
+     * @param scriptId - The new script's id.
+     * @param layer - The webpack layer in the script address, e.g. `middleware`.
+     * @param mappings - The instance's own source map mappings; `;AAAA` puts the one statement on generated line 2 (zero-based line 1).
+     * @param retainedOriginal - The original text the instance's map retains instead of the frozen source, as a map of another file would.
+     * @example harness.announceModuleInAnotherLayer('server', 'middleware', 'middleware', ';AAAA')
+     */
+    announceModuleInAnotherLayer(
+      name: Participant,
+      scriptId: string,
+      layer: string,
+      mappings: string,
+      retainedOriginal?: string,
+    ): void {
+      const sealed = bundle(name),
+        url = sealed.scriptUrl.replace(/\(action-browser\)/, `(${layer})`),
+        map = {
+          ...JSON.parse(sealed.sourceMap),
+          mappings,
+          ...(retainedOriginal === undefined
+            ? {}
+            : { sourcesContent: [retainedOriginal] }),
+        }
+      instanceSources.set(
+        scriptId,
+        `"use strict";\n${sealed.javascript}\n//# sourceURL=${url}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`,
+      )
+      listeners[name].get('Debugger.scriptParsed')?.({
+        scriptId,
+        url,
+        executionContextId: 1,
+      })
+    },
+    /** Reports the debugger's pause at a breakpoint of a participant at a chosen generated place of a chosen script, then the adapter's `stopped` for it, as js-debug does for a breakpoint it set in that script. @example harness.pauseInScript('server', 'middleware', 1, 0) */
+    pauseInScript(
+      name: Participant,
+      scriptId: string,
+      lineNumber: number,
+      columnNumber: number,
+    ): void {
+      listeners[name].get('Debugger.paused')?.(
+        debuggerPausedEvent({
+          callFrameId: name,
+          scriptId,
+          lineNumber,
+          columnNumber,
+          hitBreakpoints: ['native'],
+        }),
+      )
+      emitStopped(name)
     },
     /** Reports a runtime pause with no debugger stop at a chosen generated place, as the debug adapter's own breakpoints and hooks arrive. */
     emitUnannouncedPause(
