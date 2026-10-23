@@ -616,6 +616,57 @@ test('a slow reader position write does not hold the selected moment back', asyn
   }
 })
 
+// Value: protects=a reader position queued in the instant between the write loop's last check and the end of its run is still written, so the learner's last moment is the position that reopens; fails_when=the loop has ended but its run is not yet cleared, the late call sees a running writer and returns, and nothing writes the latest position; why_new=F366 (the run was cleared one microtask after the loop saw an empty queue); seam=the history store's position write, answered by a thenable whose continuation queues the next position right behind the loop's own; no_claim=the write's outcome or the disk
+test('a reader position queued as the position write loop ends is still written', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const writtenSequences: number[] = []
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await openReplayAt(harness, history.studyId, 2)
+    const selected = harness.reader['selectedNodeHistory']!
+    // Wait for the open's own position write to end, so only the two writes of this test remain.
+    await waitUntil(
+      () => harness.reader['nodeHistoryPositionWrites'].size === 0,
+      'the open’s position write ends',
+      READER_RESULT_BOUND_MS,
+    )
+    context.mock.method(
+      store,
+      'saveReaderPosition',
+      (...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>) => {
+        writtenSequences.push(args[1])
+        const isFirstWrite = writtenSequences.length === 1
+        // The loop awaits this thenable: its continuation is queued by `onFulfilled`, and the next position is queued right behind it, before the run's end is announced.
+        return {
+          then(onFulfilled: () => void): void {
+            onFulfilled()
+            if (isFirstWrite)
+              queueMicrotask(() =>
+                harness.reader['queueNodeHistoryPositionWrite'](selected, 3),
+              )
+          },
+        } as unknown as Promise<void>
+      },
+    )
+
+    // Act
+    harness.reader['queueNodeHistoryPositionWrite'](selected, 2)
+    await waitUntil(
+      () => writtenSequences.length >= 2,
+      'the position queued at the loop’s end is written',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(writtenSequences, [2, 3])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=two quick selections show only the last one: the first selection, overtaken while its debugger presentation loads, commits nothing, and the slot, its label and the Study position all show the last moment; fails_when=the overtaken stop's label, slot bytes or Study position appear after the later selection; why_new=Design 4's generations (rapid seeks, AC6); seam=the workspace harness's held historical debug presentation; no_claim=Play's own pacing (the timeline and pacing tests)
 test('a stop selection overtaken by an output selection leaves only the output on every surface', async () => {
   // Arrange

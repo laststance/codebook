@@ -708,6 +708,12 @@ export interface UnsavedStudyArchive {
   isTakenAfterSealedStop: boolean
 }
 
+/** One replay's reader position writes: the latest position still to write and the write loop in flight ({@link StudyWorkspace.nodeHistoryPositionWrites}). */
+type NodeHistoryPositionWriter = {
+  latest?: { history: NodeTestHistoryIndex; sequence: number }
+  running?: Promise<void>
+}
+
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
   private service?: StudyService
@@ -787,10 +793,7 @@ export class StudyWorkspace {
   /** The reader position writes of the test replays being committed: the latest position still to write and the write in flight, per study ({@link queueNodeHistoryPositionWrite}). */
   private readonly nodeHistoryPositionWrites = new Map<
     string,
-    {
-      latest?: { history: NodeTestHistoryIndex; sequence: number }
-      running?: Promise<void>
-    }
+    NodeHistoryPositionWriter
   >()
   /** The slider's marks of the selected test replay, mapped once per history object ({@link nodeHistoryTimelineMarks}). */
   private nodeHistoryTimeline?: {
@@ -24146,10 +24149,25 @@ export class StudyWorkspace {
     sequence: number,
   ): void {
     const studyId = history.header.studyId
-    const writer = this.nodeHistoryPositionWrites.get(studyId) ?? {}
+    const writer: NodeHistoryPositionWriter =
+      this.nodeHistoryPositionWrites.get(studyId) ?? {}
     this.nodeHistoryPositionWrites.set(studyId, writer)
     writer.latest = { history, sequence }
     if (writer.running) return
+    this.runNodeHistoryPositionWrites(studyId, writer)
+  }
+
+  /**
+   * Starts the write loop of one replay's reader positions: it writes the latest queued position until none is left; called by {@link queueNodeHistoryPositionWrite} and, once, by its own end.
+   * A position queued in the instant between the loop's last check and the end of its run (the run is cleared one microtask later) sees a running writer and returns, so the end of the run starts the loop again when a position is waiting (F366).
+   * @param studyId - The replay's study id.
+   * @param writer - The replay's entry of {@link nodeHistoryPositionWrites}.
+   * @example this.runNodeHistoryPositionWrites(studyId, writer)
+   */
+  private runNodeHistoryPositionWrites(
+    studyId: string,
+    writer: NodeHistoryPositionWriter,
+  ): void {
     writer.running = (async () => {
       while (writer.latest) {
         const next = writer.latest
@@ -24165,7 +24183,8 @@ export class StudyWorkspace {
       }
     })().finally(() => {
       writer.running = undefined
-      if (!writer.latest) this.nodeHistoryPositionWrites.delete(studyId)
+      if (writer.latest) this.runNodeHistoryPositionWrites(studyId, writer)
+      else this.nodeHistoryPositionWrites.delete(studyId)
     })
   }
 
