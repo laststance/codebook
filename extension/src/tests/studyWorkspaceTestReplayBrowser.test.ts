@@ -271,3 +271,94 @@ for (const { request, type } of SECOND_STOP_REQUESTS)
       await harness.close()
     }
   })
+
+/**
+ * Lists the URIs of every captured-source tab that is not a test replay's recorded-source slot, in every group.
+ * @param harness - The workspace harness.
+ * @returns The URIs of the browser replay's captured-source tabs.
+ * @example browserSourceTabs(harness) // => ['codebook-source://…/Captured-actions.ts']
+ */
+function browserSourceTabs(
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+): string[] {
+  return harness.groups.flatMap((group) =>
+    group.tabs.flatMap((tab) => {
+      const uri = (tab.input as { uri?: { toString(): string } }).uri
+      const text = uri?.toString() ?? ''
+      return text.startsWith('codebook-source:') &&
+        !text.includes('/node-history-slot/')
+        ? [text]
+        : []
+    }),
+  )
+}
+
+// Value: protects=a test replay opened over a browser replay closes the browser replay's captured-source tabs, so no two tabs of one title show different recordings' source, while a learner's own file tab stays; fails_when=the slot's show leaves the retired browser replay's Captured-<file> tab beside the slot, or closes the learner's file; why_new=F459 (the browser replay's captured-source tabs stayed open beside the test replay's slot); seam=the workspace harness's tab model and a restored captured-source tab of the browser replay; no_claim=the native tab strip
+test('a test replay opened over a browser replay closes the browser replay’s captured-source tab and keeps the learner’s file tab', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const browserTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: '/earlier-study/repository%2Finterface%2Ftheme/hash/app/Captured-actions.ts',
+    })
+    harness.openFileWithoutKeyboard('learner-notes.ts', 1)
+    const learnerTabs = (): string[] =>
+      harness.groups.flatMap((group) =>
+        group.tabs.flatMap((tab) => {
+          const uri = (tab.input as { uri?: { toString(): string } }).uri
+          return uri?.toString().includes('learner-notes.ts')
+            ? [uri.toString()]
+            : []
+        }),
+      )
+    const learnerBefore = learnerTabs()
+
+    // Act
+    await harness.reader['returnCurrentSelection']('learner')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    await waitUntil(
+      () =>
+        !browserSourceTabs(harness).some((uri) =>
+          uri.includes('app/Captured-actions.ts'),
+        ),
+      'the browser replay’s captured-source tab closes',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(learnerBefore.length, 1)
+    assert.deepEqual(learnerTabs(), learnerBefore)
+    assert.equal(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .some((tab) => tab === browserTab),
+      false,
+    )
+    assert.equal(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter((tab) =>
+          String((tab.input as { uri?: unknown }).uri).includes(
+            '/node-history-slot/',
+          ),
+        ).length,
+      1,
+    )
+  } finally {
+    await harness.close()
+  }
+})
