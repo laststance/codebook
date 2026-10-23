@@ -8,6 +8,7 @@ import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
 import { REPOSITORY_LITERAL_LIMIT_CHARS } from '../../constants'
+import { StudyError } from '../../errors'
 import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
 import type { BundleSource } from '../../repositoryBundle'
 import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
@@ -75,6 +76,8 @@ export async function configuredRuntimeHarness(
     runtimeConstants?: RuntimeConstantOverrides
     /** The stand-in browser closes without a failure and then names this profile folder as one it could not remove, as the real adapter does. */
     browserProfileLeft?: ProfileLeft
+    /** How the stand-in `[::1]` forwarder starts: its own (default), absent on a host without IPv6 loopback, or refused because another process holds `[::1]`. */
+    ipv6Loopback?: 'owned' | 'absent' | 'held'
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -726,6 +729,22 @@ export async function configuredRuntimeHarness(
       },
       './utils/assertDevelopmentPortFree': {
         assertDevelopmentPortFree: async () => undefined,
+      },
+      './utils/startIpv6LoopbackForwarder': {
+        startIpv6LoopbackForwarder: async (port: number) => {
+          if (options.ipv6Loopback === 'absent') return undefined
+          if (options.ipv6Loopback === 'held')
+            throw new StudyError(
+              'PREREQUISITE_MISSING',
+              `Port ${port} is in use on this machine at [::1]`,
+            )
+          releases.push('ipv6 forwarder started')
+          return {
+            close: async (): Promise<void> => {
+              releases.push('ipv6 forwarder')
+            },
+          }
+        },
       },
       './utils/launchDevelopmentServer': {
         launchDevelopmentServer: () => ({

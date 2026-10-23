@@ -15,6 +15,7 @@ import {
 import {
   beginReleaseOfOwnedDevelopmentPort,
   claimOwnedDevelopmentPort,
+  ownedDevelopmentPortState,
   releaseOwnedDevelopmentPort,
 } from '../utils/ownedDevelopmentPorts'
 import { readDeclaredDevelopmentPort } from '../utils/readDeclaredDevelopmentPort'
@@ -57,157 +58,12 @@ for (const [script, port] of [
     })
   })
 
-// Value: protects=the dev script's port beats an env PORT, and the env files follow Next's precedence; fails_when=a lower file or the env wins over the script or a higher file; why_new=D63's order; seam=temporary project folders; no_claim=Next's own PORT handling
-test('the dev script port wins over a PORT in the env files', async () => {
-  // Arrange
-  const files = {
-    'package.json': devScript('next dev -p 3165'),
-    '.env.local': 'PORT=4000\n',
-  }
-
-  // Act
-  const declared = await declaredPortOf(files)
-
-  // Assert
-  assert.equal(declared.port, 3165)
-})
-
-test('a PORT in .env.development.local wins over .env.local, .env.development and .env', async () => {
-  // Arrange
-  const files = {
-    'package.json': devScript('next dev'),
-    '.env': 'PORT=4001\n',
-    '.env.development': 'PORT=4002\n',
-    '.env.local': 'PORT=4003\n',
-    '.env.development.local': 'export PORT="4004" # local\n',
-  }
-
-  // Act
-  const declared = await declaredPortOf(files)
-
-  // Assert
-  assert.deepEqual(declared, {
-    port: 4004,
-    source: 'PORT in .env.development.local',
-  })
-})
-
-// Changed existing test (F420): Next keeps the first file's PORT even when it expands to nothing, so a later file no longer rescues it; the old test assumed a heuristic skip.
-test('only the PORT line of an env file is used and a PORT that expands to nothing declares no port', async () => {
-  // Arrange
-  const files = {
-    '.env.local': 'AUTH_SECRET=PORT=9999\nPORT=$OTHER\n',
-    '.env': 'SECRET=abc\nPORT=4005\n',
-  }
-
-  // Act
-  const declared = await declaredPortOf(files)
-
-  // Assert
-  assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
-})
-
-test('a PORT line among other variables is read without the others', async () => {
-  // Arrange
-  const files = { '.env': 'SECRET=abc\nAUTH_SECRET=PORT=9999\nPORT=4005\n' }
-
-  // Act
-  const declared = await declaredPortOf(files)
-
-  // Assert
-  assert.deepEqual(declared, { port: 4005, source: 'PORT in .env' })
-})
-
-// Value: protects=the port follows Next's dotenv grammar (F419); fails_when=the first duplicate, an inline comment without a space, or a colon form changes the port from the one Next uses; why_new=OCR L1 of the review of 073f6ae..e638c1b; seam=temporary project folders; no_claim=Next itself loading the file
-for (const [name, text, port] of [
-  [
-    'a later duplicate PORT in the same file wins',
-    'PORT=4101\nPORT=4102\n',
-    4102,
-  ],
-  [
-    'an inline comment without a space ends the value',
-    'PORT=4103#note\n',
-    4103,
-  ],
-  ['the colon form PORT: 4104 declares the port', 'PORT: 4104\n', 4104],
-  ['a CRLF file declares its port', 'PORT=4105\r\n', 4105],
-] as const)
-  test(`in an env file ${name}`, async () => {
-    // Arrange
-    const files = { '.env': text }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, { port, source: 'PORT in .env' })
-  })
-
-// Value: protects=$VAR references in PORT expand as Next's dotenv-expand does (F420), across the files in Next's precedence; fails_when=a reference stays unexpanded, a lower file's variable is seen by a higher file, or the fallback is ignored; why_new=CodeRabbit finding on PORT=$APP_PORT; seam=temporary project folders; no_claim=Next itself loading the files
-for (const [name, files, expected] of [
-  [
-    'a $VAR of the same file',
-    { '.env': 'APP_PORT=4201\nPORT=$APP_PORT\n' },
-    { port: 4201, source: 'PORT in .env' },
-  ],
-  [
-    'a ${VAR} of the same file',
-    { '.env': 'PORT=${APP_PORT}\nAPP_PORT=4202\n' },
-    { port: 4202, source: 'PORT in .env' },
-  ],
-  [
-    'a variable of a higher-precedence file',
-    { '.env.local': 'APP_PORT=4203\n', '.env': 'PORT=${APP_PORT}\n' },
-    { port: 4203, source: 'PORT in .env' },
-  ],
-  [
-    'a fallback when the variable is unset',
-    { '.env': 'PORT=${APP_PORT:-4204}\n' },
-    { port: 4204, source: 'PORT in .env' },
-  ],
-  [
-    'a variable only a lower-precedence file sets (Next sees it empty)',
-    { '.env.local': 'PORT=$APP_PORT\n', '.env': 'APP_PORT=4205\n' },
-    { port: 3000, source: "Next's default port" },
-  ],
-  [
-    'a self-reference that never settles',
-    { '.env': 'PORT=$PORT\n' },
-    { port: 3000, source: "Next's default port" },
-  ],
-] as const)
-  test(`PORT expands ${name}`, async () => {
-    // Arrange / Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, expected)
-  })
-
-// Value: protects=a variable of the extension host that the owned server never inherits is not used to pick the port (F420 decision: Next expands against its own environment, the allow-list); fails_when=process.env leaks into the expansion; why_new=the child env is an allow-list; seam=a process variable set for the test; no_claim=other variables staying secret in the owned process (launch tests)
-test('PORT does not expand from a host variable the owned server does not inherit', async () => {
-  // Arrange
-  process.env.CODEBOOK_TEST_NOT_INHERITED_PORT = '4300'
-  try {
-    // Act
-    const declared = await declaredPortOf({
-      '.env': 'PORT=$CODEBOOK_TEST_NOT_INHERITED_PORT\n',
-    })
-
-    // Assert
-    assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
-  } finally {
-    delete process.env.CODEBOOK_TEST_NOT_INHERITED_PORT
-  }
-})
-
 /** A package.json with the given scripts. */
 const packageScripts = (scripts: Record<string, string>): string =>
   JSON.stringify({ scripts })
 
-// Value: protects=the dev script's own port is found through an env prefix and through one delegating script (F421); fails_when=the prefix or the delegation is ignored and the app moves to another port; why_new=OCR L2; seam=temporary project folders; no_claim=Next honoring PORT itself
-for (const [name, scripts, port] of [
+// Value: protects=the port is the one the project's own `next dev` command would use, in each shell form D67 names (F430); fails_when=a form is misread and the app starts on another port than the project's AUTH_URL names; why_new=OCR M2-M5, L2, L9 of the review of e638c1b..7139a69e; seam=temporary project folders; no_claim=Next honoring PORT itself
+for (const [name, scripts, expected] of [
   ['an env prefix', { dev: 'PORT=4401 next dev' }, 4401],
   [
     'cross-env',
@@ -215,15 +71,65 @@ for (const [name, scripts, port] of [
     4402,
   ],
   ['an export before the chain', { dev: 'export PORT=4403 && next dev' }, 4403],
+  [
+    'a Windows set before the chain',
+    { dev: 'set "PORT=4412" && next dev' },
+    4412,
+  ],
   ['a flag over the prefix', { dev: 'PORT=4404 next dev -p 4405' }, 4405],
+  ['a quoted flag value', { dev: 'next dev -p "4413"' }, 4413],
+  [
+    'concurrently quoted commands',
+    { dev: 'concurrently "next dev -p 4414" "tsc -w"' },
+    4414,
+  ],
+  ['npx', { dev: 'npx next dev --port 4415' }, 4415],
+  ['pnpm exec', { dev: 'pnpm exec next dev -p 4416' }, 4416],
+  [
+    'a script name that contains next',
+    { dev: 'npm run dev:next', 'dev:next': 'next dev -p 4417' },
+    4417,
+  ],
+  [
+    'a script named next-dev',
+    { dev: 'pnpm next-dev', 'next-dev': 'next dev -p 4418' },
+    4418,
+  ],
+  [
+    'a background separator',
+    { dev: 'node api.js -p 5000 & next dev -p 4419' },
+    4419,
+  ],
+  [
+    'a background separator with an assignment before the other command',
+    { dev: 'PORT=5000 node api.js & next dev -p 4420' },
+    4420,
+  ],
+  ['a shell default', { dev: 'PORT=${PORT:-4421} next dev' }, 4421],
   ['npm run', { dev: 'npm run web', web: 'next dev -p 4406' }, 4406],
   ['pnpm run', { dev: 'pnpm run web', web: 'next dev -p 4407' }, 4407],
   ['pnpm name', { dev: 'pnpm web', web: 'PORT=4408 next dev' }, 4408],
   ['yarn name', { dev: 'yarn web', web: 'next dev --port=4409' }, 4409],
+  ['bun run', { dev: 'bun run web', web: 'next dev -p 4422' }, 4422],
   [
     'arguments passed on',
     { dev: 'pnpm web -- -p 4410', web: 'next dev' },
     4410,
+  ],
+  [
+    'an assignment before a delegation',
+    { dev: 'PORT=4423 pnpm web', web: 'next dev' },
+    4423,
+  ],
+  [
+    'cross-env before a delegation',
+    { dev: 'cross-env PORT=4424 npm run web', web: 'next dev' },
+    4424,
+  ],
+  [
+    'a delegated script that assigns its own',
+    { dev: 'PORT=4425 pnpm web', web: 'PORT=4426 next dev' },
+    4426,
   ],
 ] as const)
   test(`the dev script declares its port through ${name}`, async () => {
@@ -234,18 +140,72 @@ for (const [name, scripts, port] of [
     const declared = await declaredPortOf(files)
 
     // Assert
-    assert.equal(declared.port, port)
+    assert.equal(declared.port, expected)
   })
 
-// Value: protects=a delegation is followed one level and an unreadable script falls back to the stated default (F421); fails_when=a second hop or a missing script is invented into a port; why_new=OCR L2 bound; seam=temporary project folders; no_claim=every runner syntax
-test('a delegation two levels deep is not followed and the default is reported with its source', async () => {
+// Value: protects=only `next dev` (or a bare `next`) counts, and an unrelated command's port is never taken (F430 L2); fails_when=`next build -p`, a helper script or another program's -p moves the app; why_new=OCR L2; seam=temporary project folders; no_claim=every runner syntax
+for (const [name, scripts] of [
+  ['next build', { dev: 'next build -p 4431 && next dev' }],
+  [
+    'a delegated helper that builds',
+    { dev: 'pnpm gen && next dev', gen: 'next build -p 4432' },
+  ],
+  ['a program that is not next', { dev: 'node server.js -p 4433' }],
+  [
+    'a delegation two levels deep',
+    { dev: 'npm run a', a: 'npm run b', b: 'next dev -p 4434' },
+  ],
+] as const)
+  test(`${name} does not decide the port and the default is reported`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
+  })
+
+// Value: protects=applicationPortSource names the step that gave the port (D67); fails_when=a flag, an assignment or a delegation is reported as another step; why_new=D67 asks for the step in the source; seam=temporary project folders; no_claim=wording of the refusal
+for (const [name, scripts, source] of [
+  ['a flag', { dev: 'next dev -p 4441' }, 'the dev script in package.json'],
+  [
+    'an assignment',
+    { dev: 'PORT=4442 next dev' },
+    'a PORT assignment in the dev script in package.json',
+  ],
+  [
+    'a delegated flag',
+    { dev: 'pnpm web', web: 'next dev -p 4443' },
+    'the "web" script that the dev script runs in package.json',
+  ],
+  [
+    'an assignment before a delegation',
+    { dev: 'PORT=4444 pnpm web', web: 'next dev' },
+    'a PORT assignment in the "web" script that the dev script runs in package.json',
+  ],
+] as const)
+  test(`the port source names ${name}`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.source, source)
+  })
+
+// Changed existing tests (D67, F431): the cases "a PORT in .env.development.local wins…" and "only the PORT line of an env file is used…" read PORT from .env files; Next reads PORT before it loads them, so they are replaced by this one.
+// Value: protects=a PORT in the project's env files no longer moves the port (Next reads PORT from the command line and the process environment before it loads .env files); fails_when=an env file's PORT is used again and the app starts on a port the project's own `pnpm dev` never uses; why_new=D67/F431; seam=temporary project folders; no_claim=Next's own env loading
+test('a PORT in the env files does not move the port', async () => {
   // Arrange
   const files = {
-    'package.json': packageScripts({
-      dev: 'npm run a',
-      a: 'npm run b',
-      b: 'next dev -p 4411',
-    }),
+    'package.json': packageScripts({ dev: 'next dev' }),
+    '.env': 'PORT=4451\n',
+    '.env.local': 'PORT=4452\n',
+    '.env.development.local': 'export PORT=4453\n',
   }
 
   // Act
@@ -415,7 +375,7 @@ test('a port the system refuses to let Codebook listen on is refused as not perm
   assert.equal(refusal.code, 'PREREQUISITE_MISSING')
   assert.equal(
     refusal.message,
-    `Port ${port} is not permitted for Codebook on this machine (the operating system refuses to let this program listen on it, as for a port below 1024 without administrator rights or a port range the system reserves), and the project declares it (the dev script in package.json): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port. Ask the learner to declare a port from 1024 up for the project (the dev script's -p/--port or PORT in an env file), or to allow listening on port ${port}, then start again.`,
+    `Port ${port} is not permitted for Codebook on this machine (the operating system refuses to let this program listen on it, as for a port below 1024 without administrator rights or a port range the system reserves), and the project declares it (the dev script in package.json): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port. Ask the learner to declare a port from 1024 up for the project (the -p/--port of next dev or a PORT= in the dev script), or to allow listening on port ${port}, then start again.`,
   )
 })
 
@@ -424,8 +384,8 @@ test('a port that Codebook own stopping run releases within the wait passes the 
   // Arrange
   const occupant = await listenOn('127.0.0.1')
   assert.ok(occupant)
-  claimOwnedDevelopmentPort(occupant.port)
-  beginReleaseOfOwnedDevelopmentPort(occupant.port)
+  const claim = claimOwnedDevelopmentPort(occupant.port)
+  beginReleaseOfOwnedDevelopmentPort(claim)
   setTimeout(() => void occupant.close(), 150)
   try {
     // Act
@@ -437,7 +397,7 @@ test('a port that Codebook own stopping run releases within the wait passes the 
     // Assert
     assert.equal(outcome, undefined)
   } finally {
-    releaseOwnedDevelopmentPort(occupant.port)
+    releaseOwnedDevelopmentPort(claim)
   }
 })
 
@@ -450,8 +410,8 @@ for (const [state, wording] of [
     // Arrange
     const occupant = await listenOn('127.0.0.1')
     assert.ok(occupant)
-    claimOwnedDevelopmentPort(occupant.port)
-    if (state === 'stopping') beginReleaseOfOwnedDevelopmentPort(occupant.port)
+    const claim = claimOwnedDevelopmentPort(occupant.port)
+    if (state === 'stopping') beginReleaseOfOwnedDevelopmentPort(claim)
     try {
       // Act
       const refusal = await assertDevelopmentPortFree(
@@ -469,7 +429,149 @@ for (const [state, wording] of [
         `Port ${occupant.port} is still held by an earlier Codebook repository-browser run ${wording}, and the project declares it (test): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port. Stop that run (codebook_stop) and wait for it to finish stopping, then start again.`,
       )
     } finally {
-      releaseOwnedDevelopmentPort(occupant.port)
+      releaseOwnedDevelopmentPort(claim)
       await occupant.close()
     }
   })
+
+/** A connect that fails at once with the given system error code, as a sandbox or firewall does (EPERM) or a stack that gives up (ETIMEDOUT). */
+function failingConnect(code: string): ConnectLoopback {
+  return () => {
+    const socket = new EventEmitter() as unknown as Socket
+    Object.assign(socket, {
+      setTimeout: () => {
+        setImmediate(() =>
+          socket.emit('error', Object.assign(new Error(code), { code })),
+        )
+        return socket
+      },
+      destroy: () => socket,
+    })
+    return socket
+  }
+}
+
+// Value: protects=an unexpected connect error leaves the decision to the bind probe instead of aborting the start with a raw error (F432); fails_when=EPERM, ETIMEDOUT or ECONNRESET rejects a free port, or hides a port the bind refuses; why_new=OCR L4; seam=an injected failing connect plus the real bind probe; no_claim=a sandbox that forbids loopback connects
+for (const code of ['EPERM', 'ETIMEDOUT', 'ECONNRESET']) {
+  test(`a free port passes the start check when the loopback connect fails with ${code}`, async () => {
+    // Arrange
+    const port = await freePort()
+
+    // Act
+    const outcome = await assertDevelopmentPortFree(
+      { port, source: 'test' },
+      { connect: failingConnect(code) },
+    )
+
+    // Assert
+    assert.equal(outcome, undefined)
+  })
+}
+
+test('a port held on 127.0.0.1 is still refused when the loopback connect fails with EPERM', async () => {
+  // Arrange
+  const occupant = await listenOn('127.0.0.1')
+  assert.ok(occupant)
+  try {
+    // Act
+    const refusal = await assertDevelopmentPortFree(
+      { port: occupant.port, source: 'test' },
+      { connect: failingConnect('EPERM') },
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.ok(refusal instanceof StudyError)
+    assert.match(refusal.message, /^Port \d+ is in use on this machine/)
+  } finally {
+    await occupant.close()
+  }
+})
+
+// Value: protects=a start waits for another run's release even when the port already looks free, so its listener never meets the old run's endpoint check (F429); fails_when=the free-port early return skips the wait; why_new=OCR M1 of the review of e638c1b..7139a69e; seam=two claims of the registry and a free OS-chosen port; no_claim=the real process-group exit
+test('a free port is not passed while another run is still releasing it', async () => {
+  // Arrange
+  const port = await freePort()
+  const earlierRun = claimOwnedDevelopmentPort(port)
+  beginReleaseOfOwnedDevelopmentPort(earlierRun)
+  let released = false
+  setTimeout(() => {
+    released = true
+    releaseOwnedDevelopmentPort(earlierRun)
+  }, 150)
+
+  // Act
+  await assertDevelopmentPortFree(
+    { port, source: 'test' },
+    { releaseWaitMs: 3000 },
+  )
+
+  // Assert
+  assert.equal(released, true)
+})
+
+// Value: protects=a claim that never releases does not block a free port for ever (F429 bound); fails_when=the wait throws or exceeds its bound when the port is free; why_new=a failed close leaves its claim stopping; seam=a stuck claim and a free port; no_claim=the claim's later retry
+test('a free port passes after the wait when the earlier run never reports its release', async () => {
+  // Arrange
+  const port = await freePort()
+  const stuck = claimOwnedDevelopmentPort(port)
+  beginReleaseOfOwnedDevelopmentPort(stuck)
+
+  try {
+    // Act
+    const outcome = await assertDevelopmentPortFree(
+      { port, source: 'test' },
+      { releaseWaitMs: 200 },
+    )
+
+    // Assert
+    assert.equal(outcome, undefined)
+  } finally {
+    releaseOwnedDevelopmentPort(stuck)
+  }
+})
+
+// Value: protects=one run's release deletes only its own claim (F429); fails_when=run A's release removes run B's running claim and the next refusal blames the learner; why_new=OCR M1; seam=the registry with two claims on one port; no_claim=the launcher's wiring
+test("releasing one run's claim keeps the other run's claim on the same port", () => {
+  // Arrange
+  const runA = claimOwnedDevelopmentPort(54001)
+  const runB = claimOwnedDevelopmentPort(54001)
+
+  // Act
+  releaseOwnedDevelopmentPort(runA)
+
+  // Assert
+  assert.equal(ownedDevelopmentPortState(54001), 'running')
+  releaseOwnedDevelopmentPort(runB)
+  assert.equal(ownedDevelopmentPortState(54001), undefined)
+})
+
+// Value: protects=a cancelled run does not wait out the release bound (F432); fails_when=the abort is ignored or swallowed and the cancel takes the full wait; why_new=OCR L5; seam=a stuck claim and an abort after 50 ms; no_claim=the run's own cancellation path
+test('cancelling during the wait for a stopping run ends the start check at once', async () => {
+  // Arrange
+  const port = await freePort()
+  const stuck = claimOwnedDevelopmentPort(port)
+  beginReleaseOfOwnedDevelopmentPort(stuck)
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(new Error('Run cancelled')), 50)
+  const startedAt = performance.now()
+
+  try {
+    // Act
+    const failure = await assertDevelopmentPortFree(
+      { port, source: 'test' },
+      { releaseWaitMs: 5000, signal: controller.signal },
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.equal(String(failure), 'Error: Run cancelled')
+    assert.ok(performance.now() - startedAt < 2000)
+  } finally {
+    releaseOwnedDevelopmentPort(stuck)
+  }
+})

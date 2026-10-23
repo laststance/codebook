@@ -238,7 +238,7 @@ function inputHarness() {
       prepareRepositoryInputs(
         cdp,
         [{ selector: '#email', text: 'invalid@example.invalid' }],
-        'http://127.0.0.1:4000',
+        ['http://localhost:4000', 'http://127.0.0.1:4000', 'http://[::1]:4000'],
         assertCurrent,
       ),
   }

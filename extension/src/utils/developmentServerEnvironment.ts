@@ -6,7 +6,7 @@ import {
 /**
  * Builds the complete environment of the owned `next dev` process.
  *
- * Called by {@link launchDevelopmentServer} when it spawns the app and by {@link readDeclaredDevelopmentPort} to expand `$VAR` references in `.env*` files against what Next itself will see.
+ * Called by {@link launchDevelopmentServer} when it spawns the app.
  * Credentials and unrelated application configuration stay outside: only the variables named in {@link DEVELOPMENT_SERVER_INHERITED_ENVIRONMENT_NAMES} are inherited.
  *
  * @param host - The extension host's environment to inherit from.
@@ -22,7 +22,7 @@ export function buildDevelopmentServerEnvironment(
 ): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
     NEXT_TELEMETRY_DISABLED: '1',
-    // Next's default100ms child cutoff can kill native lock cleanup before this closer's bounded wait.
+    // Next's default 100 ms child cutoff can kill native lock cleanup before this closer's bounded wait.
     NEXT_EXIT_TIMEOUT_MS: String(REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS),
     HUSKY: '0',
     CI: 'true',

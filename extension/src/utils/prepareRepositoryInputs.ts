@@ -3,22 +3,18 @@ import { z } from 'zod'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 import type { Cdp } from '../runtimeSupport/cdp'
 
-import { loopbackOriginsOf } from './ownedApplicationOrigin'
-
 const resultSchema = z.object({
   ready: z.boolean(),
   reason: z.string().optional(),
 })
 
-/** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @example await prepareRepositoryInputs(cdp, inputs, origin, assertCurrent) */
+/** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @example await prepareRepositoryInputs(cdp, inputs, origins, assertCurrent) */
 export async function prepareRepositoryInputs(
   cdp: Pick<Cdp, 'request'>,
   inputs: NonNullable<RepositoryConfiguration['initialInputs']>,
-  origin: string,
+  origins: readonly string[],
   assertCurrent: () => void,
 ): Promise<void> {
-  // The page may sit on any loopback name of the owned port (D65).
-  const origins = loopbackOriginsOf(origin)
   for (const [index, input] of inputs.entries()) {
     assertCurrent()
     const selected = await cdp.request('Runtime.evaluate', {
@@ -63,7 +59,7 @@ export async function prepareRepositoryInputs(
 }
 
 /** Resolves one node without modifying the target page or copying its current input value. @example selectInput('#email', origins) */
-function selectInput(selector: string, origins: string[]) {
+function selectInput(selector: string, origins: readonly string[]) {
   if (!origins.includes(location.origin)) return undefined
   const matches = document.querySelectorAll(selector)
   return matches.length === 1 ? matches[0] : undefined
@@ -75,7 +71,7 @@ function inspectInput(
   input: {
     selector: string
     text: string
-    origins: string[]
+    origins: readonly string[]
     phase: 'focus' | 'verify'
   },
 ) {

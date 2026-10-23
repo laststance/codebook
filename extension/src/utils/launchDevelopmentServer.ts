@@ -83,7 +83,7 @@ export function launchDevelopmentServer(
       inspectorError = cause instanceof Error ? cause : new Error(String(cause))
     }
   })
-  claimOwnedDevelopmentPort(port)
+  const claim = claimOwnedDevelopmentPort(port)
   record('application.acquired', {
     pid: child.pid,
     node,
@@ -204,7 +204,7 @@ export function launchDevelopmentServer(
     /** Stops only the acquired process group and verifies its listener; cleanup calls this even after failed readiness. @example await app.close() */
     async close(): Promise<void> {
       const attempt = (closing ??= (async () => {
-        beginReleaseOfOwnedDevelopmentPort(port)
+        beginReleaseOfOwnedDevelopmentPort(claim)
         if (child.pid) {
           const processGroup = child.pid
           // A group whose exited members macOS has not reaped yet answers EPERM; both utilities wait for it instead of failing the release.
@@ -236,7 +236,7 @@ export function launchDevelopmentServer(
             'owned Next listener exit',
             REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
           )
-        releaseOwnedDevelopmentPort(port)
+        releaseOwnedDevelopmentPort(claim)
         record('application.closed', {
           pid: child.pid,
           origin,
