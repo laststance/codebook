@@ -564,6 +564,8 @@ export async function workspaceHarness(
   const visibleEditorListeners = new Set<() => void>()
   /** What the listeners of `onDidChangeVisibleTextEditors` threw: the extension host logs a listener's error and goes on with the other listeners, so the fake keeps it here instead of letting it end the editor operation that announced the change; see `visibleEditorListenerErrors`. */
   const visibleEditorListenerErrors: unknown[] = []
+  /** Whether the test announced that a listener of `onDidChangeVisibleTextEditors` throws on purpose; see `expectVisibleEditorListenerErrors`. Without it `close` fails the test whose operation made a listener throw. */
+  let visibleEditorListenerErrorsExpected = false
   /**
    * Tells the listeners of `onDidChangeVisibleTextEditors` that a tab opened, closed or came to the front of its group.
    * The fake delivers inside the operation that caused the change, where the extension host delivers after a hop; a listener that throws is isolated like the host's and its error is kept.
@@ -7743,6 +7745,19 @@ export async function workspaceHarness(
       pendingEditorTimers.clear()
       pendingDisposedTabCloses.length = 0
       await harness.close()
+      // The host only logs a throwing listener; the fake keeps the error, so the test that caused it fails here, after every resource is released.
+      if (
+        !visibleEditorListenerErrorsExpected &&
+        visibleEditorListenerErrors.length > 0
+      )
+        throw new AggregateError(
+          visibleEditorListenerErrors,
+          `A listener of onDidChangeVisibleTextEditors threw ${visibleEditorListenerErrors.length} time(s) during the test: ${visibleEditorListenerErrors.map(String).join('; ')}`,
+        )
+    },
+    /** Declares that the test makes a listener of `onDidChangeVisibleTextEditors` throw on purpose (the fidelity test of the isolation), so `close` does not fail it. @example harness.expectVisibleEditorListenerErrors() */
+    expectVisibleEditorListenerErrors(): void {
+      visibleEditorListenerErrorsExpected = true
     },
     /** Counts the fake editor's own timers that have not run yet: every later change it still owes ({@link runEditorChangeLater}), for example a disposed pane's tab close or a late reveal that waits for {@link DISPOSED_TAB_CLOSE_DELAY_MS}. @example harness.pendingEditorTimerCount() // => 2 right after a reader with two panes was closed in an editor that closes tabs later */
     pendingEditorTimerCount: (): number => pendingEditorTimers.size,
