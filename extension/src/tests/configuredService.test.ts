@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -3347,7 +3348,7 @@ test('an explanation whose evidence write fails names no storage path in the ref
   const receipt = service.start({
       instanceId: service.instanceId,
       profile: 'repository-browser',
-      key: 'explanation-write-names-storage',
+      key: randomUUID(),
       configuration,
     }),
     record = service.record(receipt)
