@@ -2946,6 +2946,7 @@ test('starting live explanation retires only its previous empty explanation grou
   }
 })
 
+// Value: protects=a live run's own entry retiring the explanation pane and arranging the chat beside the run; fails_when=the entry keeps the Study pane, leaves another layout or never confirms it; why_changed=F361: the reader's 250 ms refresh can carry that entry, and the click's own refresh then returns before the entry ends, so the result is awaited instead of read when the click returns; seam=the workspace harness's panels and native layout; no_claim=how long the entry takes
 test('a normal chat run retires the explanation pane without reopening the reader', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -2963,6 +2964,13 @@ test('a normal chat run retires the explanation pane without reopening the reade
     await [...harness.service.records.values()][0]!.preparation
     // Act: the ordinary chat starts execution without requesting another Open.
     await harness.reader.action('click')
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.studyContext') === undefined &&
+        harness.reader.inspect().presentation.layoutConfirmed,
+      'the live entry retires the explanation pane and confirms its layout',
+      READER_RESULT_BOUND_MS,
+    )
     // Assert
     assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
     assert.equal(harness.groups.length, 3)
@@ -2972,6 +2980,45 @@ test('a normal chat run retires the explanation pane without reopening the reade
       groups: [{ size: 0.25 }, { size: 0.25 }],
     })
     assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a live run's entry that the reader's timed refresh carries still retiring the explanation pane, though the click's own refresh joins it and returns first (F361); fails_when=that entry is lost or leaves the Study pane open; why_new=the gate run on a6f6378 met this order, and the earlier test read the pane when the click returned; seam=the reader's refresh started as its 250 ms timer starts it, before the click; no_claim=the timer's period
+test('a live entry that the reader’s timed refresh carries retires the explanation pane after a click', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    const chat = harness.addSeparateEditorPart()
+    await harness.reader.open()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    // Act: the timer's refresh is in flight when the learner clicks, so it carries the run's entry.
+    const timedRefresh = harness.reader['refresh']()
+    await harness.reader.action('click')
+    await timedRefresh
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.studyContext') === undefined &&
+        harness.reader.inspect().presentation.layoutConfirmed,
+      'the live entry retires the explanation pane and confirms its layout',
+      READER_RESULT_BOUND_MS,
+    )
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.groups.at(-1)!.tabs[0], chat.tab)
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.25 }, { size: 0.25 }],
+    })
   } finally {
     await harness.close()
   }

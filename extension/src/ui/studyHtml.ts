@@ -356,25 +356,17 @@ function studyClient(
    * @param coverage - The strip element, hidden when there is nothing to mark.
    * @param label - The legend element beside the slider.
    * @param marks - The range with its gaps and recorded stops, or `undefined` when no coverage is known.
-   * @param legends - The legend for a range with gaps; the browser transport also words one for a range without gaps and one for no known coverage, which a test replay never reaches (its strip marks the whole range as not recorded, and it hides the strip when no replay is shown).
-   * @example renderTimelineCoverage(strip, legend, { startMs: 0, endMs: 900, gaps: [{ startMs: 0, endMs: 900 }], recordedPoints: [420] }, legends)
+   * @param legend - The legend its caller words for these marks: {@link browserCoverageLegend} for the browser transport, the test replay's one legend (its strip marks the whole range as not recorded) or nothing when no test replay is shown.
+   * @example renderTimelineCoverage(strip, legend, { startMs: 0, endMs: 900, gaps: [{ startMs: 0, endMs: 900 }], recordedPoints: [420] }, 'Striped: …')
    */
   const renderTimelineCoverage = (
     coverage: HTMLElement,
     label: HTMLElement,
     marks: CoverageMarks | undefined,
-    legends: {
-      gapsLegend: string
-      noGapsLegend?: string
-      unknownLegend?: string
-    },
+    legend: string,
   ): void => {
     coverage.hidden = !marks
-    label.textContent = marks
-      ? marks.gaps.length
-        ? legends.gapsLegend
-        : (legends.noGapsLegend ?? legends.gapsLegend)
-      : (legends.unknownLegend ?? '')
+    label.textContent = legend
     // Without known coverage the strip is emptied and says so.
     if (!marks) {
       coverage.replaceChildren()
@@ -384,6 +376,18 @@ function studyClient(
     }
     coverage.setAttribute('aria-label', describeCoverageMarks(marks))
     drawCoverageMarks(coverage, marks)
+  }
+  /**
+   * Words the browser transport's coverage legend: the stripes and ticks for a range with gaps, the recorded range without them, or unknown coverage; called with {@link renderTimelineCoverage} for the browser transport.
+   * @param marks - The recording's mapped range with its gaps and recorded stops, or `undefined` when its coverage is not known.
+   * @returns The legend beside the slider.
+   * @example browserCoverageLegend(undefined) // => 'Historical source/debugger coverage unknown'
+   */
+  const browserCoverageLegend = (marks: CoverageMarks | undefined): string => {
+    if (!marks) return 'Historical source/debugger coverage unknown'
+    return marks.gaps.length
+      ? 'Striped: source/debugger not recorded · ticks: recorded stops'
+      : 'Source/debugger history recorded across this range'
   }
   /**
    * Names a coverage strip for assistive technology: how many gaps and recorded stops it marks, with their times; called by {@link renderTimelineCoverage}.
@@ -2526,11 +2530,12 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     unavailable: boolean,
   ): void => {
+    const marks = unavailable ? undefined : section?.timeline
     renderTimelineCoverage(
       element('node-history-coverage'),
       element('node-history-coverage-label'),
-      unavailable ? undefined : section?.timeline,
-      { gapsLegend: options.testReplay.timelineLegend },
+      marks,
+      marks ? options.testReplay.timelineLegend : '',
     )
   }
   /**
@@ -2893,14 +2898,17 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     replaying: boolean,
   ): unknown[] => {
-    const position = message.nodeHistoryPosition
+    // No selected moment reads as a position without fields.
+    const position: Partial<
+      NonNullable<StudyViewMessage['nodeHistoryPosition']>
+    > = message.nodeHistoryPosition ?? {}
     return [
       message.nodeHistory?.entries ?? [],
       replaying,
-      position?.sequence,
-      Boolean(position?.pending),
-      Boolean(position?.debuggerAvailable),
-      position?.sourceAvailable,
+      position.sequence,
+      Boolean(position.pending),
+      Boolean(position.debuggerAvailable),
+      position.sourceAvailable,
       message.nodeHistoryUnverifiedStops ?? [],
       section?.verdict,
     ]
@@ -2947,26 +2955,72 @@ function studyClient(
     const words = testReplayEventWords(entry, section)
     heading.textContent = words.heading
     body.textContent = words.body
-    row.append(heading, body)
-    const isSelected = entry.sequence === message.nodeHistoryPosition?.sequence
-    const select = document.createElement('button')
-    select.type = 'button'
-    select.dataset.nodeHistorySequence = String(entry.sequence)
-    select.textContent = isSelected ? 'Selected event' : 'Select event'
-    // The selected control stays focusable so keyboard focus survives the press; it then sends nothing.
-    select.disabled = replaying
-    if (isSelected) select.setAttribute('aria-disabled', 'true')
-    select.setAttribute('aria-pressed', String(isSelected))
-    row.append(select)
-    // The row of the moment being selected is the current one, loading, until the host commits it.
-    const loading = isSelected && Boolean(message.nodeHistoryPosition?.pending)
-    if (isSelected) row.setAttribute('aria-current', 'true')
-    if (loading) row.setAttribute('aria-busy', 'true')
+    const { isSelected, loading } = testReplayEventRowState(entry, message)
+    row.append(
+      heading,
+      body,
+      testReplayEventSelect(entry.sequence, isSelected, replaying),
+    )
+    markTestReplayEventRow(row, isSelected, loading)
+    // A stop's Inspect waits for the commit while its row loads, so no control acts on the earlier stop.
     if (entry.type === 'stop' && !loading)
       row.append(
         testReplayInspectControl(entry, message, isSelected, replaying),
       )
     return row
+  }
+  /**
+   * Says whether an event is the selected one and whether it is still loading: the selection has left the committed moment for it and not committed it yet (D29); called by {@link testReplayEventRow}.
+   * @param entry - The event.
+   * @param message - The current Study message.
+   * @returns Whether the event is selected, and whether it loads.
+   * @example testReplayEventRowState(stop, message) // => { isSelected: true, loading: true } while the host shows that stop
+   */
+  const testReplayEventRowState = (
+    entry: NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
+    message: StudyViewMessage,
+  ): { isSelected: boolean; loading: boolean } => {
+    const position = message.nodeHistoryPosition
+    const isSelected = entry.sequence === position?.sequence
+    return { isSelected, loading: isSelected && position?.pending === true }
+  }
+  /**
+   * Builds an event row's Select event control, pressed and inert on the selected event; called by {@link testReplayEventRow}.
+   * @param sequence - The event's sequence, which the press sends.
+   * @param isSelected - Whether the event is the selected one.
+   * @param replaying - Whether a browser recording is shown, which disables the control.
+   * @returns The control.
+   * @example testReplayEventSelect(4, true, false).textContent // => 'Selected event'
+   */
+  const testReplayEventSelect = (
+    sequence: number,
+    isSelected: boolean,
+    replaying: boolean,
+  ): HTMLButtonElement => {
+    const select = document.createElement('button')
+    select.type = 'button'
+    select.dataset.nodeHistorySequence = String(sequence)
+    select.textContent = isSelected ? 'Selected event' : 'Select event'
+    // The selected control stays focusable so keyboard focus survives the press; it then sends nothing.
+    select.disabled = replaying
+    if (isSelected) select.setAttribute('aria-disabled', 'true')
+    select.setAttribute('aria-pressed', String(isSelected))
+    return select
+  }
+  /**
+   * Marks the selected event's row as the current one, and as busy while it loads until the host commits it (D29); called by {@link testReplayEventRow}.
+   * @param row - The event's row.
+   * @param isSelected - Whether the event is the selected one.
+   * @param loading - Whether the selected event is still loading.
+   * @example markTestReplayEventRow(row, true, true) // row: aria-current="true" aria-busy="true"
+   */
+  const markTestReplayEventRow = (
+    row: HTMLElement,
+    isSelected: boolean,
+    loading: boolean,
+  ): void => {
+    if (isSelected) row.setAttribute('aria-current', 'true')
+    if (loading) row.setAttribute('aria-busy', 'true')
   }
   /**
    * Words one event of the test replay's event list: `Output · <channel> · <t> s` with its text, `Stop <n> · <path>:<line>:<column> · <t> s` with its frame and captured facts, or `Result · <verdict> · <t> s` with the output tail; called by {@link testReplayEventRow}.
@@ -3137,6 +3191,27 @@ function studyClient(
     }
   }
   window.addEventListener('resize', offerClampedTitles)
+  /**
+   * Puts the test replay section in view once per open, so the Study's article above it does not push the transport out of sight (F156, D32); called after every Study message.
+   * A message without a new scroll token, or one that still loads, leaves the learner's scroll alone.
+   * @param message - The current Study message.
+   * @example revealNodeHistoryOnOpen(message) // the section scrolled to the top once for token 7
+   */
+  const revealNodeHistoryOnOpen = (message: StudyViewMessage): void => {
+    const token = message.nodeHistoryScrollToken
+    if (
+      token === undefined ||
+      token === scrolledNodeHistoryToken ||
+      message.loading
+    )
+      return
+    scrolledNodeHistoryToken = token
+    element('node-history').scrollIntoView({
+      block: 'start',
+      inline: 'nearest',
+      behavior: 'instant',
+    })
+  }
   // Listeners of one event run in the order they were added: this one reads the focus before the message changes the page.
   window.addEventListener('message', readFocusHolder)
   window.addEventListener('message', (event) => {
@@ -3356,23 +3431,19 @@ function studyClient(
       }
       const mapped =
         timeline.status === 'mapped' && range && range.endMs > range.startMs
+      const marks = mapped
+        ? {
+            startMs: range.startMs,
+            endMs: range.endMs,
+            gaps: timeline.gaps,
+            recordedPoints: timeline.recordedPoints,
+          }
+        : undefined
       renderTimelineCoverage(
         element('history-coverage'),
         element('history-coverage-label'),
-        mapped
-          ? {
-              startMs: range.startMs,
-              endMs: range.endMs,
-              gaps: timeline.gaps,
-              recordedPoints: timeline.recordedPoints,
-            }
-          : undefined,
-        {
-          gapsLegend:
-            'Striped: source/debugger not recorded · ticks: recorded stops',
-          noGapsLegend: 'Source/debugger history recorded across this range',
-          unknownLegend: 'Historical source/debugger coverage unknown',
-        },
+        marks,
+        browserCoverageLegend(marks),
       )
     }
     const item = model.progressByItem.find(
@@ -3783,19 +3854,7 @@ function studyClient(
       })
       revealedFollowedObservationId = model.observation?.id
     }
-    // A test replay's open puts its section in view once, so the Study's article above it does not push the transport out of sight (F156).
-    if (
-      message.nodeHistoryScrollToken !== undefined &&
-      message.nodeHistoryScrollToken !== scrolledNodeHistoryToken &&
-      !message.loading
-    ) {
-      scrolledNodeHistoryToken = message.nodeHistoryScrollToken
-      element('node-history').scrollIntoView({
-        block: 'start',
-        inline: 'nearest',
-        behavior: 'instant',
-      })
-    }
+    revealNodeHistoryOnOpen(message)
     api.postMessage({
       type: 'rendered',
       revision: message.revision,
