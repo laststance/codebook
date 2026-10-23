@@ -850,6 +850,12 @@ export async function nativeParticipantsHarness(
         ? await loadConstantsWith(options.runtimeConstants)
         : {}),
       './ownedRepositoryBreakpoint': ownedBreakpoint,
+      // A stand-in for the real `[::1]` forwarder: it binds no socket, so parallel test files never collide on the fixed port.
+      './utils/startIpv6LoopbackForwarder': {
+        startIpv6LoopbackForwarder: async () => ({
+          close: async (): Promise<void> => undefined,
+        }),
+      },
       './runtimeSupport/cdp': {
         Cdp: {
           connect: async (url: string) => {
