@@ -1018,7 +1018,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       stop.bundle.sourcePath,
       stop.armed.line,
       stop.armed.column,
-      'declared-line',
       // The stop's rule is read at each acknowledgement, so a rule built again from the debugger's break locations ({@link acceptsByBreakLocations}) also judges the adapter's later news.
       (line) => stop.acceptsBoundLine(line),
     )

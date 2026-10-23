@@ -176,19 +176,16 @@ export class OwnedRepositoryBreakpoint {
    * @param path - Absolute path of the source file the stop belongs to.
    * @param line - One-based requested line.
    * @param column - One-based requested column.
-   * @param acknowledgedAt - What the adapter's registration reply must name. `'declared-line'` (configured runs and Node test runs) accepts any column of the requested line, because that caller commits the stop at the position the debugger bound. `'declared-column'` also refuses another column, for a caller that captures its pause at the requested column only; no run uses it since a Node test stop is captured at the bound column (F155); a pending reply that names no column yet is still accepted.
-   * @param acceptsOtherLine - Tells whether a line other than the requested one may be this breakpoint's verified place. A configured run passes its binding rule ({@link createBindingLineRule}), which accepts the lines from the declared to the requested one and a later line no mapped line separates from the requested one. Without it, and under `'declared-column'`, a verified reply on another line is refused.
+   * @param acceptsOtherLine - Tells whether a line other than the requested one may be this breakpoint's verified place. A configured run passes its binding rule ({@link createBindingLineRule}), which accepts the lines from the declared to the requested one and a later line no mapped line separates from the requested one. Without it, a verified reply on another line is refused. Every caller commits its stop at the position the debugger bound, so any column of the requested line is accepted.
    * @example
    * new OwnedRepositoryBreakpoint('/repo/actions.ts', 20, 5)
-   * new OwnedRepositoryBreakpoint('/repo/theme.ts', 1, 14, 'declared-column')
-   * new OwnedRepositoryBreakpoint('/repo/actions.ts', 33, 5, 'declared-line', (line) => line === 35)
+   * new OwnedRepositoryBreakpoint('/repo/theme.ts', 1, 14)
+   * new OwnedRepositoryBreakpoint('/repo/actions.ts', 33, 5, (line) => line === 35)
    */
   constructor(
     readonly path: string,
     readonly line: number,
     readonly column: number,
-    private readonly acknowledgedAt:
-      'declared-line' | 'declared-column' = 'declared-line',
     private readonly acceptsOtherLine?: (line: number) => boolean,
   ) {
     this.breakpoint = new vscode.SourceBreakpoint(
@@ -269,11 +266,11 @@ export class OwnedRepositoryBreakpoint {
 
   /**
    * Tells whether an adapter reply names a position this owner accepts; called by {@link onResponse} for the owned breakpoint's entry.
-   * A reply may leave a position out while it is pending; a verified one must name the requested line, and for an owner that captures at the requested column also that column. An owner that commits at the bound position also takes a verified reply on a line its rule accepts.
+   * A reply may leave a position out while it is pending; a verified one must name the requested line, at any column, because the stop is committed at the position the debugger bound. A verified reply on a line the owner's rule accepts is taken too.
    * @param binding - The owned breakpoint's entry of the setBreakpoints reply.
-   * @returns `false` when the reply names another line that the owner's rule does not accept, or, under `'declared-column'`, another line or column.
+   * @returns `false` when the reply names another line that the owner's rule does not accept, .
    * @example
-   * this.acknowledgesPosition({ verified: true, line: 20, column: 12 }) // => true for 'declared-line', false for 'declared-column' requested at 20:5
+   * this.acknowledgesPosition({ verified: true, line: 20, column: 12 }) // => true for an owner requested at 20:5
    */
   private acknowledgesPosition(binding: {
     verified: boolean
@@ -284,12 +281,7 @@ export class OwnedRepositoryBreakpoint {
       binding.verified
         ? replied === requested
         : (replied ?? requested) === requested
-    // An owner that captures at the requested column takes that exact position and nothing else.
-    if (this.acknowledgedAt === 'declared-column')
-      return (
-        names(this.line, binding.line) && names(this.column, binding.column)
-      )
-    // Otherwise the adapter chooses the column, and may have moved the breakpoint to a line the owner's rule accepts.
+    // The adapter chooses the column, and may have moved the breakpoint to a line the owner's rule accepts.
     return names(this.line, binding.line) || this.isOnAcceptedOtherLine(binding)
   }
 
@@ -621,7 +613,7 @@ export class OwnedRepositoryBreakpoint {
   /**
    * Tells {@link assertBoundAsDeclared} whether a verified binding names another place than the requested position.
    * @param bound - The binding's line and, when one is known, its column.
-   * @returns `true` for another line, and, for an owner that captures at the requested column, for another column on the requested line; `false` for the requested position, for any column of the requested line when the owner takes the bound column, and for the requested line without a column, which names no other column.
+   * @returns `true` for another line; `false` for any column of the requested line, including a binding without a column.
    * @example
    * this.isAwayFromDeclared({ line: 20 }) // => false for an owner requested at 20:1
    */
@@ -629,10 +621,8 @@ export class OwnedRepositoryBreakpoint {
     line: number
     column?: number
   }): boolean {
-    if (bound.line !== this.line) return true
-    // An owner that takes any column of the declared line is not moved by another column of it.
-    if (this.acknowledgedAt === 'declared-line') return false
-    return bound.column !== undefined && bound.column !== this.column
+    // The owner takes any column of the declared line, so another column of it is no move.
+    return bound.line !== this.line
   }
 
   /**

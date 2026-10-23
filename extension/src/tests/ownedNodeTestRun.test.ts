@@ -33,6 +33,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.duringRetire - Learner action performed while the owned breakpoint is being retired.
  * @param options.adapterPauseAfterContinue - After each Codebook continue the debug adapter pauses for a breakpoint of its own and resumes it: no `stopped`, only the `continued` it announces for its own resume, before the next declared stop.
  * @param options.exitAfterEntry - The test process exits after the entry pause, as when Vitest skips the cited test.
+ * @param options.entryPauseAbsent - js-debug reports no entry pause because the owned breakpoint lies in the test file Vitest pauses at the start of: the first `stopped` event is the owned breakpoint's own hit at the first declared stop (the DAP transcript of F155).
  * @param options.reportFailure - Error the Vitest report check raises after the process finishes.
  * @param options.reportStatus - Actual assertion result reported by Vitest, independent of the process exit code.
  * @param options.exitCode - The process result, which a repository plugin can reset even after a failed assertion.
@@ -57,6 +58,7 @@ async function nodeRunHarness({
   duringRetire,
   adapterPauseAfterContinue,
   exitAfterEntry,
+  entryPauseAbsent,
   reportFailure,
   reportStatus = 'passed',
   exitCode = 0,
@@ -84,6 +86,7 @@ async function nodeRunHarness({
   duringRetire?: () => void
   adapterPauseAfterContinue?: boolean
   exitAfterEntry?: boolean
+  entryPauseAbsent?: boolean
   reportFailure?: Error
   reportStatus?: 'passed' | 'failed'
   exitCode?: number | null
@@ -203,7 +206,8 @@ async function nodeRunHarness({
   const listedSessions = new Set<string>()
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
-    continued = 0,
+    // With no entry pause the first declared stop is already reached before any continue.
+    continued = entryPauseAbsent ? 1 : 0,
     pausedLine = observedLine,
     pausedFile = sourceFile
   let terminate: ((session: vscode.DebugSession) => void) | undefined
@@ -567,7 +571,11 @@ async function nodeRunHarness({
         tracker = created ?? undefined
         // The starting adapter receives the breakpoints the editor already holds.
         if (editorBreakpoints.length) replaceSourceBreakpoints()
-        queueMicrotask(() => stopped('entry'))
+        queueMicrotask(() =>
+          entryPauseAbsent
+            ? stopped('breakpoint', [OWNED_BREAKPOINT_ID])
+            : stopped('entry'),
+        )
         return true
       },
       async stopDebugging(stopped?: vscode.DebugSession): Promise<void> {
@@ -795,6 +803,60 @@ test('continuing the final declared stop retires its owned breakpoint first so a
 
     // Assert
     assert.deepEqual(harness.calls, ['retire', 'continue', 'result', 'verify'])
+    assert.equal(result.exitCode, 0)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=a Node test whose declared stop lies in the test file itself reaching that stop, because js-debug reports no entry pause there and the owned breakpoint's own hit is the first pause (F155, the DAP transcript of 16:29 in utils.test.ts); fails_when=the first pause is taken for the entry pause and continued, so the test runs past its declared stop and ends "exited with code 0 before declared stop 1"; why_new=every harness run sent an entry pause first, which js-debug does not send for a breakpoint in the entered module; seam=the harness adapter sends the owned hit as the first stop and counts the continue requests; no_claim=a real js-debug or Vitest
+test("a declared stop in the test file itself is captured from the owned breakpoint's own first pause without continuing it as an entry pause", async () => {
+  // Arrange: the adapter reports no entry pause; the first pause is the owned breakpoint's hit.
+  const harness = await nodeRunHarness({ entryPauseAbsent: true })
+  try {
+    // Act
+    const stop = await harness.run.prepare()
+
+    // Assert
+    assert.equal(stop.index, 0)
+    assert.equal(
+      harness.calls.filter((call) => call === 'continue').length,
+      0,
+      'the first pause is the declared stop and is not continued',
+    )
+    assert.deepEqual(
+      JSON.parse(
+        JSON.stringify(
+          harness.events
+            .filter((event) => event.type === 'node-test.entry-pause-absent')
+            .map((event) => event.type),
+        ),
+      ),
+      ['node-test.entry-pause-absent'],
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the second declared stop after a first stop reached without an entry pause; fails_when=the stop counting still assumes one entry continue before stop 1, so the run ends or repeats stop 1; why_new=only runs with an entry pause were advanced; seam=the harness adapter reaches stop 2 on the first continue; no_claim=a real js-debug
+test('a run whose first declared stop came without an entry pause advances to its second declared stop and finishes', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    entryPauseAbsent: true,
+    declaredStops: 2,
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const next = await harness.run.advance()
+    const result = await harness.run.complete()
+
+    // Assert
+    assert.equal(next.index, 1)
     assert.equal(result.exitCode, 0)
   } finally {
     await harness.run.stop()
@@ -2572,6 +2634,30 @@ test('a Node test stop that the debugger binds at another column of its declared
       [1, 14, 1, 1],
     )
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Value: protects=the transcript of a stop declared at 16:5 in the test file itself, which js-debug binds at 16:29 and pauses at with no entry pause before it (F155, both halves together); fails_when=the bound-column stop is continued as an entry pause, or the real tracker's pending reply is refused; why_new=the two halves were only tested apart; seam=the real breakpoint tracker with a pending reply, the first pause being the owned hit at the other column; no_claim=js-debug's real binding
+test('a stop declared in the test file at a column the debugger binds elsewhere is captured at the bound column although no entry pause precedes it', async () => {
+  // Arrange: declared at 1:14, pending reply, the owned breakpoint's own hit at 1:29 is the first pause.
+  const harness = await nodeRunHarness({
+    acknowledgements: [{ verified: false }],
+    pausedColumn: 29,
+    entryPauseAbsent: true,
+  })
+  try {
+    // Act
+    const stop = await harness.run.prepare()
+
+    // Assert
+    assert.deepEqual(
+      [stop.source.column, stop.frame.line, stop.frame.column],
+      [14, 1, 29],
+    )
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 0)
   } finally {
     await harness.run.stop()
     await harness.cleanup()
