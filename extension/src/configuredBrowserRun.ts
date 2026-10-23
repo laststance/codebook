@@ -135,6 +135,10 @@ import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
+import {
+  isModuleInAnotherLayer,
+  sealRuntimeModuleInstance,
+} from './utils/sealRuntimeModuleInstance'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import { takenStopPosition } from './utils/takenStopPosition'
@@ -156,10 +160,21 @@ interface ConfiguredBrowserOptions {
   revealSource(snapshot: ConfiguredRuntimeSnapshot): Promise<void>
   control?: RuntimeControl
 }
+/** One script a runtime parsed for a declared stop's module: the sealed one, or the same module loaded for another webpack layer ({@link PreparedStop.instances}), each with the map that places its own generated code. */
+type StopModule = {
+  bundle: BundleSource
+  verifier: ReturnType<typeof createBundleVerifier>
+  script?: Protocol.Debugger.ScriptParsedEvent
+}
 type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   bundle: BundleSource
   verifier: ReturnType<typeof createBundleVerifier>
   script?: Protocol.Debugger.ScriptParsedEvent
+  /** The same module as the runtime parsed it for other webpack layers, by script id, once each was read and found to map onto the frozen original ({@link ConfiguredBrowserRun.adoptInstance}); a server stop's line can run in any of them, not only in the sealed one. */
+  instances: Map<
+    string,
+    StopModule & { script: Protocol.Debugger.ScriptParsedEvent }
+  >
   breakpoint?: OwnedRepositoryBreakpoint
   /** The one scan of the stop's sealed map, from its declared line to the end of its citation; {@link resolveArmedPlace}, {@link createBindingLineRule} and the preparation refusal read it instead of the map. */
   scan: MappedPositionsScan
@@ -564,6 +579,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         earliestRequestLine: afterDeclaration.earliestLine,
         acceptsBoundLine: bindingRule.accepts,
         bindingRefusal: bindingRule.refusal,
+        instances: new Map(),
       }
       this.stops.push(prepared)
       await this.evidence.save(
@@ -1149,10 +1165,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private sourcePlaceOf(
     stop: PreparedStop,
-    location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
+    location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'> &
+      Partial<Pick<Protocol.Debugger.Location, 'scriptId'>>,
   ): { line: number; column: number } | undefined {
-    const line = stop.verifier.originalLine(location),
-      column = stop.verifier.originalColumn(location)
+    // A location in an instance of the module for another layer is mapped by that instance's own map.
+    const { verifier } = this.moduleOf(stop, location.scriptId),
+      line = verifier.originalLine(location),
+      column = verifier.originalColumn(location)
     return line === undefined || column === undefined
       ? undefined
       : { line, column }
@@ -2701,12 +2720,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.ScriptParsedEvent,
   ): void {
     for (const stop of this.stops) {
+      // The same module parsed for another webpack layer is a further instance of the stop's module, placed by its own map.
+      if (this.isModuleInAnotherLayerOfStop(stop, name, event))
+        this.track(this.adoptInstance(stop, name, event))
       if (!this.isModuleOfStop(stop, name, event)) continue
       if (this.isSealedAsAnotherScript(stop, event)) {
         this.fail('Selected module changed after sealing')
         return
       }
       stop.script = event
+      // The journal lists only the first scripts a runtime parses; the sealed module's own announcement is always kept, so a run that never pauses shows which script it was waiting in.
+      this.evidence.record('stop.module-parsed', {
+        participant: name,
+        source: stop.source.path,
+        line: stop.source.line,
+        scriptId: event.scriptId,
+        scriptUrl: event.url,
+      })
       this.judgeNewsRefusedBeforeModule(stop)
     }
   }
@@ -2730,6 +2760,103 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.ScriptParsedEvent,
   ): boolean {
     return stop.script !== undefined && stop.script.scriptId !== event.scriptId
+  }
+
+  /** Tells {@link bindParsedScript} whether a script a server runtime announced is the module of a declared server stop loaded for another webpack layer than the sealed one. @example this.isModuleInAnotherLayerOfStop(stop, 'server', event) // true for (middleware)/./auth.config.ts while the stop was sealed as (action-browser)/./auth.config.ts */
+  private isModuleInAnotherLayerOfStop(
+    stop: PreparedStop,
+    name: Participant,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): boolean {
+    return (
+      stop.participant === 'server' &&
+      name === 'server' &&
+      Boolean(event.url) &&
+      isModuleInAnotherLayer(stop.bundle.scriptUrl, event.url)
+    )
+  }
+
+  /**
+   * Reads another layer's instance of a declared server stop's module and, when its own source map puts it on the frozen original, accepts it as a script the stop's line may run in; called by {@link bindParsedScript} for each such script the runtime announces.
+   * Next compiles a source file once per webpack layer, so the sealed `(action-browser)` instance is not the only script that can hold a declared line (the `authorized` callback of `auth.config.ts` runs in the `(middleware)` one). The instance's generated code differs from the sealed one, so it is placed by the map in its own text, never by the sealed map. An instance whose map names another original or whose text cannot be read is journaled as refused and never takes a pause for the stop. When a pause in the script arrived before this read ended, it is judged now ({@link readmitHeldPause}).
+   * @param stop - The declared server stop.
+   * @param name - The participant whose runtime announced the script.
+   * @param event - The announced script.
+   * @example
+   * ```ts
+   * await this.adoptInstance(stop, 'server', event) // journals stop.instance-sealed for (middleware)/./auth.config.ts
+   * ```
+   */
+  private async adoptInstance(
+    stop: PreparedStop,
+    name: Participant,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): Promise<void> {
+    const cdp = this.participants[name].cdp
+    if (!cdp || this.cleaning) return
+    try {
+      const executed = await cdp.request('Debugger.getScriptSource', {
+        scriptId: event.scriptId,
+      })
+      const bundle = sealRuntimeModuleInstance(
+        stop.bundle,
+        event.url,
+        executed.scriptSource,
+      )
+      if (!bundle) throw new Error('The script text names another address')
+      const verifier = createBundleVerifier(bundle)
+      stop.instances.set(event.scriptId, { bundle, verifier, script: event })
+      this.evidence.record('stop.instance-sealed', {
+        participant: name,
+        source: stop.source.path,
+        line: stop.source.line,
+        scriptId: event.scriptId,
+        scriptUrl: event.url,
+        hashes: verifier.hashes,
+      })
+    } catch (error) {
+      if (this.cleaning || this.abort.signal.aborted) return
+      this.evidence.record('stop.instance-refused', {
+        participant: name,
+        source: stop.source.path,
+        line: stop.source.line,
+        scriptId: event.scriptId,
+        scriptUrl: event.url,
+        reason: String(error),
+      })
+      return
+    }
+    this.readmitHeldPause(stop, name, event.scriptId)
+  }
+
+  /**
+   * Judges again a pause that was held in a script of a declared stop's module before that script was accepted as an instance of it, for {@link adoptInstance}: the pause arrived while the instance's text was still being read, when no map placed it.
+   * @param stop - The declared stop whose instance was just accepted.
+   * @param name - The participant whose runtime paused.
+   * @param scriptId - The accepted instance.
+   * @example
+   * ```ts
+   * this.readmitHeldPause(stop, 'server', '1904') // the pause held in 1904 becomes the stop's pause when it is at the stop's line
+   * ```
+   */
+  private readmitHeldPause(
+    stop: PreparedStop,
+    name: Participant,
+    scriptId: string,
+  ): void {
+    const participant = this.participants[name],
+      held = participant.unannouncedPause
+    if (
+      !held ||
+      held.expectedStop !== stop ||
+      this.expectedStop(name) !== stop ||
+      held.event.callFrames[0]?.location.scriptId !== scriptId
+    )
+      return
+    participant.unannouncedPause = undefined
+    this.admitPause(name, held.event, held.journaled)
+    // A pause that is still not the stop's keeps the time it has been held since.
+    if (participant.unannouncedPause) participant.unannouncedPause = held
   }
 
   /** Observes each native proxy without borrowing another participant's script or suspension. @example await this.observeParticipant('server') */
@@ -2934,10 +3061,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent,
     stop: PreparedStop | undefined,
   ): stop is PreparedStop {
+    if (stop === undefined) return false
+    // The pause is compared by the map of the script it is in: the instances of one module differ in generated code.
+    const module = this.moduleOf(stop, event.callFrames[0]?.location.scriptId)
     return (
-      stop !== undefined &&
-      isPauseAtStop(event, this.pauseTarget(stop)) &&
-      isPauseAtBoundColumn(event, stop)
+      isPauseAtStop(event, this.pauseTarget(stop, module)) &&
+      isPauseAtBoundColumn(event, {
+        bound: stop.bound,
+        verifier: module.verifier,
+      })
     )
   }
 
@@ -2991,10 +3123,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /** Gives {@link isPauseOfStop} what a pause's line is compared with: the stop, and as its bound line the run's binding or, before the run read it, the place where the stop's owned breakpoint is verified, so an adapter pause on another acceptable line is not taken for it. @example this.pauseTarget(stop).bound // { line: 33, column: 5 } for a server stop verified on its declared line */
-  private pauseTarget(stop: PreparedStop): PauseStopTarget {
+  private pauseTarget(
+    stop: PreparedStop,
+    module: StopModule = stop,
+  ): PauseStopTarget {
     const session = this.participants[stop.participant].selected
     return {
       ...stop,
+      script: module.script,
+      verifier: module.verifier,
       bound:
         stop.bound ??
         (session ? stop.breakpoint?.verifiedPlace(session) : undefined),
@@ -3037,7 +3174,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): string {
     return pausePlace(
       event,
-      this.stops.filter((stop) => stop.participant === name),
+      this.stops
+        .filter((stop) => stop.participant === name)
+        .flatMap((stop) => [
+          stop,
+          ...[...stop.instances.values()].map((instance) => ({
+            ...stop,
+            script: instance.script,
+            verifier: instance.verifier,
+          })),
+        ]),
       this.participants[name].scriptUrls,
     )
   }
@@ -4442,12 +4588,46 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       : undefined
   }
 
-  /** Tells {@link unboundPauseInModule} whether a pause's top frame names the script id of a stop's module, as far as either is known. @example this.hasTopFrameInScriptOf(event, stop) // false for a pause in another script */
+  /** Tells {@link unboundPauseInModule} whether a pause's top frame names the script id of a stop's module (the sealed script or an accepted instance for another layer), as far as either is known. @example this.hasTopFrameInScriptOf(event, stop) // false for a pause in another script */
   private hasTopFrameInScriptOf(
     event: Protocol.Debugger.PausedEvent,
     stop: PreparedStop,
   ): boolean {
-    return event.callFrames[0]?.location.scriptId === stop.script?.scriptId
+    const scriptId = event.callFrames[0]?.location.scriptId
+    return (
+      scriptId === stop.script?.scriptId ||
+      (scriptId !== undefined && stop.instances.has(scriptId))
+    )
+  }
+
+  /**
+   * Gives the script of a stop's module that a script id names, with its own bundle and map: the accepted instance for another layer when the id is one, the sealed module otherwise. Every comparison of a pause with a stop's generated code asks it, because the instances' generated code differs.
+   * @param stop - The declared stop.
+   * @param scriptId - The script a pause or location lies in; none gives the sealed module.
+   * @returns The module that script is an instance of.
+   * @example
+   * ```ts
+   * this.moduleOf(stop, '1904').verifier // the map of the (middleware) instance
+   * ```
+   */
+  private moduleOf(stop: PreparedStop, scriptId?: string): StopModule {
+    return (
+      (scriptId === undefined ? undefined : stop.instances.get(scriptId)) ??
+      stop
+    )
+  }
+
+  /** Tells whether a pause's top frame is in the sealed script of a stop's module or in an accepted instance of it for another layer. @example this.isPauseInModuleOf(event, stop) // true for a pause in the (middleware) instance of the stop's file */
+  private isPauseInModuleOf(
+    event: Protocol.Debugger.PausedEvent,
+    stop: PreparedStop,
+  ): boolean {
+    return (
+      isPauseInScript(event, stop.script) ||
+      [...stop.instances.values()].some((instance) =>
+        isPauseInScript(event, instance.script),
+      )
+    )
   }
 
   /**
@@ -4545,7 +4725,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     held: NonNullable<DebugParticipant['unannouncedPause']>,
   ): Protocol.Debugger.Location | undefined {
     const location = held.event.callFrames[0]?.location
-    return location && isPauseAtStop(held.event, this.pauseTarget(stop))
+    return location &&
+      isPauseAtStop(
+        held.event,
+        this.pauseTarget(stop, this.moduleOf(stop, location.scriptId)),
+      )
       ? location
       : undefined
   }
@@ -4598,7 +4782,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     held: NonNullable<DebugParticipant['unannouncedPause']>,
   ): boolean {
     return (
-      held.expectedStop !== stop && isPauseInScript(held.event, stop.script)
+      held.expectedStop !== stop && this.isPauseInModuleOf(held.event, stop)
     )
   }
 
@@ -4686,8 +4870,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): boolean {
     const location = event.callFrames[0]?.location
     // A bundle can hold several originals in one script; a pause the sealed map places in another original cannot be this stop's binding.
-    if (!isPauseInScript(event, stop.script) || !location) return false
-    return !stop.verifier.isInAnotherOriginal(location)
+    if (!this.isPauseInModuleOf(event, stop) || !location) return false
+    return !this.moduleOf(stop, location.scriptId).verifier.isInAnotherOriginal(
+      location,
+    )
   }
 
   /**
@@ -4950,11 +5136,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       { scriptId: callFrame.location.scriptId },
     )
     current()
-    stop.verifier.verify(
+    // The executed script is verified against its own instance: another layer's generated code differs from the sealed one.
+    const executedModule = this.moduleOf(stop, callFrame.location.scriptId)
+    executedModule.verifier.verify(
       executed.scriptSource,
-      stop.bundle.source,
+      executedModule.bundle.source,
       callFrame.location,
-      stop.script!.scriptId,
+      executedModule.script!.scriptId,
       frame.line,
       frame.column,
     )
@@ -5027,10 +5215,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         hash: stop.verifier.hashes.typescript,
         line: frame.line,
         column: frame.column,
-        javascriptHash: stop.verifier.hashes.javascript,
-        mapHash: stop.verifier.hashes.sourceMap,
-        scriptId: stop.script!.scriptId,
-        scriptUrl: stop.script!.url,
+        javascriptHash: executedModule.verifier.hashes.javascript,
+        mapHash: executedModule.verifier.hashes.sourceMap,
+        scriptId: executedModule.script!.scriptId,
+        scriptUrl: executedModule.script!.url,
         generated: {
           line: callFrame.location.lineNumber,
           column: callFrame.location.columnNumber ?? 0,
