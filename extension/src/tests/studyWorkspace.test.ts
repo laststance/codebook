@@ -654,6 +654,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       'second stop is selected in the reader before reopening its history',
       READER_RESULT_BOUND_MS,
     )
+    // The reader writes the chosen stop to its store after the commit; the new store reads it from disk, so the reopen waits for that write (F231).
+    await waitUntil(
+      async () => (await store.readReaderPosition(header.studyId)) === 25,
+      'the chosen stop written to the history store',
+      READER_RESULT_BOUND_MS,
+    )
     const library = await harness.reader.learningStorage()
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
       library.directory,
@@ -727,6 +733,12 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     const presentationsBeforeOutputRestore =
       recordedStopPresentations(harness).length
+    // As above: the output-only position reaches the disk after its commit (F231).
+    await waitUntil(
+      async () => (await store.readReaderPosition(header.studyId)) === 24,
+      'the output-only position written to the history store',
+      READER_RESULT_BOUND_MS,
+    )
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
       library.directory,
       header.workspaceKey,
