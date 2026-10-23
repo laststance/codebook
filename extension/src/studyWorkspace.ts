@@ -1339,7 +1339,10 @@ export class StudyWorkspace {
       if (!currentSourceReady) {
         const playback = this.playback?.state()
         // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover. A recording whose load failed shows no source until it is opened again. Otherwise the reason says how the source stands (row 695).
-        if (this.testReplayHoldsComposition())
+        // A test replay that is only opening has no slot yet: it reads as opening, never as a missing slot (F416).
+        if (this.testReplayIsOpening())
+          reason = 'The recorded source is opening in its native pane.'
+        else if (this.testReplayHoldsComposition())
           reason =
             'The recorded source of the test replay is not shown in its pane. Use Focus source to show it again.'
         else if (playback?.readiness === 'loading')
@@ -2283,25 +2286,106 @@ export class StudyWorkspace {
   }
 
   /**
-   * Restores the composition of a selected test replay: its recorded-source slot is shown again at the source position and the layout is confirmed from the receipt the entry took; called by {@link changePresentation} for a Restore or a selection of the Study workspace while a test replay holds the composition (F413).
-   * A test replay has no article source, so the article's placement ({@link placePresentation}) cannot run for it.
-   * @returns The presentation state, open.
-   * @throws `PRESENTATION_UNAVAILABLE` naming the reason when the layout is still not confirmed, as when a pane stands outside its Study destination.
-   * @example await this.restoreTestReplayArrangement() // the slot tab is back in front at the source position
+   * Restores the composition of a selected test replay: its recorded-source slot is shown again at the source position, the grid gets the sizes of the receipt back, and the layout is confirmed from that receipt; called by {@link changePresentation} for a Restore or a selection of the Study workspace while a test replay holds the composition (F413).
+   * A test replay has no article source, so the article's placement ({@link placePresentation}) cannot run for it. The path is a presentation operation of its own: a second control is refused while it runs, and a close, a dispose or a newer operation that ends it meanwhile leaves the revision, the reader's state and the answer untouched (F415). The slot is fronted without the keyboard: only Focus source takes it (F418).
+   * @returns The presentation state, open; with `layoutMeasured: false` when another editor part (an agent chat) has the keyboard and the grid could not be measured without taking it.
+   * @throws `PRESENTATION_UNAVAILABLE` naming the reason when the layout is still not confirmed, as when a pane stands outside its Study destination or the editor kept the learner's sizes; the lifetime error when the reader closed meanwhile.
+   * @example await this.restoreTestReplayArrangement() // the slot tab is back in front at the source position, at the receipt's sizes
    */
-  private async restoreTestReplayArrangement(): Promise<PresentationState> {
-    await this.focusNodeSourceSlot()
-    this.presentationControlRevision++
-    this.presentationConfirmed = Boolean(this.layoutReceipt)
-    if (this.presentationConfirmed) this.retireRefusalLines()
+  private restoreTestReplayArrangement(): Promise<PresentationState> {
+    const lifetime = this.lifetime,
+      transition = {
+        id: this.presentationId,
+        cancellation: new AbortController(),
+      }
+    this.presentationTransition = transition
     this.publish()
-    const state = this.presentationState()
-    if (!state.layoutConfirmed)
-      throw new StudyError(
-        'PRESENTATION_UNAVAILABLE',
-        state.reason ?? 'The test replay layout is not confirmed.',
+    /** Throws once the reader closed, or a newer operation or a close ended this one. */
+    const assertCurrent = (): void => {
+      this.assertLifetime(lifetime)
+      transition.cancellation.signal.throwIfAborted()
+      if (
+        this.presentationTransition !== transition ||
+        transition.id !== this.presentationId
       )
-    return { ...state, state: 'open' as const }
+        throw new Error('The test replay Restore was superseded.')
+    }
+    let pending!: Promise<PresentationState>
+    // eslint-disable-next-line prefer-const -- the async body compares the shared operation against its own promise.
+    pending = (async () => {
+      try {
+        await this.focusNodeSourceSlot(false)
+        assertCurrent()
+        const measured = await this.restoreTestReplayGrid(
+          transition.cancellation.signal,
+        )
+        assertCurrent()
+        this.presentationControlRevision++
+        this.presentationConfirmed = Boolean(this.layoutReceipt)
+        if (this.presentationConfirmed) this.retireRefusalLines()
+        this.publish()
+        const state = this.presentationState()
+        if (!state.layoutConfirmed)
+          throw new StudyError(
+            'PRESENTATION_UNAVAILABLE',
+            state.reason ?? 'The test replay layout is not confirmed.',
+          )
+        return {
+          ...state,
+          state: 'open' as const,
+          ...(measured ? {} : { layoutMeasured: false as const }),
+        }
+      } finally {
+        if (this.presentationTransition === transition)
+          this.presentationTransition = undefined
+        if (this.presentationOperation === pending)
+          this.presentationOperation = undefined
+        this.publish()
+      }
+    })()
+    this.presentationOperation = pending
+    return pending
+  }
+
+  /**
+   * Gives the grid the sizes of the last arrangement's receipt back when the learner resized it; the grid step of {@link restoreTestReplayArrangement} (F417), as an Enlarge's confirmation does ({@link tryConfirmEnlargedLayout}).
+   * Nothing is set when the groups or panes are not those of the receipt (the confirmation then reads unconfirmed on its own) or when another editor part has the keyboard, since the layout command would answer for that part.
+   * @param signal - Cancels the grid step when the operation ends.
+   * @returns `false` when the grid could not be measured from the current keyboard place; otherwise `true`.
+   * @throws `PRESENTATION_UNAVAILABLE` when the editor did not keep the receipt's layout.
+   * @example const measured = await this.restoreTestReplayGrid(signal)
+   */
+  private restoreTestReplayGrid(signal: AbortSignal): Promise<boolean> {
+    return this.withLayout(signal, async (_lifetime, assertCurrent) => {
+      const receipt = this.layoutReceipt
+      if (
+        !receipt ||
+        receipt.mode !== 'study' ||
+        !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) ||
+        !this.sameStudyPanePositions(receipt.panes)
+      )
+        return true
+      const layout = await this.readPassivePresentationLayout()
+      assertCurrent()
+      if (layout === undefined) return false
+      const expected: unknown = JSON.parse(receipt.signature)
+      // Native pixel rounding is no resize; a ratio the learner changed is.
+      if (isProportionalEditorLayout(expected, layout)) return true
+      await vscode.commands.executeCommand('vscode.setEditorLayout', expected)
+      assertCurrent()
+      const restored = await vscode.commands.executeCommand<unknown>(
+        'vscode.getEditorLayout',
+      )
+      assertCurrent()
+      if (!isProportionalEditorLayout(expected, restored))
+        throw new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          'The editor did not keep the Study layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.',
+        )
+      // The sizes owed to a Close are the receipt's own from here on.
+      this.groupSizesBeforeExpand = undefined
+      return true
+    })
   }
 
   /** Lets explicit MCP recovery return from another editor to the existing explanation without changing layout or execution. @example await this.focusCurrentPresentation(input) */
@@ -11411,6 +11495,15 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether a test replay is only opening: the host's open or a pane's open is under way, so its recorded-source slot is not committed yet; read by {@link presentationState}, which says "opening" for it and not "not shown" (F416).
+   * @returns `true` between the start of a test replay's open and its end.
+   * @example if (this.testReplayIsOpening()) reason = 'The recorded source is opening in its native pane.'
+   */
+  private testReplayIsOpening(): boolean {
+    return this.hostOpeningTestReplay || this.pendingNodeHistory !== undefined
+  }
+
+  /**
    * Says whether a test replay is selected, opening, or about to open from the host, so that {@link open} arranges the Study composition and not the Live one; read by {@link open}.
    * @returns `true` while a test replay needs the Study pane.
    * @example if (this.testReplayHoldsComposition()) liveComposition = false
@@ -14610,7 +14703,8 @@ export class StudyWorkspace {
       held.address !== slot.uri.toString()
     )
       return false
-    const column = STUDY_PRESENTATIONS['study-workspace'].sourceColumn
+    // The slot shows at the selected mode's source column, as {@link nodeSourceSlotColumn} places it (F424).
+    const column = STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
     const front = vscode.window.tabGroups.all.find(
       (group) => group.viewColumn === column,
     )?.activeTab?.input
@@ -24810,10 +24904,11 @@ export class StudyWorkspace {
    * Brings the recorded-source slot's tab to the front of its group with the keyboard in it, the stop's line as the slot already shows it; called by the Study pane's Focus source action ({@link receive}) while a test replay is selected.
    * Nothing is shown when the replay has no slot yet (it is still opening or was retired); the slot's own selection draws its line and label, and this only fronts the tab that already holds them.
    * It waits as a selection's show does (F392): for the leave settle of a stop that was left ({@link NODE_HISTORY_LEAVE_SETTLE_MS}), so the tab fronted is not the left stop's bytes beside the native views; and for the close of its own address ({@link nodeSourceSlotCloses}, F196), so that close never closes the tab it shows. The slot is read again after each wait: a slot retired meanwhile (the reader closed, the replay left) shows nothing, and a tab shown after the slot was retired or renamed is closed when no newer slot owns its address ({@link settleLateSlotShow} does the same for a selection's show).
+   * @param takesKeyboard - `true` (Focus source) gives the keyboard to the slot's tab; `false` (a Restore) fronts the tab and leaves the keyboard where it is (F418).
    * @returns Once the editor showed the slot tab, or at once when no slot exists or it ended meanwhile.
    * @example await this.focusNodeSourceSlot() // the Captured-data.ts tab in front of the Welcome tab, with the keyboard
    */
-  private async focusNodeSourceSlot(): Promise<void> {
+  private async focusNodeSourceSlot(takesKeyboard = true): Promise<void> {
     if (!this.nodeSourceSlot) return
     const retirementsAtStart = this.nodeSourceSlotRetirements
     // The slot of a stop that was left keeps its earlier bytes for the leave settle; the selection that left it shows the next moment's slot right after, which is the one to front.
@@ -24841,7 +24936,7 @@ export class StudyWorkspace {
     await vscode.window.showTextDocument(document, {
       viewColumn:
         holder?.viewColumn ?? this.nodeSourceSlotColumn(slot.uri, undefined),
-      preserveFocus: false,
+      preserveFocus: !takesKeyboard,
       preview: false,
     })
     if (isCurrent()) {
