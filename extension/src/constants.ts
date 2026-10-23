@@ -1285,6 +1285,12 @@ export const DEVELOPMENT_SERVER_INHERITED_ENVIRONMENT_NAMES = [
   'USER',
   'LOGNAME',
 ] as const
+/** The loopback names that count as the owned application's origin at its port (D65); the recorded browser opens the first. */
+export const OWNED_APPLICATION_LOOPBACK_HOSTS = [
+  'localhost',
+  '127.0.0.1',
+  '[::1]',
+] as const
 /** Bounds how much of a project's package.json or env file is read to find its declared port. */
 export const DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES = 1_048_576
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200

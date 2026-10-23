@@ -120,6 +120,11 @@ import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
 import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import {
+  browserOriginOf,
+  isOwnedApplicationOrigin,
+  loopbackOriginsOf,
+} from './utils/ownedApplicationOrigin'
+import {
   pagePauseUnderResumeText,
   type PagePauseUnderResume,
 } from './utils/pagePauseUnderResumeText'
@@ -499,9 +504,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       needsServer,
       declaredPort.port,
     )
-    this.origin = await this.app.ready(
-      this.abort.signal,
-      this.definition.configuration.entryPath,
+    // The server binds 127.0.0.1; the browser opens `localhost` at its port, the name the project's own origin settings use (D65).
+    this.origin = browserOriginOf(
+      await this.app.ready(
+        this.abort.signal,
+        this.definition.configuration.entryPath,
+      ),
     )
     this.alive()
     // The lock's identity is read with exact numbers: a file id can be larger than a number holds exactly.
@@ -641,7 +649,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const storage = this.definition.configuration.initialStorage ?? []
     if (storage.length) {
       await cdp.request('Page.addScriptToEvaluateOnNewDocument', {
-        source: `if(location.origin===${JSON.stringify(this.origin)})for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
+        source: `if(${JSON.stringify(loopbackOriginsOf(this.origin))}.includes(location.origin))for(const entry of ${JSON.stringify(storage)})localStorage.setItem(entry.key,entry.value);`,
       })
       this.alive()
     }
@@ -5341,7 +5349,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         returnByValue: true,
       })
     this.alive()
-    if (identity.exceptionDetails || identity.result.value !== this.origin)
+    if (
+      identity.exceptionDetails ||
+      !isOwnedApplicationOrigin(identity.result.value, this.origin!)
+    )
       throw new Error('Selected page left its owned application origin')
     const action = this.definition.configuration.action
     const response = await cdp.request('Runtime.evaluate', {
