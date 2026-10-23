@@ -428,3 +428,49 @@ test('a test replay closes only the retired browser replay’s captured-source t
     await harness.close()
   }
 })
+
+// Value: protects=a captured-source tab of the same study that the learner opens after leaving a browser replay surviving the test replay that opens next; fails_when=the close at the test replay's first slot show picks every tab named after the retired replay's study, so a tab opened between leaving the browser replay and opening the test replay is closed; why_new=F474 (OCR medium and CodeRabbit CLI minor of the review of ef03b741..ccfe301d: F466's record holds the study id and view address, not the tabs); seam=the workspace harness's tab model, restoreLeftoverCapturedSource for the replay's tab and for the tab opened between, and returnCurrentSelection and openLearningReplay; no_claim=the native tab strip
+test('a same-study captured-source tab opened between leaving a browser replay and opening a test replay survives the test replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const browserTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-actions.ts`,
+    })
+    await harness.reader['returnCurrentSelection']('learner')
+    const openedBetweenTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-opened-between.ts`,
+    })
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    const tabs = (): unknown[] => harness.groups.flatMap((group) => group.tabs)
+    await waitUntil(
+      () => !tabs().includes(browserTab),
+      'the retired browser replay’s captured-source tab closes',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(tabs().includes(browserTab), false)
+    assert.equal(tabs().includes(openedBetweenTab), true)
+  } finally {
+    await harness.close()
+  }
+})

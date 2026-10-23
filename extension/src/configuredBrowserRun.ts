@@ -29,6 +29,7 @@ import {
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
   REPOSITORY_PATH_LIMIT_CHARS,
   REPOSITORY_STOP_INSTANCE_READ_MS,
+  REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT,
   REPOSITORY_STOP_MODULE_JOURNAL_LIMIT,
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
@@ -385,8 +386,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private readonly stopModuleJournaled = new Map<string, number>()
   /** The entries ({@link ConfiguredBrowserRun.journalStopModule}) already journaled once for an entry type, stop and script address, so the first of each is journaled past the cap. */
   private readonly stopModuleFirstJournaled = new Set<string>()
+  /** How many first entries were journaled past the cap, against {@link REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT} (F473). */
+  private stopModuleFirstBeyondLimit = 0
   /** How many of those entries past the cap were only counted; cleanup journals the count. */
   private unjournaledStopModuleEvents = 0
+  /** The order in which a runtime announced the scripts of declared stops' modules, by participant and script id, so an older read's end never removes a newer accepted script of the same address ({@link adoptInstance}, F476). */
+  private readonly scriptAnnouncements = new Map<string, number>()
+  /** How many scripts were announced so far; the next announcement's order. */
+  private scriptAnnouncementCount = 0
   /** The reads of script texts in flight, by participant and script id, so the stops of one module share a read ({@link instanceTextOf}). */
   private readonly instanceTexts = new Map<string, Promise<string>>()
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
@@ -2859,11 +2866,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.ScriptParsedEvent,
   ): Promise<void> {
     if (!this.participants[name].cdp || !this.isRunOpen()) return
+    const order = ++this.scriptAnnouncementCount
+    this.scriptAnnouncements.set(`${name}:${event.scriptId}`, order)
     // A newer script of the same address replaces the older one that is still being read or was refused, unless a pause is held or captured in the older one (F460).
     this.forgetSupersededScripts(
       stop.unusableInstances.entries(),
       name,
       event.url,
+      order,
       (scriptId) => stop.unusableInstances.delete(scriptId),
       (other) => other.url,
     )
@@ -2904,10 +2914,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     stop.unusableInstances.delete(event.scriptId)
+    // Only the scripts announced before this one are replaced: a newer script of the address may have been accepted while this older one was read (F476).
     this.forgetSupersededScripts(
       stop.instances.entries(),
       name,
       event.url,
+      order,
       (scriptId) => stop.instances.delete(scriptId),
       (other) => other.script.url,
     )
@@ -2924,23 +2936,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param entries - The older scripts by script id (a snapshot is taken, so deleting while reading is safe).
    * @param name - The participant whose runtime announced the newer script.
    * @param url - The address of the newer script.
+   * @param order - The announcement order of the script that replaces the others ({@link scriptAnnouncements}); a script announced after it stays.
    * @param forget - Removes one script by id from its map.
    * @param urlOf - Reads a script entry's address.
    * @example
    * ```ts
-   * this.forgetSupersededScripts(stop.instances.entries(), 'server', event.url, (id) => stop.instances.delete(id), (other) => other.script.url)
+   * this.forgetSupersededScripts(stop.instances.entries(), 'server', event.url, order, (id) => stop.instances.delete(id), (other) => other.script.url)
    * ```
    */
   private forgetSupersededScripts<Entry>(
     entries: IterableIterator<[string, Entry]>,
     name: Participant,
     url: string,
+    order: number,
     forget: (scriptId: string) => void,
     urlOf: (entry: Entry) => string,
   ): void {
-    for (const [scriptId, entry] of [...entries])
-      if (urlOf(entry) === url && !this.holdsPauseInScript(name, scriptId))
-        forget(scriptId)
+    for (const [scriptId, entry] of [...entries]) {
+      const key = `${name}:${scriptId}`
+      const isOlder = (this.scriptAnnouncements.get(key) ?? 0) < order
+      if (
+        urlOf(entry) !== url ||
+        !isOlder ||
+        this.holdsPauseInScript(name, scriptId)
+      )
+        continue
+      this.scriptAnnouncements.delete(key)
+      forget(scriptId)
+    }
   }
 
   /**
@@ -3024,7 +3047,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Journals a `stop.module-parsed`, `stop.instance-sealed` or `stop.instance-refused` entry, each type up to {@link REPOSITORY_STOP_MODULE_JOURNAL_LIMIT}, the rest only counted ({@link cleanupOwned} journals the count), like the pauses a hook makes in a loop.
-   * The first entry of a type for each stop and script address is always journaled, past the cap too: it is the evidence (the instance's hashes) of that stop's module, and HMR churn of one module must not use it up for the others (F467). Those first entries are bounded by the stops and layers of the run.
+   * The first entry of a type for each stop and script address (without its query and hash) is journaled past the cap too: it is the evidence (the instance's hashes) of that stop's module, and HMR churn of one module must not use it up for the others (F467). Those first entries are bounded by the stops and layers of the run, and absolutely by {@link REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT}, so addresses that change per rebuild cannot grow the journal without a ceiling (F473).
    * @param type - The entry's type.
    * @param payload - The entry's fields.
    * @example
@@ -3044,12 +3067,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       payload.participant,
       payload.source,
       payload.line,
-      payload.scriptUrl,
+      // An address that only differs in its query or hash is the same script address (F473).
+      String(payload.scriptUrl ?? '').replace(/[?#].*$/s, ''),
     ])
     const isFirst = !this.stopModuleFirstJournaled.has(firstKey)
-    if (journaled >= REPOSITORY_STOP_MODULE_JOURNAL_LIMIT && !isFirst) {
-      this.unjournaledStopModuleEvents++
-      return
+    if (journaled >= REPOSITORY_STOP_MODULE_JOURNAL_LIMIT) {
+      // Past the cap only a first entry is journaled, and only up to an absolute second cap (F473).
+      const mayBeJournaled =
+        isFirst &&
+        this.stopModuleFirstBeyondLimit <
+          REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT
+      if (!mayBeJournaled) {
+        this.unjournaledStopModuleEvents++
+        return
+      }
+      this.stopModuleFirstBeyondLimit++
     }
     this.stopModuleFirstJournaled.add(firstKey)
     this.stopModuleJournaled.set(type, journaled + 1)

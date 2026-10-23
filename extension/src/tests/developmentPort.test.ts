@@ -1305,3 +1305,251 @@ test('the splitter keeps escaped separators and quotes inside their word and lea
     ['a', ';', 'b', '&', 'c', 'd " e', 'f\\g', 'h\\.bin\\i'],
   ])
 })
+
+// Value: protects=the quoted unread segment shows no credential in a header-shaped word, a header/user/body flag value, or a flag named for a secret (F469); fails_when=an Authorization or X-Api-Key header, a -u user:password, a --data body, a --pass/--pwd/--sig/--jwt/--dsn/--private value, or a header line inside a multi-line quoted word reaches applicationPortSource (the run resource and MCP); why_new=OCR medium security of the review of ef03b741..ccfe301d, reproduced; seam=temporary project folders; no_claim=masking of secrets the script writes in forms outside this list
+for (const [name, script, segment] of [
+  [
+    'a -H header value',
+    'turbo-run -H "Authorization: Basic abc123" next dev',
+    'turbo-run -H … next dev',
+  ],
+  [
+    'a --header header value',
+    'turbo-run --header "X-Api-Key: abc123" next dev',
+    'turbo-run --header … next dev',
+  ],
+  [
+    'a header-shaped word without a header flag',
+    'turbo-run "X-Api-Key: abc123" next dev',
+    'turbo-run X-Api-Key: … next dev',
+  ],
+  [
+    'a header without a blank after the colon',
+    'turbo-run Authorization:Bearer-abc123 next dev',
+    'turbo-run Authorization: … next dev',
+  ],
+  [
+    'an Authorization header inside a multi-line quoted word',
+    'turbo-run "first line\nAuthorization: Basic abc123\nlast line" next dev',
+    'turbo-run first line Authorization: … last line next dev',
+  ],
+  [
+    'a -u user and password',
+    'turbo-run -u ada:pw123 next dev',
+    'turbo-run -u … next dev',
+  ],
+  [
+    'a --user user and password',
+    'turbo-run --user ada:pw123 next dev',
+    'turbo-run --user … next dev',
+  ],
+  [
+    'a -u user and password attached to the flag',
+    'turbo-run -uada:pw123 next dev',
+    'turbo-run -u… next dev',
+  ],
+  [
+    'a --data body',
+    'turbo-run --data body123 next dev',
+    'turbo-run --data … next dev',
+  ],
+  [
+    'a --data-raw body',
+    'turbo-run --data-raw body123 next dev',
+    'turbo-run --data-raw … next dev',
+  ],
+  [
+    'a --pass value',
+    'turbo-run --pass abc123 next dev',
+    'turbo-run --pass … next dev',
+  ],
+  [
+    'a --pwd value',
+    'turbo-run --pwd abc123 next dev',
+    'turbo-run --pwd … next dev',
+  ],
+  [
+    'a --pw value',
+    'turbo-run --pw abc123 next dev',
+    'turbo-run --pw … next dev',
+  ],
+  [
+    'a --db-sig value',
+    'turbo-run --db-sig abc123 next dev',
+    'turbo-run --db-sig … next dev',
+  ],
+  [
+    'a --jwt value',
+    'turbo-run --jwt abc123 next dev',
+    'turbo-run --jwt … next dev',
+  ],
+  [
+    'a --dsn value',
+    'turbo-run --dsn abc123 next dev',
+    'turbo-run --dsn … next dev',
+  ],
+  [
+    'a --private value',
+    'turbo-run --private abc123 next dev',
+    'turbo-run --private … next dev',
+  ],
+  [
+    'a flag that only contains the letters of pass, which stays visible',
+    'turbo-run --bypass abc123 next dev',
+    'turbo-run --bypass abc123 next dev',
+  ],
+  [
+    'a host and port word, which is no header',
+    'turbo-run localhost:3000 next dev',
+    'turbo-run localhost:3000 next dev',
+  ],
+] as const)
+  test(`${name} is masked in the port source`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE(segment) })
+  })
+
+// Value: protects=the last PORT assignment replaces both the value and its resolved state, unset and empty values reset it, and a bare PORT=N feeds a later ${PORT:-N} without reaching next unless exported (F470); fails_when=PORT=4000 PORT=$APP_PORT is reported as 4000, an unset or empty PORT keeps its old value, or a shell-local PORT is passed to next or ignored by ${PORT:-N}; why_new=OCR low and CodeRabbit CLI minor of the review of ef03b741..ccfe301d, reproduced; seam=temporary project folders; no_claim=that the shell runs the script
+for (const [name, script, expected] of [
+  [
+    'a later unresolved assignment after a known one',
+    'PORT=4000 PORT=$APP_PORT next dev',
+    { port: 3000, source: UNREAD_SOURCE('PORT=4000 PORT=$APP_PORT next dev') },
+  ],
+  [
+    'a later known assignment after an unresolved one',
+    'PORT=$APP_PORT PORT=4000 next dev',
+    {
+      port: 4000,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'an unset after an export',
+    'export PORT=4000; unset PORT; next dev',
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'an empty export after an export',
+    'export PORT=4000; export PORT=; next dev',
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'an unset before a ${PORT:-N} default',
+    'export PORT=4000; unset PORT; next dev -p ${PORT:-4001}',
+    { port: 4001, source: 'the dev script in package.json' },
+  ],
+  [
+    'an unset inside a nested sh -c',
+    'PORT=4000 sh -c "unset PORT; next dev"',
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'a bare shell variable read by a later ${PORT:-N}',
+    'PORT=5000; next dev -p ${PORT:-4001}',
+    { port: 5000, source: 'the dev script in package.json' },
+  ],
+  [
+    'a bare shell variable that is not exported to next',
+    'PORT=5000; next dev',
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'a bare shell variable exported later',
+    'PORT=5000; export PORT; next dev',
+    {
+      port: 5000,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'a bare assignment to a PORT that is already exported',
+    'export PORT=3300; PORT=5000; next dev',
+    {
+      port: 5000,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+] as const)
+  test(`${name} decides the port as the shell would`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=a ${PORT:-N} in cmd /c text is told as unread, since cmd expands no ${…} (F471); fails_when=cmd /c "next dev -p ${PORT:-4000}" is reported as port 4000; why_new=OCR low of the review of ef03b741..ccfe301d; seam=temporary project folders; no_claim=that cmd runs the script
+test('a ${PORT:-N} default inside cmd /c text is told as unread, not expanded', async () => {
+  // Arrange
+  const files = {
+    'package.json': devScript('cmd /c "next dev -p ${PORT:-4000}"'),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, {
+    port: 3000,
+    source: UNREAD_SOURCE('next dev -p ${PORT:-4000}'),
+  })
+})
+
+// Value: protects=an escaped backslash outside single quotes is one backslash, so words and separators stay where a shell puts them, and a Windows path keeps its backslashes (F472); fails_when=a\\ b reads as one word, or \; glues words, or node_modules\.bin\next loses its program name; why_new=OCR low of the review of ef03b741..ccfe301d; seam=the splitter; no_claim=every POSIX escape
+test('an escaped backslash outside single quotes is one backslash and a Windows path stays intact', () => {
+  // Arrange
+  const line = 'a\\\\ b c\\\\; d node_modules\\.bin\\next'
+
+  // Act
+  const commands = splitShellCommandLine(line)
+
+  // Assert
+  assert.deepEqual(commands, [
+    ['a\\', 'b', 'c\\'],
+    ['d', 'node_modules\\.bin\\next'],
+  ])
+})
+
+// Value: protects=the env-file list in the port source is masked, sanitized and cut as the unread segment is (F477); fails_when=a long path or many -e options grow applicationPortSource up to the package.json read bound, or a credential or the home directory in a file name is shown; why_new=CodeRabbit CLI minor of the review of ef03b741..ccfe301d; seam=temporary project folders; no_claim=the content of the env file, which is never read
+for (const [name, script, files] of [
+  [
+    'a long path',
+    `dotenv -e ${'x'.repeat(300)} -- next dev`,
+    `"${'x'.repeat(112)}… [cut]`,
+  ],
+  [
+    'many -e options',
+    `dotenv ${Array.from({ length: 40 }, (_, index) => `-e .env.${index}`).join(' ')} -- next dev`,
+    '".env.0", ".env.1", ".env.2", ".env.3", ".env.4", ".env.5", ".env.6", ".env.7", ".env.8", ".env.9", ".env.10", ".… [cut]',
+  ],
+  [
+    'a credential in a URL file name',
+    'dotenv -e https://ada:pw123@example.com/.env -- next dev',
+    '"https://…@example.com/.env"',
+  ],
+  [
+    'the home directory in a file name',
+    `dotenv -e ${homedir()}/.env -- next dev`,
+    '"~/.env"',
+  ],
+] as const)
+  test(`${name} is masked and cut in the env-file list of the port source`, async () => {
+    // Arrange
+    const packageFiles = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(packageFiles)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source: ENV_FILE_SOURCE(files) })
+  })

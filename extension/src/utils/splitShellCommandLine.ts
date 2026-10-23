@@ -37,8 +37,8 @@ export type ShellDialect = 'posix' | 'cmd'
 /** One word of a command: its unquoted text, and whether a double-quoted part of it holds an unescaped `$`, which the shell around it expands before the word reaches the command (so `bash -c "…${PORT:-1}…"` sees the outer shell's `PORT`). */
 export type ShellWord = { text: string; expandedByOuterShell: boolean }
 
-/** The unquoted characters a backslash escapes. Any other backslash stays literal, so a Windows path such as `node_modules\.bin\next` survives. */
-const UNQUOTED_ESCAPABLE = /[\s"'`;&|()#$<>]/
+/** The unquoted characters a backslash escapes, a backslash itself included (`\\` is one backslash, F472). Any other backslash stays literal, so a Windows path such as `node_modules\.bin\next` survives. */
+const UNQUOTED_ESCAPABLE = /[\s"'`;&|()#$<>\\]/
 /** The characters a backslash escapes inside double quotes in a POSIX shell. */
 const DOUBLE_QUOTED_ESCAPABLE = /["$`\\\n]/
 

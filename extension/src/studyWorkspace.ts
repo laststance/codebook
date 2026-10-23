@@ -843,8 +843,8 @@ export class StudyWorkspace {
   /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
   private replayDebuggerRetirement?: Promise<void>
   private recordingActive = false
-  /** The captured-source tabs of the browser replay that was last left, until a test replay's first slot show closes them once: the study they belong to and the address of its source view. A learner's tab of another study, or one opened after that show, is not in it (F466). */
-  private retiredBrowserReplaySource?: { studyId?: string; viewUri?: string }
+  /** The exact addresses of the captured-source tabs of the browser replay that were open when it was last left, until a test replay's first slot show closes those tabs once, or a browser replay starts. A tab of another study, or one opened after the replay was left, is not in it (F466, F474). */
+  private retiredBrowserReplayTabs?: ReadonlySet<string>
   private replayViewport?: BrowserViewport
   private replayNeedsReveal = false
   /** Why the latest {@link rememberLayout} read failed, so the layout line the learner reads names the cause; `undefined` when it settled. */
@@ -12040,6 +12040,8 @@ export class StudyWorkspace {
       signal.throwIfAborted()
     }
     this.recordingActive = true
+    // A browser replay starting ends any earlier record of tabs to close (F474).
+    this.retiredBrowserReplayTabs = undefined
     this.pendingHistory = undefined
     // A study this window still holds (a run of this session) is selected with its own item: paired with the item shown before, every reader update until the recording is read failed with "Selected item belongs to another configured article.", and that line stayed.
     const heldStudy =
@@ -12563,11 +12565,11 @@ export class StudyWorkspace {
     this.nodeHistoryPlaybackController?.pause()
     this.repositoryRecordingOpen = undefined
     if (!this.recordingActive) return
-    // Its own captured-source tabs are closed once, when a test replay's slot first shows over them (F466).
-    this.retiredBrowserReplaySource = {
-      studyId: this.playback?.state().studyId ?? this.sourceView?.studyId,
-      viewUri: this.sourceView?.uri.toString(),
-    }
+    // The captured-source tabs it has now are closed once, when a test replay's slot first shows over them; tabs opened later are not (F466, F474).
+    this.retiredBrowserReplayTabs = this.browserReplaySourceTabAddresses(
+      this.playback?.state().studyId ?? this.sourceView?.studyId,
+      this.sourceView?.uri.toString(),
+    )
     this.playback?.leave()
     // Only same-study Reload keeps the reader's current Summary and its reading context.
     if (!preserveSummary) this.clearLearningSummary()
@@ -25510,21 +25512,49 @@ export class StudyWorkspace {
   }
 
   /**
-   * Closes the captured-source tabs of the browser replay a test replay took the surfaces from, once, when the test replay's slot first shows (F459, F466); called by {@link closeEarlierNodeSourceSlots}.
-   * Only the retired replay's own tabs go: the ones named after its study and its source view ({@link retiredBrowserReplaySource}), unpinned and unchanged. A captured-source tab of another study, a learner's file, and any captured-source tab the learner opens later (from the Study reader during the replay) are never in the set, because it is taken and forgotten here, so later moves close nothing more.
+   * Closes the captured-source tabs of the browser replay a test replay took the surfaces from, once, when the test replay's slot first shows (F459, F466, F474); called by {@link closeEarlierNodeSourceSlots}.
+   * Only the tabs that were open at the address recorded when the browser replay was left go ({@link retiredBrowserReplayTabs}), unpinned and unchanged. A captured-source tab of another study, a learner's file, and any captured-source tab the learner opens after leaving the replay (also one of the same study) are never in the record, because it is taken and forgotten here, so later moves close nothing more.
    * @throws When the editor keeps a tab it was asked to close.
    * @example await this.closeRetiredBrowserReplaySourceTabs()
    */
   private async closeRetiredBrowserReplaySourceTabs(): Promise<void> {
-    const retired = this.retiredBrowserReplaySource
+    const retired = this.retiredBrowserReplayTabs
     if (!retired) return
-    this.retiredBrowserReplaySource = undefined
+    this.retiredBrowserReplayTabs = undefined
     await this.closeCapturedSourceTabs(
-      (uri) =>
-        !isNodeSourceSlotPath(uri.path) &&
-        (uri.toString() === retired.viewUri ||
-          (retired.studyId !== undefined &&
-            uri.path.split('/').filter(Boolean)[0] === retired.studyId)),
+      (uri) => !isNodeSourceSlotPath(uri.path) && retired.has(uri.toString()),
+    )
+  }
+
+  /**
+   * Lists the addresses of the captured-source tabs a browser replay has open now: the tab of its source view and the tabs named after its study, not the test replay's slot tabs; called by {@link leavePlayback}.
+   * @param studyId - The study the browser replay shows.
+   * @param viewUri - The address of the replay's source view.
+   * @returns The exact addresses, so a tab opened at another address later is not among them.
+   * @example this.browserReplaySourceTabAddresses('study-1', undefined) // Set { 'codebook-source://…/study-1/…/Captured-actions.ts' }
+   */
+  private browserReplaySourceTabAddresses(
+    studyId: string | undefined,
+    viewUri: string | undefined,
+  ): ReadonlySet<string> {
+    return new Set(
+      vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .flatMap((tab) => {
+          if (
+            !this.ownsCapturedSourceTab(tab) ||
+            !(tab.input instanceof vscode.TabInputText)
+          )
+            return []
+          const uri = tab.input.uri
+          const isReplayTab =
+            uri.toString() === viewUri ||
+            (studyId !== undefined &&
+              uri.path.split('/').filter(Boolean)[0] === studyId)
+          return !isNodeSourceSlotPath(uri.path) && isReplayTab
+            ? [uri.toString()]
+            : []
+        }),
     )
   }
 
