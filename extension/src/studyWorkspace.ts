@@ -8774,14 +8774,12 @@ export class StudyWorkspace {
       } catch (error) {
         if (this.closing || this.disposed) throw error
         // The line begins with one error name, which the report adds: the cause's own is taken off.
-        this.report(
-          'layout',
-          new Error(
-            withoutErrorName(
-              error instanceof StudyError ? error.causeDetail : String(error),
-            ),
-          ),
+        const cause = withoutErrorName(
+          error instanceof StudyError ? error.causeDetail : String(error),
         )
+        // A refusal the presentation reason already shows (the status line outside the controls) is not told a second time as an error row; both are retired together by {@link retireRefusalLines} (F400).
+        if (this.presentationReason?.includes(cause)) this.publish()
+        else this.report('layout', new Error(cause))
       }
     }
     if (action === 'current-file') {
