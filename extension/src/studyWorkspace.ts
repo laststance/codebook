@@ -18931,9 +18931,9 @@ export class StudyWorkspace {
   /**
    * Offers Cursor's learner the editor's own Move View step in a notification; {@link showLearningSummary} and {@link showNativeVariables} call it.
    *
-   * Cursor rejects the `secondarySidebar` container this extension contributes, so the summary lands in the primary side bar
-   * there, and its own chat containers refuse added views: no command of this extension can place the summary on the right.
-   * VS Code registers the container, so nothing is offered there.
+   * The manifest contributes the summary's container to the Activity Bar in both hosts (F209), so the summary stands in the primary side bar
+   * in Cursor, whose own chat containers refuse added views: no command of this extension can place the summary on the right.
+   * VS Code moves the summary beside its chat by itself at the learner's first replay open ({@link moveSummaryBesideChatOnce}), so nothing is offered there.
    *
    * Each occasion is offered at most once per editor session. Only the pressed button is an answer: Cursor removes an unanswered
    * notification by itself, so nothing is stored for it and the offer returns in the next editor session.
@@ -24889,7 +24889,7 @@ export class StudyWorkspace {
    * @param studyId - The test replay's study id.
    * @param sourcePath - The file the slot is named after.
    * @returns The slot's URI.
-   * @example this.nodeSourceSlotUri(studyId, 'src/jobs/scheduler.ts') // => Uri codebook-source://<workspaceKey>/node-history-slot/<studyId>/Captured-scheduler.ts
+   * @example this.nodeSourceSlotUri(studyId, 'src/jobs/scheduler.ts') // => Uri codebook-source://<workspaceKey>/node-history-slot/<studyId>/<12 hex>/Captured-scheduler.ts
    */
   private nodeSourceSlotUri(studyId: string, sourcePath: string): vscode.Uri {
     return vscode.Uri.from({
