@@ -987,6 +987,8 @@ export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
   LEARNING_SUMMARY_LIMITS.bytes
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
+/** The largest seal file of a test history Codebook writes or reads ({@link NodeTestHistoryWriter.finish}, {@link isSealedEmptyHistory}). */
+export const NODE_TEST_HISTORY_SEAL_LIMIT_BYTES = 16_384
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
 /** File system error codes that a retry can clear (a descriptor or lock shortage, a busy or antivirus-held file, a disk error): a read that fails with one is not remembered as the history's state ({@link isTransientFileError}). */
 export const TRANSIENT_FILE_ERROR_CODES: readonly string[] = [

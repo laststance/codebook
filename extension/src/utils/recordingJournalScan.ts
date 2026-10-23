@@ -107,6 +107,7 @@ export function citableEventOf(entry: NodeTestHistoryEntry): CitableEvent {
 /**
  * Brings a recording's scan up to the journal's current end, reading only the bytes appended since the last scan; called by {@link NodeTestHistoryStore.summarize} for a history this window still writes.
  * A scan restarts from the journal's beginning when the journal is a different file, shorter than what was consumed, or when the header file changed. A partly written last line is left for the next refresh. An entry that breaks the journal's rules ends the verified prefix, as for a whole read of an unsealed journal; nothing after it is read.
+ * It trusts that only this window's writer changes the journal while it records: the writer appends and never rewrites, inside the extension's private storage. A rewrite in place by another process (same file, at least as long) is not seen here; the read of the sealed history checks every entry against the seal, so such a journal reads as unavailable once sealed.
  * @param previous - The scan of the last refresh, if any.
  * @param header - The history's header as read now.
  * @param headerSignal - The header file's signal as read now.

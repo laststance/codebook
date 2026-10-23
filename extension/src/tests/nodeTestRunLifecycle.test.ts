@@ -1250,6 +1250,93 @@ test('a test history sealed with no entry does not offer save-node-learning', as
   }
 })
 
+// Value: protects=the run resource of a test run whose history sealed with no entry, whose folder the store removed at the seal (D6): it offers no read-history and names no historyUri, so the agent is not sent to a history that is gone (F253); fails_when=read-history and a historyUri are still offered and the agent's read fails; why_new=PR-1's /ship state-machine review found the cell untested and the action offered; seam=the owned run is a fake whose preparation a stop cancels; no_claim=the runs of other profiles, whose history the store does not remove
+test('a test run whose history sealed with no entry offers no read-history and names no history to read', async () => {
+  // Arrange
+  const run = await testRunHarness({
+    prepareHeld: new Promise<void>(() => {}),
+    silent: true,
+  })
+  try {
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: randomUUID(),
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => record.nodeRun !== undefined, 'the owned run exists')
+
+    // Act
+    const state = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+
+    // Assert
+    assert.equal(record.nodeHistoryEntryCount, 0)
+    assert.equal(record.nodeHistoryStatus, 'partial')
+    assert.equal(state.nextActions.includes('read-history'), false)
+    assert.equal(state.nodeTest?.historyUri, undefined)
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=the run resource's nodeTest.captureMissing after the summary read at the seal failed for a transient reason (EMFILE): it reads unknown at first, and the next learning-material save reads it again once the storage recovers, so the agent's claim rule can be checked (F252); fails_when=the gaps stay unknown for the run's life, so the agent can never claim saved learning for it; why_new=Codex's adversarial review of PR-1: the gaps were read once, at the seal; seam=the store's summary rejects its first call; no_claim=the store's own memo of a transient failure (F63, nodeTestHistorySummary tests)
+test('capture gaps the seal could not read for a transient reason are read again at the next learning-material save', async (context) => {
+  // Arrange
+  const run = await testRunHarness({ stops: 2 })
+  try {
+    const { record } = await run.start()
+    await continueCurrentPause(run.service, record)
+    await continueCurrentPause(run.service, record)
+    const store = run.service.nodeHistoryStore!
+    const summarize = store.summarize.bind(store)
+    let failedOnce = false
+    context.mock.method(store, 'summarize', (studyId: string) => {
+      if (failedOnce) return summarize(studyId)
+      failedOnce = true
+      return Promise.reject(
+        Object.assign(new Error('EMFILE: too many open files'), {
+          code: 'EMFILE',
+        }),
+      )
+    })
+    const stopped = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    const studyId = `${run.service.instanceId}_${record.id}`
+    const history = await store.read(studyId)
+    const stop = history.entries.find((entry) => entry.type === 'stop')!
+
+    // Act
+    await run.service.explainNodeHistory({
+      studyId,
+      expectedRevision: 0,
+      content: materialCiting([
+        {
+          type: 'stop',
+          sequence: stop.sequence,
+          sourceHash: stop.type === 'stop' ? stop.source.hash : '',
+        },
+      ]),
+    })
+    const afterSave = run.service.state(record)
+
+    // Assert
+    assert.equal(stopped.nodeTest?.captureMissing, undefined)
+    // The store's answer for this harness's history, whose stops hold no captured state.
+    assert.deepEqual(afterSave.nodeTest?.captureMissing, [
+      { kind: 'stop-state', stop: 1 },
+      { kind: 'stop-state', stop: 2 },
+    ])
+  } finally {
+    await run.harness.close()
+  }
+})
+
 // Value: protects=codebook_explain_node_history telling a stale material revision (IDEMPOTENCY_CONFLICT) from a citation that merely names a path containing the words "revision changed" (INVALID_REFERENCE stays); fails_when=the conflict is recognized by searching the error text, so a stop in src/revision changed.ts turns INVALID_REFERENCE into IDEMPOTENCY_CONFLICT, or a real stale revision stops being a conflict; why_new=explainNodeHistory mapped the error by its text (F44); seam=the history store's save is replaced by one that throws; no_claim=the store's own revision check (nodeTestHistoryStore tests)
 test('explain_node_history answers IDEMPOTENCY_CONFLICT for a stale revision and keeps INVALID_REFERENCE for a citation whose path says "revision changed"', async () => {
   // Arrange

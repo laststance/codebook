@@ -15,6 +15,7 @@ import {
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_LIMIT_BYTES,
+  NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
   NODE_TEST_HISTORY_MAX_ENTRIES,
   NODE_TEST_LEARNING_DECISION_LIMIT_BYTES,
   NODE_TEST_LEARNING_DECISION_VERSION,
@@ -999,7 +1000,7 @@ export class NodeTestHistoryStore {
     )
     const sealBytes = await this.readPrivateFile(
       join(directory, SEAL_FILE),
-      16_384,
+      NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
     ).catch((error) => {
       if (error.code === 'ENOENT') return undefined
       throw error
@@ -1468,7 +1469,11 @@ export class NodeTestHistoryWriter {
         endedAt: new Date().toISOString(),
         reason: reason?.slice(0, REASON_LIMIT_CHARS),
       })
-      await atomicPrivateWrite(join(this.directory, SEAL_FILE), seal, 16_384)
+      await atomicPrivateWrite(
+        join(this.directory, SEAL_FILE),
+        seal,
+        NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
+      )
       this.sealedHash = seal.journalHash
       this.closed = true
       this.onClosed()

@@ -55,6 +55,49 @@ test('codebook_status words a failed prerequisite read and an unreadable reposit
   }
 })
 
+// Value: protects=codebook_status naming no private path in the missing prerequisites a working read reports: a file error quoted in a missing sentence, common or of a profile, reads the repository root as <storage> while Codebook's own sentences stay as they were (F257); fails_when=a missing sentence keeps the raw file error with the repository's path; why_new=PR-1's /ship red team: only a failed prerequisite read was sanitized (F219), not the sentences of a read that resolves; seam=the environment's prerequisites resolve with the root in their sentences; no_claim=which prerequisites the environment checks
+test('codebook_status words the missing prerequisites of a working read without a private path', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    { service } = harness
+  service.environment.prerequisites = async () => ({
+    ready: false,
+    missing: [
+      `EACCES: permission denied, lstat '${harness.directory}/.next'`,
+      'The bundled JavaScript Debugger is unavailable.',
+    ],
+    profiles: {
+      [PROFILE_ID]: {
+        ready: false,
+        missing: [
+          `EACCES: permission denied, lstat '${harness.directory}/.next'`,
+        ],
+      },
+    },
+  })
+  try {
+    // Act
+    const status = await service.status()
+
+    // Assert
+    assert.deepEqual(
+      [
+        [...status.prerequisites.missing],
+        [...(status.profiles[0]?.prerequisites.missing ?? [])],
+      ],
+      [
+        [
+          "EACCES: permission denied, lstat '<storage>/.next'",
+          'The bundled JavaScript Debugger is unavailable.',
+        ],
+        ["EACCES: permission denied, lstat '<storage>/.next'"],
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the causeDetail of a refused action and of a refused continue carrying <storage> where the runtime's failure named the repository root; fails_when=either cause keeps the raw path; why_new=action and continue put String(error) into the cause (F219); seam=the runtime's action and continue throw with the root in their text; no_claim=the BUSY and STALE_PAUSE classification (the conflict tests)
 test('a refused action and a refused continue name no private path in their cause', async () => {
   // Arrange
@@ -175,6 +218,27 @@ test('a browser run whose runtime cannot be created ends with an error that name
         'cannot start in <storage>/app',
       ],
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a long cause an agent or the learner reads: past the 8,192-character bound it is cut between characters, never inside a surrogate pair, and says it was cut (F258); fails_when=the cut leaves a lone surrogate that a renderer shows as a replacement character, or drops the end without a marker; why_new=PR-1's /ship Claude adversarial review: sanitizedCause cut UTF-16 code units; seam=none; no_claim=the 300-character display cut (cutCauseForDisplay tests)
+test('a cause longer than its bound is cut whole characters short with the cut marker and no lone surrogate', async () => {
+  // Arrange
+  const harness = await createHarness()
+  const longCause = `${'x'.repeat(8_191)}😀 and more of the failure`
+  try {
+    // Act
+    const cause = harness.service.unexpectedFailure(
+      new Error(longCause),
+    ).causeDetail
+
+    // Assert
+    assert.doesNotMatch(cause, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+    assert.equal(cause.length <= 8_192, true)
+    assert.equal(cause.endsWith('… [cut]'), true)
+    assert.equal(cause.startsWith('x'.repeat(8_185)), true)
   } finally {
     await harness.close()
   }
