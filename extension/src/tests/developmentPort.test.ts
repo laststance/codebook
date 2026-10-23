@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import type { Socket } from 'node:net'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -19,6 +19,7 @@ import {
   releaseOwnedDevelopmentPort,
 } from '../utils/ownedDevelopmentPorts'
 import { readDeclaredDevelopmentPort } from '../utils/readDeclaredDevelopmentPort'
+import { splitShellCommandLine } from '../utils/splitShellCommandLine'
 
 /** Makes a project folder with the given files, runs the check and removes the folder. */
 async function declaredPortOf(files: Record<string, string>) {
@@ -992,4 +993,315 @@ test('cancelling while the probe waits for a connect ends the start check at onc
   assert.equal(String(failure), 'Error: Run cancelled')
   assert.equal(connects, 1)
   assert.equal(destroyed, true)
+})
+
+/** What `applicationPortSource` says when a wrapper loads an env file and nothing else gives the port (F462). */
+const ENV_FILE_SOURCE = (files: string): string =>
+  `Next's default port, taken because the port may come from ${files}, which a dotenv wrapper in the dev script loads and Codebook does not read`
+
+// Value: protects=a Windows `SET` in any case sets the port the script's next dev uses, and `setx` (which does not set the current shell) is told as unread (F461); fails_when=`SET PORT=4000&& next dev` is read as a program and the run reports 3000 with no note, or setx is taken as an assignment; why_new=OCR medium of the review of 6bc9eab2..ef03b741, reproduced; seam=temporary project folders; no_claim=that cmd runs the script
+for (const [name, script, expected] of [
+  [
+    'an upper-case SET',
+    'SET PORT=4501&& next dev',
+    {
+      port: 4501,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'a mixed-case Set',
+    'Set PORT=4502 && next dev',
+    {
+      port: 4502,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'an upper-case SET inside cmd /c',
+    'cmd /c "SET PORT=4503&& next dev"',
+    {
+      port: 4503,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'setx, which does not set the current shell',
+    'setx PORT 4504 && next dev',
+    { port: 3000, source: UNREAD_SOURCE('setx PORT 4504') },
+  ],
+] as const)
+  test(`${name} is read as Windows reads it`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=a dotenv-style wrapper's `-v PORT=N` is read, and an env-file wrapper with no other port says the port may come from that file (F462); fails_when=the reader steps past the wrapper and reports Next's default with no note; why_new=OCR medium/low of the review of 6bc9eab2..ef03b741, reproduced; seam=temporary project folders; no_claim=the content of the env file, which is never read
+for (const [name, script, expected] of [
+  [
+    'dotenv -v PORT',
+    'dotenv -v PORT=4511 -- next dev',
+    {
+      port: 4511,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'dotenv -e with -v PORT',
+    'dotenv -e .env.local -v PORT=4512 -- next dev',
+    {
+      port: 4512,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'dotenvx --env PORT',
+    'dotenvx run --env PORT=4513 -- next dev',
+    {
+      port: 4513,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'an env file and a -p flag',
+    'dotenv -e .env -- next dev -p 4514',
+    { port: 4514, source: 'the dev script in package.json' },
+  ],
+  [
+    'an env file and an assignment before the wrapper',
+    'PORT=4515 dotenv -e .env -- next dev',
+    {
+      port: 4515,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'dotenv -e with no other port',
+    'dotenv -e .env.local -- next dev',
+    { port: 3000, source: ENV_FILE_SOURCE('".env.local"') },
+  ],
+  [
+    'dotenvx run -f with no other port',
+    'dotenvx run -f .env.dev -- next dev',
+    { port: 3000, source: ENV_FILE_SOURCE('".env.dev"') },
+  ],
+  [
+    'dotenvx run with the default env file',
+    'dotenvx run -- next dev',
+    { port: 3000, source: ENV_FILE_SOURCE('".env"') },
+  ],
+  [
+    'two env files',
+    'dotenv -e .env -e .env.local -- next dev',
+    { port: 3000, source: ENV_FILE_SOURCE('".env", ".env.local"') },
+  ],
+] as const)
+  test(`${name} is read as the wrapper runs it`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=`${PORT:-N}` expands as the shell expands it: a PORT exported or set earlier, or inherited by a single-quoted sh -c or a delegated script, wins over N, while an assignment in the same command and a double-quoted bash -c do not (F463); fails_when=N is always taken, or the same-command assignment wins; why_new=OCR low and CodeRabbit CLI minor x2 of the review of 6bc9eab2..ef03b741; seam=temporary project folders; no_claim=other parameter expansions
+for (const [name, scripts, expected] of [
+  [
+    'an earlier export',
+    { dev: 'export PORT=5001; next dev -p ${PORT:-4001}' },
+    5001,
+  ],
+  [
+    'an earlier Windows set',
+    { dev: 'SET PORT=5002&& next dev -p ${PORT:-4002}' },
+    5002,
+  ],
+  [
+    'an outer assignment into a single-quoted sh -c',
+    { dev: "PORT=5003 sh -c 'next dev -p ${PORT:-4003}'" },
+    5003,
+  ],
+  [
+    'an assignment before a delegated script',
+    { dev: 'PORT=5004 pnpm web', web: 'next dev -p ${PORT:-4004}' },
+    5004,
+  ],
+  [
+    'an earlier export seen by a double-quoted bash -c',
+    { dev: 'export PORT=5005; bash -c "next dev -p ${PORT:-4005}"' },
+    5005,
+  ],
+  [
+    'an assignment in the same command',
+    { dev: 'PORT=5006 next dev -p ${PORT:-4006}' },
+    4006,
+  ],
+  [
+    'an assignment before a double-quoted bash -c',
+    { dev: 'PORT=5007 bash -c "next dev -p ${PORT:-4007}"' },
+    4007,
+  ],
+  ['no earlier PORT', { dev: 'next dev -p ${PORT:-4008}' }, 4008],
+] as const)
+  test(`the PORT default of -p after ${name} gives ${expected}`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.port, expected)
+  })
+
+test('a PORT exported with a variable the reader cannot resolve is told as unread, not replaced by the ${PORT:-N} default', async () => {
+  // Arrange
+  const files = {
+    'package.json': devScript(
+      'export PORT=$APP_PORT; next dev -p ${PORT:-4009}',
+    ),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, {
+    port: 3000,
+    source: UNREAD_SOURCE('export PORT=$APP_PORT'),
+  })
+})
+
+// Value: protects=the quoted unread segment shows no secret and no private path (F464); fails_when=a token flag value, an =value, URL credentials, a multi-line assignment, the home directory or the workspace root reaches applicationPortSource (the run resource and MCP); why_new=OCR low security of the review of 6bc9eab2..ef03b741, reproduced; seam=temporary project folders; no_claim=masking of secrets the script does not write in these forms
+for (const [name, script, segment] of [
+  [
+    'a value after a token flag',
+    'turbo-run --token abc123 next dev',
+    'turbo-run --token … next dev',
+  ],
+  [
+    'a value after an api-key flag',
+    'turbo-run --api-key abc123 next dev',
+    'turbo-run --api-key … next dev',
+  ],
+  [
+    'an api-key value joined with =',
+    'turbo-run --api-key=abc123 next dev',
+    'turbo-run --api-key=… next dev',
+  ],
+  [
+    'a password flag',
+    'turbo-run --password hunter2 next dev',
+    'turbo-run --password … next dev',
+  ],
+  [
+    'the port flag, which is no secret',
+    'turbo-run next dev -p $APP_PORT',
+    'turbo-run next dev -p $APP_PORT',
+  ],
+  [
+    'URL credentials',
+    'turbo-run https://ada:pw123@example.com/x next dev',
+    'turbo-run https://…@example.com/x next dev',
+  ],
+  [
+    'an assignment name with a dash and a dot',
+    'my-key.x=abc123 turbo-run next dev',
+    'my-key.x=… turbo-run next dev',
+  ],
+  [
+    'a multi-line assignment',
+    'turbo-run "KEY=first\nsecond-line" next dev',
+    'turbo-run KEY=… next dev',
+  ],
+  [
+    'the home directory',
+    `turbo-run ${homedir()}/.nvm/bin/tool next dev`,
+    'turbo-run ~/.nvm/bin/tool next dev',
+  ],
+] as const)
+  test(`${name} is masked in the port source`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE(segment) })
+  })
+
+test('the workspace root is replaced in the quoted unread segment', async () => {
+  // Arrange
+  const root = await mkdtemp(join(tmpdir(), 'codebook-port-'))
+  try {
+    await writeFile(
+      join(root, 'package.json'),
+      devScript(`turbo-run --config ${root}/turbo.json next dev`),
+    )
+
+    // Act
+    const declared = await readDeclaredDevelopmentPort(root)
+
+    // Assert
+    assert.deepEqual(declared, {
+      port: 3000,
+      source: UNREAD_SOURCE(
+        'turbo-run --config <workspace>/turbo.json next dev',
+      ),
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=POSIX backslash escapes are honored and `#` is no comment in cmd /c text (F465); fails_when=an escaped ; splits the command, an escaped quote ends its quote, or a # in cmd /c text hides the port; why_new=OCR low of the review of 6bc9eab2..ef03b741, reproduced; seam=temporary project folders and the splitter; no_claim=every POSIX escape
+for (const [name, script, expected] of [
+  [
+    'an escaped semicolon does not split the command',
+    'next dev -p 4521 \\; next dev -p 5521',
+    5521,
+  ],
+  [
+    'an escaped quote inside double quotes does not end the quote',
+    'node -e "x \\" ; y" && next dev -p 4522',
+    4522,
+  ],
+  [
+    'a hash in cmd /c text is not a comment',
+    'cmd /c "next dev # -p 4523"',
+    4523,
+  ],
+] as const)
+  test(`${name}`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.port, expected)
+  })
+
+test('the splitter keeps escaped separators and quotes inside their word and leaves single-quoted backslashes alone', () => {
+  // Arrange
+  const line = 'a \\; b \\& c "d \\" e" \'f\\g\' h\\.bin\\i'
+
+  // Act
+  const commands = splitShellCommandLine(line)
+
+  // Assert
+  assert.deepEqual(commands, [
+    ['a', ';', 'b', '&', 'c', 'd " e', 'f\\g', 'h\\.bin\\i'],
+  ])
 })
