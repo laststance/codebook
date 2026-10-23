@@ -77,6 +77,62 @@ test('development readiness waits for a complete port across process output chun
   assert.deepEqual(requestedOrigins, ['http://127.0.0.1:43217'])
 })
 
+// Value: protects=the repository-browser run starts the app on the port the project declares (F411, D63), so its pinned auth origin stays reachable; fails_when=the spawned next dev still gets `--port 0` or a port other than the declared one; why_new=N50's run started on 53273 while AUTH_URL pointed to 3165; seam=the launcher run in an isolated module context with a recording spawn; no_claim=a real next dev process or the Auth.js redirect, which the native R2 run reads
+test('the app starts on the declared port and on no other', async () => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {}
+  let spawnedArguments: string[] = []
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        if (name === 'node:child_process')
+          return {
+            spawn: (_node: string, argumentsList: string[]) => {
+              spawnedArguments = argumentsList
+              return child
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+
+  // Act
+  exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    () => {},
+    false,
+    3165,
+  )
+
+  // Assert
+  assert.deepEqual(Array.from(spawnedArguments.slice(1)), [
+    'dev',
+    '--webpack',
+    '--hostname',
+    '127.0.0.1',
+    '--port',
+    '3165',
+  ])
+})
+
 test('shutdown kills surviving workers even when the process group leader already exited', async (context) => {
   // Arrange: only the leader honors TERM; its worker disappears only after group KILL.
   const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),

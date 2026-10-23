@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 
 import {
+  DEVELOPMENT_SERVER_DEFAULT_PORT,
   REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
   REPOSITORY_APPLICATION_LOG_LIMIT_BYTES,
   REPOSITORY_SETUP_TIMEOUT_MS,
@@ -17,12 +18,13 @@ import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 import { signalProcessGroup } from './signalProcessGroup'
 import { verifyServerInspectorOwnership } from './verifyServerInspectorOwnership'
 
-/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @example const app = launchDevelopmentServer(target, node, record); await app.ready(signal) */
+/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); the app is never started on another one. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
 export function launchDevelopmentServer(
   target: string,
   node: string,
   record: (type: string, detail?: unknown) => unknown,
   inspectServer = false,
+  port = DEVELOPMENT_SERVER_DEFAULT_PORT,
 ) {
   const environment: NodeJS.ProcessEnv = {
     NEXT_TELEMETRY_DISABLED: '1',
@@ -51,7 +53,7 @@ export function launchDevelopmentServer(
     '--hostname',
     '127.0.0.1',
     '--port',
-    '0',
+    String(port),
   ]
   if (inspectServer) arguments_.push('--inspect', '127.0.0.1:0')
   const child = spawn(node, arguments_, {
@@ -165,7 +167,7 @@ export function launchDevelopmentServer(
         signal,
       )
     },
-    /** Waits for the actual ephemeral listener, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @example await app.ready(signal, '/login') */
+    /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @example await app.ready(signal, '/login') */
     async ready(signal: AbortSignal, entryPath = '/') {
       repositoryEntryPathSchema.parse(entryPath)
       origin = await waitUntil(

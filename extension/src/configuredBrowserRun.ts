@@ -78,6 +78,7 @@ import { waitTimeoutText } from './runtimeSupport/utils/waitTimeoutText'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
+import { assertDevelopmentPortFree } from './utils/assertDevelopmentPortFree'
 import {
   assertDevelopmentWorkspace,
   type DevelopmentLockIdentity,
@@ -125,6 +126,7 @@ import {
 import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
+import { readDeclaredDevelopmentPort } from './utils/readDeclaredDevelopmentPort'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
@@ -481,11 +483,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const needsServer = configuredStops(this.definition.configuration).some(
       (stop) => stop.participant === 'server',
     )
+    // The app runs on the port the project declares (its auth origin points there); a busy port refuses the start instead of moving the app.
+    const declaredPort = await readDeclaredDevelopmentPort(
+      this.options.workspace,
+    )
+    await assertDevelopmentPortFree(declaredPort)
+    this.alive()
     this.app = launchDevelopmentServer(
       this.options.workspace,
       this.options.node,
       (type, detail) => this.evidence.record(type, detail),
       needsServer,
+      declaredPort.port,
     )
     this.origin = await this.app.ready(
       this.abort.signal,
@@ -5637,6 +5646,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       profile: REPOSITORY_BROWSER_PROFILE,
       definition: this.definition,
       manifest: this.manifest,
+      applicationOrigin: this.origin,
       status: this.status,
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,

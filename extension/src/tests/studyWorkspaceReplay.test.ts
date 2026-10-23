@@ -211,8 +211,12 @@ for (const pinDuringOpen of [false, true]) {
         'const nextTheme = "dark";\n',
       )
       assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      // Changed for F410: the leave now clears the label together with the stopped line, so the only calls allowed are clears; no label is drawn over the protected bytes.
       assert.deepEqual(
-        harness.sourceIdentityDecorations().slice(identitiesBefore),
+        harness
+          .sourceIdentityDecorations()
+          .slice(identitiesBefore)
+          .filter((call) => call.ranges.length > 0),
         [],
       )
       assert.match(harness.reader.inspect().view!.errors.join('\n'), /pinned/)
@@ -774,6 +778,59 @@ test('historical source annotations identify the recorded file, time, hash and s
       )
     }
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the browser replay's recorded-source label leaves with the stopped line at the leave of a stop move (D29, F410): while the next stop's source read is held, the pane shows no end-of-line label; the commit then draws the new stop's label; fails_when=the leave clears the stopped line but keeps `Recorded: src/theme.ts:1 · 0.10 s · declared 1` beside the Application header of the requested moment (N50's 0.6 s of mixed moments); why_new=no test read the browser replay's source label between the leave and the commit; seam=the workspace harness's held native source read and its source-identity decoration calls; no_claim=the native frames of the transition, which the driving agent's N50 recheck reads
+test('a browser replay stop move removes the recorded-source label with the stopped line before the next stop is shown', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  let releaseSource = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const sourceUri = harness.reader.inspect().sourceUri
+    assert.ok(sourceUri)
+    assert.equal(
+      harness.sourceIdentityDecorations().at(-1)?.ranges.length,
+      1,
+      'The stop at 0.10 s shows its label before the move.',
+    )
+    const held = harness.holdNextSource({ uri: sourceUri })
+    releaseSource = held.release
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await held.started
+
+    // Assert
+    assert.deepEqual(
+      harness.sourceIdentityDecorations().at(-1)?.ranges,
+      [],
+      'The label must leave with the stopped line while the next source is still being read.',
+    )
+    held.release()
+    await harness.controller.settle()
+    assert.equal(
+      harness.sourceIdentityDecorations().at(-1)?.ranges.length,
+      1,
+      'The commit draws the gap label for the requested moment.',
+    )
+  } finally {
+    releaseSource()
     await harness.close()
   }
 })

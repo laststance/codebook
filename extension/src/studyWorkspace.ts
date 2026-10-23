@@ -10485,13 +10485,16 @@ export class StudyWorkspace {
           this.replayDebugger?.invalidate(
             this.replayApplicationCovered ? REPLAY_COVERED_LABEL : undefined,
           )
-          if (this.highlight)
+          // The stopped line and its end-of-line label leave together (D29, F410); the next commit's render draws both again.
+          if (this.highlight && this.sourceIdentity)
             for (const editor of vscode.window.visibleTextEditors) {
               if (
                 editor.document.uri.scheme === STUDY_SOURCE_SCHEME &&
                 editor.document.uri.authority === this.library?.workspaceKey
-              )
+              ) {
                 editor.setDecorations(this.highlight, [])
+                editor.setDecorations(this.sourceIdentity, [])
+              }
             }
           this.playbackPending = undefined
           this.playbackPresentingReady = false
