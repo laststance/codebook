@@ -6,6 +6,7 @@ import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
+import * as sanitizeCauseModule from '../utils/sanitizeCause'
 
 import {
   configuredWorkspaceHarness,
@@ -1102,8 +1103,8 @@ test('a refused placement guard writes one Output entry that names the guard, th
   }
 })
 
-// Value: protects=the extension host not sanitizing every tab label at each placement guard it arms (about thirty arms per presentation), because the snapshot is read only on the rare refusal; fails_when=a guard that ends without refusing still sanitizes the groups it noted at arm time, or the arm sanitizes at all; why_new=Cycle 0050 F393 (every arm ran sanitizeCause on up to eight labels per group); seam=armPlacementReport, sanitizeRefusalGroups, the reader's agent select and returnToCurrent over the leftover-group layout; no_claim=the wall-clock cost of one sanitization
-test('a presentation whose placement guards are armed and never refuse sanitizes no tab label for the Output', async () => {
+// Value: protects=the extension host not sanitizing every tab label at each placement guard it arms (about thirty arms per presentation), because the snapshot is read only on the rare refusal; fails_when=a guard that ends without refusing still sanitizes the groups it noted at arm time, or the arm sanitizes at all; why_new=Cycle 0050 F393 (every arm ran sanitizeCause on up to eight labels per group); seam=the sanitizeCause export, armPlacementReport, the reader's agent select and returnToCurrent over the leftover-group layout; no_claim=the wall-clock cost of one sanitization
+test('a presentation whose placement guards are armed and never refuse sanitizes no tab label for the Output', async (context) => {
   // Arrange: as in the refusal round above; the agent selected the Study cold, which put the Application into the unproven leftover.
   const harness = await workspaceHarness(false)
   const logged: CodebookDiagnostic[] = []
@@ -1132,21 +1133,31 @@ test('a presentation whose placement guards are armed and never refuse sanitizes
     harness.focusMutableDraft('auth.ts', 3)
     harness.focusMutableDraft('actions.ts', 2)
     let arms = 0
-    let sanitizedSnapshots = 0
+    let sanitizedLabels = 0
     const reader = harness.reader as unknown as Record<
       string,
       (...args: unknown[]) => unknown
     >
     const arm = reader['armPlacementReport']!.bind(reader)
-    const sanitize = reader['sanitizeRefusalGroups']!.bind(reader)
     reader['armPlacementReport'] = (...args) => {
       arms++
       return arm(...args)
     }
-    reader['sanitizeRefusalGroups'] = (...args) => {
-      sanitizedSnapshots++
-      return sanitize(...args)
-    }
+    // Counts the sanitizations of a tab label wherever the product makes them: the compiled code reads the export at each call.
+    const sanitize = sanitizeCauseModule.sanitizeCause
+    context.mock.method(
+      sanitizeCauseModule,
+      'sanitizeCause',
+      (...args: Parameters<typeof sanitize>) => {
+        if (
+          harness.groups.some((group) =>
+            group.tabs.some((tab) => tab.label === args[0]),
+          )
+        )
+          sanitizedLabels++
+        return sanitize(...args)
+      },
+    )
     const selection = harness.reader.presentationState()
     await harness.reader.changePresentation(
       {
@@ -1180,14 +1191,15 @@ test('a presentation whose placement guards are armed and never refuse sanitizes
       ).length,
       0,
     )
-    assert.equal(sanitizedSnapshots, 0)
+    assert.equal(sanitizedLabels, 0)
   } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })
 
-// Value: protects=the refusal still sanitizing the groups it reports, once for the snapshot taken at arm time and once for the groups now; fails_when=the refusal reports raw tab labels, or sanitizes only one of the two snapshots; why_new=Cycle 0050 F393 (sanitizing moved from the arm to the refusal); seam=armPlacementReport, sanitizeRefusalGroups, refusePlacement, the fake editor's workbench.action.newGroupAbove run as the learner; no_claim=the wording of the refusal sentence the learner reads
-test('a refused placement guard sanitizes the tab labels of its two snapshots for the Output', async () => {
+// Value: protects=the refusal still sanitizing the groups it reports, once for the snapshot taken at arm time and once for the groups now; fails_when=the refusal reports raw tab labels, or sanitizes only one of the two snapshots; why_new=Cycle 0050 F393 (sanitizing moved from the arm to the refusal); seam=the sanitizeCause export, refusePlacement, the fake editor's workbench.action.newGroupAbove run as the learner; no_claim=the wording of the refusal sentence the learner reads
+test('a refused placement guard sanitizes the tab labels of its two snapshots for the Output', async (context) => {
   // Arrange: as in the refusal round above; the agent selected the Study cold, which put the Application into the unproven leftover.
   const harness = await workspaceHarness(false)
   const logged: CodebookDiagnostic[] = []
@@ -1217,21 +1229,31 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
     harness.focusMutableDraft('auth.ts', 3)
     harness.focusMutableDraft('actions.ts', 2)
     let arms = 0
-    let sanitizedSnapshots = 0
+    let sanitizedLabels = 0
     const reader = harness.reader as unknown as Record<
       string,
       (...args: unknown[]) => unknown
     >
     const arm = reader['armPlacementReport']!.bind(reader)
-    const sanitize = reader['sanitizeRefusalGroups']!.bind(reader)
     reader['armPlacementReport'] = (...args) => {
       arms++
       return arm(...args)
     }
-    reader['sanitizeRefusalGroups'] = (...args) => {
-      sanitizedSnapshots++
-      return sanitize(...args)
-    }
+    // Counts the sanitizations of a tab label wherever the product makes them: the compiled code reads the export at each call.
+    const sanitize = sanitizeCauseModule.sanitizeCause
+    context.mock.method(
+      sanitizeCauseModule,
+      'sanitizeCause',
+      (...args: Parameters<typeof sanitize>) => {
+        if (
+          harness.groups.some((group) =>
+            group.tabs.some((tab) => tab.label === args[0]),
+          )
+        )
+          sanitizedLabels++
+        return sanitize(...args)
+      },
+    )
     const selection = harness.reader.presentationState()
     await harness.reader.changePresentation(
       {
@@ -1277,8 +1299,9 @@ test('a refused placement guard sanitizes the tab labels of its two snapshots fo
       ).length,
       1,
     )
-    assert.equal(sanitizedSnapshots, 2)
+    assert.equal(sanitizedLabels, 10)
   } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })
