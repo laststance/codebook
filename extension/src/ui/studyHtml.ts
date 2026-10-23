@@ -135,6 +135,8 @@ export interface StudyViewMessage {
     /** The owned native session shows this stop now. */
     debuggerAvailable?: boolean
     nativeValuesUninspected?: boolean
+    /** The selection has left the committed moment and not committed this one yet: its row is the selected one, loading, and no control acts on a stop meanwhile (D29). */
+    pending?: boolean
   }
   /** The Application pane's view of the selected test replay at the selected event (Design 3); the pane is its one output surface. */
   nodeHistoryApplication?: NodeTestApplicationView
@@ -2893,6 +2895,7 @@ function studyClient(
       message.nodeHistory?.entries ?? [],
       replaying,
       position?.sequence,
+      Boolean(position?.pending),
       Boolean(position?.debuggerAvailable),
       position?.sourceAvailable,
       message.nodeHistoryUnverifiedStops ?? [],
@@ -2952,7 +2955,11 @@ function studyClient(
     if (isSelected) select.setAttribute('aria-disabled', 'true')
     select.setAttribute('aria-pressed', String(isSelected))
     row.append(select)
-    if (entry.type === 'stop')
+    // The row of the moment being selected is the current one, loading, until the host commits it.
+    const loading = isSelected && Boolean(message.nodeHistoryPosition?.pending)
+    if (isSelected) row.setAttribute('aria-current', 'true')
+    if (loading) row.setAttribute('aria-busy', 'true')
+    if (entry.type === 'stop' && !loading)
       row.append(
         testReplayInspectControl(entry, message, isSelected, replaying),
       )

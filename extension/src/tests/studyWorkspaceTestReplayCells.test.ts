@@ -427,7 +427,7 @@ test('a Play step that is presenting when a newer seek arrives commits nothing b
     // Assert
     // The Study position names the newer seek's stop while it loads (D29, F203); the overtaken Play step's event never shows.
     assert.deepEqual(whileNewerLoads, {
-      sequence: 3,
+      sequence: 2,
       stepId: undefined,
       explanation: undefined,
       position: 'Stop 1 of 2 · 0.20 s',
@@ -480,7 +480,9 @@ test('Play at the result starts nothing and tells no error', async () => {
       sequence: 5,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 5 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the result is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -747,7 +749,9 @@ test('Play across a stop whose source does not verify shows it without recorded 
     controller.play()
     advance(60)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Play reaches the unverified stop',
       READER_RESULT_BOUND_MS,
     )
@@ -902,13 +906,17 @@ test('a reader position write that never returns holds neither Play nor the mome
     // Act: Play steps from the first stop to the output and on to the second stop while the first write is held.
     void advance(1_000).tick()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Play shows the output while the first write is held',
       READER_RESULT_BOUND_MS,
     )
     void advance(1_000).tick()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Play shows the second stop while the first write is held',
       READER_RESULT_BOUND_MS,
     )
@@ -970,7 +978,9 @@ test('closing the reader waits for the reader position write of the last selecti
       sequence: 3,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the output commits while its position write is held',
       READER_RESULT_BOUND_MS,
     )

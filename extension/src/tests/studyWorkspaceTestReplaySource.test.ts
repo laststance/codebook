@@ -273,7 +273,9 @@ async function selectMoment(
     sequence,
   })
   await waitUntil(
-    () => lastView(harness)?.nodeHistoryPosition?.sequence === sequence,
+    () =>
+      lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
+      !lastView(harness)?.nodeHistoryPosition?.pending,
     `sequence ${sequence} is selected`,
     READER_RESULT_BOUND_MS,
   )
@@ -434,7 +436,9 @@ test('while the next stop’s debugger still loads, the slot shows no earlier st
     const positionDuringLoad = lastView(harness)?.nodeHistoryPosition?.sequence
     held.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the second stop commits',
       READER_RESULT_BOUND_MS,
     )
@@ -446,7 +450,8 @@ test('while the next stop’s debugger still loads, the slot shows no earlier st
       THEME_NEXT_TEXT,
     )
     assert.deepEqual(labelsDuringLoad, [])
-    assert.equal(positionDuringLoad, 2)
+    // The list's selected row is the requested moment's while it loads (D29).
+    assert.equal(positionDuringLoad, 4)
     assert.deepEqual(slotLabels(harness), [
       '  Recorded: src/theme-next.ts:1 · 0.30 s',
     ])
@@ -478,6 +483,7 @@ test('while the next stop’s debugger presentation is held, the Study position 
     })
     await held.started
     const duringSection = lastView(harness)?.nodeHistorySection
+    const duringRow = { ...lastView(harness)?.nodeHistoryPosition }
     const duringApplication = harness.applicationOutputs().at(-1)?.view
     const invalidationsDuring =
       harness.historicalDebugInvalidationLabels().length - invalidationsBefore
@@ -485,7 +491,9 @@ test('while the next stop’s debugger presentation is held, the Study position 
     const labelsDuring = slotLabels(harness)
     held.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the second stop commits',
       READER_RESULT_BOUND_MS,
     )
@@ -497,6 +505,7 @@ test('while the next stop’s debugger presentation is held, the Study position 
     assert.equal(duringSection?.selectedStepId, undefined)
     assert.equal(duringApplication?.time, 'Recorded test output')
     assert.equal(duringApplication?.region, undefined)
+    assert.deepEqual(duringRow, { sequence: 4, eventIndex: 3, pending: true })
     assert.equal(invalidationsDuring, 1)
     assert.equal(tabsDuring.length, 1)
     assert.deepEqual(labelsDuring, [])
@@ -536,7 +545,9 @@ test('the debugger is presented at a stop only after the slot’s document shows
     const presentationsWhileHeld = harness.historicalDebugPresentations.length
     heldUpdate.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the stop commits',
       READER_RESULT_BOUND_MS,
     )
@@ -585,7 +596,9 @@ test('a slow reader position write does not hold the selected moment back', asyn
       sequence: 3,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the result commits while its position write is held',
       READER_RESULT_BOUND_MS,
     )
@@ -627,7 +640,9 @@ test('a stop selection overtaken by an output selection leaves only the output o
       sequence: 3,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the output commits',
       READER_RESULT_BOUND_MS,
     )
@@ -1077,7 +1092,9 @@ test('a slot that does not show a stop’s bytes before the deadline is told as 
     await new Promise((resolve) => setImmediate(resolve))
     harness.elapseSlotClock(5_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the selection reports that the slot did not show its bytes',
       2_000,
     )
@@ -1732,7 +1749,9 @@ test('returning to the shown output while a stop still presents leaves the debug
     )
     held.reject(new Error('Historical debugger presentation was superseded.'))
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 1,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 1 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the output stays selected',
       READER_RESULT_BOUND_MS,
     )
@@ -1862,6 +1881,8 @@ for (const refusal of [
 
       // Assert
       assert.equal(refused, 'refused')
+      assert.deepEqual(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+      assert.equal(lastView(harness)?.nodeHistoryPosition?.pending, undefined)
       assert.equal(harness.reader['selectedNodeHistorySequence'], 2)
       const tabs = slotTabs(harness)
       assert.equal(tabs.length, 1)
@@ -2071,7 +2092,9 @@ test('a slot whose show stalls reports its row at the slot deadline and releases
     await stalled.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the moment commits at the slot deadline',
       2_000,
     )
@@ -2114,13 +2137,17 @@ test('a slow slot is not failed at the 1,000 ms bound, only at the slot deadline
     const viewAtBound = lastView(harness)
     harness.elapseSlotClock(4_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the moment commits at the slot deadline',
       2_000,
     )
 
     // Assert
-    assert.equal(viewAtBound?.nodeHistoryPosition?.sequence, 2)
+    // The list's row is the requested moment's, loading, until the deadline commits it.
+    assert.equal(viewAtBound?.nodeHistoryPosition?.sequence, 4)
+    assert.equal(viewAtBound?.nodeHistoryPosition?.pending, true)
     assert.deepEqual([...(viewAtBound?.errors ?? [])], [])
     assert.equal(lastView(harness)?.errors.length, 1)
   } finally {
@@ -2146,7 +2173,9 @@ test('a slot show that completes after the deadline is closed, not shown', async
     await stalled.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the moment commits at the slot deadline',
       2_000,
     )
@@ -2203,6 +2232,7 @@ test('Play pauses at the first slot that cannot open', async () => {
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.nodeHistoryPlayback?.loading,
       'the moment commits at the slot deadline',
       2_000,
@@ -2284,7 +2314,9 @@ test('a stalled close of the earlier slot tab commits the moment at the slot dea
     await stalledClose.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the moment commits at the slot deadline',
       2_000,
     )
@@ -2332,7 +2364,9 @@ test('a close the older selection issued does not close the slot tab the newer s
       await new Promise((resolve) => setImmediate(resolve))
     heldClose.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the newer selection commits',
       2_000,
     )
@@ -2386,7 +2420,9 @@ test('a selection overtaken inside the editor’s show closes no tab before the 
     const closeRequestsBeforeTakeover = harness.tabCloseRequests().length
     heldOpen.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the newer selection commits',
       2_000,
     )

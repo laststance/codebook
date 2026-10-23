@@ -12685,6 +12685,13 @@ export class StudyWorkspace {
       selectedNodeHistoryPosition === undefined
         ? undefined
         : selectedNodeHistory?.entries[selectedNodeHistoryPosition]
+    const pendingNodeHistoryIndex =
+      selectedNodeHistory &&
+      this.leavingNodeHistoryPosition(selectedNodeHistory)
+    const pendingNodeHistoryEvent =
+      pendingNodeHistoryIndex === undefined
+        ? undefined
+        : selectedNodeHistory?.entries[pendingNodeHistoryIndex]
     const selectedNodeHistoryStop =
       selectedNodeHistoryEvent?.type === 'stop'
         ? selectedNodeHistoryEvent
@@ -12758,19 +12765,28 @@ export class StudyWorkspace {
         )
         .map((entry) => entry.sequence),
       nodeHistoryPlayback: this.nodeHistoryPlaybackController?.state(),
-      nodeHistoryPosition: selectedNodeHistoryEvent && {
-        sequence: selectedNodeHistoryEvent.sequence,
-        eventIndex: selectedNodeHistoryPosition ?? -1,
-        ...(selectedNodeHistoryStop
-          ? {
-              // A verified source match stays true after the session ends; only debuggerAvailable tracks the native session.
-              sourceAvailable: nodeStopSourceMatches(selectedNodeHistoryStop),
-              debuggerAvailable: this.selectedNodeHistoryDebugAvailable,
-              nativeValuesUninspected:
-                this.selectedNodeHistoryValuesUninspected,
-            }
-          : {}),
-      },
+      nodeHistoryPosition: pendingNodeHistoryEvent
+        ? // The row of the moment being selected is the selected one, loading, with no control that acts on the stop being left (D29, F203).
+          {
+            sequence: pendingNodeHistoryEvent.sequence,
+            eventIndex: pendingNodeHistoryIndex ?? -1,
+            pending: true,
+          }
+        : selectedNodeHistoryEvent && {
+            sequence: selectedNodeHistoryEvent.sequence,
+            eventIndex: selectedNodeHistoryPosition ?? -1,
+            ...(selectedNodeHistoryStop
+              ? {
+                  // A verified source match stays true after the session ends; only debuggerAvailable tracks the native session.
+                  sourceAvailable: nodeStopSourceMatches(
+                    selectedNodeHistoryStop,
+                  ),
+                  debuggerAvailable: this.selectedNodeHistoryDebugAvailable,
+                  nativeValuesUninspected:
+                    this.selectedNodeHistoryValuesUninspected,
+                }
+              : {}),
+          },
       ...this.nodeHistoryViews(selectedNodeHistory, selectedNodeHistoryEvent),
       nodeHistoryPage: this.selectedNodeHistoryPage,
       nodeHistoryPageCount: this.selectedNodeHistory

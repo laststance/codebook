@@ -1504,6 +1504,66 @@ async function check(page, options, collected) {
           !rowInspectAfterValues.visible &&
           !rowInspectForMismatch.visible,
       })
+      // Value: protects=while a selection has left the committed moment and not committed the new one (D29, F203), the event list's row of the requested moment is the current one, busy, with no Inspect that acts on a stop, and the transport's Inspect, the values hint and Show Variables are hidden; the commit gives the row its Inspect back and clears the busy mark; fails_when=the pending row keeps no aria-current or aria-busy, offers Inspect before the debugger shows the stop, or the old stop's controls stay; why_new=F203 (the row moved at the commit, so the list and the Study position named different moments for 0.1 to 0.6 s); seam=none; no_claim=the host's timing of the commit (studyWorkspace tests) (stand-ins: the Study messages the host posts)
+      // Act
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: {
+          sequence: nodeStop.sequence,
+          eventIndex: nodeStop.eventIndex,
+          pending: true,
+        },
+      })
+      const pendingRow = await page.evaluate((sequence) => {
+        const select = document.querySelector(
+          `.node-history-event [data-node-history-sequence="${sequence}"]`,
+        )
+        const row = select?.closest('.node-history-event')
+        return {
+          current: row?.getAttribute('aria-current') ?? null,
+          busy: row?.getAttribute('aria-busy') ?? null,
+          selectLabel: select?.textContent ?? null,
+          rowInspect: Boolean(
+            row?.querySelector('[data-inspect-node-history-stop]'),
+          ),
+        }
+      }, nodeStop.sequence)
+      const pendingControlsHidden =
+        (await page.locator('#node-history-inspect').isHidden()) &&
+        (await page.locator('#node-history-hint').isHidden()) &&
+        (await page.locator('#node-history-show-variables').isHidden())
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      const committedRow = await page.evaluate((sequence) => {
+        const row = document
+          .querySelector(
+            `.node-history-event [data-node-history-sequence="${sequence}"]`,
+          )
+          ?.closest('.node-history-event')
+        return {
+          current: row?.getAttribute('aria-current') ?? null,
+          busy: row?.getAttribute('aria-busy') ?? null,
+          rowInspect: Boolean(
+            row?.querySelector('[data-inspect-node-history-stop]'),
+          ),
+        }
+      }, nodeStop.sequence)
+      // Assert
+      cases.push({
+        name: 'the event list row of the moment being selected is current and busy with no Inspect, and the transport shows no stop control, until the host commits the moment',
+        actual: { pendingRow, pendingControlsHidden, committedRow },
+        passed:
+          pendingRow.current === 'true' &&
+          pendingRow.busy === 'true' &&
+          pendingRow.selectLabel === 'Selected event' &&
+          !pendingRow.rowInspect &&
+          pendingControlsHidden &&
+          committedRow.current === 'true' &&
+          committedRow.busy === null &&
+          committedRow.rowInspect,
+      })
       // Value: protects=the row's Inspect in native debugger follows the selected stop, not the page of the event list: once the learner pages the list away from the stop, the row still offers Inspect for that stop and a press selects it; fails_when=the row looks for the selected stop among the shown page's events, so it hides the control while another page of events shows; why_new=F353 (hosted CodeRabbit on #120); seam=none; no_claim=the host's paging and its selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
       // Arrange: the selected stop is event 1 of 26; the event list shows the second page, which holds outputs only.
       const laterPage = {
