@@ -406,3 +406,52 @@ test('the inspector lines of Node 24 are counted, not shown', () => {
   )
   assert.equal(tail.inspectorLines, 3)
 })
+
+// Value: protects=a surrogate pair split across two output entries counts as one character, so `omittedCharacters` and the 65,536-character limit do not drift by one per split; fails_when=the line `😀ab` split inside the emoji costs 5 characters instead of 4 and a 4-character limit cuts it; why_new=F291 (each entry's part was counted alone); seam=none; no_claim=that the launcher ever splits a pair (it does not; a forged history may)
+test('a surrogate pair split across two output entries is one character in the tail', () => {
+  // Arrange
+  const emoji = '😀'
+  const index = indexNodeTestOutput([
+    printed(1, 'stdout', emoji.slice(0, 1)),
+    printed(2, 'stdout', `${emoji.slice(1)}ab\n`),
+  ])
+
+  // Act
+  const tail = accumulateNodeTestOutput(index, 2, 4)
+  const beforeLineFeed = accumulateNodeTestOutput(
+    indexNodeTestOutput([
+      printed(1, 'stdout', emoji.slice(0, 1)),
+      printed(2, 'stdout', `${emoji.slice(1)}ab`),
+    ]),
+    2,
+    3,
+  )
+
+  // Assert
+  assert.deepEqual(tail.lines, [{ channel: 'stdout', text: '😀ab', number: 0 }])
+  assert.equal(tail.omittedCharacters, 0)
+  assert.deepEqual(beforeLineFeed.lines, [
+    { channel: 'stdout', text: '😀ab', number: 0 },
+  ])
+  assert.equal(beforeLineFeed.omittedCharacters, 0)
+})
+
+// Value: protects=a high surrogate that ends one channel's line and a low surrogate that starts the other channel's next line are two lines, so no character is taken off the second; fails_when=the new line counts one code point less because the previous entry ended with a high surrogate; why_new=F291 (the fix must join a pair only inside one line); seam=none; no_claim=how a lone surrogate is drawn
+test('a lone high surrogate at the end of one channel does not shorten the next channel’s line', () => {
+  // Arrange
+  const index = indexNodeTestOutput([
+    printed(1, 'stdout', '\ud83d'),
+    printed(2, 'stderr', '\ude00x\n'),
+  ])
+
+  // Act
+  const tail = accumulateNodeTestOutput(index, 2)
+
+  // Assert
+  assert.deepEqual(
+    tail.lines.map((line) => line.text),
+    ['\ud83d', '\ude00x'],
+  )
+  assert.equal(tail.omittedCharacters, 0)
+  assert.equal(index.lineTotals[2], 1 + 1 + 9 + 2 + 1)
+})

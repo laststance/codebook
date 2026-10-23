@@ -111,11 +111,15 @@ export function indexNodeTestOutput(
     from: number,
     to: number,
   ): void => {
+    const isContinuing = pending !== undefined
     pending ??= { channel, start: from, end: from, codePoints: 0 }
     // An empty part continues nothing: a chunk that ends with a line feed leaves no unfinished line.
     if (to <= from) return
+    // A surrogate pair split across two entries is one code point, not two (F291).
+    const joinsPair =
+      isContinuing && pending.end === from && endsInSplitPair(body, from)
     pending.end = to
-    pending.codePoints += countCodePoints(body, from, to)
+    pending.codePoints += countCodePoints(body, from, to) - (joinsPair ? 1 : 0)
   }
   /** Joins one output chunk (the span `from..to` of the body) to the lines: a chunk of the other channel ends the unfinished line first, so no line mixes the two channels; the first part continues the unfinished line and each later part starts a new one after a line feed. */
   const read = (
@@ -149,6 +153,21 @@ export function indexNodeTestOutput(
     })
   }
   return index
+}
+
+/**
+ * Tells whether a text offset falls inside a surrogate pair, so the code points of the parts on both sides of it add up to one too many; called by the line reader of {@link indexNodeTestOutput}.
+ * @param text - The shown text.
+ * @param offset - The offset where one part ends and the next begins.
+ * @returns Whether a high surrogate stands just before the offset and a low one at it.
+ * @example endsInSplitPair('\ud83d\ude00', 1) // => true
+ */
+function endsInSplitPair(text: string, offset: number): boolean {
+  const before = text.charCodeAt(offset - 1)
+  const after = text.charCodeAt(offset)
+  return (
+    before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff
+  )
 }
 
 /**
