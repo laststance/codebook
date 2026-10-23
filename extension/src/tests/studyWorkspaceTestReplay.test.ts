@@ -19,6 +19,7 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 
 /** The last view the reader posted to its panes. */
 function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
@@ -937,7 +938,7 @@ test('the lines of an unreadable decision, material and position show their caus
         lastView(harness)?.nodeHistory?.header.studyId === history.studyId &&
         !lastView(harness)?.loading,
       'the test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -1013,7 +1014,7 @@ test('a refresh draws the Save item of a live test run while a browser replay ho
     await waitUntil(
       () => harness.controller.state().readiness === 'ready',
       'the opened recording',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const { studyId } = await startLiveTestRun(harness, 'browser-replay-save')
 
@@ -1118,6 +1119,59 @@ test('a first open whose replay debugger cannot start lands on its moment, tells
   }
 })
 
+// Value: protects=a first open whose replay debugger failed to start while another moment is selected before the failed owner is disposed: the old open reports nothing and selects and saves nothing, so only the newer selection shows its moment, its position and no replay-debugger row; fails_when=the old open still reports its failure row and commits its moment after the disposal, over the newer selection; why_new=the failure path awaited the disposal without checking that its request was still current (F237); seam=the harness's held presentation (rejected) and held debugger disposal; no_claim=the real debug session
+test('a failed first debugger start overtaken by a newer selection while the owner is disposed reports nothing', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    // The reader left the replay on its result, a moment without a recorded stop.
+    await store.saveReaderPosition(history.studyId, 3)
+    await harness.reader.action('retry')
+    const heldPresentation = harness.holdHistoricalDebugPresentation()
+    const heldDisposal = harness.holdHistoricalDebugDisposal()
+    const opening = harness.reader.openLearningReplay(history.studyId)
+    await heldPresentation.started
+    heldPresentation.reject(new Error('Workspace trust was declined.'))
+    await heldDisposal.started
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    heldDisposal.release()
+    await opening
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the newer selection is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    await waitUntil(
+      async () => (await store.readReaderPosition(history.studyId)) === 2,
+      'the newer position is saved',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    const linesEverSent = harness
+      .postedMessages()
+      .flatMap((message) => message.errors)
+    assert.equal(
+      linesEverSent.some((line) => line.includes('could not start')),
+      false,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=Retry after a first open whose replay debugger failed to start on a moment without a recorded stop: a Retry whose start fails again keeps the replay-debugger row (with the new cause) and a Retry whose start succeeds removes it only after the debugger was started again; fails_when=Retry empties the failed debugger object, reports success without starting anything and drops the row; why_new=the retry found the failed debugger object, invalidated it and cleared the row (F226, D13); seam=the harness's historical debugger rejects the held presentations; no_claim=the real debug session start (native trials)
 test('Retry after a failed first start keeps the debugger row until the debugger starts again', async () => {
   // Arrange
@@ -1142,7 +1196,7 @@ test('Retry after a failed first start keeps the debugger row until the debugger
     await waitUntil(
       () => harness.historicalDebugPresentations.length > presentationsAtOpen,
       'the debugger starting again on Retry',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     secondHold.reject(new Error('The debug session did not start.'))
     await failingRetry
@@ -1188,7 +1242,7 @@ test('Open replay while another test replay plays stops Play and lands the new r
         lastView(harness)?.nodeHistory?.header.studyId === first.studyId &&
         !lastView(harness)?.loading,
       'the first test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-playback',
@@ -1199,7 +1253,7 @@ test('Open replay while another test replay plays stops Play and lands the new r
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPlayback?.mode === 'playing',
       'the first test replay plays',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     const playingController = harness.reader['nodeHistoryPlaybackController']!
@@ -1211,7 +1265,7 @@ test('Open replay while another test replay plays stops Play and lands the new r
         lastView(harness)?.nodeHistory?.header.studyId === second.studyId &&
         !lastView(harness)?.loading,
       'the second test replay is shown',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
@@ -1245,7 +1299,7 @@ test('Previous event from the landing reaches the start of the replay, and a fur
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     /** Presses Previous event, as the transport's button does. */
     const previousEvent = (): void =>
@@ -1262,14 +1316,14 @@ test('Previous event from the landing reaches the start of the replay, and a fur
     await waitUntil(
       () => lastView(harness)?.nodeHistoryPosition?.sequence === 1,
       'the start is selected',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
     const labelAtStart = harness.historicalDebugInvalidationLabels().at(-1)
     previousEvent()
     await waitUntil(
       () => (lastView(harness)?.errors.length ?? 0) > 0,
       'the move before the start is refused',
-      2_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert
