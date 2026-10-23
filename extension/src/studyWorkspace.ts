@@ -11330,27 +11330,78 @@ export class StudyWorkspace {
       FOREIGN_PREVIEW_ACTION.close,
     )
     if (!choice) return false
-    const tab = vscode.window.tabGroups.all
-      .filter((group) => group.viewColumn === obstacle.viewColumn)
-      .flatMap((group) => group.tabs)
-      .find(
-        (candidate) =>
-          candidate.isPreview &&
-          this.editorTabName(candidate) === obstacle.tabName,
-      )
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) =>
+        candidate.viewColumn === obstacle.viewColumn &&
+        candidate.tabs.some((tab) =>
+          this.isNamedPreview(tab, obstacle.tabName),
+        ),
+    )
+    const tab = group?.tabs.find((candidate) =>
+      this.isNamedPreview(candidate, obstacle.tabName),
+    )
     // The tab may be gone by now; the retry then decides.
-    if (!tab) return true
-    if (
-      choice === FOREIGN_PREVIEW_ACTION.keepOpen &&
-      tab.input instanceof vscode.TabInputText
-    ) {
+    if (!group || !tab) return true
+    // Only Close Tab closes the learner's tab; Keep Tab Open never does (F363).
+    if (choice === FOREIGN_PREVIEW_ACTION.close) {
+      await vscode.window.tabGroups.close([tab])
+      return true
+    }
+    if (tab.input instanceof vscode.TabInputText) {
       await vscode.window.showTextDocument(tab.input.uri, {
         viewColumn: obstacle.viewColumn,
         preview: false,
         preserveFocus: true,
       })
-    } else await vscode.window.tabGroups.close([tab])
-    return true
+      return true
+    }
+    return this.keepNonTextPreview(group, tab, obstacle.tabName)
+  }
+
+  /**
+   * Tells whether a tab is the preview tab that a foreign-preview refusal names; used by {@link resolveForeignPreviewRefusal} to find the tab again after the dialog.
+   * @param tab - A tab of the refused group.
+   * @param tabName - The name the refusal gave ({@link editorTabName}).
+   * @returns `true` for a preview tab of that name.
+   * @example this.isNamedPreview(tab, 'login-form.tsx') // => true
+   */
+  private isNamedPreview(tab: vscode.Tab, tabName: string): boolean {
+    return tab.isPreview && this.editorTabName(tab) === tabName
+  }
+
+  /**
+   * Keeps a learner's non-text preview tab (an image, a custom editor) open with the editor's own Keep Open command, which acts on the active tab of the focused group; called by {@link resolveForeignPreviewRefusal} for Keep Tab Open.
+   * The extension API cannot pin such a tab, so its group takes the focus and the command runs only when the tab is that group's front tab. Otherwise the tab stays a preview, the open is not retried and the learner is told how to keep it.
+   * @param group - The tab's group.
+   * @param tab - The preview tab.
+   * @param tabName - The tab's name, for the notice.
+   * @returns `true` when the tab is no longer a preview and the open is to be retried; `false` when it is still one.
+   * @example if (await this.keepNonTextPreview(group, tab, 'diagram.png')) retry()
+   */
+  private async keepNonTextPreview(
+    group: vscode.TabGroup,
+    tab: vscode.Tab,
+    tabName: string,
+  ): Promise<boolean> {
+    const focusCommand = focusEditorGroupCommand(group.viewColumn)
+    if (focusCommand && group.activeTab === tab) {
+      await vscode.commands.executeCommand(focusCommand)
+      // The command keeps the tab that is in front of the group the focus moved to; the tab is re-read after it.
+      const focused = vscode.window.tabGroups.activeTabGroup
+      if (focused.viewColumn === group.viewColumn && focused.activeTab === tab)
+        await vscode.commands.executeCommand('workbench.action.keepEditor')
+    }
+    const stillPreview = vscode.window.tabGroups.all
+      .filter((candidate) => candidate.viewColumn === group.viewColumn)
+      .flatMap((candidate) => candidate.tabs)
+      .some((candidate) => this.isNamedPreview(candidate, tabName))
+    if (!stillPreview) return true
+    void showPlainNotice(
+      vscode.window,
+      'warning',
+      `Codebook could not keep "${tabName}" open. Double-click its tab to keep it, then choose Open replay again.`,
+    )
+    return false
   }
 
   /**

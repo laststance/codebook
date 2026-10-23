@@ -318,6 +318,64 @@ for (const choice of ['Close Tab', 'Keep Tab Open'] as const)
     }
   })
 
+// Value: protects=Keep Tab Open on a learner's non-text preview tab (an image, a custom editor) keeping that tab and retrying the open, and telling the learner when the tab cannot be kept instead of closing it; fails_when=Keep Tab Open closes the non-text preview (the learner lost the tab the dialog promised to keep), or a tab that cannot be kept is silently dropped or the open is retried into the same refusal; why_new=Cycle 0050 F363 (the Keep branch handled text tabs only and fell through to the close); seam=addNonTextPreview, the editor's focus-group and keepEditor commands in the fake, answerWarningDialogs
+for (const scenario of [
+  { isFront: true, keeps: true },
+  { isFront: false, keeps: false },
+] as const)
+  test(`Open replay beside a learner's non-text preview tab: Keep Tab Open ${scenario.keeps ? 'keeps the tab and retries the open' : 'leaves a tab behind another one open, retries nothing and tells the learner'}`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness()
+    try {
+      await harness.reader.close()
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      harness.focusMutableDraft('learner-notes.ts', 1)
+      const agentChat = harness.addSeparateEditorPart()
+      const preview = harness.addNonTextPreview(
+        'diagram.png',
+        1,
+        scenario.isFront,
+      )
+      agentChat.focus()
+      const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+        harness.reader,
+      )
+      harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+        groupCount === 1 && preview.isPreview
+          ? false
+          : hasMainEditorFocus(groupCount)
+      harness.answerWarningDialogs(async () => 'Keep Tab Open')
+      let openAttempts = 0
+      const openRecording = harness.reader.openRecording.bind(harness.reader)
+      harness.reader.openRecording = (studyId: string): Promise<void> => {
+        openAttempts++
+        return openRecording(studyId)
+      }
+
+      // Act
+      await harness.reader.openLearningReplay(harness.studyId)
+      await harness.controller.settle()
+
+      // Assert
+      assert.equal(
+        harness.groups.some((group) => group.tabs.includes(preview)),
+        true,
+      )
+      assert.equal(preview.isPreview, !scenario.keeps)
+      assert.equal(openAttempts, scenario.keeps ? 2 : 1)
+      assert.deepEqual(
+        harness.warningDialogs.slice(1).map((dialog) => dialog.title),
+        scenario.keeps
+          ? []
+          : [
+              'Codebook could not keep "diagram.png" open. Double-click its tab to keep it, then choose Open replay again.',
+            ],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 test('a presentation selection refused for a learner preview names that tab, its group and how to clear it', async () => {
   // Arrange
   const harness = await workspaceHarness(false)

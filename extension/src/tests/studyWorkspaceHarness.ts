@@ -7281,6 +7281,26 @@ export async function workspaceHarness(
       groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
       return tab
     },
+    /**
+     * Opens a learner's non-text preview tab (an image or a custom editor) in a group, as the tab the group shows; the editor keeps it with its own `workbench.action.keepEditor` while that group has the focus.
+     * @param label - The tab's title.
+     * @param column - The view column of the group.
+     * @param isFront - Whether the tab is the one the group shows; a preview behind another tab cannot be kept by the command.
+     * @returns The tab.
+     * @example const image = harness.addNonTextPreview('diagram.png', 1)
+     */
+    addNonTextPreview(label: string, column: number, isFront = true) {
+      const tab: Tab = {
+        input: new TabInputUnknown(),
+        label,
+        isPreview: true,
+        isDirty: false,
+      }
+      const group = groups.find((group) => group.viewColumn === column)!
+      group.tabs.push(tab)
+      if (isFront) group.activeTab = tab
+      return tab
+    },
     addNodeHistoryPreview(
       studyId: string,
       column: number,
