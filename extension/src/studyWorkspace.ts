@@ -238,6 +238,7 @@ import { editorShowsDocument } from './utils/editorShowsDocument'
 import { editorTabInputKinds } from './utils/editorTabInputKinds'
 import { emptyFirstGroupObstacle } from './utils/emptyFirstGroupObstacle'
 import { emptyGroupsGoneSince } from './utils/emptyGroupsGoneSince'
+import { escapeCodiconSyntax } from './utils/escapeCodiconSyntax'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { firstVerifiedStopSequence } from './utils/firstVerifiedStopSequence'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
@@ -24867,12 +24868,15 @@ export class StudyWorkspace {
     // The command has no id: the editor draws the title as text, not as a link.
     return [
       new vscode.CodeLens(new vscode.Range(line, 0, line, 0), {
-        title: describeNodeRecordedSource({
-          kind: 'label',
-          path: stop.source.path,
-          line: stop.frame.line,
-          elapsedMs: stop.elapsedMs,
-        }),
+        // A recorded path may hold `$(name)`, which a lens title would draw as an icon.
+        title: escapeCodiconSyntax(
+          describeNodeRecordedSource({
+            kind: 'label',
+            path: stop.source.path,
+            line: stop.frame.line,
+            elapsedMs: stop.elapsedMs,
+          }),
+        ),
         command: '',
       }),
     ]

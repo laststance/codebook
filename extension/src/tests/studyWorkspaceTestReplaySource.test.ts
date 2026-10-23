@@ -2939,3 +2939,26 @@ test('a CodeLens above the stopped line carries the whole recorded label', async
     await harness.close()
   }
 })
+
+// Value: protects=a recorded path that holds icon syntax such as $(trash) showing as text in the CodeLens title, so a recording cannot draw an icon of its own there; fails_when=the title carries the path unescaped and the editor draws a codicon in place of the characters; why_new=F367 (the title stripped terminal controls only; the hover was escaped in F176); seam=the workspace harness's CodeLens provider; no_claim=how the editor draws the escaped title (the native check)
+test('a CodeLens title shows a recorded path with icon syntax as text', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+      'src/$(trash).ts',
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 4)
+    const slot = slotTabs(harness)[0]!
+
+    // Act
+    const titles = harness.codeLensTitles(slot)
+
+    // Assert
+    assert.deepEqual(titles, ['Recorded: src/\\$(trash).ts:1 · 0.30 s'])
+  } finally {
+    await harness.close()
+  }
+})
