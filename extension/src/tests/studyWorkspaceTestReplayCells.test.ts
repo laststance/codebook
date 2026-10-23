@@ -206,7 +206,7 @@ const MOVES_FROM_THE_FIRST_STOP: Move[] = [
 for (const move of MOVES_FROM_THE_FIRST_STOP) {
   // A seek that has started presents and commits on its own; the case of a seek overtaken by a newer seek is its own test below.
   if (!move.throughController)
-    // Value: protects=a move overtaken before its debugger presentation shows commits nothing of its own: the moment, the step the learner chose and its explanation stay as they were, and the overtaken press says nothing; fails_when=the overtaken move's moment or first step is committed or outlives it, or the superseded presentation is reported as an error; why_new=F139: only an overtaken step action was tested; seam=the workspace harness's held historical debug presentation, rejected as superseded; no_claim=the move that overtakes it (a seek onto the shown moment)
+    // Value: protects=a move overtaken before its debugger presentation shows commits nothing of its own: the moment, the step the learner chose and its explanation stay as they were, and the overtaken press says nothing; fails_when=the overtaken move's moment or first step is committed (even for an instant, in a view posted after its presentation ends) or outlives it, or the superseded presentation is reported as an error; why_new=F139: only an overtaken step action was tested; seam=the workspace harness's held historical debug presentation, rejected as superseded; no_claim=the move that overtakes it (a seek onto the shown moment)
     test(`a ${move.name} overtaken before its stop is shown leaves the moment and the step the learner chose`, async () => {
       // Arrange
       const harness = await workspaceHarness()
@@ -233,12 +233,24 @@ for (const move of MOVES_FROM_THE_FIRST_STOP) {
             'the seek’s selection overtakes the move',
             2_000,
           )
+        const postedBeforeRelease = harness.postedMessages().length
         held.reject(
           new Error('Historical debugger presentation was superseded.'),
         )
         await seeking
+        // The overtaken move ends a few promise turns after its presentation is rejected, which can be after the seek has ended: let those turns run before reading what was shown.
+        await new Promise<void>((resolve) => setImmediate(resolve))
 
         // Assert
+        // The overtaken move must not show its own moment even for an instant: every view posted from the release on stands at the moment the learner was at.
+        const sequencesShownAfterRelease = harness
+          .postedMessages()
+          .slice(postedBeforeRelease)
+          .flatMap((view) =>
+            view.nodeHistoryPosition ? [view.nodeHistoryPosition.sequence] : [],
+          )
+          .filter((sequence) => sequence !== (move.startSequence ?? 2))
+        assert.deepEqual(sequencesShownAfterRelease, [])
         assert.deepEqual(shownMoment(harness), before)
         assert.equal(shownMoment(harness).sequence, move.startSequence ?? 2)
         assert.equal(lastView(harness)?.errors.length, 0)

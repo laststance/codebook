@@ -474,6 +474,10 @@ test('a browser study overtaken by choosing the test replay again leaves the rep
     gate.restore()
 
     // Assert
+    // The reader's own state is read as well as the last posted view: a read that retires the replay without publishing leaves the posted view looking right.
+    const reading = harness.reader.inspect().view
+    assert.equal(reading?.nodeHistory?.header.studyId, history.studyId)
+    assert.equal(reading?.nodeHistoryPosition?.sequence, 2)
     assert.equal(
       lastView(harness)?.nodeHistory?.header.studyId,
       history.studyId,
