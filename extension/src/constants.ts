@@ -1302,6 +1302,10 @@ export const REPOSITORY_PAUSE_URL_LIMIT_CHARS = 512
 export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
 /** How many pauses away from the expected stop (and how many idle `continued` events) one run journals; past it only their count is kept, so a hook that pauses in a loop cannot use up the journal. */
 export const REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT = 100
+/** How many `stop.module-parsed`, `stop.instance-sealed` and `stop.instance-refused` entries one run journals, each type up to it; past it only their count is kept. Next's HMR announces every layer's script again after each save, so a long session must not use up the evidence budget. */
+export const REPOSITORY_STOP_MODULE_JOURNAL_LIMIT = 100
+/** The longest the run waits for the text of a script that may be another webpack layer's instance of a declared server stop's module (`Debugger.getScriptSource`); past it the instance is refused with that reason, and a pause held in it fails with a sentence naming it. It is shorter than the wait for a stop's own pause, so the sentence is ready when that wait ends. */
+export const REPOSITORY_STOP_INSTANCE_READ_MS = 2_000
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
 /** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */

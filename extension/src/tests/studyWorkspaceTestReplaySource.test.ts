@@ -3924,7 +3924,7 @@ test('a test replay opened in a saved layout with another source column reads it
   }
 })
 
-// Value: protects=a test replay's Restore that fails while it gives the grid its sizes back reading the layout as unconfirmed with the failure as the reason; fails_when=the failed Restore keeps the earlier confirmation and sets no reason, so the Study pane still reads a confirmed layout over a grid the Restore moved or failed to move; why_new=F433 (OCR L6: the Restore's failure path reset nothing); seam=the workspace harness's resized native layout and its next refused setEditorLayout command; no_claim=the wording of the editor's own error
+// Value: protects=a test replay's Restore that fails while it gives the grid its sizes back reading the layout as unconfirmed with the failure as the reason; fails_when=the failed Restore keeps the earlier confirmation and sets no reason, so the Study pane still reads a confirmed layout over a grid the Restore moved or failed to move; why_new=F433 (OCR L6: the Restore's failure path reset nothing), F444 (the first version named no expected error and accepted any string as the reason); seam=the workspace harness's resized native layout and its next refused setEditorLayout command; no_claim=the wording of the editor's own error
 test('a test replay Restore whose layout command fails reads the layout as unconfirmed with the failure as its reason', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -3953,12 +3953,93 @@ test('a test replay Restore whose layout command fails reads the layout as uncon
         mode: 'study-workspace',
         action: 'restore',
       }),
+      /Native layout command failed/,
     )
 
     // Assert
     assert.equal(confirmedBefore, true)
     assert.equal(harness.reader.presentationState().layoutConfirmed, false)
-    assert.equal(typeof harness.reader.presentationState().reason, 'string')
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'Native layout command failed',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay's Restore that ends with a pane outside its Study destination reading the layout as unconfirmed with that specific sentence as the reason; fails_when=the Restore's own refusal passes through its failure handler, which replaces the specific sentence with the thrown error's text ("Error: The application or source pane ..."), so the Study pane shows an error-class prefix before the instruction; why_new=F443 (OCR L: the catch ran for the Restore's own PRESENTATION_UNAVAILABLE throw); seam=the workspace harness's movePanel (the Application pane moved out of its destination) and the Study pane's Restore control; no_claim=where a real editor leaves a moved pane
+test('a test replay Restore that finds a pane outside its Study destination keeps that sentence as the reason without an error prefix', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    harness.movePanel('codebook.scopedBrowser', 3)
+    const before = harness.reader.presentationState()
+
+    // Act
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: before.presentationId,
+        expectedRevision: before.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      }),
+      /The application or source pane is no longer in its Study destination/,
+    )
+
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false)
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'The application or source pane is no longer in its Study destination. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay's Restore whose grid step ends with the editor not keeping the Study layout telling that sentence as the reason, without the error class in front of it; fails_when=the failure text is String(error) ("Error: The editor did not keep ..."); why_new=F443 (the failure wording of the Restore's other steps, next to the Restore's own refusal); seam=the workspace harness's constrainStudyGrid (a three-group layout settles at two columns) after the learner's resize; no_claim=the editor's own wording of a layout it does not keep
+test('a test replay Restore whose layout the editor does not keep tells that failure as the reason without an error prefix', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [
+        { size: 0.8, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.2 },
+      ],
+    })
+    harness.constrainStudyGrid()
+    const before = harness.reader.presentationState()
+
+    // Act
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: before.presentationId,
+        expectedRevision: before.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      }),
+      /The editor did not keep the Study layout Codebook applied/,
+    )
+
+    // Assert
+    assert.equal(harness.reader.presentationState().layoutConfirmed, false)
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'The editor did not keep the Study layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.',
+    )
   } finally {
     await harness.close()
   }
