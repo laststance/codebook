@@ -21,7 +21,6 @@ import {
   releaseOwnedDevelopmentPort,
 } from '../utils/ownedDevelopmentPorts'
 import { readDeclaredDevelopmentPort } from '../utils/readDeclaredDevelopmentPort'
-import { splitShellCommandLine } from '../utils/splitShellCommandLine'
 
 /** Makes a project folder with the given files, runs the check and removes the folder. */
 async function declaredPortOf(files: Record<string, string>) {
@@ -38,14 +37,32 @@ async function declaredPortOf(files: Record<string, string>) {
 const devScript = (script: string): string =>
   JSON.stringify({ scripts: { dev: script } })
 
-// Value: protects=the app starts on the port the dev script declares, in each flag form; fails_when=a form is ignored and the app moves to another port than the one AUTH_URL names; why_new=F411 (N50) started every run on an ephemeral port; seam=temporary project folders; no_claim=that Next accepts every form itself
+const UNREAD_NOTE =
+  "Next's default port, taken because the dev script has a form Codebook does not read"
+
+/** What `applicationPortSource` says when the dev script has a form the reader does not read (D72). */
+const UNREAD_SOURCE = (segment: string): string =>
+  `${UNREAD_NOTE}: "${segment}"`
+
+/** A package.json with the given scripts. */
+const packageScripts = (scripts: Record<string, string>): string =>
+  JSON.stringify({ scripts })
+
+// Value: protects=the app starts on the port the dev script declares, in each flag form of the grammar (D72), the last -p/--port winning; fails_when=a form is ignored or misread and the app moves to another port than the one AUTH_URL names; why_new=F411 (N50) started every run on an ephemeral port, F452 the last flag, D72 the grammar; seam=temporary project folders; no_claim=that Next accepts every form itself
 for (const [script, port] of [
   ['next dev --turbo -p 3165', 3165],
   ['next dev --port 4100', 4100],
-  ['next dev -p=4200', 4200],
   ['next dev --port=4300', 4300],
   ['next dev -p4400 --turbo', 4400],
-  ['mkdir -p 5 && next dev -p 4500', 4500],
+  ['next dev -p "4413"', 4413],
+  ['next dev -p 4140 -p 4141', 4141],
+  ['next dev --port 4142 -p4143', 4143],
+  ['next dev -p 4144 --port=4145 --turbopack', 4145],
+  ['next dev -H 0.0.0.0 --webpack -p 4146', 4146],
+  [
+    'next dev --experimental-https --experimental-https-key ./k.pem --experimental-https-cert=./c.pem -p 4147',
+    4147,
+  ],
 ] as const)
   test(`the dev script "${script}" declares port ${port}`, async () => {
     // Arrange
@@ -61,94 +78,212 @@ for (const [script, port] of [
     })
   })
 
-/** A package.json with the given scripts. */
-const packageScripts = (scripts: Record<string, string>): string =>
-  JSON.stringify({ scripts })
-
-// Value: protects=the port is the one the project's own `next dev` command would use, in each shell form D67 names (F430); fails_when=a form is misread and the app starts on another port than the project's AUTH_URL names; why_new=OCR M2-M5, L2, L9 of the review of e638c1b..7139a69e; seam=temporary project folders; no_claim=Next honoring PORT itself
+// Value: protects=the port is the one the project's own `next dev` would use, through each launcher, prefix, separator, delegation and concurrently form of the grammar (D72 rule 1; F421, F430, F451); fails_when=a form of the grammar is misread and the app starts on another port than the project's AUTH_URL names; why_new=D72 replaces the deny-list reader; seam=temporary project folders; no_claim=Next honoring PORT itself
 for (const [name, scripts, expected] of [
-  ['an env prefix', { dev: 'PORT=4401 next dev' }, 4401],
+  [
+    'an env prefix',
+    { dev: 'PORT=4401 next dev' },
+    { port: 4401, assignment: true },
+  ],
   [
     'cross-env',
     { dev: 'cross-env NODE_ENV=x PORT=4402 next dev --turbo' },
-    4402,
-  ],
-  ['an export before the chain', { dev: 'export PORT=4403 && next dev' }, 4403],
-  [
-    'a Windows set before the chain',
-    { dev: 'set "PORT=4412" && next dev' },
-    4412,
-  ],
-  ['a flag over the prefix', { dev: 'PORT=4404 next dev -p 4405' }, 4405],
-  ['a quoted flag value', { dev: 'next dev -p "4413"' }, 4413],
-  [
-    'concurrently quoted commands',
-    { dev: 'concurrently "next dev -p 4414" "tsc -w"' },
-    4414,
-  ],
-  ['npx', { dev: 'npx next dev --port 4415' }, 4415],
-  ['pnpm exec', { dev: 'pnpm exec next dev -p 4416' }, 4416],
-  [
-    'a script name that contains next',
-    { dev: 'npm run dev:next', 'dev:next': 'next dev -p 4417' },
-    4417,
+    { port: 4402, assignment: true },
   ],
   [
-    'a script named next-dev',
-    { dev: 'pnpm next-dev', 'next-dev': 'next dev -p 4418' },
-    4418,
+    'env with assignments',
+    { dev: 'env A=1 PORT=4403 next dev' },
+    { port: 4403, assignment: true },
   ],
   [
-    'a background separator',
-    { dev: 'node api.js -p 5000 & next dev -p 4419' },
-    4419,
+    'an export before the chain',
+    { dev: 'export PORT=4404 && next dev' },
+    { port: 4404, assignment: true },
   ],
   [
-    'a background separator with an assignment before the other command',
-    { dev: 'PORT=5000 node api.js & next dev -p 4420' },
-    4420,
+    'a semicolon after an export',
+    { dev: 'export PORT=4405; next dev' },
+    { port: 4405, assignment: true },
   ],
-  ['a shell default', { dev: 'PORT=${PORT:-4421} next dev' }, 4421],
-  ['npm run', { dev: 'npm run web', web: 'next dev -p 4406' }, 4406],
-  ['pnpm run', { dev: 'pnpm run web', web: 'next dev -p 4407' }, 4407],
-  ['pnpm name', { dev: 'pnpm web', web: 'PORT=4408 next dev' }, 4408],
-  ['yarn name', { dev: 'yarn web', web: 'next dev --port=4409' }, 4409],
-  ['bun run', { dev: 'bun run web', web: 'next dev -p 4422' }, 4422],
   [
-    'arguments passed on',
-    { dev: 'pnpm web -- -p 4410', web: 'next dev' },
-    4410,
+    'the last export',
+    { dev: 'export PORT=4406; export PORT=4407; next dev' },
+    { port: 4407, assignment: true },
+  ],
+  [
+    'a flag over the prefix',
+    { dev: 'PORT=4408 next dev -p 4409' },
+    { port: 4409, assignment: false },
+  ],
+  [
+    'a harmless variable beside the command',
+    { dev: 'NODE_ENV=development next dev -p 4410' },
+    { port: 4410, assignment: false },
+  ],
+  ['npx', { dev: 'npx next dev --port 4415' }, { port: 4415 }],
+  ['bunx', { dev: 'bunx next dev -p 4114' }, { port: 4114 }],
+  ['pnpm exec', { dev: 'pnpm exec next dev -p 4416' }, { port: 4416 }],
+  ['yarn next', { dev: 'yarn next dev -p 4112' }, { port: 4112 }],
+  [
+    'a node_modules/.bin path',
+    { dev: './node_modules/.bin/next dev -p 4104' },
+    { port: 4104 },
+  ],
+  [
+    'two statements before next dev',
+    { dev: 'A=1 && B=2; next dev -p 4419' },
+    { port: 4419 },
+  ],
+  [
+    'concurrently with one next dev',
+    { dev: 'concurrently "next dev -p 4414" "A=1 && B=2"' },
+    { port: 4414 },
+  ],
+  [
+    'concurrently around a delegation',
+    {
+      dev: "concurrently 'npm run web' 'A=1 && B=2'",
+      web: 'next dev -p 4117',
+    },
+    { port: 4117, delegate: 'web' },
+  ],
+  [
+    'npm run',
+    { dev: 'npm run web', web: 'next dev -p 4406' },
+    { port: 4406, delegate: 'web' },
+  ],
+  [
+    'npm run-script',
+    { dev: 'npm run-script web', web: 'next dev -p 4418' },
+    { port: 4418, delegate: 'web' },
+  ],
+  [
+    'pnpm run',
+    { dev: 'pnpm run web', web: 'next dev -p 4407' },
+    { port: 4407, delegate: 'web' },
+  ],
+  [
+    'pnpm name',
+    { dev: 'pnpm web', web: 'PORT=4408 next dev' },
+    { port: 4408, delegate: 'web', assignment: true },
+  ],
+  [
+    'yarn name',
+    { dev: 'yarn web', web: 'next dev --port=4409' },
+    { port: 4409, delegate: 'web' },
+  ],
+  [
+    'yarn run',
+    { dev: 'yarn run web', web: 'next dev -p 4121' },
+    { port: 4121, delegate: 'web' },
+  ],
+  [
+    'bun run',
+    { dev: 'bun run web', web: 'next dev -p 4422' },
+    { port: 4422, delegate: 'web' },
   ],
   [
     'an assignment before a delegation',
     { dev: 'PORT=4423 pnpm web', web: 'next dev' },
-    4423,
+    { port: 4423, delegate: 'web', assignment: true },
+  ],
+  [
+    'an export before a delegation',
+    { dev: 'export PORT=4424 && npm run web', web: 'next dev' },
+    { port: 4424, delegate: 'web', assignment: true },
   ],
   [
     'cross-env before a delegation',
-    { dev: 'cross-env PORT=4424 npm run web', web: 'next dev' },
-    4424,
+    { dev: 'cross-env PORT=4425 npm run web', web: 'next dev' },
+    { port: 4425, delegate: 'web', assignment: true },
   ],
   [
     'a delegated script that assigns its own',
-    { dev: 'PORT=4425 pnpm web', web: 'PORT=4426 next dev' },
-    4426,
+    { dev: 'PORT=4426 pnpm web', web: 'PORT=4427 next dev' },
+    { port: 4427, delegate: 'web', assignment: true },
+  ],
+  [
+    'a delegation through two scripts',
+    { dev: 'npm run a', a: 'npm run b', b: 'next dev -p 4119' },
+    { port: 4119, delegate: 'b' },
+  ],
+  [
+    'a script name that contains next',
+    { dev: 'npm run dev:next', 'dev:next': 'next dev -p 4428' },
+    { port: 4428, delegate: 'dev:next' },
   ],
 ] as const)
   test(`the dev script declares its port through ${name}`, async () => {
     // Arrange
     const files = { 'package.json': packageScripts(scripts) }
+    const where =
+      'delegate' in expected
+        ? `the "${expected.delegate}" script that the dev script runs in package.json`
+        : 'the dev script in package.json'
 
     // Act
     const declared = await declaredPortOf(files)
 
     // Assert
-    assert.equal(declared.port, expected)
+    assert.deepEqual(declared, {
+      port: expected.port,
+      source:
+        'assignment' in expected && expected.assignment
+          ? `a PORT assignment in ${where}`
+          : where,
+    })
   })
 
-// Value: protects=only `next dev` (or a bare `next`) counts, and an unrelated command's port is never taken (F430 L2); fails_when=`next build -p`, a helper script or another program's -p moves the app; why_new=OCR L2; seam=temporary project folders; no_claim=every runner syntax
-for (const [name, scripts] of [
-  ['next build', { dev: 'next build -p 4431 && next dev' }],
+// Value: protects=a `next dev` with no port anywhere is read, so the run takes Next's default 3000 with no unread note (D72); fails_when=a plain next dev or a PORT-free chain is reported as unread; why_new=D72 grammar; seam=temporary project folders; no_claim=that 3000 is free
+for (const [name, script] of [
+  ['a plain next dev', 'next dev'],
+  ['next dev with only flags that take no port', 'next dev --turbo'],
+  ['variables that do not name the port', 'NODE_ENV=x next dev'],
+] as const)
+  test(`${name} reports Next's default with no unread note`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
+  })
+
+// Value: protects=a PORT in the project's env files no longer moves the port (Next reads PORT from the command line and the process environment before it loads .env files); fails_when=an env file's PORT is used again; why_new=D67/F431; seam=temporary project folders; no_claim=Next's own env loading
+test('a PORT in the env files does not move the port', async () => {
+  // Arrange
+  const files = {
+    'package.json': packageScripts({ dev: 'next dev' }),
+    '.env': 'PORT=4451\n',
+    '.env.local': 'PORT=4452\n',
+    '.env.development.local': 'export PORT=4453\n',
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
+})
+
+// Value: protects=a project with no dev script declares no port and starts on Next's default; fails_when=a missing dev script is reported as an unread form; why_new=reader rewrite (D72); seam=temporary project folders; no_claim=that the project can start
+test('a project without a dev script starts on Next default 3000', async () => {
+  // Arrange
+  const files = { 'package.json': packageScripts({ build: 'next build' }) }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
+})
+
+/** Every form the review rounds found (tasks F421, F430, F451, F461 to F465, F469 to F472, F478 to F481, F487 to F492, F497) with the scripts it needs, outside the grammar: the reader asserts no port and says so. */
+const UNREAD_FORMS: ReadonlyArray<readonly [string, Record<string, string>]> = [
+  // F421, F430
+  ['next build before next dev', { dev: 'next build -p 4431 && next dev' }],
   [
     'a delegated helper that builds',
     { dev: 'pnpm gen && next dev', gen: 'next build -p 4432' },
@@ -163,8 +298,247 @@ for (const [name, scripts] of [
       c: 'next dev -p 4434',
     },
   ],
-] as const)
-  test(`${name} does not decide the port and the default is reported`, async () => {
+  ['a backgrounding &', { dev: 'node api.js -p 5000 & next dev -p 4419' }],
+  [
+    'a backgrounded assignment',
+    { dev: 'PORT=5000 node api.js & next dev -p 4420' },
+  ],
+  ['a shell default as an assignment', { dev: 'PORT=${PORT:-4421} next dev' }],
+  [
+    'a delegation with arguments',
+    { dev: 'pnpm web -- -p 4410', web: 'next dev' },
+  ],
+  ['mkdir before next dev', { dev: 'mkdir -p 5 && next dev -p 4500' }],
+  // F451
+  ['cmd /c', { dev: 'cmd /c "set PORT=4101&& next dev"' }],
+  [
+    'cmd.exe with its own flags',
+    { dev: 'cmd.exe /d /s /c "next dev -p 4102"' },
+  ],
+  ['a next.cmd launcher', { dev: 'next.cmd dev -p 4103' }],
+  [
+    'a Windows path to next.cmd',
+    { dev: 'node_modules\\.bin\\next.cmd dev -p 4104' },
+  ],
+  ['cross-env-shell', { dev: 'cross-env-shell "PORT=4105 next dev"' }],
+  ['sh -c', { dev: "sh -c 'next dev -p 4106'" }],
+  ['bash -c', { dev: 'bash -c "PORT=4107 next dev"' }],
+  ['dotenv', { dev: 'dotenv -e .env -- next dev -p 4108' }],
+  ['dotenvx run', { dev: 'dotenvx run -- next dev -p 4122' }],
+  ['env -u with an assignment', { dev: 'env -u X PORT=4109 next dev' }],
+  [
+    'node with its own flags',
+    { dev: 'node --inspect node_modules/.bin/next dev -p 4110' },
+  ],
+  [
+    'node with a preload',
+    {
+      dev: 'node --require ./setup.js node_modules/next/dist/bin/next dev -p 4111',
+    },
+  ],
+  ['pnpm next', { dev: 'pnpm next dev -p 4113' }],
+  ['npm exec --', { dev: 'npm exec -- next dev -p 4123' }],
+  ['bun naming a script', { dev: 'bun web', web: 'next dev -p 4116' }],
+  [
+    'concurrently npm:<script>',
+    { dev: 'concurrently npm:dev:web', 'dev:web': 'next dev -p 4117' },
+  ],
+  [
+    'a concurrently wildcard',
+    { dev: 'concurrently npm:dev:*', 'dev:web': 'next dev -p 4118' },
+  ],
+  [
+    'concurrently with a program outside the grammar',
+    { dev: 'concurrently "tsc -w" "next dev -p 4124"' },
+  ],
+  [
+    'concurrently with two next dev commands',
+    { dev: 'concurrently "next dev -p 4125" "next dev -p 4126"' },
+  ],
+  ['a shell default in the port flag', { dev: 'next dev -p ${PORT:-4120}' }],
+  [
+    'a quoted shell default in the port flag',
+    { dev: 'next dev --port "${PORT:-4121}"' },
+  ],
+  ['a subshell', { dev: '(cd app && next dev -p 4000)' }],
+  [
+    'a subshell followed by the real command',
+    { dev: '(echo starting) && next dev -p 4130' },
+  ],
+  ['an unknown wrapper', { dev: 'turbo-run next dev -p 4000' }],
+  ['a port flag with a variable', { dev: 'next dev -p $APP_PORT' }],
+  ['a PORT assignment with a variable', { dev: 'PORT=$APP_PORT next dev' }],
+  ['a delegation cycle', { dev: 'npm run dev' }],
+  // F461, F462
+  ['an upper-case SET', { dev: 'SET PORT=4501&& next dev' }],
+  ['a mixed-case Set', { dev: 'Set PORT=4502 && next dev' }],
+  ['setx', { dev: 'setx PORT 4504 && next dev' }],
+  ['dotenv -v PORT', { dev: 'dotenv -v PORT=4511 -- next dev' }],
+  ['dotenvx --env PORT', { dev: 'dotenvx run --env PORT=4513 -- next dev' }],
+  // F450, F465, F472: comments and escapes
+  ['a comment after the command', { dev: 'next dev # -p 4000' }],
+  ['a comment after the port', { dev: 'next dev -p 4150 # -p 5000' }],
+  ['a hash inside a word', { dev: 'next dev -p 4154#x' }],
+  ['a quoted hash', { dev: 'next dev -p 4152 "#" -p 4153' }],
+  ['an escaped semicolon', { dev: 'next dev -p 4521 \\; next dev -p 5521' }],
+  [
+    'an escaped quote inside double quotes',
+    { dev: 'node -e "x \\" ; y" && next dev -p 4522' },
+  ],
+  ['a hash in cmd /c text', { dev: 'cmd /c "next dev # -p 4523"' }],
+  ['an escaped backslash', { dev: 'a\\\\ b; next dev -p 4524' }],
+  // F463, F470, F471: ${PORT:-N}, resolved and unresolved assignments
+  [
+    'an earlier export with a shell default',
+    { dev: 'export PORT=5001; next dev -p ${PORT:-4001}' },
+  ],
+  [
+    'a single-quoted sh -c with a shell default',
+    { dev: "PORT=5003 sh -c 'next dev -p ${PORT:-4003}'" },
+  ],
+  [
+    'a delegated script with a shell default',
+    { dev: 'PORT=5004 pnpm web', web: 'next dev -p ${PORT:-4004}' },
+  ],
+  [
+    'a shell default in cmd /c text',
+    { dev: 'cmd /c "next dev -p ${PORT:-4000}"' },
+  ],
+  [
+    'an export of a variable',
+    { dev: 'export PORT=$APP_PORT; next dev -p ${PORT:-4009}' },
+  ],
+  [
+    'a known assignment then an unresolved one',
+    { dev: 'PORT=4000 PORT=$APP_PORT next dev' },
+  ],
+  [
+    'an unresolved assignment then a known one',
+    { dev: 'PORT=$APP_PORT PORT=4000 next dev' },
+  ],
+  [
+    'an unset after an export',
+    { dev: 'export PORT=4000; unset PORT; next dev' },
+  ],
+  ['an empty export', { dev: 'export PORT=4000; export PORT=; next dev' }],
+  [
+    'an unset inside a nested sh -c',
+    { dev: 'PORT=4000 sh -c "unset PORT; next dev"' },
+  ],
+  ['a bare shell variable', { dev: 'PORT=5000; next dev' }],
+  [
+    'a bare shell variable exported later',
+    { dev: 'PORT=5000; export PORT; next dev' },
+  ],
+  [
+    'a bare assignment to a PORT that is already exported',
+    { dev: 'export PORT=3300; PORT=5000; next dev' },
+  ],
+  [
+    'PORT assigned after export on one line',
+    { dev: 'PORT=4028 export PORT; next dev' },
+  ],
+  // F478 to F481: statements that change PORT
+  ['unset -v', { dev: 'export PORT=4000; unset -v PORT; next dev' }],
+  ['unset of two names', { dev: 'export PORT=4000; unset X PORT; next dev' }],
+  ['export -n', { dev: 'export PORT=4000; export -n PORT; next dev' }],
+  ['export of an extra name', { dev: 'export X PORT=4000; next dev' }],
+  ['declare -x', { dev: 'declare -x PORT=4000; next dev' }],
+  ['typeset -x', { dev: 'typeset -x PORT=4000; next dev' }],
+  ['command export', { dev: 'command export PORT=4000; next dev' }],
+  ['builtin export', { dev: 'builtin export PORT=4000; next dev' }],
+  ['a piped export', { dev: 'export PORT=4000 | next dev' }],
+  ['an export in a group', { dev: '{ export PORT=4000; }; next dev' }],
+  ['an export in a subshell', { dev: '( export PORT=4000 ); next dev' }],
+  ['an export after &&', { dev: 'true && export PORT=4000; next dev' }],
+  ['an export after ||', { dev: 'false || export PORT=4000; next dev' }],
+  ['env -i', { dev: 'export PORT=4000; env -i next dev' }],
+  ['env -', { dev: 'export PORT=4000; env - next dev' }],
+  [
+    'env --ignore-environment',
+    { dev: 'export PORT=4000; env --ignore-environment next dev' },
+  ],
+  ['env -u PORT', { dev: 'export PORT=4000; env -u PORT next dev' }],
+  ['env --unset=PORT', { dev: 'export PORT=4000; env --unset=PORT next dev' }],
+  ['an export of two assignments', { dev: 'export A=1 PORT=4000; next dev' }],
+  [
+    'an unmodeled set before an export',
+    { dev: 'set -e; export PORT=4000; next dev' },
+  ],
+  // F487: compound commands
+  [
+    'an if that exports PORT',
+    { dev: 'if true; then export PORT=4000; fi; next dev' },
+  ],
+  [
+    'a while that exports PORT',
+    { dev: 'while :; do export PORT=4000; break; done; next dev' },
+  ],
+  ['a negated export', { dev: '! export PORT=4000; next dev' }],
+  ['a timed export', { dev: 'time export PORT=4000; next dev' }],
+  // F488: expansions that set PORT
+  [
+    'a ${PORT:=N} expansion',
+    { dev: ': "${PORT:=4000}"; export PORT; next dev' },
+  ],
+  [
+    'an arithmetic assignment',
+    { dev: ': $((PORT=4000)); export PORT; next dev' },
+  ],
+  // F489: scripts that never run next dev
+  ['turbo run', { dev: 'turbo run dev' }],
+  ['pnpm --filter', { dev: 'pnpm --filter web dev' }],
+  ['yarn workspace', { dev: 'yarn workspace web dev' }],
+  ['nx', { dev: 'nx dev web' }],
+  ['node server.js', { dev: 'node server.js' }],
+  ['vite', { dev: 'vite' }],
+  ['a delegation to a script that is missing', { dev: 'npm run nothere' }],
+  ['only assignments', { dev: 'A=1' }],
+  // F490: arguments to a delegated script
+  [
+    'flags given to a delegated script',
+    { dev: 'npm run other -p 5000', other: 'next dev -p 4444' },
+  ],
+  // F491
+  ['npx -c', { dev: 'npx -c "next dev -p 4000"' }],
+  ['env -S', { dev: "env -S 'PORT=4000 next dev'" }],
+  ['node -r', { dev: 'node -r ./preload.js node_modules/.bin/next dev' }],
+  [
+    'NODE_OPTIONS with a preload',
+    { dev: 'NODE_OPTIONS=--require=./setup.js next dev' },
+  ],
+  ['a PATH override', { dev: 'PATH=./bin next dev -p 4000' }],
+  ['a variable as the program', { dev: '$NEXT dev' }],
+  ['a port with an escaped zero', { dev: 'next dev -p 40\\00' }],
+  ['a heredoc', { dev: 'next dev -p 4000 <<EOF' }],
+  ['a single-quoted shell default', { dev: "next dev -p '${PORT:-4000}'" }],
+  ['an escaped shell default', { dev: 'next dev -p \\${PORT:-4000}' }],
+  ['a line break', { dev: 'export PORT=4000\nnext dev' }],
+  ['a continued line', { dev: 'next dev \\\n -p 4000' }],
+  ['a pipe', { dev: 'next dev -p 4000 | tee log' }],
+  ['||', { dev: 'next dev -p 4000 || true' }],
+  ['a redirection', { dev: 'next dev -p 4000 > log' }],
+  ['a command substitution', { dev: 'next dev -p $(echo 4000)' }],
+  ['a backtick', { dev: 'next dev -p `echo 4000`' }],
+  ['a glob', { dev: 'next dev -p 40*' }],
+  ['a port of zero', { dev: 'next dev -p 0' }],
+  ['a port above the range', { dev: 'next dev -p 70000' }],
+  ['-p=N', { dev: 'next dev -p=4200' }],
+  ['a missing flag value', { dev: 'next dev -p' }],
+  ['a positional directory', { dev: 'next dev ./app -p 4000' }],
+  ['a flag outside the list', { dev: 'next dev --inspect -p 4000' }],
+  ['an unterminated quote', { dev: 'next dev -p "4000' }],
+  ['an empty statement', { dev: 'next dev -p 4000 &&' }],
+  // F497
+  [
+    'an export that a failed && skips',
+    { dev: 'false && export PORT=4000 && true; next dev' },
+  ],
+]
+
+// Value: protects=every form the review rounds found is outside the grammar, so the reader asserts no port for it and says Next's default 3000 was taken because of a form it does not read, never a wrong port (D72 rule 3; F421 to F497); fails_when=one of the forms reads a port again or falls back to 3000 with no note; why_new=D72 replaces the deny-list of D71 that three rounds could not complete; seam=temporary project folders; no_claim=what the shell does with the form (the real-shell test below checks the grammar's own forms)
+for (const [name, scripts] of UNREAD_FORMS)
+  test(`${name} is unread and takes Next's default 3000 with the unread note`, async () => {
     // Arrange
     const files = { 'package.json': packageScripts(scripts) }
 
@@ -173,233 +547,49 @@ for (const [name, scripts] of [
 
     // Assert
     assert.equal(declared.port, 3000)
-    assert.match(declared.source, /^Next's default port/)
+    assert.ok(declared.source.startsWith(`${UNREAD_NOTE}: "`), declared.source)
   })
 
-/** What `applicationPortSource` starts with when the dev script has a form the reader does not read (D68). */
-const UNREAD_SOURCE = (segment: string): string =>
-  `Next's default port, taken because the dev script has a form Codebook does not read: "${segment}"`
-
-// Value: protects=each form D68 lists is read, so the app starts on the port the project's own dev script uses (F451); fails_when=a form falls back silently to 3000 while the script declares another port; why_new=OCR medium of the review of 944a4d25..6bc9eab2, reproduced for each form; seam=temporary project folders; no_claim=that the shell or Next accepts each form
-for (const [name, scripts, expected] of [
-  [
-    'cmd /c with a set before &&',
-    { dev: 'cmd /c "set PORT=4101&& next dev"' },
-    {
-      port: 4101,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'cmd.exe with its own flags',
-    { dev: 'cmd.exe /d /s /c "next dev -p 4102"' },
-    { port: 4102, source: 'the dev script in package.json' },
-  ],
-  [
-    'a next.cmd launcher',
-    { dev: 'next.cmd dev -p 4103' },
-    { port: 4103, source: 'the dev script in package.json' },
-  ],
-  [
-    'a Windows path to next.cmd',
-    { dev: 'node_modules\\.bin\\next.cmd dev -p 4104' },
-    { port: 4104, source: 'the dev script in package.json' },
-  ],
-  [
-    'cross-env-shell',
-    { dev: 'cross-env-shell "PORT=4105 next dev"' },
-    {
-      port: 4105,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'sh -c',
-    { dev: "sh -c 'next dev -p 4106'" },
-    { port: 4106, source: 'the dev script in package.json' },
-  ],
-  [
-    'bash -c with an assignment',
-    { dev: 'bash -c "PORT=4107 next dev"' },
-    {
-      port: 4107,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'dotenv before --',
-    { dev: 'dotenv -e .env -- next dev -p 4108' },
-    { port: 4108, source: 'the dev script in package.json' },
-  ],
-  [
-    'env -u with an assignment',
-    { dev: 'env -u X PORT=4109 next dev' },
-    {
-      port: 4109,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'node with its own flags and a path to next',
-    { dev: 'node --inspect node_modules/.bin/next dev -p 4110' },
-    { port: 4110, source: 'the dev script in package.json' },
-  ],
-  [
-    'node with a flag that takes a value',
-    {
-      dev: 'node --require ./setup.js node_modules/next/dist/bin/next dev -p 4111',
-    },
-    { port: 4111, source: 'the dev script in package.json' },
-  ],
-  [
-    'yarn next',
-    { dev: 'yarn next dev -p 4112' },
-    { port: 4112, source: 'the dev script in package.json' },
-  ],
-  [
-    'pnpm next',
-    { dev: 'pnpm next dev -p 4113' },
-    { port: 4113, source: 'the dev script in package.json' },
-  ],
-  [
-    'bunx next',
-    { dev: 'bunx next dev -p 4114' },
-    { port: 4114, source: 'the dev script in package.json' },
-  ],
-  [
-    'npm exec --',
-    { dev: 'npm exec -- next dev -p 4123' },
-    { port: 4123, source: 'the dev script in package.json' },
-  ],
-  [
-    'dotenvx run',
-    { dev: 'dotenvx run -- next dev -p 4122' },
-    { port: 4122, source: 'the dev script in package.json' },
-  ],
-  [
-    'bun naming a script',
-    { dev: 'bun web', web: 'next dev -p 4116' },
-    {
-      port: 4116,
-      source: 'the "web" script that the dev script runs in package.json',
-    },
-  ],
-  [
-    'concurrently npm:<script>',
-    { dev: 'concurrently npm:dev:web', 'dev:web': 'next dev -p 4117' },
-    {
-      port: 4117,
-      source: 'the "dev:web" script that the dev script runs in package.json',
-    },
-  ],
-  [
-    'concurrently pnpm:<script> after another command',
-    {
-      dev: 'concurrently "tsc -w" pnpm:web',
-      web: 'next dev -p 4124',
-    },
-    {
-      port: 4124,
-      source: 'the "web" script that the dev script runs in package.json',
-    },
-  ],
-  [
-    'a concurrently wildcard that names exactly one script',
-    {
-      dev: 'concurrently npm:dev:*',
-      'dev:web': 'next dev -p 4118',
-      lint: 'eslint .',
-    },
-    {
-      port: 4118,
-      source: 'the "dev:web" script that the dev script runs in package.json',
-    },
-  ],
-  [
-    'a delegation through two scripts',
-    { dev: 'npm run a', a: 'npm run b', b: 'next dev -p 4119' },
-    {
-      port: 4119,
-      source: 'the "b" script that the dev script runs in package.json',
-    },
-  ],
-  [
-    'a shell default in the port flag',
-    { dev: 'next dev -p ${PORT:-4120}' },
-    { port: 4120, source: 'the dev script in package.json' },
-  ],
-  [
-    'a quoted shell default in the port flag',
-    { dev: 'next dev --port "${PORT:-4121}"' },
-    { port: 4121, source: 'the dev script in package.json' },
-  ],
-  [
-    'a subshell followed by the real command',
-    { dev: '(echo starting) && next dev -p 4130' },
-    { port: 4130, source: 'the dev script in package.json' },
-  ],
-] as const)
-  test(`the dev script form ${name} declares its port`, async () => {
-    // Arrange
-    const files = { 'package.json': packageScripts(scripts) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, expected)
-  })
-
-// Value: protects=a dev script segment the reader cannot interpret is told in the port source instead of silently taking 3000 (D68); fails_when=the source says only "Next's default port" for a subshell, an unknown wrapper or an unresolvable variable, or quotes a secret value; why_new=F451; seam=temporary project folders; no_claim=that the learner's script runs on 3000
+// Value: protects=the quoted segment of an unread script shows the structure D72 rule 2 allows: grammar words by base name, listed flag names, assignment names in an assignment position, script names; fails_when=a value, an operand, a path or a first program word is shown; why_new=D72 rule 2 (F481, F492, F496); seam=temporary project folders; no_claim=that a listed name holds no secret
 for (const [name, scripts, segment] of [
-  ['a subshell', { dev: '(cd app && next dev -p 4000)' }, '( cd …'],
+  [
+    'a subshell',
+    { dev: '(cd app && next dev -p 4000)' },
+    '… … … next dev -p …',
+  ],
   [
     'an unknown wrapper',
     { dev: 'turbo-run next dev -p 4000' },
-    'turbo-run next dev -p …',
+    '… next dev -p …',
   ],
   [
-    'a port flag with a variable it cannot resolve',
+    'a port flag with a variable',
     { dev: 'next dev -p $APP_PORT' },
     'next dev -p …',
   ],
   [
-    'a PORT assignment with a variable it cannot resolve',
+    'a PORT assignment with a variable',
     { dev: 'PORT=$APP_PORT next dev' },
     'PORT=… next dev',
   ],
   [
     'a secret assignment before an unknown wrapper',
     { dev: 'API_KEY=secret123 turbo-run next dev' },
-    'API_KEY=… turbo-run next dev',
+    'API_KEY=… … next dev',
   ],
   [
-    'a concurrently wildcard that names two scripts',
-    {
-      dev: 'concurrently npm:dev:*',
-      'dev:web': 'next dev -p 4000',
-      'dev:api': 'node api.js',
-    },
-    'npm:dev:*',
+    'a delegation with arguments',
+    { dev: 'npm run web --silent -- -p 4000', web: 'next dev' },
+    'npm run web --silent -- -p …',
   ],
-  ['a delegation cycle', { dev: 'npm run dev' }, 'npm run dev'],
+  ['a delegation to a missing script', { dev: 'npm run nothere' }, 'npm run …'],
   [
-    'a delegation deeper than the nesting limit',
-    {
-      dev: 'npm run a',
-      a: 'npm run b',
-      b: 'npm run c',
-      c: 'next dev -p 4000',
-    },
-    'npm run c',
-  ],
-  [
-    'a terminal control sequence in the segment',
+    'a terminal control sequence',
     { dev: 'turbo-run \u001b[31m next dev -p 4000' },
-    'turbo-run … next dev -p …',
+    '… … next dev -p …',
   ],
 ] as const)
-  test(`${name} makes the port source say Next's default was taken for a form Codebook does not read`, async () => {
+  test(`${name} is quoted by structure only in the port source`, async () => {
     // Arrange
     const files = { 'package.json': packageScripts(scripts) }
 
@@ -410,11 +600,170 @@ for (const [name, scripts, segment] of [
     assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE(segment) })
   })
 
-test('a long unread segment is cut to 120 characters in the port source', async () => {
+// Value: protects=no value reaches applicationPortSource (the run resource and MCP): not one found in F464, F469, F481, F492 and F496 (flag values, =values, attached -pSECRET, header lines, Bearer and Basic tokens, user:pass@host, multi-line words, path-like operands, a program path, long flag names that carry a value, base64 padding with = or ==); fails_when=any secret below appears in the source; why_new=D72 rule 2 replaces the masking by name; seam=temporary project folders; no_claim=that a listed program, flag or script name holds no secret
+for (const [name, script, secret] of [
+  ['a value after a token flag', 'turbo-run --token abc123 next dev', 'abc123'],
+  [
+    'an api-key value joined with =',
+    'turbo-run --api-key=abc123 next dev',
+    'abc123',
+  ],
+  [
+    'a passphrase flag value',
+    'turbo-run --passphrase abc123 next dev',
+    'abc123',
+  ],
+  ['a signature flag value', 'turbo-run --signature abc123 next dev', 'abc123'],
+  ['an sso flag value', 'turbo-run --sso abc123 next dev', 'abc123'],
+  [
+    'a value attached to a short flag',
+    'turbo-run -pSECRET123 next dev',
+    'SECRET123',
+  ],
+  [
+    'a Bearer token as its own word',
+    'turbo-run Bearer abc123 next dev',
+    'abc123',
+  ],
+  [
+    'a Basic token after an Authorization header word',
+    'turbo-run Authorization: Basic abc123 next dev',
+    'abc123',
+  ],
+  [
+    'user and password in a URL without a scheme',
+    'turbo-run ada:pw123@example.com next dev',
+    'pw123',
+  ],
+  [
+    'URL credentials',
+    'turbo-run https://ada:pw123@example.com/x next dev',
+    'pw123',
+  ],
+  [
+    'a -H header value',
+    'turbo-run -H "Authorization: Basic abc123" next dev',
+    'abc123',
+  ],
+  [
+    'a header value attached to -H',
+    'turbo-run -HX-Api-Key:abc123 next dev',
+    'abc123',
+  ],
+  ['a -u user and password', 'turbo-run -u ada:pw123 next dev', 'pw123'],
+  ['a --data-raw body', 'turbo-run --data-raw body123 next dev', 'body123'],
+  [
+    'an assignment name with a dash and a dot',
+    'my-key.x=abc123 turbo-run next dev',
+    'my-key',
+  ],
+  ['a secret assignment value', 'API_KEY=abc123 turbo-run next dev', 'abc123'],
+  [
+    'a multi-line quoted word',
+    'turbo-run "first line\nAuthorization: Basic abc123\nlast line" next dev',
+    'abc123',
+  ],
+  ['a host and port word', 'turbo-run localhost:3000 next dev', 'localhost'],
+  [
+    'the home directory in an operand',
+    `turbo-run ${homedir()}/.nvm/bin/tool next dev`,
+    homedir(),
+  ],
+  [
+    'the home directory in the program',
+    `${homedir()}/bin/turbo-run next dev`,
+    homedir(),
+  ],
+  ['a path-like operand ending in dev', 'hunter2/dev next dev', 'hunter2'],
+  [
+    'a customer folder before next',
+    '/opt/customer-acme/next dev -p $X',
+    'customer-acme',
+  ],
+  ['a key file folder before next', '~/.ssh/id_rsa/next dev', 'id_rsa'],
+  [
+    'a long flag name that carries a value',
+    'turbo-run --api-key-sk_live_abc123 next dev',
+    'sk_live_abc123',
+  ],
+  [
+    'a key after the end of options',
+    'turbo-run -- --AKIAIOSFODNN7EXAMPLE next dev',
+    'AKIAIOSFODNN7EXAMPLE',
+  ],
+  ['a first program word', 'secret-tool-9 next dev', 'secret-tool-9'],
+  ['base64 padding with ==', 'turbo-run dXNlcjpwdw== next dev', 'dXNlcjpwdw'],
+  [
+    'base64 padding after a short flag',
+    'turbo-run -pSGVsbG8= next dev',
+    'SGVsbG8',
+  ],
+  [
+    'base64 padding with = as an operand',
+    'turbo-run abc123= next dev',
+    'abc123',
+  ],
+  [
+    'an assignment after the program',
+    'turbo-run SECRETNAME=abc next dev',
+    'SECRETNAME',
+  ],
+] as const)
+  test(`${name} is not quoted in the port source`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.port, 3000)
+    assert.ok(declared.source.startsWith(UNREAD_NOTE))
+    assert.equal(declared.source.includes(secret), false)
+  })
+
+// Value: protects=the two base64 forms F496 found are shown as nothing but `…`; fails_when=`dXNlcjpwdw==` is shown as `dXNlcjpwdw=…` or `-pSGVsbG8=` as `-pSGVsbG8=…`; why_new=F496 (CodeRabbit CLI of c9664ea3..673b2923); seam=temporary project folders; no_claim=other encodings
+for (const [name, script, segment] of [
+  [
+    'an operand ending in ==',
+    'turbo-run dXNlcjpwdw== next dev',
+    '… … next dev',
+  ],
+  [
+    'a short flag with a value ending in =',
+    'turbo-run -pSGVsbG8= next dev',
+    '… -p… next dev',
+  ],
+  [
+    'an assignment with an empty value',
+    'API_KEY= turbo-run next dev',
+    '… … next dev',
+  ],
+  [
+    'an assignment whose value is only =',
+    'API_KEY== turbo-run next dev',
+    '… … next dev',
+  ],
+] as const)
+  test(`${name} is shown as an ellipsis`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE(segment) })
+  })
+
+// Value: protects=a package.json script name that reaches the run resource has no control character and is cut (F492); fails_when=a name with a line break or an escape sequence, or a very long name, is quoted raw; why_new=F492 (confirmed: a script name reached applicationPortSource raw); seam=temporary project folders; no_claim=that the reader can follow a name with control characters (it cannot: such a name is no word of the grammar)
+test('a long script name is cut in the port source', async () => {
   // Arrange
+  const name = `web${'x'.repeat(100)}`
   const files = {
     'package.json': packageScripts({
-      dev: `turbo-run next dev ${Array.from({ length: 40 }, (_, index) => `--flag-number-${index}`).join(' ')}`,
+      dev: `npm run ${name}`,
+      [name]: 'next dev -p 4001',
     }),
   }
 
@@ -422,12 +771,31 @@ test('a long unread segment is cut to 120 characters in the port source', async 
   const declared = await declaredPortOf(files)
 
   // Assert
-  const quoted = declared.source.slice(declared.source.indexOf('"') + 1, -1)
-  assert.equal(Array.from(quoted).length, 120)
-  assert.ok(quoted.endsWith('… [cut]'))
+  assert.deepEqual(declared, {
+    port: 4001,
+    source: `the "web${'x'.repeat(37)}…" script that the dev script runs in package.json`,
+  })
 })
 
-// Value: protects=a delegation chain exactly at the nesting limit is read and one step further is told as unread (F458); fails_when=the limit is checked only for concurrently, so a delegation loop is followed too deep or stops one level early; why_new=CodeRabbit CLI trivial of the review of 944a4d25..6bc9eab2; seam=temporary project folders; no_claim=other depths
+test('a script name with a line break and an escape sequence is never followed or quoted', async () => {
+  // Arrange
+  const files = {
+    'package.json': packageScripts({
+      dev: 'npm run web',
+      'web\n\u001b[31m': 'next dev -p 4002',
+    }),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE('npm run …') })
+  assert.equal(declared.source.includes('\u001b'), false)
+  assert.equal(declared.source.includes('\n'), false)
+})
+
+// Value: protects=a delegation chain exactly at the nesting limit is read and one step further is unread (F458); fails_when=the limit is off by one; why_new=CodeRabbit CLI trivial of the review of 944a4d25..6bc9eab2; seam=temporary project folders; no_claim=other depths
 test('a delegation chain of exactly the nesting limit is read', async () => {
   // Arrange
   const files = {
@@ -449,123 +817,141 @@ test('a delegation chain of exactly the nesting limit is read', async () => {
   })
 })
 
-// Value: protects=the last -p/--port wins, as in Next's own parser (F452); fails_when=the first value is taken and the app starts on a port its own `next dev` would not use; why_new=OCR low of the review of 944a4d25..6bc9eab2 (`next dev -p 4000 -p 5000` runs on 5000); seam=temporary project folders; no_claim=Next's parser
-for (const [script, port] of [
-  ['next dev -p 4140 -p 4141', 4141],
-  ['next dev --port 4142 -p=4143', 4143],
-  ['next dev -p 4144 --port=4145 --turbo', 4145],
-] as const)
-  test(`the dev script "${script}" declares the last port ${port}`, async () => {
-    // Arrange
-    const files = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, {
-      port,
-      source: 'the dev script in package.json',
-    })
-  })
-
-// Value: protects=an unquoted # at the start of a word is a shell comment, so a port written after it is not the app's (F450); fails_when=`next dev # -p 4000` reads 4000 while the shell runs 3000; why_new=OCR medium of the review of 944a4d25..6bc9eab2, reproduced; seam=temporary project folders; no_claim=quoted or mid-word # (kept as text)
-for (const [name, script, expected] of [
-  [
-    'a comment after the command',
-    'next dev # -p 4000',
-    { port: 3000, source: "Next's default port" },
-  ],
-  [
-    'a comment after the port',
-    'next dev -p 4150 # -p 5000',
-    { port: 4150, source: 'the dev script in package.json' },
-  ],
-  [
-    'a comment that holds a separator',
-    'next dev -p 4151 # && next dev -p 5000',
-    { port: 4151, source: 'the dev script in package.json' },
-  ],
-  [
-    'a quoted hash',
-    'next dev -p 4152 "#" -p 4153',
-    { port: 4153, source: 'the dev script in package.json' },
-  ],
-  [
-    'a hash inside a word',
-    'next dev -p 4154#x',
-    { port: 3000, source: "Next's default port" },
-  ],
-] as const)
-  test(`${name} is read as the shell reads it`, async () => {
-    // Arrange
-    const files = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, expected)
-  })
-
-// Value: protects=applicationPortSource names the step that gave the port (D67); fails_when=a flag, an assignment or a delegation is reported as another step; why_new=D67 asks for the step in the source; seam=temporary project folders; no_claim=wording of the refusal
-for (const [name, scripts, source] of [
-  ['a flag', { dev: 'next dev -p 4441' }, 'the dev script in package.json'],
-  [
-    'an assignment',
-    { dev: 'PORT=4442 next dev' },
-    'a PORT assignment in the dev script in package.json',
-  ],
-  [
-    'a delegated flag',
-    { dev: 'pnpm web', web: 'next dev -p 4443' },
-    'the "web" script that the dev script runs in package.json',
-  ],
-  [
-    'an assignment before a delegation',
-    { dev: 'PORT=4444 pnpm web', web: 'next dev' },
-    'a PORT assignment in the "web" script that the dev script runs in package.json',
-  ],
-] as const)
-  test(`the port source names ${name}`, async () => {
-    // Arrange
-    const files = { 'package.json': packageScripts(scripts) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.equal(declared.source, source)
-  })
-
-// Changed existing tests (D67, F431): the cases "a PORT in .env.development.local wins…" and "only the PORT line of an env file is used…" read PORT from .env files; Next reads PORT before it loads them, so they are replaced by this one.
-// Value: protects=a PORT in the project's env files no longer moves the port (Next reads PORT from the command line and the process environment before it loads .env files); fails_when=an env file's PORT is used again and the app starts on a port the project's own `pnpm dev` never uses; why_new=D67/F431; seam=temporary project folders; no_claim=Next's own env loading
-test('a PORT in the env files does not move the port', async () => {
+test('a long unread segment is cut to 120 characters in the port source', async () => {
   // Arrange
   const files = {
-    'package.json': packageScripts({ dev: 'next dev' }),
-    '.env': 'PORT=4451\n',
-    '.env.local': 'PORT=4452\n',
-    '.env.development.local': 'export PORT=4453\n',
+    'package.json': packageScripts({
+      dev: `turbo-run next dev ${Array.from({ length: 40 }, () => '--port').join(' ')}`,
+    }),
   }
 
   // Act
   const declared = await declaredPortOf(files)
 
   // Assert
-  assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
+  const quoted = declared.source.slice(declared.source.indexOf('"') + 1, -1)
+  assert.equal(Array.from(quoted).length, 120)
+  assert.ok(quoted.endsWith('… [cut]'))
 })
 
-test('a project without any declared port starts on Next default 3000', async () => {
+// Value: protects=a very long word in the dev script is read in linear time (F486); fails_when=a scan that retries at every position makes the reader quadratic on the extension host; why_new=F486; seam=temporary project folders and the clock; no_claim=the absolute time on a slow machine (the bound is generous)
+test('a dev script word of 100000 characters is read in well under a second', async () => {
   // Arrange
-  const files = { 'package.json': devScript('next dev --turbo') }
+  const files = {
+    'package.json': devScript(`turbo-run ${'a'.repeat(100_000)} next dev`),
+  }
+  const started = Date.now()
 
   // Act
   const declared = await declaredPortOf(files)
 
   // Assert
-  assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
+  assert.deepEqual(declared, {
+    port: 3000,
+    source: UNREAD_SOURCE('… … next dev'),
+  })
+  assert.ok(Date.now() - started < 1000)
 })
+
+/** A `next` that prints the port it would start on (the last `-p N`, `-pN`, `--port N` or `--port=N`, else `PORT`, else 3000). */
+const FAKE_NEXT = `#!/bin/sh
+port="\${PORT:-3000}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -p|--port) port="$2"; shift ;;
+    --port=*) port="\${1#--port=}" ;;
+    -p[0-9]*) port="\${1#-p}" ;;
+  esac
+  shift
+done
+echo "$port"
+`
+
+/** Runs a dev script in the real `/bin/sh` with the fake `next` first on the path and a `PATH`-only environment; `undefined` when the shell prints no port. */
+async function portOfRealShell(
+  script: string,
+  folder: string,
+): Promise<number | undefined> {
+  const run = promisify(execFile)
+  const result = await run('/bin/sh', ['-c', script], {
+    env: { PATH: `${folder}:/usr/bin:/bin` },
+    timeout: 10_000,
+  }).catch((error: { stdout?: string }) => ({ stdout: error.stdout ?? '' }))
+  const last = String(result.stdout).trim().split('\n').pop() ?? ''
+  return /^\d+$/.test(last) ? Number(last) : undefined
+}
+
+// Value: protects=for the grammar's own forms the reader's port is the port a real /bin/sh starts a next that reads -p N, -pN, --port N and --port=N on, and a form outside the grammar never asserts a port (D72 rule 3; F478 to F481, F487 to F491, F497); fails_when=the reader asserts a port the shell does not start; why_new=D72 allow-list, checked against a real shell (the 300-script review of c9664ea3..673b2923 found the deny-list wrong); seam=temporary project folders and a real /bin/sh with a fake next, skipped on Windows; no_claim=forms outside the grammar (the shell value is then not compared) and the real Next
+for (const [name, script, unread] of [
+  ['-p N', 'next dev -p 4601', false],
+  ['-pN', 'next dev -p4602', false],
+  ['--port N', 'next dev --port 4603', false],
+  ['--port=N', 'next dev --port=4604', false],
+  ['the last flag', 'next dev -p 4605 --port=4606 -p4607', false],
+  ['an exported port', 'export PORT=4608 && next dev', false],
+  ['an exported port and a flag', 'export PORT=4609; next dev -p 4610', false],
+  ['an assignment prefix', 'PORT=4611 next dev', false],
+  ['env with an assignment', 'env PORT=4612 next dev', false],
+  ['the last assignment of a prefix', 'PORT=4613 PORT=4614 next dev', false],
+  ['the last export', 'export PORT=4615; export PORT=4616; next dev', false],
+  ['a plain next dev', 'next dev', false],
+  ['a harmless variable', 'A=1 && next dev -p 4617', false],
+  ['a bare shell variable', 'PORT=4618; next dev', true],
+  [
+    'a bare assignment to an exported port',
+    'export PORT=3300; PORT=4619; next dev',
+    true,
+  ],
+  [
+    'an export that a failed && skips',
+    'false && export PORT=4000 && true; next dev',
+    true,
+  ],
+  ['an export after ||', 'false || export PORT=4000; next dev', true],
+  ['a backgrounded assignment', 'PORT=4000 & next dev -p 4620', true],
+  ['a piped export', 'export PORT=4000 | next dev', true],
+  ['an export in a group', '{ export PORT=4000; }; next dev', true],
+  ['an if that exports', 'if true; then export PORT=4000; fi; next dev', true],
+  ['a negated export', '! export PORT=4000; next dev', true],
+  ['a timed export', 'time export PORT=4000; next dev', true],
+  [
+    'an expansion that sets PORT',
+    ': "${PORT:=4000}"; export PORT; next dev',
+    true,
+  ],
+  ['an arithmetic assignment', ': $((PORT=4000)); export PORT; next dev', true],
+  ['env -i', 'export PORT=4000; env -i next dev', true],
+  ['env -u PORT', 'export PORT=4000; env -u PORT next dev', true],
+  ['an unset', 'export PORT=4000; unset PORT; next dev', true],
+  ['an unset -v', 'export PORT=4000; unset -v PORT; next dev', true],
+  ['declare -x', 'declare -x PORT=4000; next dev', true],
+  ['command export', 'command export PORT=4000; next dev', true],
+  ['a shell default', 'next dev -p ${PORT:-4621}', true],
+  ['a single-quoted sh -c', "PORT=4622 sh -c 'next dev'", true],
+  ['a heredoc', 'next dev -p 4623 <<EOF\nEOF', true],
+] as const)
+  test(`${name} never reports a port the real shell would not start`, async (context) => {
+    // Arrange
+    if (process.platform === 'win32') return context.skip('needs /bin/sh')
+    const folder = await mkdtemp(join(tmpdir(), 'codebook-shell-'))
+    try {
+      await writeFile(join(folder, 'next'), FAKE_NEXT)
+      await chmod(join(folder, 'next'), 0o755)
+
+      // Act
+      const declared = await declaredPortOf({
+        'package.json': devScript(script),
+      })
+      const shellRan = await portOfRealShell(script, folder)
+
+      // Assert
+      assert.equal(declared.source.includes('Codebook does not read'), unread)
+      if (unread) assert.equal(declared.port, 3000)
+      else assert.equal(declared.port, shellRan)
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
 
 /** Starts a real listener on an OS-chosen port; `undefined` when the host lacks that address family. */
 async function listenOn(host: string, port = 0) {
@@ -995,751 +1381,4 @@ test('cancelling while the probe waits for a connect ends the start check at onc
   assert.equal(String(failure), 'Error: Run cancelled')
   assert.equal(connects, 1)
   assert.equal(destroyed, true)
-})
-
-/** What `applicationPortSource` says when a wrapper loads an env file and nothing else gives the port (F462). */
-const ENV_FILE_SOURCE = (files: string): string =>
-  `Next's default port, taken because the port may come from ${files}, which a dotenv wrapper in the dev script loads and Codebook does not read`
-
-// Value: protects=a Windows `SET` in any case sets the port the script's next dev uses, and `setx` (which does not set the current shell) is told as unread (F461); fails_when=`SET PORT=4000&& next dev` is read as a program and the run reports 3000 with no note, or setx is taken as an assignment; why_new=OCR medium of the review of 6bc9eab2..ef03b741, reproduced; seam=temporary project folders; no_claim=that cmd runs the script
-for (const [name, script, expected] of [
-  [
-    'an upper-case SET',
-    'SET PORT=4501&& next dev',
-    {
-      port: 4501,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'a mixed-case Set',
-    'Set PORT=4502 && next dev',
-    {
-      port: 4502,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'an upper-case SET inside cmd /c',
-    'cmd /c "SET PORT=4503&& next dev"',
-    {
-      port: 4503,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'setx, which does not set the current shell',
-    'setx PORT 4504 && next dev',
-    { port: 3000, source: UNREAD_SOURCE('setx … …') },
-  ],
-] as const)
-  test(`${name} is read as Windows reads it`, async () => {
-    // Arrange
-    const files = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, expected)
-  })
-
-// Value: protects=a dotenv-style wrapper's `-v PORT=N` is read, and an env-file wrapper with no other port says the port may come from that file (F462); fails_when=the reader steps past the wrapper and reports Next's default with no note; why_new=OCR medium/low of the review of 6bc9eab2..ef03b741, reproduced; seam=temporary project folders; no_claim=the content of the env file, which is never read
-for (const [name, script, expected] of [
-  [
-    'dotenv -v PORT',
-    'dotenv -v PORT=4511 -- next dev',
-    {
-      port: 4511,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'dotenv -e with -v PORT',
-    'dotenv -e .env.local -v PORT=4512 -- next dev',
-    {
-      port: 4512,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'dotenvx --env PORT',
-    'dotenvx run --env PORT=4513 -- next dev',
-    {
-      port: 4513,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'an env file and a -p flag',
-    'dotenv -e .env -- next dev -p 4514',
-    { port: 4514, source: 'the dev script in package.json' },
-  ],
-  [
-    'an env file and an assignment before the wrapper',
-    'PORT=4515 dotenv -e .env -- next dev',
-    {
-      port: 4515,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'dotenv -e with no other port',
-    'dotenv -e .env.local -- next dev',
-    { port: 3000, source: ENV_FILE_SOURCE('".env.local"') },
-  ],
-  [
-    'dotenvx run -f with no other port',
-    'dotenvx run -f .env.dev -- next dev',
-    { port: 3000, source: ENV_FILE_SOURCE('".env.dev"') },
-  ],
-  [
-    'dotenvx run with the default env file',
-    'dotenvx run -- next dev',
-    { port: 3000, source: ENV_FILE_SOURCE('".env"') },
-  ],
-  [
-    'two env files',
-    'dotenv -e .env -e .env.local -- next dev',
-    { port: 3000, source: ENV_FILE_SOURCE('".env", ".env.local"') },
-  ],
-] as const)
-  test(`${name} is read as the wrapper runs it`, async () => {
-    // Arrange
-    const files = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, expected)
-  })
-
-// Value: protects=`${PORT:-N}` expands as the shell expands it: a PORT exported or set earlier, or inherited by a single-quoted sh -c or a delegated script, wins over N, while an assignment in the same command and a double-quoted bash -c do not (F463); fails_when=N is always taken, or the same-command assignment wins; why_new=OCR low and CodeRabbit CLI minor x2 of the review of 6bc9eab2..ef03b741; seam=temporary project folders; no_claim=other parameter expansions
-for (const [name, scripts, expected] of [
-  [
-    'an earlier export',
-    { dev: 'export PORT=5001; next dev -p ${PORT:-4001}' },
-    5001,
-  ],
-  [
-    'an earlier Windows set',
-    { dev: 'SET PORT=5002&& next dev -p ${PORT:-4002}' },
-    5002,
-  ],
-  [
-    'an outer assignment into a single-quoted sh -c',
-    { dev: "PORT=5003 sh -c 'next dev -p ${PORT:-4003}'" },
-    5003,
-  ],
-  [
-    'an assignment before a delegated script',
-    { dev: 'PORT=5004 pnpm web', web: 'next dev -p ${PORT:-4004}' },
-    5004,
-  ],
-  [
-    'an earlier export seen by a double-quoted bash -c',
-    { dev: 'export PORT=5005; bash -c "next dev -p ${PORT:-4005}"' },
-    5005,
-  ],
-  [
-    'an assignment in the same command',
-    { dev: 'PORT=5006 next dev -p ${PORT:-4006}' },
-    4006,
-  ],
-  [
-    'an assignment before a double-quoted bash -c',
-    { dev: 'PORT=5007 bash -c "next dev -p ${PORT:-4007}"' },
-    4007,
-  ],
-  ['no earlier PORT', { dev: 'next dev -p ${PORT:-4008}' }, 4008],
-] as const)
-  test(`the PORT default of -p after ${name} gives ${expected}`, async () => {
-    // Arrange
-    const files = { 'package.json': packageScripts(scripts) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.equal(declared.port, expected)
-  })
-
-test('a PORT exported with a variable the reader cannot resolve is told as unread, not replaced by the ${PORT:-N} default', async () => {
-  // Arrange
-  const files = {
-    'package.json': devScript(
-      'export PORT=$APP_PORT; next dev -p ${PORT:-4009}',
-    ),
-  }
-
-  // Act
-  const declared = await declaredPortOf(files)
-
-  // Assert
-  assert.deepEqual(declared, {
-    port: 3000,
-    source: UNREAD_SOURCE('export PORT=…'),
-  })
-})
-
-// Value: protects=the quoted unread segment shows the program and flag names only, so no value reaches applicationPortSource (the run resource and MCP): not one of the leaks F464, F469 and F481 found (a token, key, password, passphrase, signature or sso flag value, an =value, an attached -pSECRET or -Hname:value, a header line, a Bearer or Basic token as its own word, user:pass@host with or without a scheme, a multi-line assignment) and not one the lists of secret-looking names would have missed (D71 rule 2); fails_when=any value word of an unread form is quoted; why_new=D71 rule 2 replaces the masking by name of F464 and F469 with a structure-only display, and F481 found leaks the lists missed; seam=temporary project folders; no_claim=that a program or flag name holds no secret
-for (const [name, script, segment, secret] of [
-  [
-    'a value after a token flag',
-    'turbo-run --token abc123 next dev',
-    'turbo-run --token … next dev',
-    'abc123',
-  ],
-  [
-    'a value after an api-key flag',
-    'turbo-run --api-key abc123 next dev',
-    'turbo-run --api-key … next dev',
-    'abc123',
-  ],
-  [
-    'an api-key value joined with =',
-    'turbo-run --api-key=abc123 next dev',
-    'turbo-run --api-key=… next dev',
-    'abc123',
-  ],
-  [
-    'a passphrase flag value',
-    'turbo-run --passphrase abc123 next dev',
-    'turbo-run --passphrase … next dev',
-    'abc123',
-  ],
-  [
-    'a signature flag value',
-    'turbo-run --signature abc123 next dev',
-    'turbo-run --signature … next dev',
-    'abc123',
-  ],
-  [
-    'an sso flag value',
-    'turbo-run --sso abc123 next dev',
-    'turbo-run --sso … next dev',
-    'abc123',
-  ],
-  [
-    'a value attached to a short flag',
-    'turbo-run -pSECRET123 next dev',
-    'turbo-run -p… next dev',
-    'SECRET123',
-  ],
-  [
-    'a Bearer token as its own word',
-    'turbo-run Bearer abc123 next dev',
-    'turbo-run … … next dev',
-    'abc123',
-  ],
-  [
-    'a Basic token after an Authorization header word',
-    'turbo-run Authorization: Basic abc123 next dev',
-    'turbo-run … … … next dev',
-    'abc123',
-  ],
-  [
-    'user and password in a URL without a scheme',
-    'turbo-run ada:pw123@example.com next dev',
-    'turbo-run … next dev',
-    'pw123',
-  ],
-  [
-    'URL credentials',
-    'turbo-run https://ada:pw123@example.com/x next dev',
-    'turbo-run … next dev',
-    'pw123',
-  ],
-  [
-    'a -H header value',
-    'turbo-run -H "Authorization: Basic abc123" next dev',
-    'turbo-run -H … next dev',
-    'abc123',
-  ],
-  [
-    'a header value attached to -H',
-    'turbo-run -HX-Api-Key:abc123 next dev',
-    'turbo-run -H… next dev',
-    'abc123',
-  ],
-  [
-    'a -u user and password',
-    'turbo-run -u ada:pw123 next dev',
-    'turbo-run -u … next dev',
-    'pw123',
-  ],
-  [
-    'a --data-raw body',
-    'turbo-run --data-raw body123 next dev',
-    'turbo-run --data-raw … next dev',
-    'body123',
-  ],
-  [
-    'an assignment name with a dash and a dot',
-    'my-key.x=abc123 turbo-run next dev',
-    'my-key.x=… turbo-run next dev',
-    'abc123',
-  ],
-  [
-    'a secret assignment name',
-    'API_KEY=abc123 turbo-run next dev',
-    'API_KEY=… turbo-run next dev',
-    'abc123',
-  ],
-  [
-    'a multi-line quoted word',
-    'turbo-run "first line\nAuthorization: Basic abc123\nlast line" next dev',
-    'turbo-run … next dev',
-    'abc123',
-  ],
-  [
-    'a flag that only contains the letters of pass',
-    'turbo-run --bypass abc123 next dev',
-    'turbo-run --bypass … next dev',
-    'abc123',
-  ],
-  [
-    'a host and port word',
-    'turbo-run localhost:3000 next dev',
-    'turbo-run … next dev',
-    'localhost',
-  ],
-  [
-    'the port flag with a variable',
-    'turbo-run next dev -p $APP_PORT',
-    'turbo-run next dev -p …',
-    'APP_PORT',
-  ],
-  [
-    'the home directory in an operand',
-    `turbo-run ${homedir()}/.nvm/bin/tool next dev`,
-    'turbo-run … next dev',
-    homedir(),
-  ],
-  [
-    'the home directory in the program',
-    `${homedir()}/bin/turbo-run next dev`,
-    '~/bin/turbo-run next dev',
-    homedir(),
-  ],
-] as const)
-  test(`${name} is not quoted in the port source`, async () => {
-    // Arrange
-    const files = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, { port: 3000, source: UNREAD_SOURCE(segment) })
-    assert.equal(declared.source.includes(secret), false)
-  })
-
-test('the workspace root is replaced in the quoted unread segment', async () => {
-  // Arrange
-  const root = await mkdtemp(join(tmpdir(), 'codebook-port-'))
-  try {
-    await writeFile(
-      join(root, 'package.json'),
-      devScript(`${root}/node_modules/.bin/turbo-run next dev`),
-    )
-
-    // Act
-    const declared = await readDeclaredDevelopmentPort(root)
-
-    // Assert
-    assert.deepEqual(declared, {
-      port: 3000,
-      source: UNREAD_SOURCE('<workspace>/node_modules/.bin/turbo-run next dev'),
-    })
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-// Value: protects=POSIX backslash escapes are honored and `#` is no comment in cmd /c text (F465); fails_when=an escaped ; splits the command, an escaped quote ends its quote, or a # in cmd /c text hides the port; why_new=OCR low of the review of 6bc9eab2..ef03b741, reproduced; seam=temporary project folders and the splitter; no_claim=every POSIX escape
-for (const [name, script, expected] of [
-  [
-    'an escaped semicolon does not split the command',
-    'next dev -p 4521 \\; next dev -p 5521',
-    5521,
-  ],
-  [
-    'an escaped quote inside double quotes does not end the quote',
-    'node -e "x \\" ; y" && next dev -p 4522',
-    4522,
-  ],
-  [
-    'a hash in cmd /c text is not a comment',
-    'cmd /c "next dev # -p 4523"',
-    4523,
-  ],
-] as const)
-  test(`${name}`, async () => {
-    // Arrange
-    const files = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.equal(declared.port, expected)
-  })
-
-test('the splitter keeps escaped separators and quotes inside their word and leaves single-quoted backslashes alone', () => {
-  // Arrange
-  const line = 'a \\; b \\& c "d \\" e" \'f\\g\' h\\.bin\\i'
-
-  // Act
-  const commands = splitShellCommandLine(line)
-
-  // Assert
-  assert.deepEqual(commands, [
-    ['a', ';', 'b', '&', 'c', 'd " e', 'f\\g', 'h\\.bin\\i'],
-  ])
-})
-
-// Value: protects=the last PORT assignment replaces both the value and its resolved state, unset and empty values reset it, and a bare PORT=N feeds a later ${PORT:-N} without reaching next unless exported (F470); fails_when=PORT=4000 PORT=$APP_PORT is reported as 4000, an unset or empty PORT keeps its old value, or a shell-local PORT is passed to next or ignored by ${PORT:-N}; why_new=OCR low and CodeRabbit CLI minor of the review of ef03b741..ccfe301d, reproduced; seam=temporary project folders; no_claim=that the shell runs the script
-for (const [name, script, expected] of [
-  [
-    'a later unresolved assignment after a known one',
-    'PORT=4000 PORT=$APP_PORT next dev',
-    { port: 3000, source: UNREAD_SOURCE('PORT=… PORT=… next dev') },
-  ],
-  [
-    'a later known assignment after an unresolved one',
-    'PORT=$APP_PORT PORT=4000 next dev',
-    {
-      port: 4000,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'an unset after an export',
-    'export PORT=4000; unset PORT; next dev',
-    { port: 3000, source: "Next's default port" },
-  ],
-  [
-    'an empty export after an export',
-    'export PORT=4000; export PORT=; next dev',
-    { port: 3000, source: "Next's default port" },
-  ],
-  [
-    'an unset before a ${PORT:-N} default',
-    'export PORT=4000; unset PORT; next dev -p ${PORT:-4001}',
-    { port: 4001, source: 'the dev script in package.json' },
-  ],
-  [
-    'an unset inside a nested sh -c',
-    'PORT=4000 sh -c "unset PORT; next dev"',
-    { port: 3000, source: "Next's default port" },
-  ],
-  [
-    'a bare shell variable read by a later ${PORT:-N}',
-    'PORT=5000; next dev -p ${PORT:-4001}',
-    { port: 5000, source: 'the dev script in package.json' },
-  ],
-  [
-    'a bare shell variable that is not exported to next',
-    'PORT=5000; next dev',
-    { port: 3000, source: "Next's default port" },
-  ],
-  [
-    'a bare shell variable exported later',
-    'PORT=5000; export PORT; next dev',
-    {
-      port: 5000,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-  [
-    'a bare assignment to a PORT that is already exported',
-    'export PORT=3300; PORT=5000; next dev',
-    {
-      port: 5000,
-      source: 'a PORT assignment in the dev script in package.json',
-    },
-  ],
-] as const)
-  test(`${name} decides the port as the shell would`, async () => {
-    // Arrange
-    const files = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(files)
-
-    // Assert
-    assert.deepEqual(declared, expected)
-  })
-
-// Value: protects=a ${PORT:-N} in cmd /c text is told as unread, since cmd expands no ${…} (F471); fails_when=cmd /c "next dev -p ${PORT:-4000}" is reported as port 4000; why_new=OCR low of the review of ef03b741..ccfe301d; seam=temporary project folders; no_claim=that cmd runs the script
-test('a ${PORT:-N} default inside cmd /c text is told as unread, not expanded', async () => {
-  // Arrange
-  const files = {
-    'package.json': devScript('cmd /c "next dev -p ${PORT:-4000}"'),
-  }
-
-  // Act
-  const declared = await declaredPortOf(files)
-
-  // Assert
-  assert.deepEqual(declared, {
-    port: 3000,
-    source: UNREAD_SOURCE('next dev -p …'),
-  })
-})
-
-// Value: protects=an escaped backslash outside single quotes is one backslash, so words and separators stay where a shell puts them, and a Windows path keeps its backslashes (F472); fails_when=a\\ b reads as one word, or \; glues words, or node_modules\.bin\next loses its program name; why_new=OCR low of the review of ef03b741..ccfe301d; seam=the splitter; no_claim=every POSIX escape
-test('an escaped backslash outside single quotes is one backslash and a Windows path stays intact', () => {
-  // Arrange
-  const line = 'a\\\\ b c\\\\; d node_modules\\.bin\\next'
-
-  // Act
-  const commands = splitShellCommandLine(line)
-
-  // Assert
-  assert.deepEqual(commands, [
-    ['a\\', 'b', 'c\\'],
-    ['d', 'node_modules\\.bin\\next'],
-  ])
-})
-
-// Value: protects=the env-file list in the port source is masked, sanitized and cut as the unread segment is (F477); fails_when=a long path or many -e options grow applicationPortSource up to the package.json read bound, or a credential or the home directory in a file name is shown; why_new=CodeRabbit CLI minor of the review of ef03b741..ccfe301d; seam=temporary project folders; no_claim=the content of the env file, which is never read
-for (const [name, script, files] of [
-  [
-    'a long path',
-    `dotenv -e ${'x'.repeat(300)} -- next dev`,
-    `"${'x'.repeat(112)}… [cut]`,
-  ],
-  [
-    'many -e options',
-    `dotenv ${Array.from({ length: 40 }, (_, index) => `-e .env.${index}`).join(' ')} -- next dev`,
-    '".env.0", ".env.1", ".env.2", ".env.3", ".env.4", ".env.5", ".env.6", ".env.7", ".env.8", ".env.9", ".env.10", ".… [cut]',
-  ],
-  [
-    'a credential in a URL file name',
-    'dotenv -e https://ada:pw123@example.com/.env -- next dev',
-    '".env"',
-  ],
-  [
-    'the home directory in a file name',
-    `dotenv -e ${homedir()}/.env -- next dev`,
-    '".env"',
-  ],
-] as const)
-  test(`${name} is masked and cut in the env-file list of the port source`, async () => {
-    // Arrange
-    const packageFiles = { 'package.json': devScript(script) }
-
-    // Act
-    const declared = await declaredPortOf(packageFiles)
-
-    // Assert
-    assert.deepEqual(declared, { port: 3000, source: ENV_FILE_SOURCE(files) })
-  })
-
-/** A `next` that prints the port it would start on (the last `-p`/`--port`, else `PORT`, else 3000), in a folder of its own. */
-const FAKE_NEXT = `#!/bin/sh
-port="\${PORT:-3000}"
-while [ "$#" -gt 0 ]; do
-  case "$1" in -p|--port) port="$2"; shift ;; esac
-  shift
-done
-echo "$port"
-`
-
-/** Runs a dev script in the real `/bin/sh` with the fake `next` first on the path and no inherited `PORT`; `undefined` when the shell prints no port (a form this shell refuses). */
-async function portOfRealShell(
-  script: string,
-  folder: string,
-): Promise<number | undefined> {
-  const run = promisify(execFile)
-  const nextPath = join(folder, 'next')
-  const result = await run(
-    '/bin/sh',
-    ['-c', script.replaceAll('%NEXT%', nextPath)],
-    {
-      env: { PATH: `${folder}:${process.env.PATH ?? ''}` },
-      timeout: 10_000,
-    },
-  ).catch((error: { stdout?: string }) => ({ stdout: error.stdout ?? '' }))
-  const last = String(result.stdout).trim().split('\n').pop() ?? ''
-  return /^\d+$/.test(last) ? Number(last) : undefined
-}
-
-// Value: protects=the reader asserts a port only when it understood every step that could change PORT, and otherwise reports Next's default 3000 with the unread note, never a port the shell would not start (D71 rule 1; F478, F479, F480): statement keywords with words it does not model (unset -v, unset X PORT, export -n, export X PORT=4000, declare, typeset, command export, builtin export), an assignment or export that is backgrounded, piped, grouped or conditional, and env -i, env -, --ignore-environment, env -u PORT; fails_when=one of them keeps or drops a PORT the shell treats the other way and the run starts on a port its own origin does not name; why_new=F478-F480 (local review of ccfe301d..c9664ea3, each confirmed against real sh); seam=temporary project folders and, where the host's /bin/sh runs the form, a real /bin/sh with a fake next that prints its port; no_claim=forms outside the list, and a shell value for forms that the host's /bin/sh refuses (it is then not asserted)
-for (const [name, script, port, unread, shellPort] of [
-  ['unset -v', 'export PORT=4000; unset -v PORT; next dev', 3000, true, 3000],
-  [
-    'unset of two names',
-    'export PORT=4000; unset X PORT; next dev',
-    3000,
-    true,
-    3000,
-  ],
-  [
-    'export -n',
-    'export PORT=4000; export -n PORT; next dev',
-    3000,
-    true,
-    undefined,
-  ],
-  ['export of an extra name', 'export X PORT=4000; next dev', 3000, true, 4000],
-  ['declare -x', 'declare -x PORT=4000; next dev', 3000, true, undefined],
-  ['typeset -x', 'typeset -x PORT=4000; next dev', 3000, true, undefined],
-  ['command export', 'command export PORT=4000; next dev', 3000, true, 4000],
-  [
-    'builtin export',
-    'builtin export PORT=4000; next dev',
-    3000,
-    true,
-    undefined,
-  ],
-  [
-    'a backgrounded assignment',
-    'PORT=4000 & next dev -p ${PORT:-5000}',
-    3000,
-    true,
-    5000,
-  ],
-  ['a piped export', 'export PORT=4000 | next dev', 3000, true, 3000],
-  [
-    'an export in a group',
-    '{ export PORT=4000; }; next dev -p ${PORT:-5000}',
-    3000,
-    true,
-    4000,
-  ],
-  [
-    'an export in the middle of a group',
-    '{ echo a; export PORT=4000; }; next dev',
-    3000,
-    true,
-    4000,
-  ],
-  [
-    'an export in a subshell',
-    '( export PORT=4000 ); next dev -p ${PORT:-5000}',
-    3000,
-    true,
-    5000,
-  ],
-  [
-    'an export after &&',
-    'true && export PORT=4000; next dev',
-    3000,
-    true,
-    4000,
-  ],
-  [
-    'an export after ||',
-    'false || export PORT=4000; next dev',
-    3000,
-    true,
-    4000,
-  ],
-  ['env -i', 'export PORT=4000; env -i %NEXT% dev', 3000, true, 3000],
-  ['env -', 'export PORT=4000; env - %NEXT% dev', 3000, true, 3000],
-  [
-    'env --ignore-environment',
-    'export PORT=4000; env --ignore-environment %NEXT% dev',
-    3000,
-    true,
-    undefined,
-  ],
-  ['env -u PORT', 'export PORT=4000; env -u PORT next dev', 3000, true, 3000],
-  [
-    'env --unset PORT',
-    'export PORT=4000; env --unset PORT next dev',
-    3000,
-    true,
-    undefined,
-  ],
-  [
-    'env --unset=PORT',
-    'export PORT=4000; env --unset=PORT next dev',
-    3000,
-    true,
-    undefined,
-  ],
-  [
-    'an assignment after env -i',
-    'env -i PORT=4000 %NEXT% dev',
-    4000,
-    false,
-    4000,
-  ],
-  [
-    'an export with two assignments',
-    'export A=1 PORT=4000; next dev',
-    4000,
-    false,
-    4000,
-  ],
-  [
-    'an export after an unmodeled set',
-    'set -e; export PORT=4000; next dev -p ${PORT:-5000}',
-    4000,
-    false,
-    4000,
-  ],
-  [
-    'an export after an unset -v',
-    'unset -v PORT; export PORT=4000; next dev',
-    4000,
-    false,
-    4000,
-  ],
-  [
-    'an export chained with &&',
-    'export PORT=4000 && next dev',
-    4000,
-    false,
-    4000,
-  ],
-] as const)
-  test(`${name} never reports a port the shell would not start`, async (context) => {
-    // Arrange
-    if (process.platform === 'win32') return context.skip('needs /bin/sh')
-    const folder = await mkdtemp(join(tmpdir(), 'codebook-shell-'))
-    try {
-      await writeFile(join(folder, 'next'), FAKE_NEXT)
-      await chmod(join(folder, 'next'), 0o755)
-
-      // Act
-      const declared = await declaredPortOf({
-        'package.json': devScript(script.replaceAll('%NEXT%', 'next')),
-      })
-      const shellRan = await portOfRealShell(script, folder)
-
-      // Assert
-      assert.equal(declared.port, port)
-      assert.equal(declared.source.includes('Codebook does not read'), unread)
-      if (shellPort !== undefined) assert.equal(shellRan, shellPort)
-      // Whatever this host's shell printed, a port without the unread note must be the one it printed.
-      if (!unread && shellRan !== undefined)
-        assert.equal(declared.port, shellRan)
-    } finally {
-      await rm(folder, { recursive: true, force: true })
-    }
-  })
-
-// Value: protects=a very long word in the dev script is read in linear time (F486); fails_when=a value-masking expression that retries at every position makes the reader quadratic on the extension host; why_new=F486 (CodeRabbit CLI minor of the review of ccfe301d..c9664ea3: CREDENTIAL_HEADER_LINE); seam=temporary project folders and the clock; no_claim=the absolute time on a slow machine (the bound is generous)
-test('a dev script word of 100000 characters is read in well under a second', async () => {
-  // Arrange
-  const files = {
-    'package.json': devScript(`turbo-run ${'a'.repeat(100_000)} next dev`),
-  }
-  const started = Date.now()
-
-  // Act
-  const declared = await declaredPortOf(files)
-
-  // Assert
-  assert.deepEqual(declared, {
-    port: 3000,
-    source: UNREAD_SOURCE('turbo-run … next dev'),
-  })
-  assert.ok(Date.now() - started < 1000)
 })
