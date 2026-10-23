@@ -740,8 +740,10 @@ test('historical source annotations identify the recorded file, time, hash and s
                   start: { line: 0, character: 25 },
                   end: { line: 0, character: 25 },
                 },
-                hoverMessage:
-                  'Recorded: src/theme.ts:1 · 0.10 s · declared 1 · captured SHA-256 f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771',
+                hoverMessage: {
+                  value:
+                    'Recorded:&nbsp;src/theme.ts:1&nbsp;·&nbsp;0.10&nbsp;s&nbsp;·&nbsp;declared&nbsp;1&nbsp;·&nbsp;captured&nbsp;SHA\\-256&nbsp;f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771',
+                },
                 renderOptions: {
                   after: {
                     contentText:
@@ -756,8 +758,10 @@ test('historical source annotations identify the recorded file, time, hash and s
                   start: { line: 0, character: 31 },
                   end: { line: 0, character: 31 },
                 },
-                hoverMessage:
-                  'Recorded source · Not recorded at this moment · captured SHA-256 17ded4ea5073e886425bd977a54edd857924d864f44b3c1b83d9e8aec53893e1',
+                hoverMessage: {
+                  value:
+                    'Recorded&nbsp;source&nbsp;·&nbsp;Not&nbsp;recorded&nbsp;at&nbsp;this&nbsp;moment&nbsp;·&nbsp;captured&nbsp;SHA\\-256&nbsp;17ded4ea5073e886425bd977a54edd857924d864f44b3c1b83d9e8aec53893e1',
+                },
                 renderOptions: {
                   after: {
                     contentText:

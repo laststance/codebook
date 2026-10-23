@@ -129,11 +129,24 @@ test('a recorded-source slot is named after its replay and the file of the stop 
   // Arrange / Act / Assert
   assert.equal(
     nodeSourceSlotPath('instance_run', 'src/jobs/scheduler.ts'),
-    '/node-history-slot/instance_run/Captured-scheduler.ts',
+    '/node-history-slot/instance_run/d7dd93f69862/Captured-scheduler.ts',
   )
   assert.equal(
     nodeSourceSlotPath('instance_run', 'src/jobs/queue.ts'),
-    '/node-history-slot/instance_run/Captured-queue.ts',
+    '/node-history-slot/instance_run/d7dd93f69862/Captured-queue.ts',
+  )
+})
+
+// Value: protects=two files with the same base name in different folders are two slots, so a stop in the other file renames the slot, and the address carries a short hash of the folder, never the folder's own segments; fails_when=both files map to Captured-<basename>, or a recorded folder name appears in the address; why_new=F200 (the slot name was only the base name); seam=none; no_claim=the workspace's rename (the slot tests)
+test('a recorded-source slot tells two files of the same name in different folders apart by a folder hash', () => {
+  // Arrange / Act / Assert
+  assert.equal(
+    nodeSourceSlotPath('instance_run', 'src/jobs/queue.ts'),
+    '/node-history-slot/instance_run/d7dd93f69862/Captured-queue.ts',
+  )
+  assert.equal(
+    nodeSourceSlotPath('instance_run', 'lib/jobs/queue.ts'),
+    '/node-history-slot/instance_run/284cd4dfd6c6/Captured-queue.ts',
   )
 })
 
@@ -202,16 +215,12 @@ test('the slot’s placeholder and loading text parse without a syntax error as 
       NODE_RECORDED_SOURCE_TEXT.placeholder,
       NODE_RECORDED_SOURCE_TEXT.loading,
     ].flatMap((text) => {
-      const parsed = ts.createSourceFile(
+      // The public syntactic check of one file: transpiling reports what the parser found wrong in this text.
+      const { diagnostics = [] } = ts.transpileModule(text, {
         fileName,
-        text,
-        ts.ScriptTarget.Latest,
-        false,
-      )
-      // parseDiagnostics holds what the parser reported for this text.
-      const diagnostics = (
-        parsed as unknown as { parseDiagnostics: readonly ts.Diagnostic[] }
-      ).parseDiagnostics
+        reportDiagnostics: true,
+        compilerOptions: { allowJs: true },
+      })
       return diagnostics.map(
         (diagnostic) =>
           `${fileName}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`,

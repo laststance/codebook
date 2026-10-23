@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -454,7 +454,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     const slotUri = new URL(firstPresentation.sourceDocument.uri)
     assert.equal(
       slotUri.pathname,
-      `/node-history-slot/${header.studyId}/Captured-${basename(header.configuration.source.path)}`,
+      `/node-history-slot/${header.studyId}/${sha256(dirname(header.configuration.source.path)).slice(0, 12)}/Captured-${basename(header.configuration.source.path)}`,
     )
     // A per-stop source address of an earlier version still refuses a hash its sealed stop does not have.
     await assert.rejects(
@@ -851,7 +851,7 @@ test('saved Node history is selectable in the reader without entering browser pl
       'result',
     )
 
-    // Arrange: a native debugger preview from this Node history can outlive its selected journal.
+    // Arrange: tabs at the old per-stop address, which nothing opens since the recorded-source slot replaced the per-stop editors (F183).
     const obsoletePreview = harness.addNodeHistoryPreview(header.studyId, 2)
     const pinnedPreview = harness.addNodeHistoryPreview(header.studyId, 2, {
       pinned: true,
@@ -868,7 +868,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     }
     await learningLibrary.saveStudy(browserStudy)
 
-    // Act: choosing browser history retires only the previous journal's disposable source preview.
+    // Act: choosing browser history retires the previous journal's recorded-source slot and closes no tab at the old address.
     harness.receive({
       type: 'history',
       revision: lastPage.revision,
@@ -882,9 +882,9 @@ test('saved Node history is selectable in the reader without entering browser pl
       READER_RESULT_BOUND_MS,
     )
 
-    // Assert: learner-pinned, edited and unrelated tabs remain available.
+    // Assert: every tab at the old address stays, with the learner's pinned, edited and unrelated tabs.
     const retainedTabs = harness.groups.flatMap((group) => group.tabs)
-    assert.equal(retainedTabs.includes(obsoletePreview), false)
+    assert.equal(retainedTabs.includes(obsoletePreview), true)
     assert.equal(retainedTabs.includes(pinnedPreview), true)
     assert.equal(retainedTabs.includes(editedPreview), true)
     assert.equal(retainedTabs.includes(otherHistoryPreview), true)
@@ -1381,7 +1381,6 @@ test('returning to the current run leaves a selected Node history so its missing
       'the recorded stop reaches the native debugger',
       1_000,
     )
-    const preview = harness.addNodeHistoryPreview(history.studyId, 2)
     const invalidationsBefore = harness.historicalDebugInvalidations()
 
     // Act
@@ -1405,9 +1404,13 @@ test('returning to the current run leaves a selected Node history so its missing
     // The pane no longer shows the test replay's output document: the live run takes it back.
     assert.doesNotMatch(applicationPanel.webview.html, /id="test-output"/)
     assert.equal(
-      harness.groups.flatMap((group) => group.tabs).includes(preview),
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .some((tab) =>
+          JSON.stringify(tab.input).includes('/node-history-slot/'),
+        ),
       false,
-      'the Node history debugger preview is closed',
+      'the recorded-source slot of the Node history is closed',
     )
     assert.ok(
       harness.historicalDebugInvalidations() > invalidationsBefore,

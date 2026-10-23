@@ -330,6 +330,34 @@ export async function workspaceHarness(
     ) {}
   }
   /** Supplies native position operations to the editor boundary fake used by workspace tests. @example new Position(22, 0).with(40, 0) */
+  /**
+   * The editor's `MarkdownString` as far as the reader uses it: text appended with `appendText` is escaped the way VS Code escapes it (backslash-escaped Markdown syntax tokens, a no-break space per blank, an escaped quote marker and line break), so a test reads what the hover would render.
+   * @example new MarkdownString().appendText('a[b](c)').value // => 'a\\[b\\]\\(c\\)'
+   */
+  class MarkdownString {
+    value: string
+    isTrusted: boolean | undefined = undefined
+    constructor(value = '') {
+      this.value = value
+    }
+    appendText(text: string): this {
+      this.value += text
+        .replace(/[\\`*_{}[\]()#+\-!~]/g, '\\$&')
+        .replace(/([ \t]+)/g, (_match, blanks: string) =>
+          '&nbsp;'.repeat(blanks.length),
+        )
+        .replace(/>/gm, '\\>')
+        .replace(/\n/g, '\n\n')
+      return this
+    }
+  }
+  /** The editor's `CodeLens`: a line of text above a range, with an optional command. */
+  class CodeLens {
+    constructor(
+      readonly range: unknown,
+      readonly command?: { title: string; command: string },
+    ) {}
+  }
   class Position {
     constructor(
       readonly line: number,
@@ -497,6 +525,58 @@ export async function workspaceHarness(
   const layoutsAtGroupCloses: unknown[] = []
   let heldTabCloseResponse:
     { entered: () => void; wait: Promise<void> } | undefined
+  /** See `holdNextTextDocumentShow`. */
+  let heldTextDocumentShow:
+    { entered: () => void; wait: Promise<void>; uri?: string } | undefined
+  /** See `holdNextTabCloseEffect`. */
+  let heldTabCloseEffect:
+    { entered: () => void; wait: Promise<void> } | undefined
+  /** Whether {@link slotTimers} follow `elapseSlotClock` instead of the real clock; see `useManualSlotClock`. */
+  let manualSlotClock = false
+  let slotClockMs = 0
+  const manualSlotTimers: {
+    dueMs: number
+    callback: () => void
+    active: boolean
+  }[] = []
+  /**
+   * The timers the reader's recorded-source slot deadlines read: the real clock, or the test's hand-driven one after `useManualSlotClock`.
+   * A timer set while the clock is real stays real; one set while it is manual fires only in `elapseSlotClock`.
+   */
+  const slotTimers = {
+    set: (callback: () => void, delayMs: number): (() => void) => {
+      if (!manualSlotClock) {
+        const handle = setTimeout(callback, delayMs)
+        return (): void => clearTimeout(handle)
+      }
+      const timer = {
+        dueMs: slotClockMs + delayMs,
+        callback,
+        active: true,
+      }
+      manualSlotTimers.push(timer)
+      return (): void => {
+        timer.active = false
+      }
+    },
+  }
+  /** The listeners of the editor's `onDidChangeVisibleTextEditors`, told whenever a tab comes to the front of its group, opens, or closes. */
+  const visibleEditorListeners = new Set<() => void>()
+  const changedVisibleEditors = (): void => {
+    for (const listener of [...visibleEditorListeners]) listener()
+  }
+  type CodeLensProvider = {
+    provideCodeLenses(document: {
+      uri: Uri
+      getText(): string
+    }): readonly CodeLens[]
+    onDidChangeCodeLenses?: (listener: () => void) => { dispose(): void }
+  }
+  /** The CodeLens providers the reader registered; see `codeLensesOf`. */
+  const codeLensProviders: { selector: unknown; provider: CodeLensProvider }[] =
+    []
+  /** Every `revealRange` call of a recorded-source slot's editor, in order, with the first line of the revealed range; see `slotReveals`. */
+  const slotRevealCalls: { uri: string; line: number }[] = []
   let lastSourceEditor: SourceEditor | undefined
   let sourceFocusOnArrange: SourceEditor | undefined
   let reportedSourceColumn: number | undefined
@@ -587,6 +667,11 @@ export async function workspaceHarness(
       ]
     },
     revealRange(range, revealType): void {
+      if (document.uri.path.includes('/node-history-slot/'))
+        slotRevealCalls.push({
+          uri: document.uri.toString(),
+          line: range.start.line,
+        })
       const revealed = nextReadingReveal
       nextReadingReveal = undefined
       revealed?.()
@@ -3673,6 +3758,21 @@ export async function workspaceHarness(
   const editorDependencies = {
     vscode: {
       languages: {
+        registerCodeLensProvider(
+          selector: unknown,
+          provider: CodeLensProvider,
+        ) {
+          const registration = { selector, provider }
+          codeLensProviders.push(registration)
+          return {
+            dispose(): void {
+              codeLensProviders.splice(
+                codeLensProviders.indexOf(registration),
+                1,
+              )
+            },
+          }
+        },
         async setTextDocumentLanguage(
           document: { uri: Uri },
           languageId: string,
@@ -3683,6 +3783,8 @@ export async function workspaceHarness(
         },
       },
       EventEmitter,
+      MarkdownString,
+      CodeLens,
       Uri,
       TabInputText,
       TabInputTextDiff,
@@ -4434,6 +4536,14 @@ export async function workspaceHarness(
             },
           }
         },
+        onDidChangeVisibleTextEditors: (callback: () => void) => {
+          visibleEditorListeners.add(callback)
+          return {
+            dispose(): void {
+              visibleEditorListeners.delete(callback)
+            },
+          }
+        },
         onDidChangeTextEditorSelection: (
           callback: (change: SelectionChange) => void,
         ) => {
@@ -4468,6 +4578,18 @@ export async function workspaceHarness(
             document instanceof Uri
               ? await openSourceDocument(document)
               : document
+          // In the model of `holdNextTextDocumentShow`, the editor shows the document only once the test releases it.
+          const heldShow =
+            heldTextDocumentShow &&
+            (!heldTextDocumentShow.uri ||
+              heldTextDocumentShow.uri === sourceDocument.uri.toString())
+              ? heldTextDocumentShow
+              : undefined
+          if (heldShow) {
+            heldTextDocumentShow = undefined
+            heldShow.entered()
+            await heldShow.wait
+          }
           textDocumentShows.push({
             name: basename(sourceDocument.uri.path),
             viewColumn: options?.viewColumn,
@@ -4595,6 +4717,8 @@ export async function workspaceHarness(
             )
           if (!options?.preserveFocus || comesToFrontOfActiveGroup)
             activeTextEditorChanged(focusedSourceEditor())
+          // A tab that opened or came to the front of its group changes the visible text editors, with or without the keyboard.
+          if (opensTab || showsAnotherTab) changedVisibleEditors()
           const displayed = nextSourceDisplay
           nextSourceDisplay = undefined
           displayed?.(editor)
@@ -4675,6 +4799,13 @@ export async function workspaceHarness(
               rejectNextTabClose = false
               throw new Error('Canceled')
             }
+            // In the model of `holdNextTabCloseEffect`, the editor acts on the request only once the test releases it.
+            const heldEffect = heldTabCloseEffect
+            heldTabCloseEffect = undefined
+            if (heldEffect) {
+              heldEffect.entered()
+              await heldEffect.wait
+            }
             // Closing the tab that has the keyboard while preserving the focus focuses nothing in its place.
             const closesFocusedTab =
               Boolean(preserveFocus) &&
@@ -4682,6 +4813,7 @@ export async function workspaceHarness(
               activeTabGroup.activeTab !== undefined &&
               tabs.includes(activeTabGroup.activeTab)
             const closed = closeTabs(tabs, preserveFocus)
+            if (closed) changedVisibleEditors()
             if (closesFocusedTab && closed) keyboardOnBody = true
             // A native webview-tab close disposes its panel before the extension's close continuation runs.
             disposePanelsOfClosedTabs(tabs)
@@ -4898,6 +5030,7 @@ export async function workspaceHarness(
       },
       controls,
       handedOverArchives,
+      slotTimers,
     )
   const reader = createReader()
   if (attach) {
@@ -6633,6 +6766,8 @@ export async function workspaceHarness(
         authority?: string
         column?: number
         file?: string
+        /** The whole address path, for a tab of another address than an earlier study's captured file. */
+        path?: string
         refuseClose?: boolean
         lateTextEditor?: boolean
         staleTextEditor?: boolean
@@ -6648,7 +6783,9 @@ export async function workspaceHarness(
           scheme: 'codebook-source',
           authority:
             options.authority ?? sha256(realpathSync(harness.directory)),
-          path: `/earlier-study/repository%2Finterface%2Ftheme/hash/${options.file ?? 'Captured-login-form.tsx'}`,
+          path:
+            options.path ??
+            `/earlier-study/repository%2Finterface%2Ftheme/hash/${options.file ?? 'Captured-login-form.tsx'}`,
         }),
         version: 1,
         getText: () => 'Captured source of an earlier study.\n',
@@ -6767,6 +6904,115 @@ export async function workspaceHarness(
     rejectNextTabClose(): void {
       rejectNextTabClose = true
     },
+    /**
+     * Holds the editor's act on the next request to close tabs until the test releases it: no tab closes before `release`, so a test can show or select something else while a close is pending. Unlike `holdNextTabCloseResponse`, the effect comes after the release.
+     * @returns The entered receipt and the release callback for that one request.
+     * @example const close = harness.holdNextTabCloseEffect(); await close.started; await selectMoment(…); close.release()
+     */
+    holdNextTabCloseEffect() {
+      let entered!: () => void, release!: () => void
+      const started = new Promise<void>((resolve) => {
+          entered = resolve
+        }),
+        wait = new Promise<void>((resolve) => {
+          release = resolve
+        })
+      heldTabCloseEffect = { entered, wait }
+      return { started, release }
+    },
+    /**
+     * Holds the editor's show of the next text document (`showTextDocument`), after it opened the document and before it puts a tab in front of its group, until the test releases it, as an editor whose show stalls.
+     * @param options - An exact URI limits the hold to that document.
+     * @returns The entered receipt and the release callback for that one show.
+     * @example const show = harness.holdNextTextDocumentShow({ uri: slotUri }); await show.started; show.release()
+     */
+    holdNextTextDocumentShow(options?: { uri: string }) {
+      let entered!: () => void, release!: () => void
+      const started = new Promise<void>((resolve) => {
+          entered = resolve
+        }),
+        wait = new Promise<void>((resolve) => {
+          release = resolve
+        })
+      heldTextDocumentShow = { entered, wait, uri: options?.uri }
+      return { started, release }
+    },
+    /**
+     * Makes the editor refuse to close every open tab whose document URI contains a text, as it does for a tab it keeps (an answer of `false` for its group's requested tabs).
+     * @param uriPart - A part of the document URI, such as `Captured-theme.ts`.
+     * @returns The function that lets the editor close those tabs again.
+     * @example const accept = harness.refuseCloseOfTabsShowing('Captured-theme.ts'); …; accept()
+     */
+    refuseCloseOfTabsShowing(uriPart: string): () => void {
+      const refused = groups
+        .flatMap((group) => group.tabs)
+        .filter((tab) => {
+          const input = tab.input as
+            { uri?: { toString(): string } } | undefined
+          return input?.uri?.toString().includes(uriPart)
+        })
+      for (const tab of refused) closeRefusingTabs.add(tab)
+      return (): void => {
+        for (const tab of refused) closeRefusingTabs.delete(tab)
+      }
+    },
+    /** Turns the recorded-source slot's deadline clock over to the test: timers set from now on fire only in `elapseSlotClock`. @example harness.useManualSlotClock() */
+    useManualSlotClock(): void {
+      manualSlotClock = true
+    },
+    /**
+     * Moves the hand-driven slot clock forward and fires every timer that falls due, in order.
+     * @param milliseconds - How far to move the clock.
+     * @example harness.elapseSlotClock(1_000)
+     */
+    elapseSlotClock(milliseconds: number): void {
+      slotClockMs += milliseconds
+      for (const timer of manualSlotTimers.toSorted(
+        (left, right) => left.dueMs - right.dueMs,
+      ))
+        if (timer.active && timer.dueMs <= slotClockMs) {
+          timer.active = false
+          timer.callback()
+        }
+    },
+    /** How many hand-driven slot timers are set and not yet fired or cancelled. @example assert.equal(harness.pendingSlotTimers(), 0) */
+    pendingSlotTimers: (): number =>
+      manualSlotTimers.filter((timer) => timer.active).length,
+    /** The first line of every reveal of a recorded-source slot's editor, in order, with the slot's URI. @example harness.slotReveals().at(-1) // => { uri: 'codebook-source://…', line: 0 } */
+    slotReveals: () => [...slotRevealCalls],
+    /**
+     * Asks the registered CodeLens providers for the lenses of a document, as the editor does for a visible document.
+     * @param uri - The URI, as text, of a document some editor has open.
+     * @returns The lens titles in order.
+     * @example harness.codeLensTitles(slotUri) // => ['Recorded: src/theme.ts:1 · 0.20 s']
+     */
+    codeLensTitles(uri: string): string[] {
+      const document = visibleSourceEditors.find(
+        (editor) => editor.document.uri.toString() === uri,
+      )?.document
+      assert.ok(document, `No editor shows ${uri}`)
+      return codeLensProviders
+        .flatMap(({ provider }) => provider.provideCodeLenses(document))
+        .map((lens) => lens.command?.title ?? '')
+    },
+    /**
+     * Gives the keyboard to the editor group at a column, as a click in that group does, so a document another action shows in a different group comes to the front without becoming the active editor.
+     * @param column - The group's view column.
+     * @example harness.activateEditorGroup(1)
+     */
+    activateEditorGroup(column: number): void {
+      const group = groups.find((candidate) => candidate.viewColumn === column)
+      assert.ok(group, `No editor group at column ${column}`)
+      activeTabGroup = group
+      staleNamedGroup = undefined
+      keyboardOnBody = false
+      activeTextEditorChanged(focusedSourceEditor())
+    },
+    /** The text an open virtual document holds right now, as the editor's document model keeps it (not what the provider would serve); `undefined` when no such document is open. @example harness.documentTextOf(slotUri) // => 'const nextTheme = "dark";\n' */
+    documentTextOf: (uri: string): string | undefined =>
+      virtualSourceDocuments.get(uri)?.text,
+    /** Tells the listeners of the editor's `onDidChangeVisibleTextEditors`, as the editor does when a group shows another tab; the fake editor tells them itself for the reader's own shows and closes. @example harness.fireVisibleEditorsChanged() */
+    fireVisibleEditorsChanged: changedVisibleEditors,
     /** Makes the editor answer the next request to close a whole group with `false` and keep that group, empty or not, as it does when it refuses the close (finding 598). @example harness.refuseNextGroupClose() */
     refuseNextGroupClose(): void {
       refusesNextGroupClose = true
