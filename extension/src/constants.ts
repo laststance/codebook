@@ -476,6 +476,11 @@ export const CHAT_KEYBOARD_RETURNED_MESSAGES = {
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'
+/** The two buttons of the modal warning that answers a foreign preview tab blocking Open replay; each one retries the open (F158, D33). */
+export const FOREIGN_PREVIEW_ACTION = {
+  keepOpen: 'Keep Tab Open',
+  close: 'Close Tab',
+} as const
 /** Profile-wide (global state) key recording that Codebook moved the Learning summary beside VS Code's chat once, at the learner's first replay open; it keeps that move to once, so a place the learner chose afterwards is never overridden (F209, D31). */
 export const SUMMARY_BESIDE_CHAT_MOVED_KEY =
   'codebook.summaryBesideChatMoved.v1'

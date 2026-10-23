@@ -80,6 +80,7 @@ import {
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_FOCUS_RELEASE_WAIT_MS,
   SUMMARY_PLACEMENT_ACTION,
+  FOREIGN_PREVIEW_ACTION,
   MOVE_VIEWS_COMMAND,
   SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT,
   SUMMARY_BESIDE_CHAT_MOVED_KEY,
@@ -240,7 +241,10 @@ import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { firstVerifiedStopSequence } from './utils/firstVerifiedStopSequence'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
-import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
+import {
+  foreignPreviewObstacle,
+  parseForeignPreviewObstacle,
+} from './utils/foreignPreviewObstacle'
 import type { CodebookDiagnostic } from './utils/formatCodebookDiagnostic'
 import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
 import { groupCreatedAtColumn } from './utils/groupCreatedAtColumn'
@@ -750,6 +754,8 @@ export class StudyWorkspace {
   private selectedNodeHistoryRequest = 0
   /** The step shown with the selected event, committed with that selection (DS21, {@link nextNodeHistoryStepId}); `undefined` shows the event's first step. */
   private selectedNodeHistoryStepId?: string
+  /** The request token of the open that selected the shown test replay; the Study message carries it so the pane scrolls the replay's section into view once per open (F156, D32). */
+  private nodeHistoryOpenToken?: number
   /** The selected test replay's output read once ({@link indexNodeTestOutput}), with the history it was read from. */
   private selectedNodeHistoryOutputIndex?: {
     history: NodeTestHistoryIndex
@@ -11235,6 +11241,9 @@ export class StudyWorkspace {
       !state.reason
     )
       return
+    // A learner's preview tab that blocks the open is answered with a choice and a retry, not a toast (F158).
+    if (await this.resolveForeignPreviewRefusal(state.reason))
+      return this.openLearningReplay(studyId)
     // The controller keeps a failure as its string form, which starts with the error's name.
     void showPlainNotice(
       vscode.window,
@@ -11254,6 +11263,49 @@ export class StudyWorkspace {
       this.selectedNodeHistory !== undefined ||
       this.pendingNodeHistory !== undefined
     )
+  }
+
+  /**
+   * Answers an Open replay that a learner's preview tab refused with a modal warning that names the file, in both hosts (a toast is cut to one line in Cursor), and carries out the learner's choice; called by {@link openLearningReplay} and {@link openNodeHistoryFromHost} before they tell a failure (F158, D33).
+   * Keep Tab Open pins the tab (it stops being a preview) and Close Tab closes it; each is followed by a retry of the open.
+   * @param cause - The failure's words; only a {@link foreignPreviewObstacle} sentence in it is answered here.
+   * @returns `true` when the learner chose a way out and the open is to be retried; `false` when the cause is another failure or the dialog was dismissed.
+   * @example if (await this.resolveForeignPreviewRefusal(cause)) return this.openLearningReplay(studyId)
+   */
+  private async resolveForeignPreviewRefusal(cause: string): Promise<boolean> {
+    const obstacle = parseForeignPreviewObstacle(cause)
+    if (!obstacle) return false
+    const choice = await vscode.window.showWarningMessage(
+      `Codebook cannot open the replay: "${obstacle.tabName}" is open as a preview tab in editor group ${obstacle.viewColumn}.`,
+      {
+        modal: true,
+        detail: `The replay needs that group, and a preview tab would be replaced. Keep Tab Open keeps "${obstacle.tabName}" as a normal tab; Close Tab closes it. The replay opens again after either.`,
+      },
+      FOREIGN_PREVIEW_ACTION.keepOpen,
+      FOREIGN_PREVIEW_ACTION.close,
+    )
+    if (!choice) return false
+    const tab = vscode.window.tabGroups.all
+      .filter((group) => group.viewColumn === obstacle.viewColumn)
+      .flatMap((group) => group.tabs)
+      .find(
+        (candidate) =>
+          candidate.isPreview &&
+          this.editorTabName(candidate) === obstacle.tabName,
+      )
+    // The tab may be gone by now; the retry then decides.
+    if (!tab) return true
+    if (
+      choice === FOREIGN_PREVIEW_ACTION.keepOpen &&
+      tab.input instanceof vscode.TabInputText
+    ) {
+      await vscode.window.showTextDocument(tab.input.uri, {
+        viewColumn: obstacle.viewColumn,
+        preview: false,
+        preserveFocus: true,
+      })
+    } else await vscode.window.tabGroups.close([tab])
+    return true
   }
 
   /**
@@ -11293,15 +11345,7 @@ export class StudyWorkspace {
       await this.returnCurrentSelection('learner')
       if (this.recordingActive) return
     }
-    // The Live composition has no Study pane: the open enters the Study composition first (F208).
-    if (!this.opened || this.liveComposition) {
-      this.hostOpeningTestReplay = true
-      try {
-        await this.open()
-      } finally {
-        this.hostOpeningTestReplay = false
-      }
-    }
+    await this.enterStudyCompositionForReplay()
     const outcome = await this.openNodeHistory(studyId, this.revision)
     if (outcome.status !== 'failed') {
       // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
@@ -11310,7 +11354,42 @@ export class StudyWorkspace {
     }
     const roots = this.service?.causeRoots ?? { storage: [] }
     const cause = sanitizeCause(outcome.error, roots)
-    const stack = sanitizedStack(outcome.error, roots)
+    // A learner's preview tab that blocks the open is answered with a choice and a retry (F158).
+    if (await this.resolveForeignPreviewRefusal(cause))
+      return this.openNodeHistoryFromHost(studyId)
+    await this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
+  }
+
+  /**
+   * Opens the Study composition for a test replay that is about to open: a closed reader opens, and the Live composition (which has no Study pane) gives way to it (F208); called by {@link openNodeHistoryFromHost}.
+   * @example await this.enterStudyCompositionForReplay()
+   */
+  private async enterStudyCompositionForReplay(): Promise<void> {
+    if (this.opened && !this.liveComposition) return
+    this.hostOpeningTestReplay = true
+    try {
+      await this.open()
+    } finally {
+      this.hostOpeningTestReplay = false
+    }
+  }
+
+  /**
+   * Tells the learner that a test replay did not open: one Output › Codebook entry and the load-failure notification, whose Show details button opens the channel; called by {@link openNodeHistoryFromHost}.
+   * @param studyId - The test replay's study id.
+   * @param error - What the open threw.
+   * @param cause - The sanitized cause of that error.
+   * @example await this.tellTestReplayOpenFailure(studyId, outcome.error, cause)
+   */
+  private async tellTestReplayOpenFailure(
+    studyId: string,
+    error: unknown,
+    cause: string,
+  ): Promise<void> {
+    const stack = sanitizedStack(
+      error,
+      this.service?.causeRoots ?? { storage: [] },
+    )
     this.diagnostics?.log({
       surface: 'open:test-replay',
       studyId,
@@ -11381,6 +11460,7 @@ export class StudyWorkspace {
       if (this.selectedNodeHistory?.header.studyId !== history.header.studyId)
         this.nodeOutputReadings.clear()
       this.selectedNodeHistory = history
+      this.nodeHistoryOpenToken = request
       // Admitting another history permanently retires the prior exact Wiki visit; refused reads leave it intact.
       this.repositoryObservation = undefined
       this.selectedNodeHistoryLearningDecision = learningDecision
@@ -12166,6 +12246,7 @@ export class StudyWorkspace {
     this.nodeHistoryPlaybackController?.dispose()
     this.nodeHistoryPlaybackController = undefined
     this.selectedNodeHistory = undefined
+    this.nodeHistoryOpenToken = undefined
     this.selectedNodeHistoryLearningDecision = undefined
     this.selectedNodeHistoryLearningMaterial = undefined
     // The retired replay's output index goes with it, so its entries leave the extension host's memory.
@@ -12179,7 +12260,13 @@ export class StudyWorkspace {
     this.selectedNodeHistoryDebugAvailable = false
     this.selectedNodeHistoryValuesUninspected = false
     this.replayDebugger?.invalidate()
+    // The retired replay's reader-position and learning-material rows belong to it and go with it (F178).
+    const removedRows = [
+      this.errors.delete('history-position'),
+      this.errors.delete('history-learning'),
+    ].some(Boolean)
     await this.retireNodeSourceSlot()
+    if (removedRows) this.publish()
   }
 
   /**
@@ -12709,6 +12796,9 @@ export class StudyWorkspace {
           : {}),
       },
       ...this.nodeHistoryViews(selectedNodeHistory, selectedNodeHistoryEvent),
+      ...(selectedNodeHistory && this.nodeHistoryOpenToken !== undefined
+        ? { nodeHistoryScrollToken: this.nodeHistoryOpenToken }
+        : {}),
       nodeHistoryPage: this.selectedNodeHistoryPage,
       nodeHistoryPageCount: this.selectedNodeHistory
         ? Math.max(
@@ -12991,6 +13081,19 @@ export class StudyWorkspace {
       this.pendingHistory !== undefined
     )
       return Promise.resolve()
+    // A selected or opening test replay does no source work for the Study's own selection: no article tab and no captured-source warning beside the replay's slot (F156, D32).
+    if (this.testReplayHoldsComposition()) {
+      // A shown replay that a refused or failed browser choice left selected ends the loading state that choice set; an opening replay ends its own.
+      if (
+        this.loading &&
+        this.pendingNodeHistory === undefined &&
+        !this.hostOpeningTestReplay
+      ) {
+        this.loading = false
+        this.publish()
+      }
+      return Promise.resolve()
+    }
     // An explicit source request revokes pending chat returns before source I/O can yield.
     if (!preserveFocus) this.keyboardOutsideEditors = undefined
     // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer.

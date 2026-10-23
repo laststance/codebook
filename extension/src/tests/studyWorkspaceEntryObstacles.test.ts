@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -257,6 +258,65 @@ test('Open replay in Cursor beside a foreign preview tab that keeps the main edi
     await harness.close()
   }
 })
+
+// Value: protects=Open replay refused for a learner's preview tab being answered with a modal warning that names the file and offers Keep Tab Open and Close Tab, each retrying the open, in both hosts (Cursor cuts a toast to one line, so the learner saw neither the file nor the way out); fails_when=the refusal stays a toast, the dialog names no file, a button does not clear the tab, or the open is not retried; why_new=Cycle 0050 F158 and D33 (PR-B2 spike, Cursor 3.26.13); seam=addTextPreview, the main editor never reporting focus beside it (hasMainEditorFocus), answerWarningDialogs
+for (const choice of ['Close Tab', 'Keep Tab Open'] as const)
+  test(`Open replay beside a learner's preview tab asks in a modal dialog that names the file, and ${choice} retries the open`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness()
+    try {
+      await harness.reader.close()
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      // The learner's own kept file stands in group 1 beside the preview, so the group still has a file once the preview is closed.
+      harness.focusMutableDraft('learner-notes.ts', 1)
+      const agentChat = harness.addSeparateEditorPart()
+      await writeFile(join(harness.directory, 'login-form.tsx'), 'export {}\n')
+      const preview = harness.addTextPreview(
+        join(harness.directory, 'login-form.tsx'),
+        1,
+      )
+      agentChat.focus()
+      const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+        harness.reader,
+      )
+      // The main editor reports no focus in group 1 only while the preview tab is a preview.
+      harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+        groupCount === 1 && preview.isPreview
+          ? false
+          : hasMainEditorFocus(groupCount)
+      harness.answerWarningDialogs(async () => choice)
+      let openAttempts = 0
+      const openRecording = harness.reader.openRecording.bind(harness.reader)
+      harness.reader.openRecording = (studyId: string): Promise<void> => {
+        openAttempts++
+        return openRecording(studyId)
+      }
+
+      // Act
+      await harness.reader.openLearningReplay(harness.studyId)
+      await harness.controller.settle()
+
+      // Assert
+      assert.equal(harness.warningDialogs.length, 1)
+      assert.match(harness.warningDialogs[0]!.title, /"login-form\.tsx"/)
+      assert.deepEqual(harness.warningDialogs[0]!.items, [
+        'Keep Tab Open',
+        'Close Tab',
+      ])
+      assert.equal(
+        (harness.warningDialogs[0]!.options as { modal?: boolean }).modal,
+        true,
+      )
+      // The choice retried the open once (the fake editor's chat-focus model still lets that second attempt fail for another cause, which the dialog does not answer).
+      assert.equal(openAttempts, 2)
+      assert.equal(
+        harness.groups.some((group) => group.tabs.includes(preview)),
+        choice === 'Keep Tab Open',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
 
 test('a presentation selection refused for a learner preview names that tab, its group and how to clear it', async () => {
   // Arrange

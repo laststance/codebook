@@ -3183,3 +3183,65 @@ test('a host without vscode.moveViews still opens the replay and reports the ref
     await harness.close()
   }
 })
+
+// Value: protects=Open replay from a closed reader showing only the replay's own recorded-source slot: the Study's article selection opens no source tab and no captured-source warning beside it; fails_when=the entry renders the article's source first (a `Captured-overview` tab and "Configured source is unavailable") before the replay opens; why_new=Cycle 0050 F156 (PR-B2 spike, both hosts); seam=workspaceHarness, openLearningReplay, the fake tab model
+test('Open replay from a closed reader opens no source tab of the Study’s article beside the replay’s slot', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    const sourceTabs = harness.groups
+      .flatMap((group) => group.tabs)
+      .map((tab) => tab.label)
+      .filter((label) => label.startsWith('Captured-'))
+    assert.deepEqual(sourceTabs, ['Captured-theme.ts'])
+    assert.deepEqual([...(harness.reader.inspect().view?.errors ?? [])], [])
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const row of [
+  {
+    kind: 'history-position',
+    method: 'readReaderPosition',
+    line: 'reader position file unreadable',
+  },
+  {
+    kind: 'history-learning',
+    method: 'readLearningMaterial',
+    line: 'learning material file unreadable',
+  },
+] as const)
+  // Value: protects=the Study pane's lines of a retired test replay not staying beside the current run: the row of a reader position or a learning material that could not be read belongs to the replay and goes when the learner returns to Live; fails_when=the retire clears the source row only, so the retired replay's `history-position` and `history-learning` rows survive a return to Live; why_new=Cycle 0050 F178 (sideways sweep of F164, present on main); seam=workspaceHarness, a rejecting NodeTestHistoryStore read, the reader's return-current action, errorLines
+  test(`returning to Live removes the retired test replay’s ${row.kind} row`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const store = harness.service.nodeHistoryStore!
+      const history = await saveOneStopNodeHistory(store)
+      await harness.reader.action('retry')
+      context.mock.method(store, row.method, async () => {
+        throw new Error(row.line)
+      })
+      await harness.reader.openLearningReplay(history.studyId)
+      assert.equal(readerSeams(harness).errorLines().includes(row.line), true)
+
+      // Act
+      await harness.reader.action('return-current')
+
+      // Assert
+      assert.equal(readerSeams(harness).errorLines().includes(row.line), false)
+    } finally {
+      context.mock.restoreAll()
+      await harness.close()
+    }
+  })

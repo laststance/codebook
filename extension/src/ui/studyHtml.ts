@@ -140,6 +140,8 @@ export interface StudyViewMessage {
   nodeHistoryApplication?: NodeTestApplicationView
   /** The Study pane's test replay section, every line already worded (Designs 5 and 6). */
   nodeHistorySection?: NodeTestSectionView
+  /** Names the open that selected the shown test replay; the pane scrolls the test replay section into view once for each value (F156, D32). */
+  nodeHistoryScrollToken?: number
   /** The test replay's learning material for the one summary renderer, each referenced step with its event (Design 5). */
   nodeHistoryLearningSummary?: NodeLearningSummaryProjection
   contentTab?: 'overview' | 'live' | 'recording'
@@ -501,6 +503,7 @@ function studyClient(
   const readerOptions = element('reader-options')
   let selectedContentTab: StudyViewMessage['contentTab']
   let revealedFollowedObservationId: string | undefined
+  let scrolledNodeHistoryToken: number | undefined
   let readerOptionsOpenedByLearner = false
   readerOptions.querySelector('summary')?.addEventListener('click', () => {
     readerOptionsOpenedByLearner = !readerOptions.hasAttribute('open')
@@ -3772,6 +3775,19 @@ function studyClient(
         behavior: 'instant',
       })
       revealedFollowedObservationId = model.observation?.id
+    }
+    // A test replay's open puts its section in view once, so the Study's article above it does not push the transport out of sight (F156).
+    if (
+      message.nodeHistoryScrollToken !== undefined &&
+      message.nodeHistoryScrollToken !== scrolledNodeHistoryToken &&
+      !message.loading
+    ) {
+      scrolledNodeHistoryToken = message.nodeHistoryScrollToken
+      element('node-history').scrollIntoView({
+        block: 'start',
+        inline: 'nearest',
+        behavior: 'instant',
+      })
     }
     api.postMessage({
       type: 'rendered',
