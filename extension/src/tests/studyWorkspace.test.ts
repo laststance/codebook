@@ -688,7 +688,23 @@ test('saved Node history is selectable in the reader without entering browser pl
         !harness.postedMessages().slice(-1)[0]?.loading,
       'a new history store restores the saved stop and its native snapshot',
       READER_RESULT_BOUND_MS,
-    )
+    ).catch((error: unknown) => {
+      // The reopen failed once on a CI runner and never since (F279): a timeout names what the reader showed, so the next one tells a lost update from a failed or superseded open.
+      const shown = harness.postedMessages().slice(-1)[0]
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; reader: ${JSON.stringify(
+          {
+            presentations: recordedStopPresentations(harness).length,
+            sequence: shown?.nodeHistoryPosition?.sequence,
+            loading: shown?.loading,
+            shownRevision: shown?.revision,
+            sentRevision: latestRevision,
+            readerRevision: harness.reader['revision'],
+            errors: [...harness.reader['errors'].values()],
+          },
+        )}`,
+      )
+    })
 
     // Assert
     const reopenedHistoryMessage = harness.postedMessages().slice(-1)[0]!
