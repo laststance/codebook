@@ -1018,6 +1018,187 @@ test('a refused placement guard writes one Output entry that names the guard, th
   }
 })
 
+// Value: protects=the extension host not sanitizing every tab label at each placement guard it arms (about thirty arms per presentation), because the snapshot is read only on the rare refusal; fails_when=a guard that ends without refusing still sanitizes the groups it noted at arm time, or the arm sanitizes at all; why_new=Cycle 0050 F393 (every arm ran sanitizeCause on up to eight labels per group); seam=armPlacementReport, sanitizeRefusalGroups, the reader's agent select and returnToCurrent over the leftover-group layout; no_claim=the wall-clock cost of one sanitization
+test('a presentation whose placement guards are armed and never refuse sanitizes no tab label for the Output', async () => {
+  // Arrange: as in the refusal round above; the agent selected the Study cold, which put the Application into the unproven leftover.
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    let arms = 0
+    let sanitizedSnapshots = 0
+    const reader = harness.reader as unknown as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >
+    const arm = reader['armPlacementReport']!.bind(reader)
+    const sanitize = reader['sanitizeRefusalGroups']!.bind(reader)
+    reader['armPlacementReport'] = (...args) => {
+      arms++
+      return arm(...args)
+    }
+    reader['sanitizeRefusalGroups'] = (...args) => {
+      sanitizedSnapshots++
+      return sanitize(...args)
+    }
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    const selected = harness.reader.presentationState()
+    const answer = harness.reader
+      .returnToCurrent(
+        {
+          presentationId: selected.presentationId,
+          expectedRevision: selected.reader.contentRevision,
+        },
+        'agent',
+      )
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+    await answer
+
+    // Assert
+    assert.ok(arms > 0)
+    assert.equal(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:placement-refused',
+      ).length,
+      0,
+    )
+    assert.equal(sanitizedSnapshots, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the refusal still sanitizing the groups it reports, once for the snapshot taken at arm time and once for the groups now; fails_when=the refusal reports raw tab labels, or sanitizes only one of the two snapshots; why_new=Cycle 0050 F393 (sanitizing moved from the arm to the refusal); seam=armPlacementReport, sanitizeRefusalGroups, refusePlacement, the fake editor's workbench.action.newGroupAbove run as the learner; no_claim=the wording of the refusal sentence the learner reads
+test('a refused placement guard sanitizes the tab labels of its two snapshots for the Output', async () => {
+  // Arrange: as in the refusal round above; the agent selected the Study cold, which put the Application into the unproven leftover.
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    let arms = 0
+    let sanitizedSnapshots = 0
+    const reader = harness.reader as unknown as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >
+    const arm = reader['armPlacementReport']!.bind(reader)
+    const sanitize = reader['sanitizeRefusalGroups']!.bind(reader)
+    reader['armPlacementReport'] = (...args) => {
+      arms++
+      return arm(...args)
+    }
+    reader['sanitizeRefusalGroups'] = (...args) => {
+      sanitizedSnapshots++
+      return sanitize(...args)
+    }
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    const selected = harness.reader.presentationState()
+    const answer = harness.reader
+      .returnToCurrent(
+        {
+          presentationId: selected.presentationId,
+          expectedRevision: selected.reader.contentRevision,
+        },
+        'agent',
+      )
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.scopedBrowser') === 1 &&
+        harness.groups.includes(leftover) &&
+        leftover.tabs.length === 0,
+      "the Application's move out of the leftover",
+    )
+
+    // Act: the learner runs New Group Above before the editor removes the emptied leftover.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    await answer
+
+    // Assert
+    assert.ok(arms > 0)
+    assert.equal(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:placement-refused',
+      ).length,
+      1,
+    )
+    assert.equal(sanitizedSnapshots, 2)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's own choice while an agent's Return Current waits for the editor's late removal of the leftover the Application's move emptied (row 658): a click into their auth.ts, or a page they bring to the front of auth.ts's group, is no effect of Codebook's move, and the Return refuses as a learner's change instead of arranging over it; fails_when=only the groups are compared during the move and the wait, so the learner's focus or front tab is taken into the placement guard taken after them and the Return goes on; why_new=Cycle 0046 row 670; seam=applicationGroupMarkers, leaveEmptyLockedGroup, closeEmptyGroupsAfterPanelMove with removeGroupLeftByPanelMoveLater, the reader's agent select and returnToCurrent, focusMutableDraft's focus (the learner's click), addOpaqueTab with focusOpaqueTab (the learner's tab), panelColumn and harness.groups
 for (const change of ['focus', 'tab'] as const)
   test(`in VS Code, a learner's ${change === 'focus' ? 'click into their file' : 'tab brought to the front of their group'} while an agent's Return Current waits for the editor's late removal of the emptied leftover refuses the Return as a learner's change`, async () => {

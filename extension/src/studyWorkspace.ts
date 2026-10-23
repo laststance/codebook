@@ -21553,8 +21553,9 @@ export class StudyWorkspace {
 
   /**
    * Notes the moment and the editor groups a placement guard starts waiting at, so {@link refusePlacement} can say what changed; called by each of the three placement guards when it is armed.
+   * The groups are kept raw and cheap (labels are not sanitized here): a guard is armed far more often than it refuses, and {@link refusePlacement} sanitizes the snapshot only when it reports.
    * @param guard - The guard's name, as the report names it.
-   * @returns The arm time and the groups then, sanitized and bounded.
+   * @returns The arm time and the groups then, with raw labels and bounded.
    * @example const armed = this.armPlacementReport('retainPresentationPlacement')
    */
   private armPlacementReport(guard: string): {
@@ -21570,18 +21571,17 @@ export class StudyWorkspace {
   }
 
   /**
-   * Describes the editor groups as a refusal report shows them: column, active flag and each tab's label (sanitized, cut) and input kind; called by {@link armPlacementReport} and {@link refusePlacement}.
-   * @returns One view per group.
+   * Describes the editor groups as a refusal report keeps them: column, active flag and each tab's raw label (bounded in count) and input kind; called by {@link armPlacementReport} and {@link refusePlacement}.
+   * @returns One view per group; the labels still need {@link sanitizeRefusalGroups} before they are shown.
    * @example this.refusalGroupViews() // => [{ viewColumn: 1, isActive: true, tabs: [{ label: 'auth.ts', kind: 'text' }] }]
    */
   private refusalGroupViews(): RefusalGroupView[] {
-    const roots = this.service?.causeRoots ?? { storage: [] }
     const active = vscode.window.tabGroups.activeTabGroup
     return vscode.window.tabGroups.all.map((group) => ({
       viewColumn: group.viewColumn,
       isActive: group === active,
       tabs: group.tabs.slice(0, REFUSAL_REPORT_GROUP_TABS).map((tab) => ({
-        label: sanitizeCause(tab.label, roots),
+        label: tab.label,
         kind:
           tab.input instanceof vscode.TabInputText
             ? 'text'
@@ -21590,6 +21590,25 @@ export class StudyWorkspace {
               : tab.input instanceof vscode.TabInputTextDiff
                 ? 'diff'
                 : 'other',
+      })),
+    }))
+  }
+
+  /**
+   * Sanitizes the tab labels of a refusal snapshot (home, storage and repository paths and control characters removed) for the Output entry; called by {@link refusePlacement} for the groups before and after, and by nothing else, so a guard that does not refuse sanitizes nothing.
+   * @param groups - Groups from {@link refusalGroupViews}.
+   * @returns The same groups with sanitized labels.
+   * @example this.sanitizeRefusalGroups(this.refusalGroupViews())
+   */
+  private sanitizeRefusalGroups(
+    groups: readonly RefusalGroupView[],
+  ): RefusalGroupView[] {
+    const roots = this.service?.causeRoots ?? { storage: [] }
+    return groups.map((group) => ({
+      ...group,
+      tabs: group.tabs.map((tab) => ({
+        ...tab,
+        label: sanitizeCause(tab.label, roots),
       })),
     }))
   }
@@ -21611,8 +21630,8 @@ export class StudyWorkspace {
       guard: armed.guard,
       armedAtMs: armed.armedAtMs,
       nowMs,
-      before: armed.before,
-      after: this.refusalGroupViews(),
+      before: this.sanitizeRefusalGroups(armed.before),
+      after: this.sanitizeRefusalGroups(this.refusalGroupViews()),
       events: this.placementEvents.since(armed.armedAtMs),
     })
     this.diagnostics?.log({ surface: 'presentation:placement-refused', cause })
