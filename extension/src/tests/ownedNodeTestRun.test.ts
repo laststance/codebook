@@ -2651,3 +2651,43 @@ test('a learner’s breakpoint pausing at the declared column is accepted althou
     await harness.cleanup()
   }
 })
+
+// Value: protects=a learner's own breakpoint that pauses at the column the owned breakpoint is bound at: the pause is held as the learner's, Codebook neither captures it as the declared stop nor resumes it, and the stop is captured only at the owned breakpoint's own hit after the learner continues; fails_when=every pause at the bound column is captured as the declared stop, so a learner's pause is recorded as the stop and the journal holds a moment the test had not reached; why_new=checkFrameAtBoundColumn accepts the bound column only when the pause is not a learner's hit (F155, F220), and only the declared-column learner pause was tested; seam=the fake session acknowledges 1:1, pauses at 1:1 for a learner breakpoint and then for the owned one; no_claim=a learner's pause at the declared column (the test above)
+test('a learner’s breakpoint pausing at the column the owned breakpoint is bound at holds the run and is not captured as the declared stop', async () => {
+  // Arrange: declared at 1:14, owned breakpoint acknowledged at 1:1, the learner's breakpoint also pauses at 1:1.
+  const harness = await nodeRunHarness({
+    acknowledgements: [{ verified: true, line: 1, column: 1 }],
+    pausedColumn: 1,
+    firstPause: { line: 1, hitBreakpointIds: [LEARNER_BREAKPOINT_ID] },
+  })
+  try {
+    // Act
+    const preparing = harness.run.prepare()
+    await waitUntil(
+      () =>
+        harness.events.some(
+          (event) => event.type === 'node-test.learner-paused',
+        ),
+      'learner pause event',
+      2_000,
+    )
+    const settledAtLearnerPause = await Promise.race([
+      preparing.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 300)),
+    ])
+    harness.learnerContinues()
+    const stop = await preparing
+
+    // Assert
+    assert.equal(settledAtLearnerPause, false)
+    assert.deepEqual([stop.frame.line, stop.frame.column], [1, 1])
+    assert.equal(
+      harness.calls.filter((call) => call === 'continue').length,
+      1,
+      'Codebook never resumed the learner pause',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})

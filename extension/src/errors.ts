@@ -161,7 +161,7 @@ export class NodeLearningRevisionChangedError extends Error {
   }
 }
 
-/** Normalizes unexpected boundary failures without pretending they succeeded; called by protocol handlers. @example domainError(new Error('disk')).code */
+/** Normalizes unexpected failures without pretending they succeeded; called by {@link StudyService} where a failure becomes a run's error. The MCP answers use {@link StudyService.unexpectedFailure}, which also hides private paths in the cause. @example domainError(new Error('disk')).code */
 export function domainError(error: unknown): StudyError {
   return error instanceof StudyError
     ? error

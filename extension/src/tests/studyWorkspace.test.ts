@@ -663,6 +663,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       'second stop is selected in the reader before reopening its history',
       READER_RESULT_BOUND_MS,
     )
+    // The reader writes the chosen stop to its store after the commit; the new store reads it from disk, so the reopen waits for that write (F231).
+    await waitUntil(
+      async () => (await store.readReaderPosition(header.studyId)) === 25,
+      'the chosen stop written to the history store',
+      READER_RESULT_BOUND_MS,
+    )
     const library = await harness.reader.learningStorage()
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
       library.directory,
@@ -742,6 +748,12 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
     const presentationsBeforeOutputRestore =
       recordedStopPresentations(harness).length
+    // As above: the output-only position reaches the disk after its commit (F231).
+    await waitUntil(
+      async () => (await store.readReaderPosition(header.studyId)) === 24,
+      'the output-only position written to the history store',
+      READER_RESULT_BOUND_MS,
+    )
     harness.reader['nodeHistoryStore'] = new NodeTestHistoryStore(
       library.directory,
       header.workspaceKey,
@@ -1267,7 +1279,7 @@ test('reopening a Node history after the learner stops its historical debugger r
         harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
           1 && !harness.postedMessages().slice(-1)[0]?.loading,
       'the sealed Node history is loaded',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     harness.receiveContext({
       type: 'node-history-stop',
@@ -1278,10 +1290,19 @@ test('reopening a Node history after the learner stops its historical debugger r
     await waitUntil(
       () => recordedStopPresentations(harness).length === 1,
       'the recorded stop reaches the native debugger',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
     // The learner ends the "Codebook · Recorded learning" session from the native debugger.
     harness.historicalDebuggers[0]!.available = false
+    // The reopen restores the saved stop from disk, which the reader writes after its commit (F231).
+    await waitUntil(
+      async () =>
+        (await harness.service.nodeHistoryStore!.readReaderPosition(
+          history.studyId,
+        )) === 2,
+      'the chosen stop written to the history store',
+      READER_RESULT_BOUND_MS,
+    )
 
     // Act: reopening the same history is the documented recovery.
     harness.receiveContext({
@@ -1294,7 +1315,7 @@ test('reopening a Node history after the learner stops its historical debugger r
         recordedStopPresentations(harness).length === 2 &&
         !harness.postedMessages().slice(-1)[0]?.loading,
       'the reopened history presents its saved stop through a fresh historical debugger',
-      1_000,
+      READER_RESULT_BOUND_MS,
     )
 
     // Assert

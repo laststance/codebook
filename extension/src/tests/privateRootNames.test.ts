@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,4 +38,29 @@ test('an unreadable home directory gives no root instead of throwing', () => {
 
   // Assert
   assert.deepEqual(names, [])
+})
+
+// Value: protects=the extension host from a synchronous real-path read at every cause it words: a folder's real path is read once and remembered, while a folder that could not be resolved is tried again (F262); fails_when=every sanitized cause calls realpath again, which blocks the host on a slow or network home, or a folder that appears later keeps only its reported name; why_new=PR-1's /ship Claude adversarial review, cycle 3: causeRoots resolved the workspace and the home at every access; seam=the native realpath, counted and made to fail for one path; no_claim=a folder whose link target changes during a session
+test("a folder's real path is read once and remembered, and one that could not be resolved is tried again", async (context) => {
+  // Arrange
+  const resolvable = `/codebook-root-${Date.now()}-resolvable`
+  const missing = `/codebook-root-${Date.now()}-missing`
+  const calls: string[] = []
+  context.mock.method(fs.realpathSync, 'native', (path: string) => {
+    calls.push(path)
+    if (path === missing)
+      throw new Error(`ENOENT: no such file or directory, realpath '${path}'`)
+    return `/real${path}`
+  })
+
+  // Act
+  const first = privateRootNames(resolvable)
+  const second = privateRootNames(resolvable)
+  privateRootNames(missing)
+  privateRootNames(missing)
+
+  // Assert
+  assert.deepEqual(first, [resolvable, `/real${resolvable}`])
+  assert.deepEqual(second, first)
+  assert.deepEqual(calls, [resolvable, missing, missing])
 })

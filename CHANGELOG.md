@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.2.36.0] - 2026-10-23 (development candidate)
+
+Cycle 0050 is a bug-fix cycle ([Issue #118](https://github.com/laststance/codebook/issues/118)): it fixes the defects Cycle 0049 left, in three pull requests merged in order. This version holds the first: the test run's start, stops and refusals, saving and storing test replays, causes that name no private path, the bundled skill and the tests that failed under load. The Application pane and the Study section come with the second, the recorded-source tab and the moves between moments with the third.
+
+**Starting a test run.**
+
+- **A full library is said before the start.** While saved studies and test histories take every place of the Saved Study Limit, `codebook_status` reads the `node-test` profile not ready and names the places taken and the limit. A start is refused with `PREREQUISITE_MISSING`, worded as the study library's own refusal: raise **Codebook: Saved Study Limit** in the Settings of this editor profile, or delete a saved study from Saved studies; only the learner can do either.
+- **Checks before the history begins.** The cited files, the editors' open documents of the cited sources and the repository's root Vitest program are checked before a history begins, so a refused start leaves no empty test replay behind. A root `node_modules/vitest` that links outside the repository is named as such: Codebook does not run it.
+- **Stops where the debugger binds them.** A declared stop that the debugger binds at another column of its line is accepted and captured where it binds. A refused stop position names the stop (`source` or `additionalStops[n]`), its `anchorIndex`, the cited path and lines, and which check failed, with what to send instead.
+
+**During and after a test run.**
+
+- **A stop before the first stop reads stopped**, not refused, and offers no `read-history`. After a stop whose release failed, the run offers only `stop`, and a continue is refused with `STALE_PAUSE`.
+- **A seal that meets a passing failure is tried once more.** A history's seal that fails with `EMFILE`, `ENFILE`, `EBUSY`, `EAGAIN` or `EPERM` is retried once after 200 ms.
+- **Empty and damaged histories.** A test history that ends with no entry is removed when it seals: it is listed nowhere and takes no place of the limit, and its run offers no `read-history`. A history that holds a saved learning material or understanding marks is kept, and so is one whose seal records entries but whose journal was lost: a status call or a list never removes it.
+
+**Saving the learning.**
+
+- **Save before the first stop does nothing** and says `Nothing to save yet: the test run has not reached its first stop.`, and the run goes on.
+- **The agent's claim of saved learning** also needs `nodeTest.captureMissing` empty (bundled skill 1.0.47). The run resource and the `codebook://node-history` resource list the capture gaps; when the seal could not read them for a passing reason, the next learning-material save reads them again.
+- **A replay debugger that cannot start** (a declined workspace trust, the capture timeout) no longer fails the open: the replay opens on its moment, the Study pane says `The replay debugger could not start: <cause>. Select this stop or use Inspect in native debugger to restart it.`, and Retry starts it again. A debugger you stopped stays stopped when you move to an output or the result.
+- **`codebook_playback` refuses a test replay** with `PLAYBACK_PROFILE_UNSUPPORTED`, also one of an earlier session that this window has not listed yet.
+
+**Causes name no private path.** Every cause an agent or a learner reads (MCP answers and refusals, the run resource, `codebook_status`, Saved studies, the book catalog, notices, Output › Codebook) shows the extension's storage folder as `<storage>`, the opened repository as `<workspace>` and the home directory as `~`, also under their real paths. A long cause is cut between characters and ends with `… [cut]`; the run resource shows at most 300 characters of it.
+
+**The bundled skill (1.0.47).** In a new VS Code chat that runs in the Copilot harness, where Codebook's MCP tools are not reachable, the skill tells the learner to open a Local chat session, as **Codebook: Set Up AI Chat** says.
+
+**Compatibility.** The MCP API stays 1.8. No stored format changes: test histories, learning materials and reader positions written by 0.2.35.0 open unchanged, and those written now open in 0.2.35.0. A history sealed with no entry by an earlier version is removed when a list or a count meets it, unless it holds learning material or understanding marks.
+
+**Not observed.** No native run of this version yet; the native checks of this cycle run with its second and third pull requests. Windows and Linux are not run.
+
 ## [0.2.35.0] - 2026-10-23 (development candidate)
 
 Cycle 0049's third pull request ([Issue #107](https://github.com/laststance/codebook/issues/107)): a test replay's executed source in one recorded-source tab that the native debugger opens, moves that never show two moments at once, the unrecorded time on the slider and a bounded wait in Play. The native round in VS Code and Cursor follows this merge.

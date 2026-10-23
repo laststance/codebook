@@ -3081,6 +3081,7 @@ test('a failed Update LLM Wiki whose error quotes a command link shows no clicka
 })
 
 test('a failed Save Learning Replay whose error quotes a command link shows no clickable link', async () => {
+  // Value: protects=the Save Learning Replay command's error notice shows the workspace's described cause as plain text, so a cause quoting a Markdown command link cannot become a clickable link; fails_when=the notice passes the cause to the editor unescaped, or the command reports nothing because describing the failure throws; why_changed=F264 words the notice through StudyWorkspace.describeFailure, so the stand-in describes a failure as the real workspace does (F277); seam=the StudyWorkspace stand-in; no_claim=which private roots the real workspace hides (studyWorkspaceTestReplay.test.ts)
   // Arrange
   const commands = new Map<string, () => Promise<void>>(),
     errors: string[] = []
@@ -3117,6 +3118,9 @@ test('a failed Save Learning Replay whose error quotes a command link shows no c
               "EACCES: permission denied, open '/library/[Open](command:x).json'",
             )
           }
+          describeFailure(error: unknown): string {
+            return sanitizeCause(error, { storage: [] })
+          }
           async dispose(): Promise<void> {}
         },
       },
@@ -3134,7 +3138,7 @@ test('a failed Save Learning Replay whose error quotes a command link shows no c
 
     // Assert
     assert.deepEqual(errors, [
-      "Codebook could not save learning: Error: EACCES: permission denied, open '/library/[Open] (command:x).json'",
+      "Codebook could not save learning: EACCES: permission denied, open '/library/[Open] (command:x).json'",
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {

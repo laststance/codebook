@@ -103,10 +103,6 @@ function rootPatterns(root: string): RegExp[] {
  * // => 'EACCES <workspace>\\a.ts'
  */
 export function sanitizeCause(error: unknown, roots: CauseRoots): string {
-  let text =
-    error instanceof StudyError
-      ? messageNamingCause(error.message, error.causeDetail)
-      : withoutErrorName(String(error))
   const replacements: [string, string][] = roots.storage.map(
     (root): [string, string] => [root, '<storage>'],
   )
@@ -118,8 +114,20 @@ export function sanitizeCause(error: unknown, roots: CauseRoots): string {
     (left, right) =>
       shortSpellingLength(right[0]) - shortSpellingLength(left[0]),
   )
-  for (const [root, words] of replacements)
-    for (const pattern of rootPatterns(root))
-      text = text.replace(pattern, words)
+  const hideRoots = (text: string): string => {
+    let hidden = text
+    for (const [root, words] of replacements)
+      for (const pattern of rootPatterns(root))
+        hidden = hidden.replace(pattern, words)
+    return hidden
+  }
+  // A domain error's message and cause lose their roots before they are joined and cut, so a cut never leaves part of a root behind (F263).
+  const text =
+    error instanceof StudyError
+      ? messageNamingCause(
+          hideRoots(error.message),
+          hideRoots(error.causeDetail),
+        )
+      : hideRoots(withoutErrorName(String(error)))
   return text.replace(CONTROL_CHARACTERS, ' ').replace(/ {2,}/g, ' ').trim()
 }

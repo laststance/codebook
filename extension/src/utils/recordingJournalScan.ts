@@ -107,26 +107,26 @@ export function citableEventOf(entry: NodeTestHistoryEntry): CitableEvent {
 /**
  * Brings a recording's scan up to the journal's current end, reading only the bytes appended since the last scan; called by {@link NodeTestHistoryStore.summarize} for a history this window still writes.
  * A scan restarts from the journal's beginning when the journal is a different file, shorter than what was consumed, or when the header file changed. A partly written last line is left for the next refresh. An entry that breaks the journal's rules ends the verified prefix, as for a whole read of an unsealed journal; nothing after it is read.
+ * It trusts that only this window's writer changes the journal while it records: the writer appends and never rewrites, inside the extension's private storage. A rewrite in place by another process (same file, at least as long) is not seen here; the read of the sealed history checks every entry against the seal, so such a journal reads as unavailable once sealed.
  * @param previous - The scan of the last refresh, if any.
  * @param header - The history's header as read now.
  * @param headerSignal - The header file's signal as read now.
  * @param journalPath - The journal file.
+ * @param describeCause - Words a broken entry's parse or schema failure for {@link RecordingScan.brokenReason} without private paths ({@link NodeTestHistoryStore.describeCause}); the failure can quote the line, which holds test output (F243). The store cuts the reason to its bound when it shows it.
  * @returns The scan (the same object as `previous` when it could be continued).
  * @throws When the journal is no bounded regular file or cannot be read.
- * @example scan = await advanceRecordingScan(scan, header, headerSignal, join(directory, 'events.jsonl'))
+ * @example scan = await advanceRecordingScan(scan, header, headerSignal, join(directory, 'events.jsonl'), (error) => store.describeCause(error))
  */
 export async function advanceRecordingScan(
   previous: RecordingScan | undefined,
   header: NodeTestHistoryHeader,
   headerSignal: string,
   journalPath: string,
+  describeCause: (error: unknown) => string,
 ): Promise<RecordingScan> {
   const journal = await lstat(journalPath)
-  if (
-    !journal.isFile() ||
-    journal.isSymbolicLink() ||
-    journal.size > NODE_TEST_HISTORY_LIMIT_BYTES
-  )
+  // lstat follows no link, so a link is no file here.
+  if (!journal.isFile() || journal.size > NODE_TEST_HISTORY_LIMIT_BYTES)
     throw new Error('Node history file is not a bounded regular file.')
   const scan: RecordingScan =
     previous &&
@@ -165,7 +165,7 @@ export async function advanceRecordingScan(
       scan.citable.set(entry.sequence, citableEventOf(entry))
       if (entry.type !== 'output') scan.kept.push(entry)
     } catch (error) {
-      scan.brokenReason = `Interrupted Node history after its verified prefix: ${String(error)}`
+      scan.brokenReason = `Interrupted Node history after its verified prefix: ${describeCause(error)}`
       break
     }
   }

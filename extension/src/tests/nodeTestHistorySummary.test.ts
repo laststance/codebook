@@ -270,6 +270,261 @@ test('a legacy history sealed with no entry takes no place of the saved study li
   assert.equal(names.includes(kept.studyId), true)
 })
 
+// Value: protects=the saved learning of a sealed history whose journal was lost: a capacity check (what codebook_status and every start ask) keeps its folder, header and learning material, and counts its place (F251); fails_when=the check takes the damaged history for an empty one and removes the whole folder, so a status call deletes the learner's saved study; why_new=Codex's structured review of PR-1 found the deletion through admission, and the legacy test seals no entry; seam=the journal is removed by hand; no_claim=how the damaged history reads in Saved studies (unavailable)
+test('a capacity check keeps a sealed history whose journal was lost, with its learning material, and counts its place', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 4)
+  const damaged = nodeTestHistoryHeader(workspaceKey)
+  const writer = await store.start(damaged)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  await writer.finish('partial', 'The learner stopped this run.')
+  const folder = join(directory, NODE_TEST_HISTORY_DIRECTORY, damaged.studyId)
+  await writeFile(join(folder, 'learning-material.json'), '{"kept":true}')
+  await rm(join(folder, 'events.jsonl'))
+
+  // Act
+  const capacity = await store.admission()
+  const names = await readdir(folder)
+
+  // Assert
+  assert.equal(capacity.taken, 1)
+  assert.deepEqual(names.sort(), [
+    'header.json',
+    'learning-material.json',
+    'sealed.json',
+  ])
+})
+
+/** Makes the store's removal of one folder fail as a busy folder does, as long as `failing()` says so; every other removal runs. */
+function failRemovalOf(
+  context: TestContext,
+  folder: string,
+  failing: () => boolean,
+): void {
+  const rmBefore = fsPromises.rm
+  context.mock.method(
+    fsPromises,
+    'rm',
+    async (...args: Parameters<typeof fsPromises.rm>) => {
+      if (args[0] === folder && failing())
+        throw Object.assign(
+          new Error('EBUSY: resource busy or locked, rmdir'),
+          { code: 'EBUSY' },
+        )
+      return rmBefore(...args)
+    },
+  )
+}
+
+// Value: protects=a test history that ends with no entry when its folder cannot be removed at the seal: it is sealed as any other, and the next capacity check removes it, so it is never listed and takes no place (F254, D6); fails_when=a failed removal leaves the folder unsealed, so Saved studies lists it as interrupted and it keeps a place; why_new=PR-1's /ship state-machine review found the failed-removal cell of the seal untested; seam=the removal of that one folder fails once, as a busy folder does; no_claim=a removal that fails at every try (the next test)
+test('an empty history whose folder cannot be removed at its seal is sealed, then removed by the next capacity check and listed nowhere', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 1)
+  const empty = nodeTestHistoryHeader(workspaceKey)
+  const writer = await store.start(empty)
+  const folder = join(directory, NODE_TEST_HISTORY_DIRECTORY, empty.studyId)
+  let busy = true
+  failRemovalOf(context, folder, () => busy)
+
+  // Act
+  await writer.finish('partial', 'The learner stopped this run.')
+  const filesAfterSeal = await readdir(folder)
+  busy = false
+  const capacity = await store.admission()
+  const listed = await store.list()
+  const names = await readdir(join(directory, NODE_TEST_HISTORY_DIRECTORY))
+
+  // Assert
+  assert.equal(filesAfterSeal.includes('sealed.json'), true)
+  assert.equal(capacity.taken, 0)
+  assert.deepEqual(
+    listed.map((summary) => summary.studyId),
+    [],
+  )
+  assert.equal(names.includes(empty.studyId), false)
+})
+
+// Value: protects=a legacy history sealed with no entry whose folder cannot be removed when a capacity check or the list finds it: it is neither listed nor counted, the check and the list still answer, and the folder is removed once it can be (F254, D28); fails_when=the failed removal is counted, listed, or fails the check that every start and codebook_status make; why_new=PR-1's /ship state-machine review found dropSealedEmpty's failed removal untested; seam=the removal of that folder fails as long as the test says, as a busy folder does; no_claim=histories with entries
+test('a legacy empty history whose folder cannot be removed is neither listed nor counted, and goes once it can be removed', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 2)
+  const legacy = nodeTestHistoryHeader(workspaceKey)
+  const legacyWriter = await store.start(legacy)
+  legacyWriter.abandon()
+  const folder = join(directory, NODE_TEST_HISTORY_DIRECTORY, legacy.studyId)
+  await writeFile(
+    join(folder, 'sealed.json'),
+    JSON.stringify({
+      version: 1,
+      studyId: legacy.studyId,
+      entryCount: 0,
+      journalBytes: 0,
+      journalHash: sha256(''),
+      status: 'partial',
+      endedAt: '2026-09-28T00:00:01.000Z',
+    }),
+  )
+  let busy = true
+  failRemovalOf(context, folder, () => busy)
+
+  // Act
+  const capacityWhileBusy = await store.admission()
+  const listedWhileBusy = await store.list()
+  const namesWhileBusy = await readdir(
+    join(directory, NODE_TEST_HISTORY_DIRECTORY),
+  )
+  busy = false
+  await store.admission()
+  const namesAfterwards = await readdir(
+    join(directory, NODE_TEST_HISTORY_DIRECTORY),
+  )
+
+  // Assert
+  assert.equal(capacityWhileBusy.taken, 0)
+  assert.deepEqual(listedWhileBusy, [])
+  assert.equal(namesWhileBusy.includes(legacy.studyId), true)
+  assert.equal(namesAfterwards.includes(legacy.studyId), false)
+})
+
+// Value: protects=the summary of a recording whose folder the seal removed (no entry, D6): the next summary answers none and the list forgets it, with no memo or scan of the gone history left to answer from (F255); fails_when=a summary read after the removal answers the recording's last memo, so Saved studies or the history resource shows a history that is gone; why_new=PR-1's /ship state-machine review found the recording × folder-removed cell untested; seam=none; no_claim=a summary read that races the removal inside one await
+test('a recording summarized before its empty seal answers no summary once the seal removed its folder, and the list forgets it', async (context) => {
+  // Arrange
+  const { workspaceKey, store } = await emptyStore(context, () => 2)
+  const empty = nodeTestHistoryHeader(workspaceKey)
+  const writer = await store.start(empty)
+  const whileRecording = await store.summarize(empty.studyId)
+
+  // Act
+  await writer.finish('partial', 'The learner stopped this run.')
+  const afterSeal = await store.summarize(empty.studyId)
+  const listed = await store.list()
+
+  // Assert
+  assert.equal(whileRecording?.status, 'recording')
+  assert.equal(afterSeal, undefined)
+  assert.deepEqual(listed, [])
+})
+
+// Value: protects=the summary of a sealed history with entries whose folder was removed by hand or by another window: the next summary answers none and the list forgets it (F255); fails_when=the memo of the gone history is answered, so Saved studies keeps a row that opens nothing; why_new=PR-1's /ship state-machine review found the sealed × folder-removed cell untested; seam=the folder is removed by hand; no_claim=the learner's own delete, which the Study workspace makes
+test('a sealed history whose folder was removed answers no summary and leaves the list', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 2)
+  const sealed = nodeTestHistoryHeader(workspaceKey)
+  const writer = await store.start(sealed)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  await writer.finish('partial', 'The learner stopped this run.')
+  const beforeRemoval = await store.list()
+  await rm(join(directory, NODE_TEST_HISTORY_DIRECTORY, sealed.studyId), {
+    recursive: true,
+  })
+
+  // Act
+  const afterRemoval = await store.summarize(sealed.studyId)
+  const listed = await store.list()
+
+  // Assert
+  assert.deepEqual(
+    beforeRemoval.map((summary) => summary.studyId),
+    [sealed.studyId],
+  )
+  assert.equal(afterRemoval, undefined)
+  assert.deepEqual(listed, [])
+})
+
+// Value: protects=a learning material saved for a history before its first entry: when the run ends with no entry, the seal keeps the folder with the material, and the history is listed and counted instead of being removed (F274); fails_when=the empty seal removes the folder and the saved material with it after its save was acknowledged; why_new=Codex's adversarial review of PR-1, cycle 3; seam=the material file is written by hand as a save leaves it; no_claim=the material's content
+test('a history that ends with no entry but holds a saved learning material keeps its folder and is listed', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 4)
+  const header = nodeTestHistoryHeader(workspaceKey)
+  const writer = await store.start(header)
+  const folder = join(directory, NODE_TEST_HISTORY_DIRECTORY, header.studyId)
+  await writeFile(join(folder, 'learning-material.json'), '{"revision":1}')
+
+  // Act
+  await writer.finish('partial', 'The learner stopped this run.')
+  const capacity = await store.admission()
+  const names = await readdir(folder)
+
+  // Assert
+  assert.equal(capacity.taken, 1)
+  assert.equal(names.includes('learning-material.json'), true)
+  assert.equal(names.includes('sealed.json'), true)
+})
+
+// Value: protects=the saved-study count against a history sealed with no entry whose header a removal at the seal took before it failed partway: such a folder is removed by the next count like any empty history (F266); fails_when=a headerless folder is never counted, listed or removed, so it stays on disk for good; why_new=PR-1's /ship Claude adversarial review, cycle 3: the count removed sealed-empty folders only when their header still read; seam=the folder is written by hand; no_claim=folders not named like a study id
+test('a headerless history sealed with no entry is removed by the next capacity check', async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 2)
+  const studyId = nodeTestHistoryHeader(workspaceKey).studyId
+  const folder = join(directory, NODE_TEST_HISTORY_DIRECTORY, studyId)
+  await fsPromises.mkdir(folder, { recursive: true })
+  await writeFile(
+    join(folder, 'sealed.json'),
+    JSON.stringify({
+      version: 1,
+      studyId,
+      entryCount: 0,
+      journalBytes: 0,
+      journalHash: sha256(''),
+      status: 'partial',
+      endedAt: '2026-10-23T00:00:01.000Z',
+    }),
+  )
+
+  // Act
+  const capacity = await store.admission()
+  const names = await readdir(join(directory, NODE_TEST_HISTORY_DIRECTORY))
+
+  // Assert
+  assert.equal(capacity.taken, 0)
+  assert.equal(names.includes(studyId), false)
+})
+
+// Value: protects=the reasons a window shows once its service is attached: replacing the store's describer forgets the summaries the earlier one worded, so a reason made before the attach (which did not hide the repository) is worded again (F267); fails_when=the memo keeps the earlier reason until a file changes; why_new=PR-1's /ship Claude adversarial review, cycle 3: the Study workspace lists the histories before it attaches the service; seam=two describers that say which one worded the reason; no_claim=what the service's roots hide
+test("replacing the store's describer words an earlier summary's reason again", async (context) => {
+  // Arrange
+  const { directory, workspaceKey, store } = await emptyStore(context, () => 4)
+  const header = nodeTestHistoryHeader(workspaceKey)
+  const writer = await store.start(header)
+  await writer.appendOutput({
+    sequence: 1,
+    elapsedMs: 1,
+    channel: 'stdout',
+    text: 'RUN src/theme.test.ts',
+  })
+  writer.abandon()
+  await appendFile(
+    join(
+      directory,
+      NODE_TEST_HISTORY_DIRECTORY,
+      header.studyId,
+      'events.jsonl',
+    ),
+    '{"type":"output",broken}\n',
+  )
+  const restarted = new NodeTestHistoryStore(directory, workspaceKey, () => 4)
+  restarted.describeCause = () => 'worded before the attach'
+  const before = await restarted.summarize(header.studyId)
+
+  // Act
+  restarted.describeCause = () => 'worded by the attached service'
+  const after = await restarted.summarize(header.studyId)
+
+  // Assert
+  assert.match(before?.reason ?? '', /worded before the attach$/)
+  assert.match(after?.reason ?? '', /worded by the attached service$/)
+})
+
 // Value: protects=a recording read by two summaries at once (the 250 ms refresh and a history resource read); fails_when=both continue the shared scan from one offset, so the second applies the same entries again and the recording reads interrupted; why_new=advanceRecordingScan mutated the shared scan across awaits with no serialization per study (F216); seam=the first journal read is held until the second summary was asked for; no_claim=reads of different histories
 test('two overlapping summaries of a growing recording leave it recording with no interrupted reason', async (context) => {
   // Arrange

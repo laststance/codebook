@@ -1,5 +1,6 @@
 import { MAX_UI_TEXT_CHARS } from '../constants'
 
+import { cutTextToFit } from './cutTextToFit'
 import { withoutErrorName } from './withoutErrorName'
 
 /** A cause that names an error's kind and nothing else, as a thrown error without a message reads in its string form ("Error", "TypeError:"). */
@@ -30,5 +31,9 @@ export function messageNamingCause(message: string, cause: string): string {
     message.includes(causeWords)
   )
     return message
-  return `${message} Cause: ${causeWords}`.slice(0, MAX_UI_TEXT_CHARS)
+  // Cut between characters, never inside a surrogate pair, saying it was cut (F263).
+  return cutTextToFit(
+    `${message} Cause: ${causeWords}`,
+    (candidate) => candidate.length <= MAX_UI_TEXT_CHARS,
+  )
 }

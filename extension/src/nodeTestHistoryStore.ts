@@ -15,6 +15,7 @@ import {
   NODE_HISTORY_SUMMARY_READ_CONCURRENCY,
   NODE_TEST_HISTORY_DIRECTORY,
   NODE_TEST_HISTORY_LIMIT_BYTES,
+  NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
   NODE_TEST_HISTORY_MAX_ENTRIES,
   NODE_TEST_LEARNING_DECISION_LIMIT_BYTES,
   NODE_TEST_LEARNING_DECISION_VERSION,
@@ -50,10 +51,13 @@ import {
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { causeRootsFor } from './utils/causeRootsFor'
+import { cutTextToFit } from './utils/cutTextToFit'
 import {
   describeNodeTestResult,
   type NodeTestVerdict,
 } from './utils/describeNodeTestResult'
+import { holdsLearnerFiles } from './utils/holdsLearnerFiles'
 import { isSealedEmptyHistory } from './utils/isSealedEmptyHistory'
 import { isTransientFileError } from './utils/isTransientFileError'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
@@ -72,7 +76,6 @@ import {
   nodeTestResultKind,
   type NodeTestResultKind,
 } from './utils/nodeTestResultKind'
-import { homeRootNames } from './utils/privateRootNames'
 import {
   acceptJournalEntry,
   advanceRecordingScan,
@@ -98,6 +101,19 @@ const LEARNING_DECISION_FILE = 'learning-decision.json'
 const LEARNING_MATERIAL_FILE = 'learning-material.json'
 const HEADER_LIMIT_BYTES = 8_388_608
 const REASON_LIMIT_CHARS = 1_024
+
+/**
+ * Cuts a history's reason to {@link REASON_LIMIT_CHARS} between characters, never inside a surrogate pair, saying it was cut, so every reason fits the seal's and the index's bound (F265); called wherever the store words a reason.
+ * @param reason - The whole reason.
+ * @returns The reason itself when it fits, else its beginning with the cut marker.
+ * @example cutReason('x'.repeat(2_000)).length // => 1_024
+ */
+function cutReason(reason: string): string {
+  return cutTextToFit(
+    reason,
+    (candidate) => candidate.length <= REASON_LIMIT_CHARS,
+  )
+}
 /** The name of a history's folder: its study id. Any other entry of the history directory (a `.DS_Store`, a stray folder) is nobody's history. */
 const HISTORY_IDENTITY = /^[0-9a-f-]{36}_[0-9a-f-]{36}$/
 
@@ -312,17 +328,29 @@ export class NodeTestHistoryStore {
     string,
     Promise<NodeTestHistorySummary | undefined>
   >()
+  /** How a failure's cause is worded for a reason ({@link describeCause}). */
+  private causeDescriber: (error: unknown) => string = (error) =>
+    sanitizeCause(error, causeRootsFor([this.learningDirectory]))
+  /** The study ids whose memo still holds its citable events ({@link rememberSummary}). */
+  private readonly citableOrder = new Set<string>()
+
   /**
    * Words a failure's cause for a summary's `reason` without the private paths it can carry; the Study workspace sets it to the service's roots when it attaches the service, until then it hides the storage folder and the home directory.
    * @example store.describeCause(new Error("ENOENT: open '/Users/ada/…/events.jsonl'")) // => "ENOENT: open '<storage>/…/events.jsonl'"
    */
-  describeCause: (error: unknown) => string = (error) =>
-    sanitizeCause(error, {
-      storage: [this.learningDirectory],
-      home: homeRootNames(),
-    })
-  /** The study ids whose memo still holds its citable events ({@link rememberSummary}). */
-  private readonly citableOrder = new Set<string>()
+  get describeCause(): (error: unknown) => string {
+    return this.causeDescriber
+  }
+
+  /**
+   * Replaces how reasons are worded, and forgets the summaries the earlier wording made: the Study workspace lists the histories before it attaches the service, and a memo would otherwise keep those reasons, which do not hide the repository, until a file changed (F267).
+   * @example store.describeCause = (error) => sanitizeCause(error, service.causeRoots)
+   */
+  set describeCause(describe: (error: unknown) => string) {
+    this.causeDescriber = describe
+    this.summaries.clear()
+    this.citableOrder.clear()
+  }
 
   constructor(
     /** The learning directory the histories live in; a private storage root that no cause shown to the learner or the agent names ({@link sanitizeCause}). */
@@ -507,12 +535,10 @@ export class NodeTestHistoryStore {
     let listed = 0
     for (const name of await readdir(this.directory)) {
       if (listed >= places) break
-      // A history sealed with no entry (written before D6) is removed when met and counts nothing, as the list shows nothing of it (D28, F213).
-      if (
-        (await this.listedHeader(name)) &&
-        !(await this.dropSealedEmpty(name))
-      )
-        listed += 1
+      // A history sealed with no entry (written before D6) is removed when met and counts nothing, as the list shows nothing of it (D28, F213); so is one whose header a removal at its seal took before it failed (F266).
+      if (HISTORY_IDENTITY.test(name) && (await this.dropSealedEmpty(name)))
+        continue
+      if (await this.listedHeader(name)) listed += 1
     }
     return listed
   }
@@ -583,6 +609,7 @@ export class NodeTestHistoryStore {
 
   /**
    * Says whether this workspace's history directory holds a folder for a study id, listed or not, without reading its files; read by {@link StudyService.playback}, so a test replay of an earlier session is refused before this window has listed it (F9).
+   * Synchronous on purpose: {@link StudyService.playback} answers synchronously, and this one existence check of the editor's local storage, made once per agent playback command, takes about a microsecond (F246).
    * @param studyId - A study id an agent sent.
    * @returns `true` for a study id named like a history whose folder exists.
    * @example store.holdsHistoryFolder(earlierSessionStudyId) // => true before any list of this window
@@ -809,7 +836,9 @@ export class NodeTestHistoryStore {
           header: scan.header,
           entries: scan.kept,
           status: 'recording',
-          ...(scan.brokenReason ? { reason: scan.brokenReason } : {}),
+          ...(scan.brokenReason
+            ? { reason: cutReason(scan.brokenReason) }
+            : {}),
         },
         citable: scan.citable,
         scan,
@@ -853,7 +882,9 @@ export class NodeTestHistoryStore {
     const summary: NodeTestHistorySummary = {
       ...emptySummary(header),
       status: 'partial',
-      reason: `History integrity check failed: ${this.describeCause(error).slice(0, REASON_LIMIT_CHARS)}`,
+      reason: cutReason(
+        `History integrity check failed: ${this.describeCause(error)}`,
+      ),
       verification: 'unavailable',
     }
     // A transient file error is not the history's state: it is shown now and read again at the next refresh (F63).
@@ -894,6 +925,7 @@ export class NodeTestHistoryStore {
       header,
       headerSignal,
       join(directory, JOURNAL_FILE),
+      (error) => this.describeCause(error),
     )
   }
 
@@ -995,7 +1027,7 @@ export class NodeTestHistoryStore {
     )
     const sealBytes = await this.readPrivateFile(
       join(directory, SEAL_FILE),
-      16_384,
+      NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
     ).catch((error) => {
       if (error.code === 'ENOENT') return undefined
       throw error
@@ -1022,7 +1054,10 @@ export class NodeTestHistoryStore {
         entries.push(entry)
       } catch (error) {
         if (seal) throw error
-        reason = `Interrupted Node history after its verified prefix: ${String(error)}`
+        // The failure can quote the line, which holds test output: its words lose private paths, and the whole reason keeps the index's bound (F243).
+        reason = cutReason(
+          `Interrupted Node history after its verified prefix: ${this.describeCause(error)}`,
+        )
         break
       }
     }
@@ -1448,6 +1483,8 @@ export class NodeTestHistoryWriter {
       // A history that ends with no entry holds nothing to replay: its folder is removed when it seals, so it is listed nowhere, takes no place of the saved study limit and agrees with a run that reads `replayAvailable: false` (D6, F85). A folder that cannot be removed is sealed as any other.
       if (
         this.entries === 0 &&
+        // Learning material or understanding marks saved before the first entry keep the folder, sealed as any other (F274).
+        !(await holdsLearnerFiles(this.directory)) &&
         (await rm(this.directory, { recursive: true, force: true }).then(
           () => true,
           () => false,
@@ -1466,9 +1503,13 @@ export class NodeTestHistoryWriter {
         journalHash: sha256(journal),
         status,
         endedAt: new Date().toISOString(),
-        reason: reason?.slice(0, REASON_LIMIT_CHARS),
+        reason: reason === undefined ? undefined : cutReason(reason),
       })
-      await atomicPrivateWrite(join(this.directory, SEAL_FILE), seal, 16_384)
+      await atomicPrivateWrite(
+        join(this.directory, SEAL_FILE),
+        seal,
+        NODE_TEST_HISTORY_SEAL_LIMIT_BYTES,
+      )
       this.sealedHash = seal.journalHash
       this.closed = true
       this.onClosed()

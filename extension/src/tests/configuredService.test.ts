@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -852,7 +853,7 @@ test('a run that the maintenance turn ends for an evidence write failure names t
         code: 'EVIDENCE_UNAVAILABLE',
         message:
           'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
-        cause: 'Error: ENOSPC: no space left on device, write',
+        cause: 'ENOSPC: no space left on device, write',
       },
       journaledReasons: [
         'Evidence buffering or persistence failed. Cause: ENOSPC: no space left on device, write',
@@ -1082,7 +1083,8 @@ test('a run whose saved study was found removed after its evidence write failed 
       runNamesPath: resource.text.includes(runtime.evidence.directory),
     },
     {
-      errorNamedPathBefore: true,
+      // Since F256 the write's error is sanitized where it is made, so it names no storage path even before the removal is known.
+      errorNamedPathBefore: false,
       terminalReason:
         "Evidence buffering or persistence failed. Cause: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
       error: {
@@ -1183,7 +1185,7 @@ test('a completed run whose release failed after its saved study was removed by 
 })
 
 // Value: protects=the evidence that no resource serves the storage path a removed study's kept run.failed holds in memory: once the removal is known, the run's journal (Evidence.events) still holds the run.failed the runtime journaled with the write's raw failure, but every resource below the run, its events among them, refuses with the removal's sentence (StudyService.assertEvidenceReadable), and the run resource and the status resource read the error row 700 worded again; the recording context takes no run.failed reason (only its time, for a paused interval) and is built only from a saved archive, which a removed study no longer gets; fails_when=a resource below a removed run serves its journal again, so an agent reads the storage path in the kept run.failed; why_new=Cycle 0046 row 707 (evidence: the in-memory event is served by no resource after the removal; this test reads every copy a reader can reach); seam=the run's evidence directory removed, an event recorded after that, maintain, the run.failed ConfiguredBrowserRun.fail journals (Evidence.recordFailure with the run's error), the release's wait, StudyService.excludeHistory, readResource of the run, its events and its manifest, and StudyService.status
-test("a removed study's kept run failure with the storage path is served by no resource: its events and manifest are refused with the removal, and the run and status name no path", async (context) => {
+test("a removed study's kept run failure is served by no resource: its events and manifest are refused with the removal, and the run, its journal and status name no path", async (context) => {
   // Arrange: as above, and the runtime journals the run's failure as ConfiguredBrowserRun.fail does, with the raw write failure in its reason; then the learner's Retry storage finds the archive gone.
   const { service, configuration, runtimes } =
     await configuredServiceHarness(context)
@@ -1242,7 +1244,8 @@ test("a removed study's kept run failure with the storage path is served by no r
       ).includes(path),
     },
     {
-      journalKeepsPath: true,
+      // Since F256 the journal keeps the sanitized failure: no copy holds the storage path to be served.
+      journalKeepsPath: false,
       events:
         "EVIDENCE_UNAVAILABLE: The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
       manifest:
@@ -1511,8 +1514,9 @@ test('a runtime failure longer than the saved reason limit is cut to that limit 
   runtimes[0]!.status = 'failed'
   const state = service.state(record)
   // Assert
-  assert.equal(state.terminalReason, longFailure.slice(0, 8_192))
-  assert.equal(state.error?.cause, longFailure.slice(0, 8_192))
+  // Cut whole characters short of the limit, with the cut marker (F258).
+  assert.equal(state.terminalReason, `${longFailure.slice(0, 8_185)}… [cut]`)
+  assert.equal(state.error?.cause, `${longFailure.slice(0, 8_185)}… [cut]`)
 })
 
 test('a repository run exposes the Study link identity separately from its debugger session identity', async (context) => {
@@ -3068,6 +3072,41 @@ test('a continuation without the answer argument answers accepted at once', asyn
   assert.equal(runtime.snapshots.length, 1)
 })
 
+// Value: protects=a repository-browser run whose Stop failed to release it: the run resource offers only stop, withdraws the browser's continueArguments, and codebook_continue refuses with STALE_PAUSE without reaching the runtime; fails_when=a run whose release failed keeps offering repository-click or continue for a pause it can no longer resume (the node-test profile's F91 fix reaches the shared state, not only that profile); why_new=the F91 test covers the node-test profile only, while the cleanupError guards were added to the shared canControl, nextActions and the repository-browser continue (F91, D18); seam=runtime.stop rejects once, as a still-alive owned process does; no_claim=the node-test profile (nodeTestRunLifecycle covers it)
+test('a repository-browser run whose release failed offers only stop and refuses a continue with STALE_PAUSE', async (context) => {
+  // Arrange: a run paused at its first stop, whose runtime cannot be released once.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, record, continueArguments } =
+    await runPausedAtFirstStop(context, 'release-fails', () => nowMs)
+  const stopRuntime = runtime.stop.bind(runtime)
+  runtime.stop = async (): Promise<void> => {
+    runtime.stop = stopRuntime
+    throw new Error('Owned process still alive')
+  }
+
+  // Act
+  const stopRefusal = await service.stop(receipt).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  const afterFailedRelease = service.state(record)
+  const continueRefusal = await service.continue(continueArguments).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(stopRefusal instanceof Error)
+  assert.deepEqual(afterFailedRelease.nextActions, ['stop'])
+  assert.equal(
+    afterFailedRelease.participants.browser.continueArguments,
+    undefined,
+  )
+  assert.ok(continueRefusal instanceof StudyError)
+  assert.equal(continueRefusal.code, 'STALE_PAUSE')
+  assert.equal(runtime.status, 'paused-browser')
+})
+
 // The Study pane's Continue sends the run resource's arguments as they are: it must return at the acknowledgement.
 test('the pane’s continuation with the run resource’s arguments answers at the acknowledgement, without waiting for the next state', async (context) => {
   // Arrange: a run is paused at its first stop.
@@ -3289,14 +3328,78 @@ test('a run whose explanation was not committed and whose whole-run deadline the
         code: 'EVIDENCE_UNAVAILABLE',
         message:
           "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
-        cause:
-          "Error: EACCES: permission denied, open 'agent-explanation.json'",
+        cause: "EACCES: permission denied, open 'agent-explanation.json'",
       },
       journaledByExplanation: [
         "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
       ],
       journaledByDeadline: [
         "Explanation was not committed. Cause: EACCES: permission denied, open 'agent-explanation.json'",
+      ],
+    },
+  )
+})
+
+// Value: protects=the codebook_explain refusal and the run's journal when the explanation's evidence write fails with an error that names the evidence file under the storage folder: the cause, the message and the reason journaled as run.failed read <storage> (F256); fails_when=the raw write error reaches the agent's answer, the run resource or the journal with the absolute storage path; why_new=PR-1's /ship red team found writeFailureError passing String(error) through as a StudyError, which the MCP answers pass on unchanged; seam=runtime.evidence.save, made to reject, and runtime.fail; no_claim=a removed study's wording (rows 667 and 700)
+test('an explanation whose evidence write fails names no storage path in the refusal, the run error or the journal', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: randomUUID(),
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'click' })
+  const runtime = runtimes[0]!,
+    failRuntime = runtime.fail.bind(runtime),
+    journaledReasons: string[] = []
+  runtime.fail = (reason): void => {
+    journaledReasons.push(reason)
+    failRuntime(reason)
+  }
+  const storage = service.causeRoots.storage[0]!
+  runtime.evidence.save = async () => {
+    throw new Error(
+      `ENOSPC: no space left on device, write '${storage}/evidence/agent-explanation.json'`,
+    )
+  }
+  const snapshotUri = service.state(record).participants.browser.snapshotUri!
+
+  // Act
+  const refusal = await service
+    .explain({
+      ...receipt,
+      key: 'explain',
+      snapshotUri,
+      sourceHash: configuration.source.hash,
+      valuePaths: ['value:enabled'],
+      interpretation: 'The actual captured flag is false.',
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => service.unexpectedFailure(error).describe(),
+    )
+
+  // Assert
+  assert.deepEqual(
+    {
+      code: refusal?.code,
+      message: refusal?.message,
+      cause: refusal?.cause,
+      journaledReasons,
+    },
+    {
+      code: 'EVIDENCE_UNAVAILABLE',
+      message:
+        "Explanation was not committed. Cause: ENOSPC: no space left on device, write '<storage>/evidence/agent-explanation.json'",
+      cause:
+        "ENOSPC: no space left on device, write '<storage>/evidence/agent-explanation.json'",
+      journaledReasons: [
+        "Explanation was not committed. Cause: ENOSPC: no space left on device, write '<storage>/evidence/agent-explanation.json'",
       ],
     },
   )
@@ -4138,7 +4241,8 @@ test('a start on a stored book the store cannot read is refused in the answer of
     error.message,
     'Stored book interface is unavailable; no older revision was substituted.',
   )
-  assert.equal(error.cause.startsWith('SyntaxError: '), true)
+  // The parse failure's words, sanitized at the MCP answer, which drops the error's name (F261).
+  assert.match(error.cause, /in JSON at position 2/)
   assert.equal(service.records.size, 0)
   assert.equal(runtimes.length, 0)
 })

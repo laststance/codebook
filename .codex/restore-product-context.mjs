@@ -10,7 +10,7 @@ const RESTORED_SECTIONS = ['## Mandatory entry', '## Owner directions in force']
  * Returns one `## ` section of AGENTS.md, from its heading to the next `## ` heading.
  *
  * Why: the restored context carries only the sections that order the re-entry and keep the owner's scope, so it stays within the hosts' context limits.
- * Lines are split on LF or CRLF (a Git for Windows checkout) and a heading matches despite trailing spaces or tabs.
+ * Lines are split on LF or CRLF (a Git for Windows checkout) and a heading matches despite trailing spaces or tabs; the section's own lines keep their trailing spaces, so a Markdown hard break is restored verbatim (F268).
  * Caller: {@link restoreProductContext}.
  *
  * @param instructions - The current AGENTS.md text.
@@ -20,14 +20,14 @@ const RESTORED_SECTIONS = ['## Mandatory entry', '## Owner directions in force']
  * sectionOf('# A\r\n\r\n## Mandatory entry \r\n\r\nRead.\r\n\r\n## Next\r\n', '## Mandatory entry') // => '## Mandatory entry\n\nRead.'
  */
 function sectionOf(instructions, heading) {
-  const lines = instructions.split(/\r?\n/).map((line) => line.trimEnd())
-  const start = lines.indexOf(heading)
+  const lines = instructions.split(/\r?\n/)
+  // Only the heading is compared without its trailing spaces; the section's lines are restored as they are, a Markdown hard break included.
+  const start = lines.findIndex((line) => line.trimEnd() === heading)
   if (start === -1) return undefined
   const next = lines.findIndex(
     (line, index) => index > start && line.startsWith('## '),
   )
-  return lines
-    .slice(start, next === -1 ? lines.length : next)
+  return [heading, ...lines.slice(start + 1, next === -1 ? lines.length : next)]
     .join('\n')
     .trimEnd()
 }

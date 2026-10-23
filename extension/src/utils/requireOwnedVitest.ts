@@ -1,3 +1,4 @@
+import { VITEST_PROGRAM_PATH } from '../constants'
 import { StudyError } from '../errors'
 
 import { readVitestPrerequisite } from './readVitestPrerequisite'
@@ -24,14 +25,11 @@ export async function requireOwnedVitest(root: string): Promise<OwnedVitest> {
   // Older Vitest lacks the verified file listing, exclusion and report behavior this exact selection relies on.
   const vitest = await readVitestPrerequisite(root)
   if (!vitest.ready) throw new StudyError('PREREQUISITE_MISSING', vitest.reason)
-  const program = await resolveOwnedRepositoryFile(
-    root,
-    'node_modules/vitest/vitest.mjs',
-  )
+  const program = await resolveOwnedRepositoryFile(root, VITEST_PROGRAM_PATH)
   if (!program)
     throw new StudyError(
       'PREREQUISITE_MISSING',
-      'node-test needs the root Vitest program node_modules/vitest/vitest.mjs inside the opened repository; reinstall Vitest at the repository root, then call codebook_status again.',
+      `node-test needs the root Vitest program ${VITEST_PROGRAM_PATH} inside the opened repository; reinstall Vitest at the repository root, then call codebook_status again.`,
     )
   return { major: vitest.major, program }
 }

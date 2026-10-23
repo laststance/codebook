@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.35'
+export const EXTENSION_VERSION = '0.2.36'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -987,8 +987,14 @@ export const NODE_TEST_LEARNING_DECISION_LIMIT_BYTES = 4_096
 export const NODE_TEST_LEARNING_MATERIAL_VERSION = 1
 export const NODE_TEST_LEARNING_MATERIAL_LIMIT_BYTES =
   LEARNING_SUMMARY_LIMITS.bytes
+/** The root Vitest's package file a node-test run reads its version from, relative to the opened repository ({@link readVitestPrerequisite}). */
+export const VITEST_PACKAGE_PATH = 'node_modules/vitest/package.json'
+/** The root Vitest's program a node-test run starts, relative to the opened repository ({@link requireOwnedVitest}). */
+export const VITEST_PROGRAM_PATH = 'node_modules/vitest/vitest.mjs'
 export const NODE_TEST_HISTORY_DIRECTORY = 'node-tests.v1'
 export const NODE_TEST_HISTORY_LIMIT_BYTES = 8_388_608
+/** The largest seal file of a test history Codebook writes or reads ({@link NodeTestHistoryWriter.finish}, {@link isSealedEmptyHistory}). */
+export const NODE_TEST_HISTORY_SEAL_LIMIT_BYTES = 16_384
 export const NODE_TEST_HISTORY_MAX_ENTRIES = 10_000
 /** File system error codes that a retry can clear (a descriptor or lock shortage, a busy or antivirus-held file, a disk error): a read that fails with one is not remembered as the history's state ({@link isTransientFileError}). */
 export const TRANSIENT_FILE_ERROR_CODES: readonly string[] = [

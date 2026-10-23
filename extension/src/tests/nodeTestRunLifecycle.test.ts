@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import fsPromises, { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -1037,7 +1038,7 @@ test('a learner’s stop while a test run prepares before its history reads as s
       const other = run.service.start({
         instanceId: run.service.instanceId,
         profile: NODE_TEST_PROFILE,
-        key: `stopped-filler-${index}`,
+        key: randomUUID(),
         configuration: run.configuration,
       })
       await run.service.stop({
@@ -1060,7 +1061,7 @@ test('a learner’s stop after the test history began and before the first stop 
     const receipt = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'stopped-before-first-stop',
+      key: randomUUID(),
       configuration: run.configuration,
     })
     const record = run.service.record(receipt)
@@ -1099,7 +1100,7 @@ test('a test run stopped before its history began offers no read-history and fre
     const receipt = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'stopped-while-checking',
+      key: randomUUID(),
       configuration: run.configuration,
     })
     const record = run.service.record(receipt)
@@ -1121,7 +1122,7 @@ test('a test run stopped before its history began offers no read-history and fre
       const other = run.service.start({
         instanceId: run.service.instanceId,
         profile: NODE_TEST_PROFILE,
-        key: `slot-filler-${index}`,
+        key: randomUUID(),
         configuration: run.configuration,
       })
       await run.service.stop({
@@ -1229,7 +1230,7 @@ test('a test history sealed with no entry does not offer save-node-learning', as
     const receipt = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'sealed-with-no-entry',
+      key: randomUUID(),
       configuration: run.configuration,
     })
     const record = run.service.record(receipt)
@@ -1249,12 +1250,261 @@ test('a test history sealed with no entry does not offer save-node-learning', as
   }
 })
 
+// Value: protects=the run resource of a test run whose history sealed with no entry, whose folder the store removed at the seal (D6): it offers no read-history and names no historyUri, so the agent is not sent to a history that is gone (F253); fails_when=read-history and a historyUri are still offered and the agent's read fails; why_new=PR-1's /ship state-machine review found the cell untested and the action offered; seam=the owned run is a fake whose preparation a stop cancels; no_claim=the runs of other profiles, whose history the store does not remove
+test('a test run whose history sealed with no entry offers no read-history and names no history to read', async () => {
+  // Arrange
+  const run = await testRunHarness({
+    prepareHeld: new Promise<void>(() => {}),
+    silent: true,
+  })
+  try {
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: randomUUID(),
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => record.nodeRun !== undefined, 'the owned run exists')
+
+    // Act
+    const state = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+
+    // Assert
+    assert.equal(record.nodeHistoryEntryCount, 0)
+    assert.equal(record.nodeHistoryStatus, 'partial')
+    assert.equal(state.nextActions.includes('read-history'), false)
+    assert.equal(state.nodeTest?.historyUri, undefined)
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=the run resource's nodeTest.captureMissing after the summary read at the seal failed for a transient reason (EMFILE): it reads unknown at first, and the next learning-material save reads it again once the storage recovers, so the agent's claim rule can be checked (F252); fails_when=the gaps stay unknown for the run's life, so the agent can never claim saved learning for it; why_new=Codex's adversarial review of PR-1: the gaps were read once, at the seal; seam=the store's summary rejects its first call; no_claim=the store's own memo of a transient failure (F63, nodeTestHistorySummary tests)
+test('capture gaps the seal could not read for a transient reason are read again at the next learning-material save', async (context) => {
+  // Arrange
+  const run = await testRunHarness({ stops: 2 })
+  try {
+    const { record } = await run.start()
+    await continueCurrentPause(run.service, record)
+    await continueCurrentPause(run.service, record)
+    const store = run.service.nodeHistoryStore!
+    const summarize = store.summarize.bind(store)
+    let failedOnce = false
+    context.mock.method(store, 'summarize', (studyId: string) => {
+      if (failedOnce) return summarize(studyId)
+      failedOnce = true
+      return Promise.reject(
+        Object.assign(new Error('EMFILE: too many open files'), {
+          code: 'EMFILE',
+        }),
+      )
+    })
+    const stopped = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    const studyId = `${run.service.instanceId}_${record.id}`
+    const history = await store.read(studyId)
+    const stop = history.entries.find((entry) => entry.type === 'stop')!
+
+    // Act
+    await run.service.explainNodeHistory({
+      studyId,
+      expectedRevision: 0,
+      content: materialCiting([
+        {
+          type: 'stop',
+          sequence: stop.sequence,
+          sourceHash: stop.type === 'stop' ? stop.source.hash : '',
+        },
+      ]),
+    })
+    const afterSave = run.service.state(record)
+
+    // Assert
+    assert.equal(stopped.nodeTest?.captureMissing, undefined)
+    // The store's answer for this harness's history, whose stops hold no captured state.
+    assert.deepEqual(afterSave.nodeTest?.captureMissing, [
+      { kind: 'stop-state', stop: 1 },
+      { kind: 'stop-state', stop: 2 },
+    ])
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a test run whose empty history could not be removed at its seal (a busy folder): the run offers no read-history and names no historyUri, and the next capacity check removes the sealed folder (F272); fails_when=the run sends the agent to a history the list never shows, or the sealed empty folder stays and takes a place; why_new=PR-1's /ship state-machine review, cycle 3: the failed-removal cell of the run resource was untested; seam=the removal of the history's folder fails while the run stops; no_claim=a removal that keeps failing (the store tests)
+test('a run whose empty history could not be removed at its seal offers no read-history, and the next capacity check removes it', async (context) => {
+  // Arrange
+  const run = await testRunHarness({
+    prepareHeld: new Promise<void>(() => {}),
+    silent: true,
+  })
+  try {
+    const receipt = run.service.start({
+      instanceId: run.service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: randomUUID(),
+      configuration: run.configuration,
+    })
+    const record = run.service.record(receipt)
+    await waitUntil(() => record.nodeRun !== undefined, 'the owned run exists')
+    const studyId = `${run.service.instanceId}_${record.id}`
+    const historyDirectory = join(
+      run.service.nodeHistoryStore!.learningDirectory,
+      NODE_TEST_HISTORY_DIRECTORY,
+    )
+    const rmBefore = fsPromises.rm
+    let busy = true
+    context.mock.method(
+      fsPromises,
+      'rm',
+      async (...args: Parameters<typeof fsPromises.rm>) => {
+        if (busy && String(args[0]).endsWith(studyId))
+          throw Object.assign(new Error('EBUSY: resource busy or locked'), {
+            code: 'EBUSY',
+          })
+        return rmBefore(...args)
+      },
+    )
+
+    // Act
+    const state = await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    const namesAfterSeal = await readdir(historyDirectory)
+    busy = false
+    await run.service.nodeHistoryStore!.admission()
+    const namesAfterCheck = await readdir(historyDirectory)
+
+    // Assert
+    assert.equal(state.nextActions.includes('read-history'), false)
+    assert.equal(state.nodeTest?.historyUri, undefined)
+    assert.equal(namesAfterSeal.includes(studyId), true)
+    assert.equal(namesAfterCheck.includes(studyId), false)
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a test run whose seal failed (its folder kept): it still offers read-history and names its historyUri, so the agent can read what was recorded (F273); fails_when=the removed-empty-history rule also matches a failed seal and hides a readable history; why_new=PR-1's /ship coverage audit, cycle 3: only the removed side of the rule was tested; seam=the writer's seal fails; no_claim=the seal failure's wording (the cut test)
+test('a test run whose seal failed still offers read-history and names its history', async (context) => {
+  // Arrange
+  const run = await testRunHarness()
+  context.mock.method(NodeTestHistoryWriter.prototype, 'finish', async () => {
+    throw new Error('ENOSPC: no space left on device, write')
+  })
+  try {
+    const { record } = await run.start()
+    await continueCurrentPause(run.service, record)
+
+    // Act
+    const answer = await run.service.stopForTool({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+
+    // Assert
+    assert.equal(record.nodeHistoryStatus, 'failed')
+    assert.equal(answer.state.nextActions.includes('read-history'), true)
+    assert.match(
+      answer.state.nodeTest?.historyUri ?? '',
+      /^codebook:\/\/node-history\//,
+    )
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=capture gaps that the seal could not read and that a later save cannot read either: they stay unknown, never an empty list that would let the agent claim complete learning (F273); fails_when=a failed re-read is reported as no gap; why_new=PR-1's /ship coverage audit, cycle 3: only the recovered re-read was tested; seam=the store's summary rejects every call; no_claim=the store's memo of a transient failure
+test('capture gaps that a later save still cannot read stay unknown', async (context) => {
+  // Arrange
+  const run = await testRunHarness({ stops: 2 })
+  try {
+    const { record } = await run.start()
+    await continueCurrentPause(run.service, record)
+    await continueCurrentPause(run.service, record)
+    const store = run.service.nodeHistoryStore!
+    context.mock.method(store, 'summarize', () =>
+      Promise.reject(
+        Object.assign(new Error('EMFILE: too many open files'), {
+          code: 'EMFILE',
+        }),
+      ),
+    )
+    await run.service.stop({
+      instanceId: run.service.instanceId,
+      runId: record.id,
+    })
+    const studyId = `${run.service.instanceId}_${record.id}`
+    const history = await store.read(studyId)
+    const stop = history.entries.find((entry) => entry.type === 'stop')!
+
+    // Act
+    await run.service.explainNodeHistory({
+      studyId,
+      expectedRevision: 0,
+      content: materialCiting([
+        {
+          type: 'stop',
+          sequence: stop.sequence,
+          sourceHash: stop.type === 'stop' ? stop.source.hash : '',
+        },
+      ]),
+    })
+
+    // Assert
+    assert.equal(run.service.state(record).nodeTest?.captureMissing, undefined)
+  } finally {
+    await run.harness.close()
+  }
+})
+
+// Value: protects=a learning material saved while the test run still records: it is kept on the run and counts no coverage before the seal, which counts it then (F273); fails_when=a save before the seal throws or reads capture gaps for a history that is not sealed; why_new=PR-1's /ship coverage audit, cycle 3: the save path before the seal was untested since cacheNodeLearning became asynchronous; seam=none; no_claim=the seal's count of that material (the seal test)
+test('a learning material saved while the test run records is kept on the run and counts nothing before the seal', async () => {
+  // Arrange
+  const run = await testRunHarness({ stops: 2 })
+  try {
+    const { record } = await run.start()
+    const studyId = `${run.service.instanceId}_${record.id}`
+    const history = await run.service.nodeHistoryStore!.read(studyId)
+    const stop = history.entries.find((entry) => entry.type === 'stop')!
+
+    // Act
+    const saved = await run.service.explainNodeHistory({
+      studyId,
+      expectedRevision: 0,
+      content: materialCiting([
+        {
+          type: 'stop',
+          sequence: stop.sequence,
+          sourceHash: stop.type === 'stop' ? stop.source.hash : '',
+        },
+      ]),
+    })
+    const state = run.service.state(record)
+
+    // Assert
+    assert.equal(saved.revision, 1)
+    assert.equal(record.nodeLearningMaterial?.revision, 1)
+    assert.equal(state.nodeTest?.learningCoverage, undefined)
+    assert.equal(state.nodeTest?.captureMissing, undefined)
+  } finally {
+    await run.harness.close()
+  }
+})
+
 // Value: protects=codebook_explain_node_history telling a stale material revision (IDEMPOTENCY_CONFLICT) from a citation that merely names a path containing the words "revision changed" (INVALID_REFERENCE stays); fails_when=the conflict is recognized by searching the error text, so a stop in src/revision changed.ts turns INVALID_REFERENCE into IDEMPOTENCY_CONFLICT, or a real stale revision stops being a conflict; why_new=explainNodeHistory mapped the error by its text (F44); seam=the history store's save is replaced by one that throws; no_claim=the store's own revision check (nodeTestHistoryStore tests)
 test('explain_node_history answers IDEMPOTENCY_CONFLICT for a stale revision and keeps INVALID_REFERENCE for a citation whose path says "revision changed"', async () => {
   // Arrange
   const run = await testRunHarness()
   const store = run.service.nodeHistoryStore!
-  const studyId = `${'1'.repeat(8)}-1111-1111-1111-${'1'.repeat(12)}_${'2'.repeat(8)}-2222-2222-2222-${'2'.repeat(12)}`
+  const studyId = `${randomUUID()}_${randomUUID()}`
   const content = materialCiting([
     { type: 'stop', sequence: 2, sourceHash: 'a'.repeat(64) },
   ])
@@ -1860,7 +2110,7 @@ test('a run refused at its admission and then stopped keeps refused-at-admission
     const receipt = run.service.start({
       instanceId: run.service.instanceId,
       profile: NODE_TEST_PROFILE,
-      key: 'refused-then-stopped',
+      key: randomUUID(),
       configuration: run.configuration,
     })
     const record = run.service.record(receipt)

@@ -1,18 +1,27 @@
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 
+/** The names of each folder whose real path was resolved, by the path as the extension knows it ({@link privateRootNames}). */
+const resolvedRootNames = new Map<string, string[]>()
+
 /**
  * Gives the names a private folder can appear under in a failure's cause: the path as reported and, when it differs, its real path, so a symlinked workspace or home directory stays hidden in a message that names the real one; called by {@link StudyService}'s `causeRoots` for the opened repository and by {@link homeRootNames}.
- * A path that cannot be resolved (removed since, no permission) keeps only its reported name.
+ * A path that cannot be resolved (removed since, no permission) keeps only its reported name. A resolved path is remembered for the life of the extension host, so the real path is read once per folder (F262).
  * @param path - The folder as the extension knows it.
  * @returns The reported path first, then its real path when it differs.
  * @example privateRootNames('/Users/ada/link-to-repo') // => ['/Users/ada/link-to-repo', '/Volumes/work/repo']
  */
 export function privateRootNames(path: string): string[] {
+  // A folder's real path is resolved once: every cause a window words asks for it, and the call blocks the extension host (F262).
+  const resolved = resolvedRootNames.get(path)
+  if (resolved) return [...resolved]
   try {
     const real = realpathSync.native(path)
-    return real === path ? [path] : [path, real]
+    const names = real === path ? [path] : [path, real]
+    resolvedRootNames.set(path, names)
+    return [...names]
   } catch {
+    // An unresolved path is not remembered, so a folder that appears later is resolved then.
     return [path]
   }
 }

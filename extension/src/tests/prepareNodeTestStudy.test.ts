@@ -252,7 +252,7 @@ for (const scenario of [
       },
     }),
     message:
-      'node-test preparation refused: source cites src/mode.ts, but anchorIndex 0 of the article node cites src/theme.ts lines 1 to 1. Send src/theme.ts, or the anchorIndex of the citation of src/mode.ts.',
+      'node-test preparation refused: source cites src/mode.ts, but anchorIndex 0 cites src/theme.ts lines 1 to 1. Send src/theme.ts, or the anchorIndex of the citation of src/mode.ts.',
   },
   {
     condition: 'the hash differs from the anchor’s',
