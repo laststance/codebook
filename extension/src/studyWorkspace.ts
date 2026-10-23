@@ -37,6 +37,7 @@ import {
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
+  NODE_HISTORY_POSITION_DRAIN_MS,
   NODE_HISTORY_SLOT_DEADLINE_MS,
   NODE_HISTORY_TRANSITION_BOUND_MS,
   OPEN_REPLAY_RESULT_WAIT_MS,
@@ -9231,6 +9232,7 @@ export class StudyWorkspace {
     this.playback?.hide()
     this.clearLearningSummary()
     const pending = (this.closingPromise = (async () => {
+      await this.drainNodeHistoryPositionWrites()
       // Read before anything is closed: with one editor part, a tab that is neither a text editor nor a pane is settled like a learner's file.
       const settlesKeyboard =
         hadKeyboardInEditors || (await this.namesOnlyMainEditorGroups())
@@ -12453,6 +12455,26 @@ export class StudyWorkspace {
         marks: this.nodeHistoryTimelineMarks(history),
       }),
       ...(learning ? { nodeHistoryLearningSummary: learning } : {}),
+    }
+  }
+
+  /**
+   * Waits, for at most {@link NODE_HISTORY_POSITION_DRAIN_MS}, until the reader position writes that Play and the selections started have returned, so a close does not leave a write running into storage that is being removed (F197); called by {@link close}.
+   * @example await this.drainNodeHistoryPositionWrites()
+   */
+  private async drainNodeHistoryPositionWrites(): Promise<void> {
+    const running = [...this.nodeHistoryPositionWrites.values()].flatMap(
+      (writer) => (writer.running ? [writer.running] : []),
+    )
+    if (!running.length) return
+    let cancel = (): void => {}
+    const bound = new Promise<void>((resolve) => {
+      cancel = this.slotTimers.set(resolve, NODE_HISTORY_POSITION_DRAIN_MS)
+    })
+    try {
+      await Promise.race([Promise.allSettled(running), bound])
+    } finally {
+      cancel()
     }
   }
 
@@ -23848,14 +23870,13 @@ export class StudyWorkspace {
       while (writer.latest) {
         const next = writer.latest
         writer.latest = undefined
+        const store = this.nodeHistoryStore
+        // A reader that closed meanwhile has no store to write to and nobody to tell.
+        if (!store) break
         try {
-          await this.nodeHistoryStore!.saveReaderPosition(
-            studyId,
-            next.sequence,
-            next.history,
-          )
+          await store.saveReaderPosition(studyId, next.sequence, next.history)
         } catch (error) {
-          this.report('history-position', error)
+          if (!this.closing) this.report('history-position', error)
         }
       }
     })().finally(() => {

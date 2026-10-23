@@ -940,3 +940,58 @@ test('a reader position write that never returns holds neither Play nor the mome
     await harness.close()
   }
 })
+
+// Value: protects=closing the reader waits for the reader position write a selection started, so the moment the learner left is the one saved and no write runs into storage that is being removed; fails_when=close() returns while the write is held, or the held position is never written; why_new=F197 moved the write out of the selection, so the close has to wait for it (bounded by NODE_HISTORY_POSITION_DRAIN_MS); seam=the history store's position write, held by the test; no_claim=the bound itself, which a stuck disk would hit
+test('closing the reader waits for the reader position write of the last selection', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let releaseWrite = (): void => {}
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await openWithChosenStep(harness)
+    const writeHeld = new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    const save = store.saveReaderPosition.bind(store)
+    context.mock.method(
+      store,
+      'saveReaderPosition',
+      async (
+        ...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>
+      ) => {
+        await writeHeld
+        return save(...args)
+      },
+    )
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 3,
+    })
+    await waitUntil(
+      () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
+      'the output commits while its position write is held',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act
+    let closed = false
+    const closing = harness.reader.close().then(() => {
+      closed = true
+    })
+    for (let turn = 0; turn < 20; turn++)
+      await new Promise((resolve) => setImmediate(resolve))
+    const closedWhileHeld = closed
+    releaseWrite()
+    await closing
+
+    // Assert
+    assert.equal(closedWhileHeld, false)
+    assert.equal(await store.readReaderPosition(history.studyId), 3)
+  } finally {
+    releaseWrite()
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})

@@ -664,6 +664,8 @@ export const NODE_SOURCE_SLOT_DIRECTORY_HASH_CHARS = 12
 export const NODE_HISTORY_TRANSITION_BOUND_MS = 1_000
 /** One deadline over a test replay's whole recorded-source show: the document's open, its show, the wait for its bytes and the close of the earlier slot tab. When it passes first, the moment reports its `history-source` row and releases Play's pending selection (closure rule 7 of #118). */
 export const NODE_HISTORY_SLOT_DEADLINE_MS = 5_000
+/** How long closing the reader waits for the reader position writes of a test replay that are still running (F197): a write that has not returned by then is left to finish in the background, so a stuck disk cannot hold the close. */
+export const NODE_HISTORY_POSITION_DRAIN_MS = 2_000
 /** Registered view types of the editor panes Codebook creates: Application, Study and Repository Wiki. */
 export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
   'codebook.scopedBrowser',
