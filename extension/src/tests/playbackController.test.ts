@@ -1915,7 +1915,7 @@ test('the seek description names the snap distance the seek applies', async () =
   )
 })
 
-// Value: protects=a seek keeping the shown pixels while the next frame's bytes are read, and handing that frame to the pane in the same step that retires the old moment; fails_when=the seek retires the moment (and blanks the pane) before the frame resolves, which showed dark frames for 0.5 to 1.2 s at a stop's entry (F3, D29); why_new=Cycle 0050 F3 (observed in Cycle 0044 on Linux); seam=a gated frame read
+// Value: protects=a seek keeping the shown pixels while the next frame's bytes are read, and handing that frame to the pane in the same step that retires the old moment; fails_when=the seek retires the moment (and blanks the pane) before the frame resolves, which showed dark frames for 0.5 to 1.2 s at a stop's entry (F3, D29); why_new=Cycle 0050 F3 (observed in Cycle 0044 on Linux); why_changed=F381, the held-leave snapshot was taken after one microtask turn, so a leave issued a few turns later but before the frame read was missed (a mutation that leaves with the next frame six turns early passed the old snapshot) and now the snapshot is taken once the held read has started; seam=a gated frame read
 test('a seek retires the shown moment only after the next frame is read and hands that frame to the leave', async () => {
   // Arrange
   let releaseRead = (): void => {}
@@ -1923,10 +1923,17 @@ test('a seek retires the shown moment only after the next frame is read and hand
     releaseRead = resolve
   })
   let holdNextRead = false
+  let markReadStarted = (): void => {}
+  const readStarted = new Promise<void>((resolve) => {
+    markReadStarted = resolve
+  })
   const leaves: Array<{ keepPixels?: boolean; next?: number }> = []
   const player = playbackHarness({
     frame: async (_study, hash) => {
-      if (holdNextRead) await readHeld
+      if (holdNextRead) {
+        markReadStarted()
+        await readHeld
+      }
       return Buffer.from(hash)
     },
     invalidate: (keepPixels, next) => {
@@ -1940,7 +1947,8 @@ test('a seek retires the shown moment only after the next frame is read and hand
 
   // Act
   player.seek(120)
-  await Promise.resolve()
+  // F381: the frame read has started, so a leave issued before it would already be in the list.
+  await readStarted
   const leavesWhileHeld = leaves.slice(leavesBeforeSeek)
   releaseRead()
   await player.controller.settle()
@@ -1993,6 +2001,63 @@ test('a seek whose frame read passes its bound blanks the pane without a frame, 
   assert.deepEqual(leavesAtBound, [{ next: undefined }])
   assert.equal(leaves.length, leavesBeforeSeek + 1)
   assert.equal(player.controller.state().presentedMs, 120)
+  await player.controller.dispose()
+})
+
+// Value: protects=the bound of a frame read over a burst of superseding seeks (a drag of the time slider): the shown pixels and native state leave once the bound has passed since the first of them; fails_when=every superseded read re-arms the full bound, so the earlier moment's pixels stay on screen for as long as the drag lasts (F377); why_new=Cycle 0050 F377, the single-seek bound case never supersedes a read; seam=a gated frame read, frameReadBoundMs and the injected clock
+test('a burst of superseding seeks still blanks the pane once the bound has passed since the first of them', async () => {
+  // Arrange
+  let releaseRead = (): void => {}
+  const readHeld = new Promise<void>((resolve) => {
+    releaseRead = resolve
+  })
+  let holdNextRead = false
+  let readsStarted = 0
+  const leaves: Array<{ next?: number }> = []
+  const player = playbackHarness({
+    frameReadBoundMs: 60_000,
+    frame: async (_study, hash) => {
+      if (holdNextRead) {
+        readsStarted++
+        await readHeld
+      }
+      return Buffer.from(hash)
+    },
+    invalidate: (_keepPixels, next) => {
+      leaves.push({ next: next?.positionMs })
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  const leavesBeforeSeeks = leaves.length
+  holdNextRead = true
+
+  // Act: the first seek's read is held; the bound passes on the clock; a second seek supersedes it.
+  player.seek(100)
+  await waitUntil(
+    () => readsStarted === 1,
+    'the first read starts',
+    READER_RESULT_BOUND_MS,
+  )
+  player.clock(60_000)
+  player.seek(200)
+  await waitUntil(
+    () => readsStarted === 2,
+    'the second read starts',
+    READER_RESULT_BOUND_MS,
+  )
+  await waitUntil(
+    () => leaves.length > leavesBeforeSeeks,
+    'the pane blanks although the second seek superseded the first read',
+    2_000,
+  )
+  const leavesWhileHeld = leaves.slice(leavesBeforeSeeks)
+  releaseRead()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(leavesWhileHeld, [{ next: undefined }])
+  assert.equal(player.controller.state().presentedMs, 200)
   await player.controller.dispose()
 })
 
