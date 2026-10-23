@@ -24620,13 +24620,25 @@ export class StudyWorkspace {
   /**
    * Brings the recorded-source slot's tab to the front of its group with the keyboard in it, the stop's line as the slot already shows it; called by the Study pane's Focus source action ({@link receive}) while a test replay is selected.
    * Nothing is shown when the replay has no slot yet (it is still opening or was retired); the slot's own selection draws its line and label, and this only fronts the tab that already holds them.
-   * @returns Once the editor showed the slot tab, or at once when no slot exists.
+   * It waits as a selection's show does (F392): for the leave settle of a stop that was left ({@link NODE_HISTORY_LEAVE_SETTLE_MS}), so the tab fronted is not the left stop's bytes beside the native views; and for the close of its own address ({@link nodeSourceSlotCloses}, F196), so that close never closes the tab it shows. The slot is read again after each wait: a slot retired meanwhile (the reader closed, the replay left) shows nothing, and a tab shown after the slot was retired or renamed is closed when no newer slot owns its address ({@link settleLateSlotShow} does the same for a selection's show).
+   * @returns Once the editor showed the slot tab, or at once when no slot exists or it ended meanwhile.
    * @example await this.focusNodeSourceSlot() // the Captured-data.ts tab in front of the Welcome tab, with the keyboard
    */
   private async focusNodeSourceSlot(): Promise<void> {
+    if (!this.nodeSourceSlot) return
+    const retirementsAtStart = this.nodeSourceSlotRetirements
+    // The slot of a stop that was left keeps its earlier bytes for the leave settle; the selection that left it shows the next moment's slot right after, which is the one to front.
+    await this.nodeLeaveSettle?.done
     const slot = this.nodeSourceSlot
-    if (!slot) return
+    if (!slot || this.nodeSourceSlotRetirements !== retirementsAtStart) return
     const address = slot.uri.toString()
+    // The slot named by this call is still the reader's slot, and no retirement happened since the call began.
+    const isCurrent = (): boolean =>
+      this.nodeSourceSlotRetirements === retirementsAtStart &&
+      this.nodeSourceSlot?.uri.toString() === address
+    // A close of this address that an earlier selection issued must end first, or it would close the tab shown below (F196).
+    await this.nodeSourceSlotCloses.get(address)?.catch(() => undefined)
+    if (!isCurrent()) return
     // The group that holds the slot's tab now; a slot closed by hand opens again where its column rule puts it.
     const holder = vscode.window.tabGroups.all.find((group) =>
       group.tabs.some(
@@ -24636,13 +24648,22 @@ export class StudyWorkspace {
       ),
     )
     const document = await vscode.workspace.openTextDocument(slot.uri)
+    if (!isCurrent()) return
     await vscode.window.showTextDocument(document, {
       viewColumn:
         holder?.viewColumn ?? this.nodeSourceSlotColumn(slot.uri, undefined),
       preserveFocus: false,
       preview: false,
     })
-    this.decorateNodeSourceSlot()
+    if (isCurrent()) {
+      this.decorateNodeSourceSlot()
+      return
+    }
+    // The slot ended or was renamed while the editor showed its tab: the tab belongs to no moment, so it is closed unless a newer slot shows the same address.
+    if (this.nodeSourceSlot?.uri.toString() !== address)
+      void this.closeNodeSourceSlotTabs(undefined, slot.uri).catch(
+        () => undefined,
+      )
   }
 
   /**
