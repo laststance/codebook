@@ -751,7 +751,7 @@ export class NodeTestHistoryStore {
    * - `material`: the learning material's signal
    * - `header`: the header's own signal
    * - `recording`: whether this or another live window still writes the history
-   * @example await this.fileSignals(studyId) // => { history: '310:1792590600000:43|812:1792590603000:44|missing:ENOENT|active', material: '1203:1792590700000:45', header: '310:1792590600000:43', recording: true }
+   * @example await this.fileSignals(studyId) // => { history: '310:5.5:43|812:9.25:44|missing:ENOENT|active', material: '1203:12.5:45', header: '310:5.5:43', recording: true } (size:mtimeMs:inode, mtimes shortened)
    */
   private async fileSignals(studyId: string): Promise<{
     history: string
