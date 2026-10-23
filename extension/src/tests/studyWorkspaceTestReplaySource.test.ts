@@ -704,6 +704,231 @@ test('a recorded-source slot that cannot open is told with its stop and cause, a
   }
 })
 
+// Value: protects=Retry or Inspect on the moment already shown whose slot fails to open leaves the moment with no stop in the debugger and the slot's document at its loading text, so late bytes of the failed show cannot appear undecorated beside the failure row; fails_when=the failed branch leaves the debugger on the shown stop (no invalidation) or the slot document keeps the stop's bytes; why_new=F170 (the failed branch skipped the leave step because the moment did not change); seam=the workspace harness's injected failure of a non-file document open and its invalidation labels; no_claim=the wording of the failure row
+test('a reselect of the shown stop whose slot fails to open empties the debugger and resets the slot to its loading text', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 2)
+    await openReplayAt(harness, history.studyId, 2)
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    harness.failCurrentSourceOpen()
+
+    // Act
+    await harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      2,
+    )
+
+    // Assert
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().length - invalidationsBefore,
+      1,
+    )
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      false,
+    )
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      '// Loading recorded source…\n',
+    )
+    assert.deepEqual(slotLabels(harness), [])
+  } finally {
+    harness.restoreCurrentSourceOpen()
+    await harness.close()
+  }
+})
+
+// Value: protects=Retry answers each failure row with its own remedy while a test replay is shown (D43, F167): the layout, Application and reader rows get the render of the selection and no new selection of the moment, so Play is not paused and no debugger is restarted for them; fails_when=Retry selects the shown moment again for a row that is not the replay's own, so the render of the selection is lost; why_new=F167 (Retry re-selected the moment for every error kind); seam=the reader's error rows set by hand and a spy on the render of the selection; no_claim=what each render repairs
+for (const row of ['layout', 'application', 'reader'] as const) {
+  test(`Retry with a ${row} row while a test replay is shown renders the selection and does not select its moment again`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const history = await saveOneStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      harness.reader['errors'].set(row, 'Injected failure')
+      const render = harness.reader['renderSelection'].bind(harness.reader)
+      let renders = 0
+      harness.reader['renderSelection'] = (...args): Promise<void> => {
+        renders++
+        return render(...args)
+      }
+      const requestsBefore = harness.reader['selectedNodeHistoryRequest']
+
+      // Act
+      await harness.reader.action('retry')
+
+      // Assert
+      assert.equal(harness.reader['selectedNodeHistoryRequest'], requestsBefore)
+      assert.ok(renders >= 1, 'the selection is rendered')
+    } finally {
+      await harness.close()
+    }
+  })
+}
+
+// Value: protects=Retry after a failed recorded-source slot reopens the slot and leaves a replay debugger the learner stopped stopped: no new presentation reaches the debugger, the slot shows the stop again with its line and label, and the failure row is gone; fails_when=Retry restarts the stopped debugger (a new presentation) or pauses Play for a row that is not about them; why_new=F167 (Retry re-selected with publish: true, which restarts a debugger the learner stopped); seam=the harness's injected failure of a non-file document open and its ended historical debugger session; no_claim=the wording of the failure row
+test('Retry of a failed recorded-source slot reopens it and does not restart a debugger the learner stopped', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    harness.failCurrentSourceOpen()
+    await selectMoment(harness, history.studyId, 2)
+    harness.endHistoricalDebugSession()
+    harness.restoreCurrentSourceOpen()
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      THEME_TEXT,
+    )
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      false,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a failure that comes out of Retry's selection of the shown moment is told on the replay-debugger row and does not fail the Retry; fails_when=the Retry rejects with the failure and the Study pane tells nothing; why_new=F167 (a debugger failure could throw out of the Retry handler); seam=the selection of a moment, made to throw once; no_claim=which failures can reach it
+test('a failure from the selection Retry makes is told on the debugger row and does not fail Retry', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    harness.reader['errors'].set('history-source', 'Injected slot failure')
+    harness.reader['requestNodeHistoryEvent'] = (): Promise<void> =>
+      Promise.reject(new Error('Injected debugger failure'))
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      [...(lastView(harness)?.errors ?? [])],
+      ['Injected slot failure', 'Error: Injected debugger failure'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the selection of the committed moment after an overtaken selection took the surfaces off it leaves it again (F191): a stop selection withdrawn after its debugger presentation shows no earlier stop beside the Study position while the reselect of the committed stop presents; fails_when=the same-moment test compares with the last committed moment, so the reselect keeps the withdrawn stop's frames on the debugger until its own presentation ends; why_new=F191 (the same-moment test read the committed moment, not what the surfaces show); seam=the workspace harness's held historical debug presentations and the withdrawn caller's isCurrent; no_claim=the debugger's own redraw
+test('a reselect of the committed stop after a withdrawn selection presented another stop empties the debugger first', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const selected = harness.reader['selectedNodeHistory']!
+    let wanted = true
+    const withdrawnHold = harness.holdHistoricalDebugPresentation(true)
+    const withdrawn = harness.reader['requestNodeHistoryEvent'](selected, 4, {
+      publish: false,
+      alignPlayback: false,
+      isCurrent: () => wanted,
+    })
+    await withdrawnHold.started
+    wanted = false
+    withdrawnHold.release()
+    await waitUntil(
+      () =>
+        harness.historicalDebugPresentations.at(-1)?.label ===
+        'Recorded test stop 2 · src/theme-next.ts:1',
+      'the withdrawn selection presented the second stop',
+      READER_RESULT_BOUND_MS,
+    )
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    const reselectHold = harness.holdHistoricalDebugPresentation(true)
+
+    // Act
+    const reselect = harness.reader['requestNodeHistoryEvent'](selected, 2)
+    await reselectHold.started
+    const invalidationsWhileHeld =
+      harness.historicalDebugInvalidationLabels().length - invalidationsBefore
+    reselectHold.release()
+    await Promise.all([withdrawn, reselect])
+
+    // Assert
+    assert.equal(invalidationsWhileHeld, 1)
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.label,
+      'Recorded test stop 1 · src/theme.ts:1',
+    )
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the slot that shows its moment retires the failure row of the earlier try without a Study message of its own: the row leaves with the commit, so no message shows the moment half committed; fails_when=the show publishes when it clears the row, so the Study pane loses the failure beside a moment still waiting for its debugger; why_new=F191 (showNodeSourceSlot published before the commit); seam=the workspace harness's injected failure of a non-file document open and its held historical debug presentation; no_claim=the wording of the failure row
+test('the failure row of a slot stays in the Study message until the retried moment commits', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    harness.failCurrentSourceOpen()
+    await selectMoment(harness, history.studyId, 2)
+    harness.restoreCurrentSourceOpen()
+    const held = harness.holdHistoricalDebugPresentation(true)
+
+    // Act
+    const retry = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      2,
+    )
+    await held.started
+    const errorsWhileHeld = [...(lastView(harness)?.errors ?? [])]
+    held.release()
+    await retry
+
+    // Assert
+    assert.equal(errorsWhileHeld.length, 1)
+    assert.match(
+      errorsWhileHeld[0]!,
+      /could not open the recorded source of stop 1/,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a slot whose document never shows the selected stop's bytes before the slot deadline is told as an open failure with Retry, and the debugger shows no stop of the earlier moment, also when the bytes land late; fails_when=the selection waits forever, presents the debugger at stale text, commits silently without the history-source row, or presents the stop once the late bytes land; why_new=the deadline path of EN8 step 2 (the open-failure test covers only a failing open); seam=the workspace harness's held delivery of a provider result to the open slot document and its hand-driven slot clock; no_claim=the real editor's delivery latency
 test('a slot that does not show a stop’s bytes before the deadline is told as an open failure and presents no stop', async () => {
   // Arrange
