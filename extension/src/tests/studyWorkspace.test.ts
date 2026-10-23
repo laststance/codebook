@@ -106,7 +106,7 @@ test('an unreadable Node history folder is reported while the saved-study reader
   }
 })
 
-// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger through the replay's one recorded-source slot (PR-B2, DS5; counts follow recorded-stop presentations, as the debugger also starts on the "Not recorded" thread), and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview
+// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger through the replay's one recorded-source slot (PR-B2, DS5; counts follow recorded-stop presentations, as the debugger also starts on the "Not recorded" thread), and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('saved Node history is selectable in the reader without entering browser playback', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -381,9 +381,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       sequence: 20,
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        20,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 20 && !position.pending
+      },
       'last event on the first page is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -394,9 +397,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       direction: 'next',
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        21,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 21 && !position.pending
+      },
       'next event crosses into the second page',
       READER_RESULT_BOUND_MS,
     )
@@ -562,9 +568,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       sequence: 24,
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        24,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 24 && !position.pending
+      },
       'inter-stop output event is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -600,9 +609,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       direction: 'next',
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        25,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 25 && !position.pending
+      },
       'next recorded stop is restored',
       READER_RESULT_BOUND_MS,
     )
@@ -613,9 +625,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       direction: 'previous',
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        24,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 24 && !position.pending
+      },
       'backward navigation restores the output gap',
       READER_RESULT_BOUND_MS,
     )
@@ -627,9 +642,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       sequence: 26,
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        26,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 26 && !position.pending
+      },
       'terminal result event is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -747,9 +765,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       sequence: 24,
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        24,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 24 && !position.pending
+      },
       'output-only position replaces the saved stop',
       READER_RESULT_BOUND_MS,
     )

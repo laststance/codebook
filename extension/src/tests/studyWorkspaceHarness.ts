@@ -11,7 +11,6 @@ import {
   APPLICATION_GROUP_MARKER_KEY,
   CURSOR_FOCUS_AGENT_COMMAND,
   NATIVE_DEBUG_FOCUS_SESSION_COMMAND,
-  NODE_HISTORY_LEAVE_SETTLE_MS,
   type ReaderErrorKind,
 } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
@@ -547,11 +546,7 @@ export async function workspaceHarness(
   const slotTimers = {
     set: (callback: () => void, delayMs: number): (() => void) => {
       if (!manualSlotClock) {
-        // The wait after a stop was left (F385, F387) is the native views' own repaint delay; on the real clock it would add its length to every stop-to-stop move of every test, so only a test on the manual clock waits it.
-        const handle = setTimeout(
-          callback,
-          delayMs === NODE_HISTORY_LEAVE_SETTLE_MS ? 0 : delayMs,
-        )
+        const handle = setTimeout(callback, delayMs)
         return (): void => clearTimeout(handle)
       }
       const timer = {
