@@ -2415,6 +2415,41 @@ async function check(page, options, collected) {
           topAtNextOpen < topAfterLearnerScroll &&
           topAtNextOpen < shortPaneHeight,
       })
+      // Value: protects=a test replay's open token surviving a message that names no section yet, so the section that arrives next is scrolled into view; fails_when=the token is spent on a message without the section and the open never scrolls (F371); why_new=F371, the F156 case sends its token with the section already shown; seam=none; no_claim=when the host sends the section (studyWorkspace tests)
+      // Arrange: the 240 px pane with the page at its top, the replay selected but its section not worded yet.
+      await page.setViewportSize({ width: 600, height: shortPaneHeight })
+      let topWithoutSection, topWhenSectionArrives
+      try {
+        await publish({
+          ...atFirstOutput,
+          nodeHistorySection: undefined,
+          nodeHistoryScrollToken: 21,
+        })
+        await page.evaluate(() => window.scrollTo(0, 0))
+        topWithoutSection = await page.evaluate(() =>
+          Math.round(
+            document.getElementById('node-history').getBoundingClientRect().top,
+          ),
+        )
+        // Act
+        await publish({ ...atFirstOutput, nodeHistoryScrollToken: 21 })
+        topWhenSectionArrives = await page.evaluate(() =>
+          Math.round(
+            document.getElementById('node-history').getBoundingClientRect().top,
+          ),
+        )
+      } finally {
+        await page.setViewportSize({ width: 600, height: 800 })
+      }
+      // Assert
+      cases.push({
+        name: 'a test replay’s open token that arrives before its section is worded scrolls the section into view once the section arrives',
+        actual: { topWithoutSection, topWhenSectionArrives },
+        passed:
+          topWithoutSection >= shortPaneHeight &&
+          topWhenSectionArrives < topWithoutSection &&
+          topWhenSectionArrives < shortPaneHeight,
+      })
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
       // Value: protects=a closed Application pane is named in the test replay section with a way back: the row with Show recorded output appears, its click asks the host for the pane (`focus-app`), and the row goes once the pane is back; fails_when=the row stays hidden while the pane is closed, the button sends another action (`arrange`, which could not bring the pane back), or the row stays after the pane is back; why_new=Step 9 pass 1b's QA critical (Show recorded output could not bring the pane back) and pass 2's testing review: no DOM case showed the row or clicked it; seam=none; no_claim=that the host builds the pane again, which studyWorkspaceTestReplayOutput.test.ts proves
       // Arrange: the stop of the replay while the learner has closed the Application pane.
@@ -6498,6 +6533,46 @@ async function check(page, options, collected) {
               noMaterialHidden: true,
               missingEventLines: 1,
             }),
+      })
+      // Value: protects=a test replay's open token surviving a browser replay that holds the bottom panel, so the section is scrolled into view once it shows instead of the token being spent while it is not; fails_when=the token is spent on the first message that names it while the replay is shown, so the open never scrolls once the replay is left (F371); why_new=F371, the F156 case sends its token with the section already shown; seam=none; no_claim=where the host places the panes or that a hidden bottom-panel section scrolls anything (native check)
+      // Arrange: a browser replay is shown in the bottom panel; the section's scrollIntoView is counted.
+      await page.evaluate(() => {
+        window.scrollsOfNodeHistory = 0
+        document.getElementById('node-history').scrollIntoView = () => {
+          window.scrollsOfNodeHistory++
+        }
+      })
+      const scrollsOfNodeHistory = () =>
+        page.evaluate(() => window.scrollsOfNodeHistory)
+      const sectionShown = {
+        ...panelReplay,
+        recording: undefined,
+        nodeHistorySection: { status: 'Test passed', position: 'Stop 1 of 1' },
+        nodeHistoryScrollToken: 31,
+      }
+      // Act: the token arrives while the replay holds the panel; the replay is left, so the section shows; the same token arrives again.
+      await publish({
+        ...panelReplay,
+        revision: revisionAt(40),
+        nodeHistoryScrollToken: 31,
+      })
+      const scrollsWhileReplayHoldsPanel = await scrollsOfNodeHistory()
+      await publish({ ...sectionShown, revision: revisionAt(41) })
+      const scrollsWhenSectionShows = await scrollsOfNodeHistory()
+      await publish({ ...sectionShown, revision: revisionAt(42) })
+      const scrollsAfterRepeat = await scrollsOfNodeHistory()
+      // Assert
+      cases.push({
+        name: 'a test replay’s open token that arrives while a browser replay holds the bottom panel scrolls the section into view once it shows, and only once',
+        actual: {
+          scrollsWhileReplayHoldsPanel,
+          scrollsWhenSectionShows,
+          scrollsAfterRepeat,
+        },
+        passed:
+          scrollsWhileReplayHoldsPanel === 0 &&
+          scrollsWhenSectionShows === 1 &&
+          scrollsAfterRepeat === 1,
       })
     }
   }

@@ -3204,8 +3204,18 @@ function studyClient(
   }
   window.addEventListener('resize', offerClampedTitles)
   /**
+   * Says whether the test replay section is in the page for a message, so an open's scroll token is spent only on a section that can be scrolled to (F371); called by {@link revealNodeHistoryOnOpen}.
+   * @param message - The current Study message.
+   * @returns `false` while the message loads, names no section, or shows a browser replay in the bottom panel (which holds the section back).
+   * @example isNodeHistoryRevealable(message) // => false for a message whose nodeHistorySection is absent
+   */
+  const isNodeHistoryRevealable = (message: StudyViewMessage): boolean =>
+    !message.loading &&
+    Boolean(message.nodeHistorySection) &&
+    !isReplayInBottomPanel(message)
+  /**
    * Puts the test replay section in view once per open, so the Study's article above it does not push the transport out of sight (F156, D32); called after every Study message.
-   * A message without a new scroll token, or one that still loads, leaves the learner's scroll alone.
+   * A message without a new scroll token leaves the learner's scroll alone; the token is kept, not spent, until the section shows (F371).
    * @param message - The current Study message.
    * @example revealNodeHistoryOnOpen(message) // the section scrolled to the top once for token 7
    */
@@ -3214,7 +3224,7 @@ function studyClient(
     if (
       token === undefined ||
       token === scrolledNodeHistoryToken ||
-      message.loading
+      !isNodeHistoryRevealable(message)
     )
       return
     scrolledNodeHistoryToken = token
