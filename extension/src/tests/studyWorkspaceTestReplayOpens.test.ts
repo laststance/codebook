@@ -622,7 +622,11 @@ test('with a live run’s viewport lease the Application pane writes another rep
       afterMove.html === afterRefresh.html,
       'a moved pane gets no new document',
     )
-    assert.deepEqual(afterMove.panels, ['codebook.scopedBrowser'])
+    // The move posts the header that waits for the commit and then the moment (D29, F203).
+    assert.deepEqual(afterMove.panels, [
+      'codebook.scopedBrowser',
+      'codebook.scopedBrowser',
+    ])
     assert.equal(harness.applicationOutputs().length, outputsAtClose)
     assert.equal(lastView(harness)?.errors.length, 0)
   } finally {

@@ -47,6 +47,7 @@ type SelectedEvent = NodeTestHistoryIndex['entries'][number]
  * @param selected - The selected event, absent before one is selected.
  * @param generation - The Application view's generation, which changes only when the shown moment (the history, its entry count, the selected event or the opening state) does, so a document ignores an update older than the one it shows.
  * @param loading - Whether the replay is still opening.
+ * @param leaving - Whether the selected event is being left for another one: the header names the surface alone, as while the replay opens, and the output stays until the new moment commits (D29, F203).
  * @returns The view.
  * @example
  * projectNodeTestApplication(history, indexNodeTestOutput(history.entries), history.entries[0], 1, false).time // => 'Recorded test output · 0.12 s'
@@ -57,6 +58,7 @@ export function projectNodeTestApplication(
   selected: SelectedEvent | undefined,
   generation: number,
   loading: boolean,
+  leaving = false,
 ): NodeTestApplicationView {
   // The configuration names the cited test (file and title path) as {@link describeNodeTestReplay} reads it.
   const test = history.header.configuration
@@ -81,18 +83,22 @@ export function projectNodeTestApplication(
     generation,
     time: describeNodeTestReplay({
       kind: 'application-time',
-      elapsedMs: selected.elapsedMs,
+      ...(leaving ? {} : { elapsedMs: selected.elapsedMs }),
     }),
     test: testLine,
     name: describeNodeTestReplay({
       kind: 'application-name',
       test,
-      elapsedMs: selected.elapsedMs,
+      ...(leaving ? {} : { elapsedMs: selected.elapsedMs }),
     }),
-    region: describeNodeTestReplay({
-      kind: 'application-region',
-      elapsedMs: selected.elapsedMs,
-    }),
+    ...(leaving
+      ? {}
+      : {
+          region: describeNodeTestReplay({
+            kind: 'application-region',
+            elapsedMs: selected.elapsedMs,
+          }),
+        }),
     lines: tail.lines,
     ...leftOutLines(tail),
     ...(tail.hasOutput

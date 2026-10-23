@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { type TestContext, test } from 'node:test'
 
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
@@ -273,7 +273,9 @@ async function selectMoment(
     sequence,
   })
   await waitUntil(
-    () => lastView(harness)?.nodeHistoryPosition?.sequence === sequence,
+    () =>
+      lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
+      !lastView(harness)?.nodeHistoryPosition?.pending,
     `sequence ${sequence} is selected`,
     READER_RESULT_BOUND_MS,
   )
@@ -434,7 +436,9 @@ test('while the next stop’s debugger still loads, the slot shows no earlier st
     const positionDuringLoad = lastView(harness)?.nodeHistoryPosition?.sequence
     held.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the second stop commits',
       READER_RESULT_BOUND_MS,
     )
@@ -446,10 +450,73 @@ test('while the next stop’s debugger still loads, the slot shows no earlier st
       THEME_NEXT_TEXT,
     )
     assert.deepEqual(labelsDuringLoad, [])
-    assert.equal(positionDuringLoad, 2)
+    // The list's selected row is the requested moment's while it loads (D29).
+    assert.equal(positionDuringLoad, 4)
     assert.deepEqual(slotLabels(harness), [
       '  Recorded: src/theme-next.ts:1 · 0.30 s',
     ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=every surface leaves the earlier moment in one step (D29, F203): while the next stop's debugger presentation is held, the debugger has been emptied once, the slot holds the new stop's bytes with no line or label, the Study position names the stop being selected with no explanation, and the Application header has no time; the commit then shows all of them together; fails_when=the Study position, its explanation or the Application header keep the earlier moment beside the new stop's slot, or the debugger keeps the earlier frames; why_new=N49 part 7's 0.1 to 0.6 s of mixed moments; seam=the workspace harness's held historical debug presentation; no_claim=the native frames of the transition, which the driving agent's N49 recheck reads
+test('while the next stop’s debugger presentation is held, the Study position and the Application header have left the earlier moment', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const shownBefore = lastView(harness)?.nodeHistorySection
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    const held = harness.holdHistoricalDebugPresentation(true)
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 4,
+    })
+    await held.started
+    const duringSection = lastView(harness)?.nodeHistorySection
+    const duringRow = { ...lastView(harness)?.nodeHistoryPosition }
+    const duringApplication = harness.applicationOutputs().at(-1)?.view
+    const invalidationsDuring =
+      harness.historicalDebugInvalidationLabels().length - invalidationsBefore
+    const tabsDuring = slotTabs(harness)
+    const labelsDuring = slotLabels(harness)
+    held.release()
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the second stop commits',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(shownBefore?.position, 'Stop 1 of 2 · 0.20 s')
+    assert.equal(duringSection?.position, 'Stop 2 of 2 · 0.30 s')
+    assert.equal(duringSection?.explanation, undefined)
+    assert.equal(duringSection?.selectedStepId, undefined)
+    assert.equal(duringApplication?.time, 'Recorded test output')
+    assert.equal(duringApplication?.region, undefined)
+    assert.deepEqual(duringRow, { sequence: 4, eventIndex: 3, pending: true })
+    assert.equal(invalidationsDuring, 1)
+    assert.equal(tabsDuring.length, 1)
+    assert.deepEqual(labelsDuring, [])
+    assert.equal(
+      lastView(harness)?.nodeHistorySection?.position,
+      'Stop 2 of 2 · 0.30 s',
+    )
+    assert.equal(
+      harness.applicationOutputs().at(-1)?.view.time,
+      'Recorded test output · 0.30 s',
+    )
   } finally {
     await harness.close()
   }
@@ -478,7 +545,9 @@ test('the debugger is presented at a stop only after the slot’s document shows
     const presentationsWhileHeld = harness.historicalDebugPresentations.length
     heldUpdate.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the stop commits',
       READER_RESULT_BOUND_MS,
     )
@@ -527,7 +596,9 @@ test('a slow reader position write does not hold the selected moment back', asyn
       sequence: 3,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the result commits while its position write is held',
       READER_RESULT_BOUND_MS,
     )
@@ -569,7 +640,9 @@ test('a stop selection overtaken by an output selection leaves only the output o
       sequence: 3,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 3,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the output commits',
       READER_RESULT_BOUND_MS,
     )
@@ -646,6 +719,351 @@ test('a recorded-source slot that cannot open is told with its stop and cause, a
   }
 })
 
+// Value: protects=Retry or Inspect on the moment already shown whose slot fails to open leaves the moment with no stop in the debugger and the slot's document at its loading text, so late bytes of the failed show cannot appear undecorated beside the failure row; fails_when=the failed branch leaves the debugger on the shown stop (no invalidation) or the slot document keeps the stop's bytes; why_new=F170 (the failed branch skipped the leave step because the moment did not change); seam=the workspace harness's injected failure of a non-file document open and its invalidation labels; no_claim=the wording of the failure row
+test('a reselect of the shown stop whose slot fails to open empties the debugger and resets the slot to its loading text', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 2)
+    await openReplayAt(harness, history.studyId, 2)
+    // The learner closes the slot's tab by hand, so a reselect of the shown stop opens the slot again.
+    const slotAddress = slotTabs(harness)[0]!
+    const slotTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find((tab) =>
+        (
+          tab.input as { uri?: { path?: string } } | undefined
+        )?.uri?.path?.includes('/node-history-slot/'),
+      )!
+    harness.closeTabByHand(slotTab)
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    harness.failCurrentSourceOpen()
+
+    // Act
+    await harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      2,
+    )
+
+    // Assert
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().length - invalidationsBefore,
+      1,
+    )
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      false,
+    )
+    assert.equal(
+      await harness.readCapturedSource(slotAddress),
+      '// Loading recorded source…\n',
+    )
+    assert.equal(harness.reader['nodeSourceSlot']?.stop, undefined)
+  } finally {
+    harness.restoreCurrentSourceOpen()
+    await harness.close()
+  }
+})
+
+// Value: protects=Retry answers each failure row with its own remedy while a test replay is shown (D43, F167): the layout, Application and reader rows get the render of the selection and no new selection of the moment, so Play is not paused and no debugger is restarted for them; fails_when=Retry selects the shown moment again for a row that is not the replay's own, so the render of the selection is lost; why_new=F167 (Retry re-selected the moment for every error kind); seam=the reader's error rows set by hand and a spy on the render of the selection; no_claim=what each render repairs
+for (const row of ['layout', 'application', 'reader'] as const) {
+  test(`Retry with a ${row} row while a test replay is shown renders the selection and does not select its moment again`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const history = await saveOneStopNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      harness.reader['errors'].set(row, 'Injected failure')
+      const render = harness.reader['renderSelection'].bind(harness.reader)
+      let renders = 0
+      harness.reader['renderSelection'] = (...args): Promise<void> => {
+        renders++
+        return render(...args)
+      }
+      const requestsBefore = harness.reader['selectedNodeHistoryRequest']
+
+      // Act
+      await harness.reader.action('retry')
+
+      // Assert
+      assert.equal(harness.reader['selectedNodeHistoryRequest'], requestsBefore)
+      assert.ok(renders >= 1, 'the selection is rendered')
+    } finally {
+      await harness.close()
+    }
+  })
+}
+
+// Value: protects=Retry after a failed recorded-source slot reopens the slot and leaves a replay debugger the learner stopped stopped: no new presentation reaches the debugger, the slot shows the stop again with its line and label, and the failure row is gone; fails_when=Retry restarts the stopped debugger (a new presentation) or pauses Play for a row that is not about them; why_new=F167 (Retry re-selected with publish: true, which restarts a debugger the learner stopped); seam=the harness's injected failure of a non-file document open and its ended historical debugger session; no_claim=the wording of the failure row
+test('Retry of a failed recorded-source slot reopens it and does not restart a debugger the learner stopped', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    harness.failCurrentSourceOpen()
+    await selectMoment(harness, history.studyId, 2)
+    harness.endHistoricalDebugSession()
+    harness.restoreCurrentSourceOpen()
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      THEME_TEXT,
+    )
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(
+      lastView(harness)?.nodeHistoryPosition?.debuggerAvailable,
+      false,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a failure that comes out of Retry's selection of the shown moment is told on the replay-debugger row and does not fail the Retry; fails_when=the Retry rejects with the failure and the Study pane tells nothing; why_new=F167 (a debugger failure could throw out of the Retry handler); seam=the selection of a moment, made to throw once; no_claim=which failures can reach it
+test('a failure from the selection Retry makes is told on the debugger row and does not fail Retry', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    harness.reader['errors'].set('history-source', 'Injected slot failure')
+    harness.reader['requestNodeHistoryEvent'] = (): Promise<void> =>
+      Promise.reject(new Error('Injected debugger failure'))
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(
+      [...(lastView(harness)?.errors ?? [])],
+      ['Injected slot failure', 'Error: Injected debugger failure'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the selection of the committed moment after an overtaken selection took the surfaces off it leaves it again (F191): a stop selection withdrawn after its debugger presentation shows no earlier stop beside the Study position while the reselect of the committed stop presents; fails_when=the same-moment test compares with the last committed moment, so the reselect keeps the withdrawn stop's frames on the debugger until its own presentation ends; why_new=F191 (the same-moment test read the committed moment, not what the surfaces show); seam=the workspace harness's held historical debug presentations and the withdrawn caller's isCurrent; no_claim=the debugger's own redraw
+test('a reselect of the committed stop after a withdrawn selection presented another stop empties the debugger first', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const selected = harness.reader['selectedNodeHistory']!
+    let wanted = true
+    const withdrawnHold = harness.holdHistoricalDebugPresentation(true)
+    const withdrawn = harness.reader['requestNodeHistoryEvent'](selected, 4, {
+      publish: false,
+      alignPlayback: false,
+      isCurrent: () => wanted,
+    })
+    await withdrawnHold.started
+    wanted = false
+    withdrawnHold.release()
+    await waitUntil(
+      () =>
+        harness.historicalDebugPresentations.at(-1)?.label ===
+        'Recorded test stop 2 · src/theme-next.ts:1',
+      'the withdrawn selection presented the second stop',
+      READER_RESULT_BOUND_MS,
+    )
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    const reselectHold = harness.holdHistoricalDebugPresentation(true)
+
+    // Act
+    const reselect = harness.reader['requestNodeHistoryEvent'](selected, 2)
+    await reselectHold.started
+    const invalidationsWhileHeld =
+      harness.historicalDebugInvalidationLabels().length - invalidationsBefore
+    reselectHold.release()
+    await Promise.all([withdrawn, reselect])
+
+    // Assert
+    assert.equal(invalidationsWhileHeld, 1)
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.label,
+      'Recorded test stop 1 · src/theme.ts:1',
+    )
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the slot that shows its moment retires the failure row of the earlier try without a Study message of its own: the row leaves with the commit, so no message shows the moment half committed; fails_when=the show publishes when it clears the row, so the Study pane loses the failure beside a moment still waiting for its debugger; why_new=F191 (showNodeSourceSlot published before the commit); seam=the workspace harness's injected failure of a non-file document open and its held historical debug presentation; no_claim=the wording of the failure row
+test('the failure row of a slot stays in the Study message until the retried moment commits', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveOneStopNodeHistory(store)
+    await store.saveReaderPosition(history.studyId, 1)
+    await openReplayAt(harness, history.studyId, 1)
+    harness.failCurrentSourceOpen()
+    await selectMoment(harness, history.studyId, 2)
+    harness.restoreCurrentSourceOpen()
+    const held = harness.holdHistoricalDebugPresentation(true)
+
+    // Act
+    const retry = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      2,
+    )
+    await held.started
+    const errorsWhileHeld = [...(lastView(harness)?.errors ?? [])]
+    held.release()
+    await retry
+
+    // Assert
+    assert.equal(errorsWhileHeld.length, 1)
+    assert.match(
+      errorsWhileHeld[0]!,
+      /could not open the recorded source of stop 1/,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Counts what the reader asks of the editor for the recorded-source slot while a test runs: the provider events it fires for the slot, and the documents it opens and shows.
+ * @param harness - The workspace harness.
+ * @returns The counters, read after the moves.
+ * @example const asked = countSlotRequests(harness); await selectMoment(harness, id, 3); asked.providerEvents // => 1
+ */
+function countSlotRequests(harness: Harness) {
+  const counts = { providerEvents: 0, opens: 0, shows: 0 }
+  harness.reader['sourceChanges'].event((uri) => {
+    if (uri.path.includes('/node-history-slot/')) counts.providerEvents++
+  })
+  const open = harness.editor.workspace.openTextDocument.bind(
+    harness.editor.workspace,
+  )
+  harness.editor.workspace.openTextDocument = ((...args: unknown[]) => {
+    if (String(args[0]).includes('/node-history-slot/')) counts.opens++
+    return (open as (...rest: unknown[]) => unknown)(...args)
+  }) as typeof harness.editor.workspace.openTextDocument
+  const show = harness.editor.window.showTextDocument.bind(
+    harness.editor.window,
+  )
+  harness.editor.window.showTextDocument = ((...args: unknown[]) => {
+    if (
+      String(args[0] && (args[0] as { uri?: unknown }).uri).includes(
+        '/node-history-slot/',
+      )
+    )
+      counts.shows++
+    return (show as (...rest: unknown[]) => unknown)(...args)
+  }) as typeof harness.editor.window.showTextDocument
+  return counts
+}
+
+// Value: protects=Play over outputs and the result leaves an unchanged recorded-source slot as it is (F174): the placeholder is already in an open tab, so a move from one output to the result asks the editor for no provider event, no open and no show; fails_when=every move runs the slot's whole cycle although its bytes did not change; why_new=F174 (every Play event ran provider event, open and show); seam=counters on the reader's provider event and on the editor's open and show; no_claim=the cost of one cycle
+test('a move between two moments that record no stop leaves the recorded-source slot untouched', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const asked = countSlotRequests(harness)
+
+    // Act
+    await selectMoment(harness, history.studyId, 5)
+
+    // Assert
+    assert.deepEqual(asked, { providerEvents: 0, opens: 0, shows: 0 })
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      PLACEHOLDER,
+    )
+    assert.equal(slotTabs(harness).length, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a move from a stop to an output asks the editor for the slot's text once, not once for the loading text and once for the new text (F174); fails_when=the leave step fires a provider event of its own; why_new=F174 (a stop-to-output move fired the provider twice); seam=counters on the reader's provider event and on the editor's open and show; no_claim=the cost of one event
+test('a move from a stop to an output asks the editor for the slot’s text once', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const asked = countSlotRequests(harness)
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+
+    // Assert
+    assert.deepEqual(asked, { providerEvents: 1, opens: 1, shows: 1 })
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      PLACEHOLDER,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the slider's marks of a test replay are mapped from its journal once per opened history (F162, F190): every Study message and every move carries the very same timeline object, so no publish maps the whole journal again or verifies every stop's sealed source again; fails_when=a Study message maps the journal onto the timeline again; why_new=F162 and F190 (projectNodeTestSection mapped the whole history at every message); seam=the reader's message, read by hand, with object identity as the count of projections; no_claim=the marks' values, which the projection's own tests pin
+test('the slider’s marks are mapped once per opened test replay, not at every Study message', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const atOpen = harness.reader['message']().nodeHistorySection?.timeline
+
+    // Act
+    const again = harness.reader['message']().nodeHistorySection?.timeline
+    await selectMoment(harness, history.studyId, 4)
+    const afterMove = harness.reader['message']().nodeHistorySection?.timeline
+
+    // Assert
+    assert.deepEqual(atOpen?.recordedPoints, [200, 300])
+    assert.equal(again, atOpen)
+    assert.equal(afterMove, atOpen)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a slot whose document never shows the selected stop's bytes before the slot deadline is told as an open failure with Retry, and the debugger shows no stop of the earlier moment, also when the bytes land late; fails_when=the selection waits forever, presents the debugger at stale text, commits silently without the history-source row, or presents the stop once the late bytes land; why_new=the deadline path of EN8 step 2 (the open-failure test covers only a failing open); seam=the workspace harness's held delivery of a provider result to the open slot document and its hand-driven slot clock; no_claim=the real editor's delivery latency
 test('a slot that does not show a stop’s bytes before the deadline is told as an open failure and presents no stop', async () => {
   // Arrange
@@ -674,7 +1092,9 @@ test('a slot that does not show a stop’s bytes before the deadline is told as 
     await new Promise((resolve) => setImmediate(resolve))
     harness.elapseSlotClock(5_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the selection reports that the slot did not show its bytes',
       2_000,
     )
@@ -788,6 +1208,348 @@ test('a rename whose slot cannot open leaves no earlier slot tab once the next m
     await harness.close()
   }
 })
+
+// Value: protects=Retry at a verified stop that shows its slot fine keeps everything as it is (F166 cell verified stop x Retry): one slot tab with the stop's bytes, line and label, the debugger on that stop and no error; fails_when=Retry closes or empties the slot, loses the label, or moves the debugger off the stop; why_new=F166 (verified stop x Retry had no test); seam=none; no_claim=a Retry that has a failure to answer (the open-failure test)
+test('Retry at a verified stop keeps its slot tab, label and debugger frames', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.label,
+      'Recorded test stop 1 · src/theme.ts:1',
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Retry at a moment that shows the placeholder keeps the one slot tab with the placeholder and no label, and the debugger on no stop (F166 cell placeholder x Retry); fails_when=Retry opens a second tab, loses the placeholder or puts a stop on the debugger; why_new=F166 (placeholder x Retry had no test); seam=none; no_claim=a Retry that has a failure to answer
+test('Retry at an output keeps the placeholder slot and no stop in the debugger', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const presentationsBefore = harness.historicalDebugPresentations.length
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), PLACEHOLDER)
+    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().at(-1),
+      'Not recorded at this moment',
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a stop in another file after an output renames the slot that showed the placeholder: the tab of the earlier file closes and the renamed slot holds the new stop (F166 cell placeholder x rename); fails_when=the placeholder's slot keeps its tab beside the renamed one, or the renamed slot keeps the placeholder; why_new=F166 (placeholder x rename had no test; the rename test starts at a stop); seam=none; no_claim=the group the tab opens in
+test('a stop in another file after an output renames the placeholder slot and closes its tab', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const placeholderSlot = slotTabs(harness)[0]!
+
+    // Act
+    await selectMoment(harness, history.studyId, 4)
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.notEqual(tabs[0], placeholderSlot)
+    assert.match(tabs[0]!, /\/Captured-theme-next\.ts$/)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_NEXT_TEXT)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a rename that starts at the placeholder and is overtaken before its slot opens, by the result, leaves one slot tab with the placeholder and no label (F166 cell placeholder x overtaken during a rename); fails_when=the overtaken rename leaves its tab beside the placeholder's, or its stop's bytes or label reach the result; why_new=F166 (placeholder x overtaken during a rename had no test); seam=the workspace harness's held native open of the renamed slot's document; no_claim=the debugger, which the overtaken-selection test covers
+test('a rename from the placeholder that the result overtakes leaves one slot tab with the placeholder', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const renamedSlot = slotTabs(harness)[0]!.replace(
+      /Captured-theme\.ts$/,
+      'Captured-theme-next.ts',
+    )
+    const heldOpen = harness.holdNextSource({ uri: renamedSlot })
+    const overtaken = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    await heldOpen.started
+
+    // Act
+    await selectMoment(harness, history.studyId, 5)
+    heldOpen.release()
+    await overtaken
+
+    // Assert
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), PLACEHOLDER)
+    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 5)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a rename whose slot fails to open after a newer selection overtook it tells nothing and leaves the newer moment's slot alone (F166 cell failed open x overtaken during a rename); fails_when=the overtaken selection's failure shows as a row beside a moment that opened fine; why_new=F166 (failed open x overtaken during a rename had no test); seam=the workspace harness's held and rejected native open of the renamed slot's document; no_claim=the wording of the failure row
+test('a rename whose slot fails to open after the output overtook it tells no failure', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const renamedSlot = slotTabs(harness)[0]!.replace(
+      /Captured-theme\.ts$/,
+      'Captured-theme-next.ts',
+    )
+    const heldOpen = harness.holdNextSource({ uri: renamedSlot })
+    const overtaken = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    await heldOpen.started
+
+    // Act
+    await selectMoment(harness, history.studyId, 3)
+    heldOpen.reject(new Error('Injected held slot open failure'))
+    await overtaken.catch(() => undefined)
+
+    // Assert
+    assert.equal(lastView(harness)?.errors.length, 0)
+    assert.equal(slotTabs(harness).length, 1)
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 3)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Makes one stop of the replays the workspace's store reads unverified: its captured text no longer hashes to its sealed hash, as after an edit of the captured file.
+ * @param context - The test's context, which restores the store's read.
+ * @param harness - The workspace harness.
+ * @param sequence - The stop to unverify.
+ * @example unverifyStop(context, harness, 4)
+ */
+function unverifyStop(
+  context: TestContext,
+  harness: Harness,
+  sequence: number,
+): void {
+  const store = harness.service.nodeHistoryStore!
+  const read = store.read.bind(store)
+  context.mock.method(store, 'read', async (studyId: string) => {
+    const index = await read(studyId)
+    return {
+      ...index,
+      entries: index.entries.map((entry) =>
+        entry.type === 'stop' && entry.sequence === sequence
+          ? {
+              ...entry,
+              debuggerSnapshot: {
+                ...entry.debuggerSnapshot,
+                frames: entry.debuggerSnapshot.frames.map((frame) => ({
+                  ...frame,
+                  source: frame.source && {
+                    ...frame.source,
+                    text: 'const nextTheme = "light";\n',
+                  },
+                })),
+              },
+            }
+          : entry,
+      ),
+    }
+  })
+}
+
+// Value: protects=moving from a stop whose source does not verify to a verified stop shows that stop's sealed source with its line and label in the slot (F179 cell unverified stop x select another moment); fails_when=the slot keeps the placeholder of the unverified stop, or the label is not drawn; why_new=F179 (unverified stop x select another moment had no slot test); seam=the store's read, whose second stop's captured text was edited; no_claim=the Study pane's unverified line, which the cells tests cover
+test('moving from a stop whose source does not verify to a verified stop shows its source and label in the slot', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    unverifyStop(context, harness, 4)
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 4)
+    const placeholderSlot = slotTabs(harness)[0]!
+    const placeholderAtUnverified =
+      await harness.readCapturedSource(placeholderSlot)
+
+    // Act
+    await selectMoment(harness, history.studyId, 2)
+
+    // Assert
+    assert.equal(placeholderAtUnverified, PLACEHOLDER)
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=selecting the stop whose source does not verify again leaves its placeholder slot untouched: no provider event, open or show, no stopped line or label, no new invalidation of the debugger and no error (F179 cell unverified stop x reselect); fails_when=the reselect runs the slot's cycle again, draws a label for the unverified stop or leaves the debugger on another stop; why_new=F179 (unverified stop x reselect had no test); seam=the store's read, whose second stop's captured text was edited, and counters on the editor's requests; no_claim=the Study pane's unverified line
+test('selecting a stop whose source does not verify again leaves its placeholder slot and the debugger as they are', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    unverifyStop(context, harness, 4)
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 4)
+    const asked = countSlotRequests(harness)
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+
+    // Act
+    await harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+
+    // Assert
+    assert.deepEqual(asked, { providerEvents: 0, opens: 0, shows: 0 })
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().length,
+      invalidationsBefore,
+    )
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      PLACEHOLDER,
+    )
+    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=returning to Live at a stop whose source does not verify closes the slot tab that shows its placeholder (F179 cell unverified stop x retire); fails_when=the retire leaves the placeholder's tab open with no replay behind it; why_new=F179 (unverified stop x retire had no test); seam=the store's read, whose second stop's captured text was edited; no_claim=a tab the learner pinned or edited
+test('returning to Live at a stop whose source does not verify closes the slot tab', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    unverifyStop(context, harness, 4)
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 4)
+    const openedSlots = slotTabs(harness)
+
+    // Act
+    await harness.reader['retireNodeHistorySelection']()
+
+    // Assert
+    assert.equal(openedSlots.length, 1)
+    assert.deepEqual(slotTabs(harness), [])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=selecting the output or the result again leaves the placeholder slot as it is: no provider event, open or show, and the debugger stays on no stop (F179 cells output x reselect and result x reselect); fails_when=a reselect of a moment that records no stop runs the slot's cycle again or puts a stop on the debugger; why_new=F179 (output x reselect and result x reselect had no test); seam=counters on the editor's requests; no_claim=the Study pane's rows
+for (const moment of [
+  { name: 'output', sequence: 3 },
+  { name: 'result', sequence: 5 },
+]) {
+  test(`selecting the ${moment.name} again leaves the placeholder slot and the debugger as they are`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const history = await saveTwoFileNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      await selectMoment(harness, history.studyId, moment.sequence)
+      const asked = countSlotRequests(harness)
+      const presentationsBefore = harness.historicalDebugPresentations.length
+      const invalidationsBefore =
+        harness.historicalDebugInvalidationLabels().length
+
+      // Act
+      await harness.reader['requestNodeHistoryEvent'](
+        harness.reader['selectedNodeHistory']!,
+        moment.sequence,
+      )
+
+      // Assert
+      assert.deepEqual(asked, { providerEvents: 0, opens: 0, shows: 0 })
+      assert.equal(
+        harness.historicalDebugPresentations.length,
+        presentationsBefore,
+      )
+      assert.equal(
+        harness.historicalDebugInvalidationLabels().length,
+        invalidationsBefore,
+      )
+      assert.equal(
+        await harness.readCapturedSource(slotTabs(harness)[0]!),
+        PLACEHOLDER,
+      )
+      assert.equal(lastView(harness)?.errors.length, 0)
+    } finally {
+      await harness.close()
+    }
+  })
+}
 
 // Value: protects=returning to Live while a renamed slot's document still opens closes every slot tab of the retired replay, the earlier file's included; fails_when=the retire closes only the renamed slot, which had no tab yet, and the earlier file's slot tab stays open with no replay behind it; why_new=PR-B2 /ship Step 9 state-machines review (critical: an orphan slot tab, retire during a pending rename); seam=the workspace harness's held native open of the renamed slot's document; no_claim=a slot tab the learner pinned or edited, which stays
 test('returning to Live while a renamed slot still opens closes every slot tab of the replay', async () => {
@@ -987,7 +1749,9 @@ test('returning to the shown output while a stop still presents leaves the debug
     )
     held.reject(new Error('Historical debugger presentation was superseded.'))
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 1,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 1 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the output stays selected',
       READER_RESULT_BOUND_MS,
     )
@@ -1058,6 +1822,79 @@ test('a Play step withdrawn after its slot showed the next stop shows the commit
     await harness.close()
   }
 })
+
+// Value: protects=a selection that is refused before it changes anything (an event the replay lacks, a seek at a debugger the learner stopped) supersedes no earlier selection: the Play step it found leaving the committed stop, withdrawn meanwhile, still shows the committed stop again in the slot with its line and label; fails_when=the refused selection takes the request token, so the withdrawn step's return is dropped and the slot keeps its loading text or the withdrawn stop's bytes with no stopped line or label beside the committed stop's Study position; why_new=F165 (D34: the request is taken after the refusal checks); seam=the workspace harness's held document open of the next stop's slot, with the caller's isCurrent turned false while the open is held, and the ended historical debugger session; no_claim=the debugger's own restart
+for (const refusal of [
+  {
+    name: 'an event the replay lacks',
+    refuse: (harness: Harness): Promise<void> =>
+      harness.reader['requestNodeHistoryEvent'](
+        harness.reader['selectedNodeHistory']!,
+        99,
+        { publish: false, alignPlayback: false },
+      ),
+    prepare: (_harness: Harness) => undefined,
+  },
+  {
+    name: 'a seek at a debugger the learner stopped',
+    refuse: (harness: Harness): Promise<void> =>
+      harness.reader['requestNodeHistoryEvent'](
+        harness.reader['selectedNodeHistory']!,
+        2,
+        { publish: false, alignPlayback: false },
+      ),
+    prepare: (harness: Harness): void => harness.endHistoricalDebugSession(),
+  },
+]) {
+  test(`${refusal.name} refused while a withdrawn Play step is leaving the committed stop leaves that stop in the slot with its line and label`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      const history = await saveTwoFileNodeHistory(
+        harness.service.nodeHistoryStore!,
+      )
+      await openReplayAt(harness, history.studyId, 2)
+      const selected = harness.reader['selectedNodeHistory']!
+      let wanted = true
+      const held = harness.holdNextSource()
+      const step = harness.reader['requestNodeHistoryEvent'](selected, 4, {
+        publish: false,
+        alignPlayback: false,
+        isCurrent: () => wanted,
+      })
+      await held.started
+      refusal.prepare(harness)
+      wanted = false
+
+      // Act: the refused selection arrives while the step's slot opens; the open then completes.
+      const refused = await refusal.refuse(harness).then(
+        () => 'accepted',
+        () => 'refused',
+      )
+      held.release()
+      await step
+      await waitUntil(
+        () => slotLabels(harness).length === 1,
+        'the committed stop’s label is drawn again',
+        READER_RESULT_BOUND_MS,
+      )
+
+      // Assert
+      assert.equal(refused, 'refused')
+      assert.deepEqual(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+      assert.equal(lastView(harness)?.nodeHistoryPosition?.pending, undefined)
+      assert.equal(harness.reader['selectedNodeHistorySequence'], 2)
+      const tabs = slotTabs(harness)
+      assert.equal(tabs.length, 1)
+      assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+      assert.deepEqual(slotLabels(harness), [
+        '  Recorded: src/theme.ts:1 · 0.20 s',
+      ])
+    } finally {
+      await harness.close()
+    }
+  })
+}
 
 // Value: protects=a Play step or seek that the learner withdrew (Pause or dispose, with no newer selection) while its recorded-source slot was still failing to open commits nothing: not its moment, not its page, not its reader position; fails_when=the failed-slot branch skips the caller's withdrawal check and the moment (sequence 2) becomes the selected one after the learner paused; why_new=F282: only the debugger branch checked isCurrent; seam=the workspace harness's held and rejected non-file document open, with the caller's isCurrent turned false while the open is held; no_claim=the wording of the slot's failure row
 test('a Play step withdrawn while its slot fails to open commits no moment', async () => {
@@ -1255,7 +2092,9 @@ test('a slot whose show stalls reports its row at the slot deadline and releases
     await stalled.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the moment commits at the slot deadline',
       2_000,
     )
@@ -1298,13 +2137,17 @@ test('a slow slot is not failed at the 1,000 ms bound, only at the slot deadline
     const viewAtBound = lastView(harness)
     harness.elapseSlotClock(4_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the moment commits at the slot deadline',
       2_000,
     )
 
     // Assert
-    assert.equal(viewAtBound?.nodeHistoryPosition?.sequence, 2)
+    // The list's row is the requested moment's, loading, until the deadline commits it.
+    assert.equal(viewAtBound?.nodeHistoryPosition?.sequence, 4)
+    assert.equal(viewAtBound?.nodeHistoryPosition?.pending, true)
     assert.deepEqual([...(viewAtBound?.errors ?? [])], [])
     assert.equal(lastView(harness)?.errors.length, 1)
   } finally {
@@ -1330,7 +2173,9 @@ test('a slot show that completes after the deadline is closed, not shown', async
     await stalled.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the moment commits at the slot deadline',
       2_000,
     )
@@ -1387,6 +2232,7 @@ test('Play pauses at the first slot that cannot open', async () => {
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.nodeHistoryPlayback?.loading,
       'the moment commits at the slot deadline',
       2_000,
@@ -1468,7 +2314,9 @@ test('a stalled close of the earlier slot tab commits the moment at the slot dea
     await stalledClose.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the moment commits at the slot deadline',
       2_000,
     )
@@ -1516,7 +2364,9 @@ test('a close the older selection issued does not close the slot tab the newer s
       await new Promise((resolve) => setImmediate(resolve))
     heldClose.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the newer selection commits',
       2_000,
     )
@@ -1570,7 +2420,9 @@ test('a selection overtaken inside the editor’s show closes no tab before the 
     const closeRequestsBeforeTakeover = harness.tabCloseRequests().length
     heldOpen.release()
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the newer selection commits',
       2_000,
     )

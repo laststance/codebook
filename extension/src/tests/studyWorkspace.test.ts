@@ -577,8 +577,9 @@ test('saved Node history is selectable in the reader without entering browser pl
     )
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
-    assert.ok(
-      harness.historicalDebugInvalidations() > invalidationsBeforeOutput,
+    assert.equal(
+      harness.historicalDebugInvalidations() - invalidationsBeforeOutput,
+      1,
       'the previous stop is cleared during an output-only interval',
     )
     assert.equal(
@@ -638,8 +639,9 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.match(terminalMessage.nodeHistorySection?.position ?? '', /^Result /)
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
-    assert.ok(
-      harness.historicalDebugInvalidations() > invalidationsBeforeResult,
+    assert.equal(
+      harness.historicalDebugInvalidations() - invalidationsBeforeResult,
+      1,
       'terminal events do not retain historical debugger values',
     )
     assert.equal(
@@ -1065,7 +1067,12 @@ test('Node journal time seeking restores exact stops and clears debugger across 
     )
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
-    assert.equal(await store.readReaderPosition(history.studyId), 4)
+    // The position is written after the commit and never awaited by it (F197).
+    await waitUntil(
+      async () => (await store.readReaderPosition(history.studyId)) === 4,
+      'the second stop’s reader position is written',
+      READER_RESULT_BOUND_MS,
+    )
 
     // Act: seek into the output interval and then to the final result.
     harness.receiveContext({
@@ -1412,8 +1419,9 @@ test('returning to the current run leaves a selected Node history so its missing
       false,
       'the recorded-source slot of the Node history is closed',
     )
-    assert.ok(
-      harness.historicalDebugInvalidations() > invalidationsBefore,
+    assert.equal(
+      harness.historicalDebugInvalidations() - invalidationsBefore,
+      1,
       'the historical debugger no longer shows the Node stop',
     )
   } finally {
