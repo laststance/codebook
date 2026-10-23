@@ -107,37 +107,52 @@ test('a project without any declared port starts on Next default 3000', async ()
   assert.deepEqual(declared, { port: 3000, source: "Next's default port" })
 })
 
-// Value: protects=a busy project port refuses the start with a typed refusal that names the port and the recovery and never picks another port; fails_when=the check passes while the port is in use or the message omits the port, the origin reason or the recovery; why_new=D63 (F411); seam=a real loopback listener; no_claim=the learner's actual dev server
-test('a busy project port refuses the start and names the port, the origin reason and the recovery', async () => {
-  // Arrange
-  const occupant = createServer()
-  await new Promise<void>((resolve) =>
-    occupant.listen({ host: '127.0.0.1', port: 0 }, resolve),
+/** Starts a real listener on an OS-chosen port; `undefined` when the host lacks that address family. */
+async function listenOn(host: string, port = 0) {
+  const server = createServer()
+  const failure = await new Promise<NodeJS.ErrnoException | undefined>(
+    (resolve) => {
+      server.once('error', resolve)
+      server.listen({ host, port }, () => resolve(undefined))
+    },
   )
-  const address = occupant.address()
+  if (failure) return undefined
+  const address = server.address()
   assert.ok(address && typeof address === 'object')
-  const { port } = address
-  try {
-    // Act
-    const refusal = await assertDevelopmentPortFree({
-      port,
-      source: 'the dev script in package.json',
-    }).then(
-      () => undefined,
-      (error: unknown) => error,
-    )
-
-    // Assert
-    assert.ok(refusal instanceof StudyError)
-    assert.equal(refusal.code, 'PREREQUISITE_MISSING')
-    assert.equal(
-      refusal.message,
-      `Port ${port} on 127.0.0.1 is not available, and the project declares it (the dev script in package.json): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port. Ask the learner to stop the process that listens on port ${port} (often their own dev server), then start again.`,
-    )
-  } finally {
-    await new Promise((resolve) => occupant.close(resolve))
+  return {
+    port: address.port,
+    close: () => new Promise((resolve) => server.close(resolve)),
   }
-})
+}
+
+// Value: protects=a busy project port refuses the start whichever loopback address the learner's own dev server listens on (D63, F411: a `::` or `::1` listener does not block a bind to 127.0.0.1); fails_when=the check passes while the port is in use, or the message omits the port, the origin reason or the recovery; why_new=the bind-only check missed `next dev -p 3165`'s wildcard listener; seam=real loopback listeners on OS-chosen ports; no_claim=the learner's actual dev server
+for (const host of ['127.0.0.1', '::1', '::']) {
+  test(`a dev server listening on ${host} refuses the start and names the port, the origin reason and the recovery`, async (context) => {
+    // Arrange
+    const occupant = await listenOn(host)
+    if (!occupant) return context.skip(`${host} is not available on this host`)
+    try {
+      // Act
+      const refusal = await assertDevelopmentPortFree({
+        port: occupant.port,
+        source: 'the dev script in package.json',
+      }).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+      // Assert
+      assert.ok(refusal instanceof StudyError)
+      assert.equal(refusal.code, 'PREREQUISITE_MISSING')
+      assert.equal(
+        refusal.message,
+        `Port ${occupant.port} is in use on this machine, and the project declares it (the dev script in package.json): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port. Ask the learner to stop the process that listens on port ${occupant.port} (often their own dev server), then start again.`,
+      )
+    } finally {
+      await occupant.close()
+    }
+  })
+}
 
 test('a free project port passes the start check', async () => {
   // Arrange

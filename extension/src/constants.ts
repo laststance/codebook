@@ -1265,6 +1265,8 @@ export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
 /** Next's own development port, used when neither the dev script nor an env file declares one. */
 export const DEVELOPMENT_SERVER_DEFAULT_PORT = 3000
 export const DEVELOPMENT_SERVER_MAX_PORT = 65_535
+/** Bounds one loopback connect that asks whether something already listens on the project's port; a connect that times out counts as a listener. */
+export const DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS = 500
 /** Bounds how much of a project's package.json or env file is read to find its declared port. */
 export const DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES = 1_048_576
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
