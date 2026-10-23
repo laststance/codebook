@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { workspaceHarness } from './studyWorkspaceHarness'
+import {
+  takeUnreportedListenerErrors,
+  workspaceHarness,
+} from './studyWorkspaceHarness'
 
 // Value: protects=the fake extension context keeping profile state like the editor's Memento, so a reader that writes a Date, a Map or reads with a default is tested against what the editor does; fails_when=the fake answers undefined for a missing key whose default was given, or keeps a Date or Map that the editor would turn into text or an empty object; why_new=F376 (the fake ignored the default and used structuredClone); seam=the harness's fake globalState and workspaceState; no_claim=the persistence of the real Memento across restarts
 test('the fake profile state answers a default for a missing key and keeps JSON only', async () => {
@@ -107,26 +110,27 @@ test('the hand-driven slot clock fires a timer that a firing timer sets inside t
   }
 })
 
-// Value: protects=a throwing visible-editors listener of the product failing the workspace test whose editor operation made it throw, as the extension host would log it and leave a stale slot decoration; fails_when=the harness keeps a listener error without ever failing the test (the error is only readable by a test that asks), or fails a test that declared the error with expectVisibleEditorListenerErrors; why_new=Cycle 0050 F391 (every tab close now fires the event while the catch hid a throwing listener from all but one test); seam=the harness's close and its visible-editors listener isolation; no_claim=the extension host's log of the error
-test('a visible-editors listener that throws fails the test whose close caused it unless the test declared it', async () => {
+// Value: protects=a throwing visible-editors listener of the product failing the workspace test whose editor operation made it throw, without replacing the failure that test already has and without failing twice when the harness closes twice; fails_when=close throws the listener errors (a test that closes in finally loses its own assertion error, and a second close throws again), or keeps the error without ever handing it to the afterEach hook; why_new=Cycle 0050 F405 (F391's close threw an AggregateError after teardown); seam=the harness's close, takeUnreportedListenerErrors and the afterEach hook that reports what it hands over; no_claim=the extension host's log of the error
+test('a visible-editors listener that throws is handed to the failure hook once and close neither throws nor throws again', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
   harness.focusMutableDraft('closing.txt', 1)
   const throwing = harness.editor.window.onDidChangeVisibleTextEditors(() => {
     throw new Error('Listener failed.')
   })
-
-  // Act
   await harness.editor.commands.executeCommand(
     'workbench.action.closeActiveEditor',
   )
   throwing.dispose()
 
+  // Act
+  await harness.close()
+  await harness.close()
+  const handedOver = takeUnreportedListenerErrors().map(String)
+
   // Assert
-  await assert.rejects(
-    harness.close(),
-    /onDidChangeVisibleTextEditors threw 1 time\(s\) during the test: Error: Listener failed\./,
-  )
+  assert.deepEqual(handedOver, ['Error: Listener failed.'])
+  assert.deepEqual(takeUnreportedListenerErrors(), [])
 })
 
 // Value: protects=the fake workspace state answering a stored null as the editor's Memento does, so a reader that stores null is tested against the real answer and not the default; fails_when=the fake treats a stored null like a missing key and answers the default; why_new=Cycle 0050 F399 (workspaceState.get used ?? defaultValue); seam=the harness's fake workspaceState; no_claim=the persistence of the real Memento across restarts
