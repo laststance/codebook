@@ -543,12 +543,15 @@ function studyClient(
   })
   const strip = document.querySelector<HTMLElement>('.live-strip')
   const replayTransportBar = document.getElementById('node-history-transport')
+  // The sticky bars this page has, top first: the live strip, then the test replay's transport.
+  const stickyBars = [strip, replayTransportBar].filter(
+    (bar): bar is HTMLElement => bar !== null,
+  )
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
   // The live strip sticks at the top and the test replay's transport sticks right below it, so the sticky bars never cover each other; a bar taller than the fraction of the pane flows with the page instead, and the focus scroll room counts the bars that stay.
   const adaptStrip = (): void => {
     let stickyHeight = 0
-    for (const bar of [strip, replayTransportBar]) {
-      if (!bar) continue
+    for (const bar of stickyBars) {
       const height = bar.getBoundingClientRect().height
       bar.classList.toggle(
         'flowing',
@@ -564,8 +567,9 @@ function studyClient(
       `${stickyHeight}px`,
     )
   }
-  for (const bar of [strip, replayTransportBar])
-    if (bar) new ResizeObserver(adaptStrip).observe(bar)
+  // One observer measures every bar again when any of them changes size.
+  const stickyBarObserver = new ResizeObserver(adaptStrip)
+  for (const bar of stickyBars) stickyBarObserver.observe(bar)
   window.addEventListener('resize', adaptStrip)
   document.addEventListener('click', (event) => {
     const target =
@@ -2421,6 +2425,14 @@ function studyClient(
       text(id, value)
     element('node-history-closed').hidden = !section?.applicationClosed
   }
+  /** The section's lines that show one of its fields as it is, by element id, each empty when the field is absent. */
+  const testReplayFieldLines = [
+    ['node-history-capture-reason', 'captureReason'],
+    ['node-history-explanation', 'explanation'],
+    ['node-history-not-recorded', 'notRecorded'],
+    ['node-history-unverified', 'unverified'],
+    ['node-history-pointer', 'pointer'],
+  ] as const
   /**
    * Gives the text of each of the section's worded lines by its element id; called by {@link renderTestReplayLines}.
    * @param section - The section's worded view, absent while suppressed or without a test replay.
@@ -2435,15 +2447,21 @@ function studyClient(
     // Without a section every line is empty and the status line says `idle`.
     ({
       'node-history-status': section?.status ?? idle,
-      'node-history-capture-reason': section?.captureReason ?? '',
-      'node-history-position': section
-        ? (section.position ?? options.testReplay.noSelection)
-        : '',
-      'node-history-explanation': section?.explanation ?? '',
-      'node-history-not-recorded': section?.notRecorded ?? '',
-      'node-history-unverified': section?.unverified ?? '',
-      'node-history-pointer': section?.pointer ?? '',
+      'node-history-position': testReplayPositionText(section),
+      ...Object.fromEntries(
+        testReplayFieldLines.map(([id, field]) => [id, section?.[field] ?? '']),
+      ),
     })
+  /**
+   * Gives the selected moment's locator line; called by {@link testReplayLineTexts}.
+   * @param section - The section's worded view, absent while suppressed or without a test replay.
+   * @returns The section's position, the line that no moment is selected, or nothing without a section.
+   * @example testReplayPositionText(undefined) // => ''
+   */
+  const testReplayPositionText = (
+    section: StudyViewMessage['nodeHistorySection'],
+  ): string =>
+    section ? (section.position ?? options.testReplay.noSelection) : ''
   /**
    * Enables or disables a control of the section by its id; called by the transport's renderers.
    * @param id - The control's id.
@@ -2690,6 +2708,18 @@ function studyClient(
       element('node-learning-sequence').replaceChildren(visual)
       element('node-learning-steps').replaceChildren(list)
     }
+    markTestReplaySteps(section, replaying)
+  }
+  /**
+   * Marks the test replay's numbered steps for the selected moment (DS21): the selected step `aria-current`, the selected event's other steps `Same recorded moment`, and every step's control disabled while a browser recording is shown; called by {@link renderTestReplayLearning} for every Study message, also when the steps were drawn before.
+   * @param section - The section's worded view, which names the selected step and the steps of the same moment.
+   * @param replaying - Whether a browser recording is shown.
+   * @example markTestReplaySteps(message.nodeHistorySection, false)
+   */
+  const markTestReplaySteps = (
+    section: StudyViewMessage['nodeHistorySection'],
+    replaying: boolean,
+  ): void => {
     for (const control of Array.from(
       element('node-learning-steps').querySelectorAll<HTMLButtonElement>(
         'button[data-node-step]',
