@@ -1,13 +1,11 @@
 import type { BundleSource } from '../repositoryBundle'
 
 import { bundleOfEvaluatedModule } from './extractDevelopmentModule'
-
-/** Splits a Next webpack module address into its layer and the module path after it. */
-const WEBPACK_LAYER_URL = /^webpack-internal:\/\/\/\(([^)/]+)\)\/(.+)$/
+import { parseDevelopmentModuleUrl } from './parseDevelopmentModuleUrl'
 
 /**
  * Tells whether a script address is the same module as a sealed one, loaded for another webpack layer.
- * Next compiles one source file once per layer that imports it (`(action-browser)`, `(middleware)`, `(rsc)`, ...) and the runtime parses each as a script of its own, so a declared stop's line can run in a script other than the one that was sealed. Called by {@link ConfiguredBrowserRun} for every script a participant announces.
+ * Next compiles one source file once per layer that imports it (`(action-browser)`, `(middleware)`, `(rsc)`, ...) and the runtime parses each as a script of its own, so a declared stop's line can run in a script other than the one that was sealed. Called by {@link ConfiguredBrowserRun}'s `isModuleInAnotherLayerOfStop` for every script a server participant announces. The address is read by {@link parseDevelopmentModuleUrl}, the parser {@link isPageStubOfSource} uses for the same addresses.
  * @param sealedUrl - The script address the stop's bundle was sealed under.
  * @param url - The address of a script the runtime announced.
  * @returns `true` when both are webpack layer addresses of the same module path and the layers differ; `false` for the sealed script itself, another module, and any address that is no webpack layer address.
@@ -21,13 +19,13 @@ export function isModuleInAnotherLayer(
   sealedUrl: string,
   url: string,
 ): boolean {
-  const sealed = WEBPACK_LAYER_URL.exec(sealedUrl),
-    announced = WEBPACK_LAYER_URL.exec(url)
+  const sealed = parseDevelopmentModuleUrl(sealedUrl),
+    announced = parseDevelopmentModuleUrl(url)
   return (
-    sealed !== null &&
-    announced !== null &&
-    sealed[2] === announced[2] &&
-    sealed[1] !== announced[1]
+    sealed?.layer !== undefined &&
+    announced?.layer !== undefined &&
+    sealed.path === announced.path &&
+    sealed.layer !== announced.layer
   )
 }
 
