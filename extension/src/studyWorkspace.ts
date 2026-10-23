@@ -2335,6 +2335,14 @@ export class StudyWorkspace {
           state: 'open' as const,
           ...(measured ? {} : { layoutMeasured: false as const }),
         }
+      } catch (error) {
+        // A failed Restore resets the confirmation and tells why, as the article's Restore does (F433).
+        if (transition.id === this.presentationId) {
+          this.presentationConfirmed = false
+          this.presentationReason = String(error)
+          this.publish()
+        }
+        throw error
       } finally {
         if (this.presentationTransition === transition)
           this.presentationTransition = undefined
