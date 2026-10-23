@@ -11559,6 +11559,8 @@ export class StudyWorkspace {
         this.nodeOutputReadings.clear()
       this.selectedNodeHistory = history
       this.nodeHistoryOpenToken = request
+      // The pending close failure of another replay's withdrawn selection is not this replay's (F365).
+      this.nodeSourceSlotCloseFailure = undefined
       // Admitting another history permanently retires the prior exact Wiki visit; refused reads leave it intact.
       this.repositoryObservation = undefined
       this.selectedNodeHistoryLearningDecision = learningDecision
@@ -12379,6 +12381,8 @@ export class StudyWorkspace {
   private async retireNodeSourceSlot(): Promise<void> {
     const slot = this.nodeSourceSlot
     this.nodeSourceSlotRetirements++
+    // A close failure that no commit answered belongs to the retired replay and is never told at another one (F365).
+    this.nodeSourceSlotCloseFailure = undefined
     this.nodeSourceSlot = undefined
     this.nodeSourceSlotHeld = undefined
     // A slot that could not open belonged to the retired replay: its row and Retry go with it.

@@ -2336,6 +2336,46 @@ test('a refused close of the earlier slot tab commits the moment and is told as 
   }
 })
 
+// Value: protects=a refused close of the earlier slot tab that a withdrawn selection (Return to Live before it commits) never told is not told at the next replay's first commit, which would blame a tab of the retired study; fails_when=the pending close failure survives the retirement of the slot, so the next replay's first moment warns about an earlier tab of another study; why_new=F365 (the pending failure was consumed only by a commit); seam=the workspace harness's refusal to close a tab and its held historical debug presentation (the selection is withdrawn after its slot shows and before it commits); no_claim=the wording of the close warning
+test('a close failure of a withdrawn selection is not told at the next replay’s first moment', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const acceptClose = harness.refuseCloseOfTabsShowing('Captured-theme.ts')
+    const held = harness.holdHistoricalDebugPresentation(true)
+    const withdrawn = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    await held.started
+    acceptClose()
+
+    // Act
+    await harness.reader.action('return-current')
+    held.reject(new Error('Historical debugger presentation was superseded.'))
+    await withdrawn
+    await openReplayAt(harness, history.studyId, 2)
+
+    // Assert
+    assert.deepEqual(
+      logged.map(({ surface }) => surface),
+      [],
+    )
+    assert.deepEqual([...(lastView(harness)?.errors ?? [])], [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a close of the earlier slot tab that passes the slot deadline commits the moment normally with the close warning; fails_when=a stalled close holds the selection or fails the slot that shows its bytes; why_new=F198 (the tab close was unbounded); seam=the workspace harness's held tab close and its hand-driven slot clock; no_claim=the editor's own close of the tab once it answers
 test('a stalled close of the earlier slot tab commits the moment at the slot deadline with the close warning', async () => {
   // Arrange
