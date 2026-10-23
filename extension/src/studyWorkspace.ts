@@ -374,6 +374,8 @@ type NodeHistorySelectionOptions = {
   publish?: boolean
   alignPlayback?: boolean
   stepChoice?: { stepId: string | undefined }
+  /** Says whether the caller still wants this selection (Play's and a seek's step ask the playback controller, whose newer seek abandons the step); a presentation that ends when it says no commits nothing. */
+  isCurrent?: () => boolean
 }
 const messageSchema = z.discriminatedUnion('type', [
   webviewFocusReceiptSchema,
@@ -11237,7 +11239,7 @@ export class StudyWorkspace {
       this.presentApplication(this.message())
       // Each opened history gets its own controller; the present callback is bound to this study.
       this.nodeHistoryPlaybackController = new NodeHistoryPlaybackController({
-        present: async (sequence) => {
+        present: async (sequence, isCurrent) => {
           const selectedHistory = this.selectedNodeHistory
           if (!selectedHistory || selectedHistory.header.studyId !== studyId)
             throw new Error(
@@ -11246,6 +11248,7 @@ export class StudyWorkspace {
           await this.requestNodeHistoryEvent(selectedHistory, sequence, {
             publish: false,
             alignPlayback: false,
+            isCurrent,
           })
         },
         changed: () => this.publish(),
@@ -23292,6 +23295,7 @@ export class StudyWorkspace {
       publish = true,
       alignPlayback = true,
       stepChoice,
+      isCurrent,
     }: NodeHistorySelectionOptions = {},
   ): Promise<void> {
     const request = ++this.selectedNodeHistoryRequest
@@ -23320,7 +23324,12 @@ export class StudyWorkspace {
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
     } else if (
-      !(await this.presentNodeHistoryDebugger(verifiedStop, slot, request))
+      !(await this.presentNodeHistoryDebugger(
+        verifiedStop,
+        slot,
+        request,
+        isCurrent,
+      ))
     )
       return
     // The slot's stopped line and label commit with the moment.
@@ -23486,10 +23495,27 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether a selection is outdated: a newer selection took its request token, or its caller no longer wants it (a newer seek abandoned a Play step or a seek that was presenting); called by {@link presentNodeHistoryDebugger}.
+   * @param request - The selection's request token.
+   * @param isCurrent - The caller's answer, absent when the caller never abandons.
+   * @returns `true` when the selection must commit nothing.
+   * @example this.isNodeHistoryRequestOutdated(request, () => generation === this.generation)
+   */
+  private isNodeHistoryRequestOutdated(
+    request: number,
+    isCurrent?: () => boolean,
+  ): boolean {
+    return (
+      request !== this.selectedNodeHistoryRequest || isCurrent?.() === false
+    )
+  }
+
+  /**
    * Presents a test replay's moment in the replay debugger at the recorded-source slot (EN8 step 3): a verified stop's recorded frames and values on the thread `Recorded test stop <n> · <path>:<line>`, otherwise the thread "Not recorded at this moment" with no frames, which also starts the session when the replay opens on such a moment; called by {@link selectNodeHistoryEvent}.
    * @param verifiedStop - The stop whose source verifies, or `undefined`.
    * @param slotUri - The slot the stop's frames open.
    * @param request - The selection's request token.
+   * @param isCurrent - Whether the caller still wants the selection; a no ends it like a newer selection.
    * @returns `true` once the debugger shows the moment; `false` when a newer selection took over.
    * @throws The debugger's failure for the current selection.
    * @example await this.presentNodeHistoryDebugger(stop, slotUri, request) // => true
@@ -23498,6 +23524,7 @@ export class StudyWorkspace {
     verifiedStop: NodeTestHistoryStop | undefined,
     slotUri: vscode.Uri,
     request: number,
+    isCurrent?: () => boolean,
   ): Promise<boolean> {
     if (!verifiedStop) {
       // A debugger that has not started yet starts on the "Not recorded" thread; a running one is emptied even when this moment is the committed one, since a newer selection may have presented its stop meanwhile (4A); one the learner stopped stays stopped.
@@ -23510,7 +23537,7 @@ export class StudyWorkspace {
           )
         })
       else this.replayDebugger.invalidate()
-      if (request !== this.selectedNodeHistoryRequest) return false
+      if (this.isNodeHistoryRequestOutdated(request, isCurrent)) return false
       this.selectedNodeHistoryDebugAvailable = false
       this.selectedNodeHistoryValuesUninspected = false
       return true
@@ -23538,7 +23565,7 @@ export class StudyWorkspace {
           { uri: slotUri.toString(), hash: verifiedStop.source.hash },
         ),
     )
-    if (request !== this.selectedNodeHistoryRequest) return false
+    if (this.isNodeHistoryRequestOutdated(request, isCurrent)) return false
     this.selectedNodeHistoryDebugAvailable = true
     this.selectedNodeHistoryValuesUninspected = inspection === 'uninspected'
     return true

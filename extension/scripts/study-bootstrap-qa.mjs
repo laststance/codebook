@@ -3356,7 +3356,7 @@ async function check(page, options, collected) {
           focusedTestLine.displayed === 'block' &&
           fittingTestLine.tabindex === null,
       })
-      // Value: protects=three cells of the Application document's follow state that no case read: a document that follows the output ignores an older view and stays at the end; a learner who stopped following and scrolls back to the end follows again, with Jump to latest gone; a document loaded again never uses the newer view another replay left in the kept state; fails_when=an older view moves a following document off its latest moment, scrolling back to the end leaves Jump to latest and the choice behind, or another replay's kept view (a newer generation) is shown in this replay's document; why_new=F125 (the document's following x an older view, not-following x a scroll back to the end) and F147 (another replay's newer kept view); seam=none; no_claim=VS Code's own state transport (stand-ins: a stub of the webview API with a kept state)
+      // Value: protects=three cells of the Application document's follow state that no case read, each its own case below: a document that follows the output ignores an older view and stays at the end; a learner who stopped following and scrolls back to the end follows again, with Jump to latest gone; a document loaded again never uses the newer view another replay left in the kept state; fails_when=an older view moves a following document off its latest moment, scrolling back to the end leaves Jump to latest and the choice behind, or another replay's kept view (a newer generation) is shown in this replay's document; why_new=F125 (the document's following x an older view, not-following x a scroll back to the end) and F147 (another replay's newer kept view); seam=none; no_claim=VS Code's own state transport (stand-ins: a stub of the webview API with a kept state)
       // Arrange: a document of its own in a page, as the cases above build one.
       const cellPage = await page.context().newPage()
       await cellPage.setViewportSize({ width: 760, height: 360 })
@@ -3463,22 +3463,26 @@ async function check(page, options, collected) {
       await cellPage.close()
       // Assert
       cases.push({
-        name: 'a following Application document ignores an older view, a learner who scrolls back to the end follows again, and another replay’s newer kept view is not used (DS20)',
-        actual: {
-          followingAtNewest,
-          followingAfterOlder,
-          notFollowing,
-          followingAgain,
-          withOtherReplaysState,
-        },
+        name: 'a following Application document ignores an older view and stays at the end of its latest moment (DS20)',
+        actual: { followingAtNewest, followingAfterOlder },
         passed:
           followingAtNewest.atEnd &&
           followingAfterOlder.time === followingAtNewest.time &&
-          followingAfterOlder.atEnd &&
+          followingAfterOlder.atEnd,
+      })
+      cases.push({
+        name: 'a learner who stopped following and scrolls back to the end follows again, with Jump to latest gone (DS20)',
+        actual: { notFollowing, followingAgain },
+        passed:
           !notFollowing.atEnd &&
           !notFollowing.jumpHidden &&
           followingAgain.atEnd &&
-          followingAgain.jumpHidden &&
+          followingAgain.jumpHidden,
+      })
+      cases.push({
+        name: 'a document loaded again never shows the newer view that another replay left in the kept state (DS20)',
+        actual: { withOtherReplaysState },
+        passed:
           withOtherReplaysState.time !== 'Recorded test output · 9.99 s' &&
           withOtherReplaysState.atEnd,
       })

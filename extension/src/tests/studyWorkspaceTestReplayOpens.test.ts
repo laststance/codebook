@@ -176,9 +176,9 @@ test('a render that settles while another test replay opens ends on that replay�
     await harness.reader.action('retry')
     await openAtFirstStop(harness, shown.studyId)
     const held = harness.holdHistoricalDebugPresentation(true)
+    const outputsBefore = harness.applicationOutputs().length
     const opening = harness.reader.openLearningReplay(other.studyId)
     await held.started
-    const outputsBefore = harness.applicationOutputs().length
 
     // Act
     await harness.reader.action('retry')
@@ -194,6 +194,12 @@ test('a render that settles while another test replay opens ends on that replay�
 
     // Assert
     const posted = harness.applicationOutputs().slice(outputsBefore)
+    assert.ok(
+      posted.some(
+        (update) => update.view.placeholder === 'Loading recorded test output…',
+      ),
+      'the open tells its loading line',
+    )
     assert.ok(
       posted.every(
         (update) =>
@@ -288,6 +294,7 @@ function gateArchiveReads(harness: Harness) {
     entered = resolve
   })
   let failure: Error | undefined
+  let finishedReads = 0
   reader.readSavedArchive = async (id: string): Promise<unknown> => {
     entered()
     if (failure) {
@@ -296,7 +303,11 @@ function gateArchiveReads(harness: Harness) {
       throw error
     }
     await waiting
-    return read(id)
+    try {
+      return await read(id)
+    } finally {
+      finishedReads++
+    }
   }
   return {
     hold(): void {
@@ -308,6 +319,7 @@ function gateArchiveReads(harness: Harness) {
       })
     },
     release: (): void => release(),
+    finishedReads: (): number => finishedReads,
     started: (): Promise<void> => started,
     failNext(error: Error): void {
       failure = error
@@ -445,6 +457,11 @@ test('a browser study overtaken by choosing the test replay again leaves the rep
       2_000,
     )
     gate.release()
+    await waitUntil(
+      () => gate.finishedReads() >= 1,
+      'the overtaken study’s read ends',
+      2_000,
+    )
     await new Promise<void>((resolve) => setImmediate(resolve))
     await harness.controller.settle()
     gate.restore()
@@ -596,6 +613,69 @@ test('with a live run’s viewport lease the Application pane writes another rep
     assert.deepEqual(afterMove.panels, ['codebook.scopedBrowser'])
     assert.equal(harness.applicationOutputs().length, outputsAtClose)
     assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a background render that settles while the shown test replay opens again does not end the open's loading line early or leave a placeholder: the pane ends on the saved moment; fails_when=the render's end reads as the open's end, so the pane says "No test output recorded up to this moment." for the replay that is still opening; why_new=F147: a render that settles while the same test replay opens had no test; seam=the workspace harness's held historical debug presentation; no_claim=the Study pane's loading line
+test('a render that settles while the shown test replay opens again ends on its saved moment', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await openAtFirstStop(harness, history.studyId)
+    harness.receiveContext({
+      type: 'node-history-step',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      direction: 'next',
+      unit: 'stop',
+    })
+    await waitUntil(
+      async () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        (await harness.service.nodeHistoryStore!.readReaderPosition(
+          history.studyId,
+        )) === 4,
+      'the second stop is shown and saved',
+      2_000,
+    )
+    const held = harness.holdHistoricalDebugPresentation(true)
+    const outputsBefore = harness.applicationOutputs().length
+    const opening = harness.reader.openLearningReplay(history.studyId)
+    await held.started
+
+    // Act
+    await harness.reader.action('retry')
+    held.release()
+    await opening
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.loading,
+      'the replay returns to its saved moment',
+      2_000,
+    )
+
+    // Assert
+    assert.ok(
+      harness
+        .applicationOutputs()
+        .slice(outputsBefore)
+        .every(
+          (update) =>
+            update.view.placeholder !==
+            'No test output recorded up to this moment.',
+        ),
+    )
+    assert.equal(
+      applicationReading(harness).time,
+      'Recorded test output · 0.30 s',
+    )
   } finally {
     await harness.close()
   }

@@ -90,6 +90,15 @@ async function standAt(
     'the replay stands at the start of the move',
     2_000,
   )
+  // The reader position is written after the commit; the harness is not closed under that write.
+  await waitUntil(
+    async () =>
+      (await harness.service.nodeHistoryStore!.readReaderPosition(
+        history.studyId,
+      )) === sequence,
+    'the start of the move is saved',
+    2_000,
+  )
 }
 
 /** One way to leave the first stop for a moment whose debugger presentation the test holds. */
@@ -326,14 +335,15 @@ test('a Play step whose debugger presentation fails pauses Play and leaves the m
   }
 })
 
-// Value: protects=a Play step or a seek that is overtaken by a newer seek ends on the newer seek's moment with that moment's first step (DS21), told without an error: the presentation that had started commits, the newer one follows it, and no step the learner chose before is revived; fails_when=the chosen step outlives the two moves, the overtaken presentation is told as an error, or the controller and the Study pane disagree about the moment; why_new=F139: an overtaken seek or Play had no test; seam=the workspace harness's held historical debug presentation (released, not failed: the presentation that had started commits) and the playback clock, moved by hand; no_claim=the controller's own generation guard for a step that has not started (its unit tests)
-test('a Play step and a seek that a newer seek overtakes end on the newer seekâ€™s moment with its first step', async () => {
+// Value: protects=a seek that is presenting when a newer seek arrives commits nothing: while the newer seek's presentation loads, the Study pane still shows the moment it showed before, not the overtaken seek's moment, and the newer seek's moment (here the same one) shows when it ends, with the step the learner chose kept and without an error; fails_when=the overtaken seek's presentation ends and commits its moment (the Study pane and the Application pane show it) before the newer seek has shown anything; why_new=F139 (the coordinator's review of PR-2 B): an in-flight seek or Play step committed at the host after a newer seek had overtaken it; seam=the workspace harness's held historical debug presentation, held twice (the overtaken seek's, then the newer seek's) and released in order; no_claim=the native debugger's own display between the two presentations
+test('a seek that is presenting when a newer seek arrives commits nothing before the newer seek shows', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
     const history = await openWithChosenStep(harness)
+    const before = shownMoment(harness)
     const controller = harness.reader['nodeHistoryPlaybackController']!
-    const seekHeld = harness.holdHistoricalDebugPresentation(true)
+    const overtakenHold = harness.holdHistoricalDebugPresentation(true)
     harness.receiveContext({
       type: 'node-history-playback',
       revision: lastView(harness)!.revision,
@@ -341,32 +351,59 @@ test('a Play step and a seek that a newer seek overtakes end on the newer seekâ€
       action: 'seek',
       positionMs: 300,
     })
-    await seekHeld.started
+    await overtakenHold.started
 
-    // Act: a newer seek onto the first stop overtakes the held seek; the held presentation then ends.
+    // Act: a newer seek onto the first stop arrives while the first seek presents; the first seek's presentation then ends.
+    const newerHold = harness.holdHistoricalDebugPresentation(true)
     const newerSeek = controller.seek(200)
-    seekHeld.release()
+    overtakenHold.release()
+    await newerHold.started
+    const whileNewerLoads = shownMoment(harness)
+    newerHold.release()
     await newerSeek
-    const afterSeeks = {
-      moment: shownMoment(harness),
-      mode: controller.state(),
-    }
-    await standAt(harness, history, 3)
-    const advance = playbackClock(harness)
-    advance(0).play()
-    const playHeld = harness.holdHistoricalDebugPresentation(true)
-    advance(1_000)
-    await playHeld.started
-    const newerSeekAfterPlay = controller.seek(250)
-    playHeld.release()
-    await newerSeekAfterPlay
 
     // Assert
-    assert.equal(afterSeeks.moment.sequence, 2)
-    assert.equal(afterSeeks.moment.stepId, 'read')
-    assert.equal(afterSeeks.mode.sequence, 2)
-    assert.equal(shownMoment(harness).sequence, 3)
-    assert.equal(controller.state().sequence, 3)
+    assert.deepEqual(whileNewerLoads, before)
+    assert.equal(whileNewerLoads.sequence, 2)
+    assert.equal(shownMoment(harness).sequence, 2)
+    assert.equal(shownMoment(harness).stepId, 'keep')
+    assert.equal(controller.state().sequence, 2)
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Play step that is presenting when a newer seek arrives commits nothing: while the newer seek loads, the Study pane still shows the moment Play started from, not the played event; the newer seek's moment shows when it ends; fails_when=the overtaken Play step commits its event before the newer seek has shown anything; why_new=F139 (the coordinator's review of PR-2 B): the same defect as the seek's, through Play; seam=the workspace harness's held historical debug presentation and the playback clock, moved by hand; no_claim=Play's pacing
+test('a Play step that is presenting when a newer seek arrives commits nothing before the newer seek shows', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await openWithChosenStep(harness)
+    await standAt(harness, history, 3)
+    const before = shownMoment(harness)
+    const advance = playbackClock(harness)
+    const controller = advance(0)
+    controller.play()
+    const playHold = harness.holdHistoricalDebugPresentation(true)
+    advance(1_000)
+    await playHold.started
+
+    // Act
+    const newerHold = harness.holdHistoricalDebugPresentation(true)
+    const newerSeek = controller.seek(200)
+    playHold.release()
+    await newerHold.started
+    const whileNewerLoads = shownMoment(harness)
+    newerHold.release()
+    await newerSeek
+
+    // Assert
+    assert.deepEqual(whileNewerLoads, before)
+    assert.equal(whileNewerLoads.sequence, 3)
+    assert.equal(shownMoment(harness).sequence, 2)
+    assert.equal(controller.state().sequence, 2)
+    assert.equal(controller.state().mode, 'paused')
     assert.equal(lastView(harness)?.errors.length, 0)
   } finally {
     await harness.close()
