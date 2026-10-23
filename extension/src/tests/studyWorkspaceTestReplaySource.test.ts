@@ -2205,6 +2205,20 @@ function startMomentSelection(
   })
 }
 
+/**
+ * Lets the 300 ms wait that follows a selection's leave of a stop pass on the hand-driven slot clock, once the selection has started it.
+ * @param harness - The workspace harness, on its manual slot clock.
+ * @example await elapseLeaveSettle(harness)
+ */
+async function elapseLeaveSettle(harness: Harness): Promise<void> {
+  await waitUntil(
+    () => harness.pendingSlotTimers() > 0,
+    'the selection waits for the native views to redraw the stop it left',
+    READER_RESULT_BOUND_MS,
+  )
+  harness.elapseSlotClock(300)
+}
+
 // Value: protects=a slot whose editor show stalls fails at the one slot deadline of 5,000 ms: the moment reports its history-source row with the stop and the timeout, commits with no debugger stop, and the selection is released; fails_when=a stalled open, show or close holds the selection, Play's pending step and every later seek forever; why_new=F198 (only the slot's text wait was bounded); seam=the workspace harness's held text document show and its hand-driven slot clock; no_claim=how long the real editor takes to show a document
 test('a slot whose show stalls reports its row at the slot deadline and releases the selection', async () => {
   // Arrange
@@ -2220,6 +2234,8 @@ test('a slot whose show stalls reports its row at the slot deadline and releases
 
     // Act
     startMomentSelection(harness, history.studyId, 4)
+    // The selection first waits 300 ms for the native views to redraw the stop it left (F385, F387).
+    await elapseLeaveSettle(harness)
     await stalled.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
@@ -2260,6 +2276,8 @@ test('a slow slot is not failed at the 1,000 ms bound, only at the slot deadline
     harness.useManualSlotClock()
     stalled = harness.holdNextTextDocumentShow({ uri: nextFileSlot(harness) })
     startMomentSelection(harness, history.studyId, 4)
+    // The selection first waits 300 ms for the native views to redraw the stop it left (F385, F387).
+    await elapseLeaveSettle(harness)
     await stalled.started
 
     // Act
@@ -2301,6 +2319,8 @@ test('a slot show that completes after the deadline is closed, not shown', async
     harness.useManualSlotClock()
     stalled = harness.holdNextTextDocumentShow({ uri: nextFileSlot(harness) })
     startMomentSelection(harness, history.studyId, 4)
+    // The selection first waits 300 ms for the native views to redraw the stop it left (F385, F387).
+    await elapseLeaveSettle(harness)
     await stalled.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
@@ -2398,6 +2418,8 @@ test('Play pauses at the first slot that cannot open', async () => {
       studyId: history.studyId,
       action: 'play',
     })
+    // The step first waits 300 ms for the native views to redraw the stop it left (F385, F387).
+    await elapseLeaveSettle(harness)
     await stalled.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
@@ -2522,6 +2544,8 @@ test('a stalled close of the earlier slot tab commits the moment at the slot dea
 
     // Act
     startMomentSelection(harness, history.studyId, 4)
+    // The selection first waits 300 ms for the native views to redraw the stop it left (F385, F387).
+    await elapseLeaveSettle(harness)
     await stalledClose.started
     harness.elapseSlotClock(5_000)
     await waitUntil(
@@ -3088,6 +3112,146 @@ test('a CodeLens title shows a recorded path with icon syntax as text', async ()
 
     // Assert
     assert.deepEqual(titles, ['Recorded: src/\\$(trash).ts:1 · 0.30 s'])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=after Next stop leaves a stop, the slot keeps the earlier stop's bytes for the native views' repaint delay (300 ms) and shows the next stop's bytes only then, so the Call Stack that still lists the earlier stop's frames never sits beside the next file's bytes (F385); fails_when=the slot shows the next stop's bytes in the same turn as the debugger's leave; why_new=F385 (native frames 73 and 74 paired stop 1's frames with stop 2's bytes); seam=the workspace harness's hand-driven slot clock and its counts of the slot's shows and of the debugger's invalidations; no_claim=the native Call Stack's own repaint time (the driving agent's frame recheck)
+test('the slot keeps the earlier stop’s bytes until the native views have redrawn the stop that was left', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slotBefore = slotTabs(harness)[0]!
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    const showsBefore = harness.textDocumentShows().length
+    harness.useManualSlotClock()
+
+    // Act
+    startMomentSelection(harness, history.studyId, 4)
+    await waitUntil(
+      () =>
+        harness.historicalDebugInvalidationLabels().length >
+        invalidationsBefore,
+      'the debugger leaves the first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    harness.elapseSlotClock(299)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const showsBeforeSettle = harness.textDocumentShows().length
+    const textBeforeSettle = harness.documentTextOf(slotBefore)
+    harness.elapseSlotClock(1)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the second stop commits',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(showsBeforeSettle, showsBefore)
+    assert.equal(textBeforeSettle, THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme-next.ts:1 · 0.30 s',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=moving from a stop to an output announces the CodeLens refresh at the leave, answers no lens for the slot at once, and keeps the stop's bytes in the slot until the editor's lens refresh delay (300 ms) has passed, so the stale lens never stands above the placeholder (F387); fails_when=the placeholder replaces the stop's bytes while the editor may still draw the stop's lens; why_new=F387 (native frames 76 to 82 showed the stop's lens above line 1 of the placeholder for 230 ms); seam=the workspace harness's CodeLens registry with its refresh counter, the document model and the hand-driven slot clock; no_claim=when the native editor repaints the lens (the driving agent's frame recheck)
+test('the stop’s CodeLens is withdrawn at the leave and the placeholder replaces the stop’s bytes only after the editor’s lens refresh delay', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slot = slotTabs(harness)[0]!
+    const lensBefore = harness.codeLensTitles(slot)
+    const refreshesBefore = harness.codeLensRefreshCount()
+    const invalidationsBefore =
+      harness.historicalDebugInvalidationLabels().length
+    harness.useManualSlotClock()
+
+    // Act
+    startMomentSelection(harness, history.studyId, 3)
+    await waitUntil(
+      () =>
+        harness.historicalDebugInvalidationLabels().length >
+        invalidationsBefore,
+      'the debugger leaves the stop',
+      READER_RESULT_BOUND_MS,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const lensDuringLeave = harness.codeLensTitles(slot)
+    const refreshesDuringLeave = harness.codeLensRefreshCount()
+    const textDuringLeave = harness.documentTextOf(slot)
+    harness.elapseSlotClock(300)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the output commits',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(lensBefore, ['Recorded: src/theme.ts:1 · 0.20 s'])
+    assert.deepEqual(lensDuringLeave, [])
+    assert.equal(refreshesDuringLeave > refreshesBefore, true)
+    assert.equal(textDuringLeave, THEME_TEXT)
+    assert.notEqual(harness.documentTextOf(slot), THEME_TEXT)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=while a stop's selection is pending, the Study pane's playback state names the requested moment (its sequence and recorded time) instead of the moment being left, and a failed presentation gives the committed moment back (F386); fails_when=the time readout and the slider keep the left moment's time beside the requested position, or keep the requested time after the selection failed; why_new=F386 (native frames 73 to 86 read Recorded test time 20.71 s beside Stop 2 of 2 · 150.22 s); seam=the workspace harness's held historical debug presentation and the Study message's nodeHistoryPlayback; no_claim=how the slider and its readout are drawn (the Reader DOM case)
+test('the playback time follows the pending stop and returns to the committed moment when the presentation fails', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const playbackBefore = { ...lastView(harness)?.nodeHistoryPlayback }
+    const held = harness.holdHistoricalDebugPresentation(true)
+    const selecting = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    const outcome = assert.rejects(selecting, {
+      message: 'The presentation failed.',
+    })
+    await held.started
+
+    // Act
+    const playbackPending = { ...lastView(harness)?.nodeHistoryPlayback }
+    held.reject(new Error('The presentation failed.'))
+    await outcome
+    await waitUntil(
+      () => !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the committed moment is back',
+      READER_RESULT_BOUND_MS,
+    )
+    const playbackAfter = { ...lastView(harness)?.nodeHistoryPlayback }
+
+    // Assert
+    assert.equal(playbackBefore.positionMs, 200)
+    assert.equal(playbackPending.sequence, 4)
+    assert.equal(playbackPending.positionMs, 300)
+    assert.equal(playbackAfter.sequence, 2)
+    assert.equal(playbackAfter.positionMs, 200)
   } finally {
     await harness.close()
   }

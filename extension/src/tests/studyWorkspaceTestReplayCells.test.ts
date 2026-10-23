@@ -655,7 +655,7 @@ function unverifySecondStop(context: TestContext, harness: Harness): void {
   )
 }
 
-// Value: protects=Next stop onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable, presents no recorded values in the debugger and tells no error; fails_when=the move is refused or stays on the first stop, or the debugger presents another moment's values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × step move had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the placeholder slot's text (the source slot tests)
+// Value: protects=Next stop onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable, presents no recorded values in the debugger and tells no error; fails_when=the move is refused or stays on the first stop, or the debugger presents another moment's values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × step move had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the placeholder slot's text (the source slot tests); why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('Next stop onto a stop whose source does not verify shows it without recorded values and tells no error', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -675,6 +675,7 @@ test('Next stop onto a stop whose source does not verify shows it without record
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'Next stop lands on the unverified stop',
       READER_RESULT_BOUND_MS,
@@ -694,7 +695,7 @@ test('Next stop onto a stop whose source does not verify shows it without record
   }
 })
 
-// Value: protects=a seek onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable and presents no recorded values; fails_when=the seek is refused, lands elsewhere, or the debugger presents recorded values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × seek had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the playhead's drawing (the Reader DOM check)
+// Value: protects=a seek onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable and presents no recorded values; fails_when=the seek is refused, lands elsewhere, or the debugger presents recorded values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × seek had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the playhead's drawing (the Reader DOM check); why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('a seek onto a stop whose source does not verify shows it without recorded values and tells no error', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -714,6 +715,7 @@ test('a seek onto a stop whose source does not verify shows it without recorded 
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'the seek lands on the unverified stop',
       READER_RESULT_BOUND_MS,
@@ -801,7 +803,7 @@ test('Inspect on the result is refused as no debugger stop and changes nothing',
   }
 })
 
-// Value: protects=after the learner stopped the replay debugger, an explicit Next stop is the learner's choice to see the next stop's values: it starts the debugger again there and commits the stop; fails_when=Next stop is refused like a seek, or commits the stop without recorded values; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): a stopped debugger × step move had no cell (only a seek's refusal was tested); seam=the harness's fake historical debugger, marked stopped; no_claim=the native Run and Debug view
+// Value: protects=after the learner stopped the replay debugger, an explicit Next stop is the learner's choice to see the next stop's values: it starts the debugger again there and commits the stop; fails_when=Next stop is refused like a seek, or commits the stop without recorded values; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): a stopped debugger × step move had no cell (only a seek's refusal was tested); seam=the harness's fake historical debugger, marked stopped; no_claim=the native Run and Debug view; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('Next stop after the learner stopped the replay debugger starts it again at the next stop', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -822,6 +824,7 @@ test('Next stop after the learner stopped the replay debugger starts it again at
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'Next stop lands on the second stop',
       READER_RESULT_BOUND_MS,

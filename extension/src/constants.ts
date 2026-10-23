@@ -677,6 +677,12 @@ export const NODE_SOURCE_SLOT_PATH_ROOT = 'node-history-slot'
 export const NODE_SOURCE_SLOT_DIRECTORY_HASH_CHARS = 12
 /** How long a test replay's recorded-source slot may take to show a selected moment's bytes before it is asked to read them again; the slot keeps its loading text meanwhile, never the earlier moment, and the selection is not failed by this bound alone ({@link NODE_HISTORY_SLOT_DEADLINE_MS} fails it) (EN8). */
 export const NODE_HISTORY_TRANSITION_BOUND_MS = 1_000
+/**
+ * How long a test replay's recorded-source slot keeps the earlier stop's bytes after the selection left that stop, so no native view still drawing the earlier stop sits beside the next moment's bytes (F385, F387).
+ * Two native views redraw after the leave, and each repaints on a delay of its own: VS Code's Call Stack view applies the debugger's `continued` in a 50 ms scheduler (`CallStackView.onCallStackChangeScheduler`) followed by the thread and stack requests, and the editor refreshes CodeLenses `provideCodeLensDebounce` after a provider change, at least 250 ms (`LanguageFeatureDebounceService.for(codeLensProvider, 'CodeLensProvide', { min: 250 })`, 1.143.0), restarted by every content change of the document.
+ * 300 ms is that 250 ms plus the time to ask the provider and paint; the bytes change once, after it.
+ */
+export const NODE_HISTORY_LEAVE_SETTLE_MS = 300
 /** One deadline over a test replay's whole recorded-source show: the document's open, its show, the wait for its bytes and the close of the earlier slot tab. When it passes first, the moment reports its `history-source` row and releases Play's pending selection (closure rule 7 of #118). */
 export const NODE_HISTORY_SLOT_DEADLINE_MS = 5_000
 /** How long closing the reader waits for the reader position writes of a test replay that are still running (F197): a write that has not returned by then is left to finish in the background, so a stuck disk cannot hold the close. */

@@ -102,7 +102,7 @@ test('a background render that fails keeps the selected test replay and its Appl
   }
 })
 
-// Value: protects=a background render that is still running when the learner moves to another event of the selected test replay does not take the pane back: once it ends, the Application pane and the Study section show the later moment; fails_when=the render's end writes the moment it started with, or a loading view; why_new=F139: only a render that settles on its own was tested; seam=the learning library's list, held until the move is shown; no_claim=the order of two renders (the workspace tests of the library)
+// Value: protects=a background render that is still running when the learner moves to another event of the selected test replay does not take the pane back: once it ends, the Application pane and the Study section show the later moment; fails_when=the render's end writes the moment it started with, or a loading view; why_new=F139: only a render that settles on its own was tested; seam=the learning library's list, held until the move is shown; no_claim=the order of two renders (the workspace tests of the library); why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('a background render overtaken by a move keeps the later moment in the Application pane', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -139,7 +139,9 @@ test('a background render overtaken by a move keeps the later moment in the Appl
       unit: 'stop',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Next stop reaches the second stop',
       READER_RESULT_BOUND_MS,
     )
@@ -547,7 +549,7 @@ test('an open that fails or is overtaken leaves the shown test replay or the new
   }
 })
 
-// Value: protects=with a live run's viewport lease present, the Application pane of a test replay behaves as without one: another replay writes its own document, the same moment is written as it was, with no loading view, a pane the learner closed gets nothing posted and a pane moved to another column keeps receiving the later moments in place; fails_when=another replay's moments are posted into the first replay's document, a refresh of the same moment rewrites the page or posts a view, a move posts into a pane that is gone, or a moved pane gets a new document; why_new=F125: a test replay's other history, same moment, closed pane and moved pane with a viewport lease present were untested cells; seam=the recorded-reader harness (its live run holds the viewport lease), closeTabByHand and movePanel; no_claim=the native placement of the moved pane
+// Value: protects=with a live run's viewport lease present, the Application pane of a test replay behaves as without one: another replay writes its own document, the same moment is written as it was, with no loading view, a pane the learner closed gets nothing posted and a pane moved to another column keeps receiving the later moments in place; fails_when=another replay's moments are posted into the first replay's document, a refresh of the same moment rewrites the page or posts a view, a move posts into a pane that is gone, or a moved pane gets a new document; why_new=F125: a test replay's other history, same moment, closed pane and moved pane with a viewport lease present were untested cells; seam=the recorded-reader harness (its live run holds the viewport lease), closeTabByHand and movePanel; no_claim=the native placement of the moved pane; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('with a live run’s viewport lease the Application pane writes another replay anew, the same moment as it was, and follows a moved pane but not a closed one', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)
@@ -577,7 +579,9 @@ test('with a live run’s viewport lease the Application pane writes another rep
       unit: 'stop',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Next stop reaches the second stop',
       READER_RESULT_BOUND_MS,
     )
@@ -606,7 +610,9 @@ test('with a live run’s viewport lease the Application pane writes another rep
       unit: 'stop',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Previous stop returns to the first stop',
       READER_RESULT_BOUND_MS,
     )
