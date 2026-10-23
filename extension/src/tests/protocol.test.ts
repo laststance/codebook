@@ -1010,6 +1010,45 @@ test('Node learning material is exposed through MCP with exact workspace history
   }
 })
 
+// Value: protects=the agent's answer when a test replay's history cannot be read (its folder removed by the learner or another window): RUNTIME_FAILED whose cause reads <storage> where the file call quoted the private storage folder, through codebook_read_resource (F243); fails_when=the raw file error, with the absolute storage path, reaches the tool's structured error; why_new=the MCP answers passed an unexpected failure's String(error) through unchanged, and no test read a failed history read through MCP; seam=none; no_claim=the MCP resources/read route, which serves no node-history address; the wording of other domain errors, which carry their own sanitized causes
+test('a test replay whose history folder is gone is answered through MCP with a cause that names no storage path', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    directory = await mkdtemp(join(tmpdir(), 'codebook-node-history-gone-'))
+  const header = nodeTestHistoryHeader(sha256('node-history-gone-workspace'))
+  harness.service.nodeHistoryStore = new NodeTestHistoryStore(
+    directory,
+    header.workspaceKey,
+  )
+  const endpoint = await startServer(harness.service),
+    connection = await connect(endpoint.descriptor)
+  const historyUri = `codebook://node-history/${header.studyId}`
+  try {
+    // Act
+    const toolAnswer = await connection.client.callTool({
+      name: 'codebook_read_resource',
+      arguments: { uri: historyUri },
+    })
+
+    // Assert
+    const failure = z
+      .object({
+        ok: z.literal(false),
+        error: z.object({ code: z.string(), cause: z.string() }),
+      })
+      .parse(toolAnswer.structuredContent).error
+    assert.equal(toolAnswer.isError, true)
+    assert.equal(failure.code, 'RUNTIME_FAILED')
+    assert.ok(!failure.cause.includes(directory), failure.cause)
+    assert.match(failure.cause, /<storage>/)
+  } finally {
+    await connection.close()
+    await endpoint.close()
+    await harness.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('standard MCP explanation calls persist learning material and reject foreign sequence references', async () => {
   // Arrange
   const harness = await createHarness(),

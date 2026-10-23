@@ -1259,3 +1259,47 @@ test('a failing Node test result can be sealed only as partial history', async (
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the reason an interrupted test history is read with after a broken journal line, which Saved studies and the agent's node-history resource show: worded by the store's describer, which hides private paths, and cut whole to the index's 1,024-character bound (F243); fails_when=the raw parse or schema failure is kept, so a quoted path reaches the agent, or a long failure makes the read itself fail on the index's bound; why_new=the read wrote String(error) unbounded and no test read a broken unsealed journal's reason; seam=none (describeCause is the store's own field the Study workspace sets); no_claim=what the describer hides, which sanitizeCause.test.ts pins
+test("an interrupted history's broken journal line is read with a reason the store's describer words, cut to the index's bound", async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-broken-'),
+  )
+  const header = nodeTestHistoryHeader(sha256('broken-line-workspace'))
+  const store = new NodeTestHistoryStore(directory, header.workspaceKey)
+  const writer = await store.start(header)
+  try {
+    await writer.appendOutput({
+      sequence: 1,
+      elapsedMs: 4,
+      channel: 'stdout',
+      text: 'RUN src/theme.test.ts',
+    })
+    await appendFile(
+      join(
+        directory,
+        NODE_TEST_HISTORY_DIRECTORY,
+        header.studyId,
+        'events.jsonl',
+      ),
+      '{"type":"output",broken}\n',
+    )
+    const restarted = new NodeTestHistoryStore(directory, header.workspaceKey)
+    restarted.describeCause = () => 'x'.repeat(5_000)
+
+    // Act
+    const history = await restarted.read(header.studyId)
+
+    // Assert
+    const prefix = 'Interrupted Node history after its verified prefix: '
+    assert.equal(history.status, 'interrupted')
+    assert.equal(history.entries.length, 1)
+    assert.equal(
+      history.reason,
+      `${prefix}${'x'.repeat(1_024 - prefix.length)}`,
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

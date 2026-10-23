@@ -111,15 +111,17 @@ export function citableEventOf(entry: NodeTestHistoryEntry): CitableEvent {
  * @param header - The history's header as read now.
  * @param headerSignal - The header file's signal as read now.
  * @param journalPath - The journal file.
+ * @param describeCause - Words a broken entry's parse or schema failure for {@link RecordingScan.brokenReason} without private paths ({@link NodeTestHistoryStore.describeCause}); the failure can quote the line, which holds test output (F243). The store cuts the reason to its bound when it shows it.
  * @returns The scan (the same object as `previous` when it could be continued).
  * @throws When the journal is no bounded regular file or cannot be read.
- * @example scan = await advanceRecordingScan(scan, header, headerSignal, join(directory, 'events.jsonl'))
+ * @example scan = await advanceRecordingScan(scan, header, headerSignal, join(directory, 'events.jsonl'), (error) => store.describeCause(error))
  */
 export async function advanceRecordingScan(
   previous: RecordingScan | undefined,
   header: NodeTestHistoryHeader,
   headerSignal: string,
   journalPath: string,
+  describeCause: (error: unknown) => string,
 ): Promise<RecordingScan> {
   const journal = await lstat(journalPath)
   if (
@@ -165,7 +167,7 @@ export async function advanceRecordingScan(
       scan.citable.set(entry.sequence, citableEventOf(entry))
       if (entry.type !== 'output') scan.kept.push(entry)
     } catch (error) {
-      scan.brokenReason = `Interrupted Node history after its verified prefix: ${String(error)}`
+      scan.brokenReason = `Interrupted Node history after its verified prefix: ${describeCause(error)}`
       break
     }
   }

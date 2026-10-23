@@ -583,6 +583,7 @@ export class NodeTestHistoryStore {
 
   /**
    * Says whether this workspace's history directory holds a folder for a study id, listed or not, without reading its files; read by {@link StudyService.playback}, so a test replay of an earlier session is refused before this window has listed it (F9).
+   * Synchronous on purpose: {@link StudyService.playback} answers synchronously, and this one existence check of the editor's local storage, made once per agent playback command, takes about a microsecond (F246).
    * @param studyId - A study id an agent sent.
    * @returns `true` for a study id named like a history whose folder exists.
    * @example store.holdsHistoryFolder(earlierSessionStudyId) // => true before any list of this window
@@ -809,7 +810,9 @@ export class NodeTestHistoryStore {
           header: scan.header,
           entries: scan.kept,
           status: 'recording',
-          ...(scan.brokenReason ? { reason: scan.brokenReason } : {}),
+          ...(scan.brokenReason
+            ? { reason: scan.brokenReason.slice(0, REASON_LIMIT_CHARS) }
+            : {}),
         },
         citable: scan.citable,
         scan,
@@ -894,6 +897,7 @@ export class NodeTestHistoryStore {
       header,
       headerSignal,
       join(directory, JOURNAL_FILE),
+      (error) => this.describeCause(error),
     )
   }
 
@@ -1022,7 +1026,12 @@ export class NodeTestHistoryStore {
         entries.push(entry)
       } catch (error) {
         if (seal) throw error
-        reason = `Interrupted Node history after its verified prefix: ${String(error)}`
+        // The failure can quote the line, which holds test output: its words lose private paths, and the whole reason keeps the index's bound (F243).
+        reason =
+          `Interrupted Node history after its verified prefix: ${this.describeCause(error)}`.slice(
+            0,
+            REASON_LIMIT_CHARS,
+          )
         break
       }
     }

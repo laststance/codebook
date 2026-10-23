@@ -455,6 +455,22 @@ export class StudyService {
   }
 
   /**
+   * Gives a failed tool call or resource read its domain error for the agent: a {@link StudyError} as it is, any other failure (a file call, a parse) as `RUNTIME_FAILED` whose cause names no private path, since such a failure quotes the storage folder or the home directory (F243); called by the MCP protocol's tool and resource answers in place of {@link domainError}.
+   * @param error - What the call threw.
+   * @returns The domain error the answer describes.
+   * @example service.unexpectedFailure(new Error("ENOENT: lstat '/Users/ada/…/node-tests.v1/x'")).causeDetail // => "ENOENT: lstat '<storage>/node-tests.v1/x'"
+   */
+  unexpectedFailure(error: unknown): StudyError {
+    return error instanceof StudyError
+      ? error
+      : new StudyError(
+          'RUNTIME_FAILED',
+          'The study operation failed.',
+          this.sanitizedCause(error),
+        )
+  }
+
+  /**
    * Reports one unexpected failure of a run to the Output › Codebook channel with its sanitized cause and stack; called where a test history's seal or a browser recording's finish fails at a stop.
    * @param surface - The error code or the surface that failed.
    * @param record - The run.

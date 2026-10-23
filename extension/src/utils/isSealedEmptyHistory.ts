@@ -1,6 +1,8 @@
 import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { systemErrorCode } from './systemErrorCode'
+
 /**
  * Tells whether a test history's folder holds a seal and no journal entry, the history that a run ended before its first entry used to leave (before Decision D6 the store sealed it; since then it removes the folder at the seal); a cheap check of two file sizes, not a read of the journal. Called by {@link NodeTestHistoryStore} wherever it lists a history or counts one toward the saved study limit, so both follow one rule.
  * @param historyDirectory - The history's folder.
@@ -17,9 +19,7 @@ export async function isSealedEmptyHistory(
   const journal = await lstat(join(historyDirectory, 'events.jsonl')).then(
     (entry) => entry,
     (error: unknown) =>
-      error instanceof Error && 'code' in error && error.code === 'ENOENT'
-        ? null
-        : undefined,
+      systemErrorCode(error) === 'ENOENT' ? null : undefined,
   )
   return journal === null || journal?.size === 0
 }
