@@ -362,6 +362,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private savingCompletion = false
   private status = 'preparing'
   private origin?: string
+  /** Where the app's port was declared, reported beside the origin so a default is visible. */
+  private portSource?: string
   private operation?: ConfiguredRuntimeView['operation']
   private snapshot?: ConfiguredRuntimeSnapshot
   private snapshotReady = false
@@ -487,6 +489,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const declaredPort = await readDeclaredDevelopmentPort(
       this.options.workspace,
     )
+    this.portSource = declaredPort.source
     await assertDevelopmentPortFree(declaredPort)
     this.alive()
     this.app = launchDevelopmentServer(
@@ -5647,6 +5650,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       definition: this.definition,
       manifest: this.manifest,
       applicationOrigin: this.origin,
+      applicationPortSource: this.portSource,
       status: this.status,
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,

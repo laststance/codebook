@@ -64,6 +64,8 @@ export type ConfiguredRuntimeView = {
   runId: string
   /** The origin the owned app listens on (the project's own port), once it is ready. */
   applicationOrigin?: string
+  /** Where the app's port was declared (the dev script, an env file or Next's default 3000). */
+  applicationPortSource?: string
   status: string
   cleaned: boolean
   resourcesReleased: boolean

@@ -69,6 +69,8 @@ test('development readiness waits for a complete port across process output chun
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   // Act
   const origin = await server.ready(new AbortController().signal)
@@ -186,6 +188,8 @@ test('shutdown kills surviving workers even when the process group leader alread
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   // Act
   await server.close()
@@ -240,6 +244,8 @@ test('a later stop retries an application signal failure instead of replaying it
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   // Act
   await assert.rejects(server.close(), /Transient process signal failure/)
@@ -299,6 +305,8 @@ test('stopping the application resolves while macOS still answers its exited, un
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   child.emit('exit')
   // Act
@@ -368,6 +376,8 @@ test('server inspection is opt-in and waits for complete stderr identity without
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   // Act / Assert
   await assert.rejects(
@@ -380,6 +390,7 @@ test('server inspection is opt-in and waits for complete stderr identity without
     '/node',
     () => {},
     true,
+    3000,
   )
   assert.equal(
     await inspected.inspectorEndpoint(new AbortController().signal),
@@ -422,6 +433,7 @@ test('competing inspector announcements and an exited application cannot reuse a
     '/node',
     () => {},
     true,
+    3000,
   )
   child.stderr.emit(
     'data',
@@ -500,6 +512,8 @@ test('an application without a root page is ready through its selected entry pat
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
 
   // Act
@@ -556,6 +570,8 @@ test('a selected entry path that redirects to sign-in does not count as a ready 
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
 
   // Act
@@ -613,6 +629,8 @@ test('an application whose root page fails is not ready when the root is its ent
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
 
   // Act
@@ -668,7 +686,13 @@ process.on('SIGTERM', () => {
 });
 `,
   )
-  const server = launchDevelopmentServer(directory, process.execPath, () => {})
+  const server = launchDevelopmentServer(
+    directory,
+    process.execPath,
+    () => {},
+    false,
+    3000,
+  )
   context.after(() => server.close())
   await server.ready(new AbortController().signal, '/login')
   assert.equal((await stat(join(directory, '.next/dev/lock'))).isFile(), true)
