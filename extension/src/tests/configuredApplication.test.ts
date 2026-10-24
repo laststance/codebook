@@ -9,8 +9,8 @@ import { runInNewContext } from 'node:vm'
 
 import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
 import { launchDevelopmentServer } from '../utils/launchDevelopmentServer'
-import { ownedDevelopmentPortState } from '../utils/ownedDevelopmentPorts'
 import type * as ServerModule from '../utils/launchDevelopmentServer'
+import { ownedDevelopmentPortState } from '../utils/ownedDevelopmentPorts'
 
 test('development readiness waits for a complete port across process output chunks', async () => {
   // Arrange
