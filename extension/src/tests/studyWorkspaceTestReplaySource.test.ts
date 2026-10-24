@@ -4216,3 +4216,61 @@ test('a Play step to an output, withdrawn after its slot showed, shows the commi
     await harness.close()
   }
 })
+
+// Value: protects=a Play step to a stop, withdrawn by its caller after its slot showed the stop's source, with no newer selection, while an output is the committed moment, leaves no surface on the stop: the slot shows the output's placeholder again, the replay debugger shows no stop, the Study position stays on the output, and no error row appears (F351 cell committed output x withdrawn by its caller); fails_when=the return keeps the withdrawn stop or the last stop for a committed output, so the slot holds a stop's sealed source with a stopped line and label and the debugger a stop's frames beside the Study position that names the output; why_new=F546 (pass-3 state-machines cell: every withdrawn-step restore test began from a committed stop, so the stop passed as undefined to the slot and the debugger had no test); seam=the workspace harness's held document open of the next stop's slot, with the caller's isCurrent turned false while the open is held; no_claim=the controller paths that withdraw a step
+test('a Play step to a stop, withdrawn after its slot showed, shows the committed output’s placeholder in the slot and no stop in the debugger', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const selected = harness.reader['selectedNodeHistory']!
+    const presentationsBefore = harness.historicalDebugPresentations.length
+    const invalidationsBefore = harness.historicalDebugInvalidations()
+    let wanted = true
+    const held = harness.holdNextSource()
+    const step = harness.reader['requestNodeHistoryEvent'](selected, 4, {
+      publish: false,
+      alignPlayback: false,
+      isCurrent: () => wanted,
+    })
+    await held.started
+
+    // Act: the caller withdraws the step while the next stop's slot opens; the open then completes.
+    wanted = false
+    held.release()
+    await step
+    await waitUntil(
+      () => harness.reader['nodeSurfacesSequence'] === 3,
+      'the surfaces are back on the output',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(harness.reader['selectedNodeHistorySequence'], 3)
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 3)
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), PLACEHOLDER)
+    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().at(-1),
+      'Not recorded at this moment',
+    )
+    // The withdrawn stop was presented once before the withdrawal was seen; the return presents no stop, it empties the debugger again (the leave step's invalidation and the return's).
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore + 1,
+    )
+    assert.equal(
+      harness.historicalDebugInvalidations(),
+      invalidationsBefore + 2,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
