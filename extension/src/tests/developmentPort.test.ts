@@ -2096,6 +2096,52 @@ test('a dev script of 19 delegations to a six-statement script still declares it
   assert.equal(declared.port, 4000)
 })
 
+// Value: protects=a package.json that is a FIFO is never opened (an open would block the extension host with no cancellation) and the result says why (F556); fails_when=the reader opens the FIFO and the call hangs; why_new=F556 (Step 11, third round); seam=a temporary project folder with a real mkfifo, skipped on Windows; no_claim=other special files
+test(
+  'a package.json that is a FIFO is refused at once with a note',
+  { skip: process.platform === 'win32', timeout: 5000 },
+  async () => {
+    // Arrange
+    const root = await mkdtemp(join(tmpdir(), 'codebook-port-fifo-'))
+    await promisify(execFile)('mkfifo', [join(root, 'package.json')])
+
+    try {
+      // Act
+      const declared = await readDeclaredDevelopmentPort(root, 'linux')
+
+      // Assert
+      assert.deepEqual(declared, {
+        port: 3000,
+        source:
+          "Next's default port, taken because package.json is not a regular file Codebook reads",
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=a package.json over the 1 MiB source limit is told as too large instead of being cut and read as Next's plain default (F556); fails_when=the cut file reads as an empty or broken script with no note; why_new=F556 (Step 11, third round); seam=temporary project folders; no_claim=the exact byte limit beyond the stated one
+test('a package.json larger than 1 MiB is refused with a size note', async () => {
+  // Arrange
+  const files = {
+    'package.json': JSON.stringify({
+      scripts: { dev: 'next dev -p 4000' },
+      padding: 'a'.repeat(1_048_576),
+    }),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, {
+    port: 3000,
+    source:
+      "Next's default port, taken because package.json is larger than Codebook reads",
+  })
+})
+
 /** A `next` that prints the port it would start on (the last `-p N`, `-pN`, `--port N` or `--port=N`, else `PORT`, else 3000). */
 const FAKE_NEXT = `#!/bin/sh
 port="\${PORT:-3000}"

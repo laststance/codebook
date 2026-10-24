@@ -1379,6 +1379,14 @@ export const OWNED_APPLICATION_LOOPBACK_HOSTS = [
 ] as const
 /** Bounds how much of a project's package.json is read to find its declared port. */
 export const DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES = 1_048_576
+
+/** The `applicationPortSource` when `package.json` is not a regular file (a FIFO, a device, a socket or a folder), which Codebook never opens (F556). */
+export const DEVELOPMENT_PACKAGE_NOT_REGULAR_SOURCE =
+  "Next's default port, taken because package.json is not a regular file Codebook reads"
+
+/** The `applicationPortSource` when `package.json` is larger than {@link DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES}, so reading it would cut it (F556). */
+export const DEVELOPMENT_PACKAGE_TOO_LARGE_SOURCE =
+  "Next's default port, taken because package.json is larger than Codebook reads"
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT = 8
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT_CHARS = 512

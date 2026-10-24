@@ -1,4 +1,4 @@
-import { access, open } from 'node:fs/promises'
+import { access, open, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
 import {
@@ -9,6 +9,8 @@ import {
   DEVELOPMENT_BUN_SHELL_UNREAD_REASON,
   DEVELOPMENT_CMD_UNREAD_REASON,
   DEVELOPMENT_EMPTY_SCRIPT_SOURCE,
+  DEVELOPMENT_PACKAGE_NOT_REGULAR_SOURCE,
+  DEVELOPMENT_PACKAGE_TOO_LARGE_SOURCE,
   DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES,
   DEVELOPMENT_SCRIPT_NESTING_LIMIT,
   DEVELOPMENT_SCRIPT_STATEMENT_LIMIT,
@@ -48,8 +50,27 @@ type DevelopmentCommand = {
   delegate?: string
 }
 
-/** Reads one project file up to the source limit; `undefined` when it is absent or unreadable. */
-async function readProjectFile(path: string): Promise<string | undefined> {
+/**
+ * Reads one project file whole; `undefined` when it is absent or unreadable.
+ *
+ * Called by {@link readDeclaredDevelopmentPort} for `package.json`. The path is `stat`ed first (a `stat` does not block on a FIFO, an `open` does and cannot be cancelled), so a path that is not a regular file or is larger than {@link DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES} is refused instead of read or cut (F556).
+ *
+ * @returns The text, `undefined` for an absent or unreadable file, or the reason the file is refused.
+ *
+ * @example
+ * ```ts
+ * await readProjectFile('/repo/package.json') // '{"scripts":{…}}'
+ * ```
+ */
+async function readProjectFile(
+  path: string,
+): Promise<string | { refused: 'not-regular' | 'too-large' } | undefined> {
+  const info = await stat(path).catch(() => undefined)
+  if (!info) return undefined
+  // A FIFO, device, socket or folder is never opened.
+  if (!info.isFile()) return { refused: 'not-regular' }
+  if (info.size > DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES)
+    return { refused: 'too-large' }
   const handle = await open(path, 'r').catch(() => undefined)
   if (!handle) return undefined
   try {
@@ -632,7 +653,18 @@ export async function readDeclaredDevelopmentPort(
   root: string,
   platform: NodeJS.Platform = process.platform,
 ): Promise<DeclaredDevelopmentPort> {
-  const packageText = await readProjectFile(join(root, 'package.json'))
+  const file = await readProjectFile(join(root, 'package.json'))
+  const fallback = { port: DEVELOPMENT_SERVER_DEFAULT_PORT }
+  // A package.json Codebook does not open is told, never silently read as empty (F556).
+  if (typeof file === 'object')
+    return {
+      ...fallback,
+      source:
+        file.refused === 'not-regular'
+          ? DEVELOPMENT_PACKAGE_NOT_REGULAR_SOURCE
+          : DEVELOPMENT_PACKAGE_TOO_LARGE_SOURCE,
+    }
+  const packageText = file
   let scripts: Scripts
   let packageManager: unknown
   try {
@@ -646,7 +678,6 @@ export async function readDeclaredDevelopmentPort(
     // A package.json that is absent or not JSON declares nothing; Next itself will report it.
   }
   const dev = scripts?.dev
-  const fallback = { port: DEVELOPMENT_SERVER_DEFAULT_PORT }
   if (typeof dev !== 'string')
     return { ...fallback, source: "Next's default port" }
   // An empty or blank script runs nothing; say so instead of quoting an empty text (F511).
