@@ -1,6 +1,3 @@
-import type { BundleSource } from '../repositoryBundle'
-
-import { bundleOfEvaluatedModule } from './extractDevelopmentModule'
 import { parseDevelopmentModuleUrl } from './parseDevelopmentModuleUrl'
 
 /**
@@ -26,33 +23,5 @@ export function isModuleInAnotherLayer(
     announced?.layer !== undefined &&
     sealed.path === announced.path &&
     sealed.layer !== announced.layer
-  )
-}
-
-/**
- * Seals the module a runtime parsed for another layer under the frozen original of a declared stop, so a pause in that script can be placed by its own source map.
- * The instance is accepted only as the same original: its inline map must name the exact source path, and the caller's verifier ({@link createBundleVerifier}) refuses a map whose retained original differs from the frozen text. Its generated code may differ from the sealed instance's, which is why it carries its own map.
- * @param sealed - The stop's sealed bundle, which gives the frozen original and path.
- * @param url - The address of the script the runtime announced.
- * @param scriptSource - The text the runtime holds for that script (`Debugger.getScriptSource`).
- * @returns The instance's bundle, or `undefined` when the text carries another script address.
- * @throws When the text's script identity or inline map is ambiguous or malformed, or the map does not name the exact original.
- * @example
- * ```ts
- * createBundleVerifier(sealRuntimeModuleInstance(stop.bundle, event.url, executed.scriptSource)!)
- * ```
- */
-export function sealRuntimeModuleInstance(
-  sealed: BundleSource,
-  url: string,
-  scriptSource: string,
-): BundleSource | undefined {
-  return bundleOfEvaluatedModule(
-    scriptSource,
-    sealed.sourcePath,
-    sealed.source,
-    sealed.chunkPath,
-    sealed.chunkHash,
-    url,
   )
 }
