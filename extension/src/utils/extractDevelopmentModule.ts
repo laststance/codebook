@@ -41,7 +41,8 @@ export function extractDevelopmentModule(
 }
 
 /**
- * Reads one evaluated webpack module's text (its code, `sourceURL` and inline source map) as a sealed bundle of a cited original, for {@link extractDevelopmentModule} (each eval literal of a built chunk) and {@link sealRuntimeModuleInstance} (the text a runtime reports for a script it parsed).
+ * Reads one evaluated webpack module's text (its code, `sourceURL` and inline source map) as a sealed bundle of a cited original, for {@link extractDevelopmentModule} (each eval literal of a built chunk) and {@link ConfiguredBrowserRun}'s sealing of a runtime instance (the text a runtime reports for a script it parsed).
+ * An instance of another webpack layer of a declared stop's module is accepted only as the same original: its inline map must name the exact source path, and the caller's verifier ({@link createBundleVerifier}) refuses a map whose retained original differs from the frozen text. Its generated code may differ from the sealed instance's, which is why it carries its own map; pass the stop's sealed bundle as `identity` and the announced address as `scriptUrl`.
  * @param javascript - The evaluated module text.
  * @param identity - The cited original and the chunk it was acquired from, kept as the bundle's identity: `sourcePath` is the original's absolute path, `source` its frozen text, `chunkPath` the built chunk and `chunkHash` that chunk's SHA-256. One object typed from {@link BundleSource}, so a caller cannot swap the four strings.
  * @param scriptUrl - The script address the module must carry as its effective `sourceURL`.

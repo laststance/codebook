@@ -112,6 +112,7 @@ import { declaredAndArmedPlace } from './utils/declaredAndArmedPlace'
 import { declaredInspectionBindings } from './utils/declaredInspectionBindings'
 import { describeCdpPause } from './utils/describeCdpPause'
 import { elapsedMsSince } from './utils/elapsedMsSince'
+import { bundleOfEvaluatedModule } from './utils/extractDevelopmentModule'
 import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
@@ -142,10 +143,7 @@ import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { sanitizeCause } from './utils/sanitizeCause'
-import {
-  isModuleInAnotherLayer,
-  sealRuntimeModuleInstance,
-} from './utils/sealRuntimeModuleInstance'
+import { isModuleInAnotherLayer } from './utils/sealRuntimeModuleInstance'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import {
@@ -2896,10 +2894,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // The run may have ended, or a newer script of this address may have replaced this one, while its text was read.
       if (!this.isRunOpen() || !stop.unusableInstances.has(event.scriptId))
         return
-      const bundle = sealRuntimeModuleInstance(
+      const bundle = bundleOfEvaluatedModule(
+        scriptSource,
         stop.bundle,
         event.url,
-        scriptSource,
       )
       if (!bundle) throw new Error('The script text names another address')
       instance = {
