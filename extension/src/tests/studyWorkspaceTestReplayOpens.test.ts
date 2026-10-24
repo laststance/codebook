@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +11,7 @@ import {
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import { lastView, saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
 
@@ -893,6 +895,53 @@ test('a test replay opened while a chosen browser study waits for the editor are
         ).length,
       1,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a second Saved studies choice made while the first still waits for the hidden editor area keeps the retired replay's slot tabs waiting too, so the maximized bottom panel stays maximized; fails_when=the second choice's retirement closes the waiting slot tabs, which brings the editor area back (local CodeRabbit round 2, minor); why_new=Cycle 0052 task 15; seam=recordedReaderHarness with a maximized bottom panel, two history messages from the bottom panel; no_claim=the native editor's own restore of the area
+test('a second Saved studies choice while the first waits for the editor area keeps the panel maximized', async () => {
+  // Arrange: a second saved browser study stands in Saved studies beside the first.
+  const harness = await recordedReaderHarness(true)
+  try {
+    const library = await harness.reader.learningStorage(),
+      second = createConfiguredStudy(),
+      runId = randomUUID()
+    for (const observation of second.observations)
+      observation.snapshotUri = observation.snapshotUri.replace(
+        second.runId,
+        runId,
+      )
+    second.workspaceKey = library.workspaceKey
+    second.runId = runId
+    second.id = `${second.instanceId}_${runId}`
+    second.savedAt = '2026-09-20T00:00:01.000Z'
+    await library.saveStudy(second)
+    await openReplayBesideBrowserStudy(harness)
+    harness.maximizePanel()
+    const chooseSavedStudy = async (studyId: string): Promise<void> => {
+      harness.receivePlaybackPanel({
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view?.nodeHistory === undefined &&
+          harness.reader.inspect().view?.model.selection.studyId === studyId &&
+          !harness.reader.inspect().view?.loading,
+        'the saved study is chosen',
+        READER_RESULT_BOUND_MS,
+      )
+    }
+    await chooseSavedStudy(harness.studyId)
+
+    // Act
+    await chooseSavedStudy(second.id)
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), true)
   } finally {
     await harness.close()
   }

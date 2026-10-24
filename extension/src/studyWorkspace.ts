@@ -962,6 +962,8 @@ export class StudyWorkspace {
   private liveComposition = false
   /** Counts the learner's test replay entries ({@link openNodeHistoryFromHost}) in the order they were made, so the latest one wins also while an earlier one still enters the summary composition (EN19, Cycle 0051). */
   private nodeHistoryEntryRequest = 0
+  /** How many test replay entries ({@link openNodeHistoryFromHost}) are under way, the waiting ones included; a superseded entry leaves the empty summary composition it built only when no newer entry is under way to fill it (Cycle 0052 task 12). */
+  private nodeHistoryEntriesUnderWay = 0
   /** Settles when the test replay entry in front has entered its composition: entries take turns there, so two entries never run {@link open} at once (one would be refused as busy and leave no replay shown). */
   private nodeHistoryEntryTurn: Promise<void> = Promise.resolve()
   /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
@@ -11723,10 +11725,12 @@ export class StudyWorkspace {
     this.nodeHistoryEntryTurn = new Promise<void>((resolve) => {
       releaseTurn = resolve
     })
+    this.nodeHistoryEntriesUnderWay++
     try {
       await previousTurn
       if (!(await this.enterCompositionForEntry(studyId, entry))) return
     } finally {
+      this.nodeHistoryEntriesUnderWay--
       releaseTurn()
     }
     if (entry !== this.nodeHistoryEntryRequest) return
@@ -11779,7 +11783,11 @@ export class StudyWorkspace {
       )
       return false
     }
-    return entry === this.nodeHistoryEntryRequest
+    if (entry === this.nodeHistoryEntryRequest) return true
+    // A Return or a Close superseded this entry while it entered: with no newer entry under way to fill it, the summary composition it built is left (Cycle 0052 task 12).
+    if (this.nodeHistoryEntriesUnderWay === 1)
+      await this.leaveEmptySummaryComposition()
+    return false
   }
 
   /**
@@ -12839,8 +12847,10 @@ export class StudyWorkspace {
     try {
       // A saved study chosen with the editor area hidden keeps the slot's tabs, which read the placeholder below, until the area is back: closing the tab a group shows would bring the area back (Cycle 0052 task 15).
       if (keepTabsForHiddenArea)
-        this.nodeSourceSlotTabsAwaitingArea = new Set(
-          vscode.window.tabGroups.all
+        // A later choice made while the area is still hidden keeps the earlier wait's tabs waiting too.
+        this.nodeSourceSlotTabsAwaitingArea = new Set([
+          ...(this.nodeSourceSlotTabsAwaitingArea ?? []),
+          ...vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
             .filter(
               (tab) =>
@@ -12848,9 +12858,12 @@ export class StudyWorkspace {
                 isNodeSourceSlotPath(tab.input.uri.path) &&
                 this.ownsCapturedSourceTab(tab),
             ),
-        )
-      // The retired replay's recorded-source slot goes with it, with any slot tab a rename still opening or one that failed left.
-      else await this.closeNodeSourceSlotTabs()
+        ])
+      else {
+        // The retired replay's recorded-source slot goes with it, with any slot tab a rename still opening or one that failed left; tabs that waited for the area go too.
+        this.nodeSourceSlotTabsAwaitingArea = undefined
+        await this.closeNodeSourceSlotTabs()
+      }
     } catch (error) {
       this.reportSlotCloseFailure(error)
     }
@@ -23372,7 +23385,8 @@ export class StudyWorkspace {
     this.pendingHistory = undefined
     // Browser selection retires the separate Node journal and its historical debugger context; with the editor area hidden its slot tabs wait for the area, as the chosen study does (Cycle 0052 task 15).
     await this.retireNodeHistorySelection(
-      Boolean(this.selectedNodeHistory) &&
+      (Boolean(this.selectedNodeHistory) ||
+        this.nodeSourceSlotTabsAwaitingArea !== undefined) &&
         this.replayReaderOpen &&
         (await this.editorAreaHidden()),
     )
