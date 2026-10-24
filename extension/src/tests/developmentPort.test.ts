@@ -2054,6 +2054,48 @@ test('a dev script word of 100000 characters is read in well under a second', as
   assert.ok(Date.now() - started < 1000)
 })
 
+// Value: protects=a dev script whose delegations multiply (thousands of `npm run a`, each running thousands of `npm run b`) is refused after a bounded number of statements instead of running millions of reads on the extension host (F550); fails_when=breadth is unbounded and the read takes seconds or minutes; why_new=F550 (Step 11, third round); seam=temporary project folders and the clock; no_claim=the absolute time on a slow machine (the bound is generous)
+test('a dev script whose delegations multiply is left unread within a second', async () => {
+  // Arrange
+  const files = {
+    'package.json': packageScripts({
+      dev: Array.from({ length: 2000 }, () => 'npm run a').join(' && '),
+      a: Array.from({ length: 2000 }, () => 'npm run b').join(' && '),
+      b: 'next dev -p 4000',
+    }),
+  }
+  const started = Date.now()
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, {
+    port: 3000,
+    source:
+      "Next's default port, taken because the dev script runs more statements than Codebook reads",
+  })
+  // gstack-timing-ok: the bound is the contract (F550); the unbounded read made millions of statement reads, and the budgeted read stops at the first oversized line
+  assert.ok(Date.now() - started < 1000)
+})
+
+// Value: protects=a real-sized dev script (a few chained delegations) is still read after the statement budget (F550); fails_when=the budget is so small or so wrongly counted that a normal script reads as too long; why_new=F550 (Step 11, third round); seam=temporary project folders; no_claim=scripts beyond 256 statements
+test('a dev script of 19 delegations to a six-statement script still declares its port', async () => {
+  // Arrange
+  const files = {
+    'package.json': packageScripts({
+      dev: Array.from({ length: 19 }, () => 'npm run a').join(' && '),
+      a: 'export PORT=1 && export PORT=2 && export PORT=3 && export PORT=4 && export PORT=5 && next dev -p 4000',
+    }),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.equal(declared.port, 4000)
+})
+
 /** A `next` that prints the port it would start on (the last `-p N`, `-pN`, `--port N` or `--port=N`, else `PORT`, else 3000). */
 const FAKE_NEXT = `#!/bin/sh
 port="\${PORT:-3000}"

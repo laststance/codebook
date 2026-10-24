@@ -1,13 +1,18 @@
 import { DEVELOPMENT_SCRIPT_ALLOWED_CHARACTERS } from '../constants'
 
 /** The shell meanings that make a statement unread although it is in the grammar's syntax. */
-export type UnreadReason = 'bun-env' | 'bun-shell' | 'cmd' | 'yarn-shell'
+export type UnreadReason =
+  | 'bun-env'
+  | 'bun-shell'
+  | 'cmd'
+  | 'too-long'
+  | 'yarn-shell'
 
 /**
  * Says that the `dev` script has a form outside the grammar the reader asserts a port for (D72); thrown by {@link tokenizeDevelopmentScript} and the readers of {@link readDeclaredDevelopmentPort}, caught only there.
  *
  * @param words - The words of the statement that left the grammar, as the tokenizer saw them; empty when the thrower does not know the statement yet (the statement reader fills it in).
- * @param reason - Why the statement is unread when the cause is a shell's meaning and not its syntax: `bun-env` when Bun loads `.env` files into the script's environment, where a `PORT` can decide the port of a `next dev` without a port flag (F499), `cmd` when the form means something else under the Windows shell (F502), `bun-shell` when Bun runs the script on Windows with a shell whose meaning depends on its configuration (D75), `yarn-shell` when Yarn 2 and later's portable shell reads the form differently from `sh` (F515, F519).
+ * @param reason - Why the statement is unread when the cause is a shell's meaning and not its syntax: `bun-env` when Bun loads `.env` files into the script's environment, where a `PORT` can decide the port of a `next dev` without a port flag (F499), `cmd` when the form means something else under the Windows shell (F502), `bun-shell` when Bun runs the script on Windows with a shell whose meaning depends on its configuration (D75), `too-long` when the script runs more statements than the reader's budget (F550), `yarn-shell` when Yarn 2 and later's portable shell reads the form differently from `sh` (F515, F519).
  */
 export class UnreadScriptError extends Error {
   constructor(

@@ -1301,6 +1301,13 @@ export const DEVELOPMENT_CMD_UNREAD_REASON =
   "Next's default port, taken because npm runs the dev script with cmd on Windows, where this form (single quotes, a PORT= or NAME= prefix, export, env, ;, a PORT variable written in another case, or a program written as a path with /) does not mean what it means in sh"
 /** Bounds how deep the `dev` script reader descends (a count, not a duration): every step into another command line grows the same depth, whether it is a quoted `concurrently` command or another script (`npm run x`, `pnpm x`). The `dev` script is depth 0; no step is taken from depth {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}, so a delegation cycle stops there and the script is reported as unread. */
 export const DEVELOPMENT_SCRIPT_NESTING_LIMIT = 2
+
+/** Bounds how many statements one `readDeclaredDevelopmentPort` call reads across every line and delegation of the `dev` script (a count, not a duration). {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} bounds depth only, so thousands of delegations that each hold thousands of delegations would otherwise run millions of reads on the extension host (F550); a real script holds a handful of statements. */
+export const DEVELOPMENT_SCRIPT_STATEMENT_LIMIT = 256
+
+/** The reason the `applicationPortSource` gives when the `dev` script runs more statements than {@link DEVELOPMENT_SCRIPT_STATEMENT_LIMIT} (F550). */
+export const DEVELOPMENT_SCRIPT_TOO_LONG_REASON =
+  "Next's default port, taken because the dev script runs more statements than Codebook reads"
 /** Bounds the part of an unread `dev` script that `applicationPortSource` quotes (code points, not bytes). */
 export const DEVELOPMENT_SCRIPT_UNREAD_SEGMENT_MAX_CHARS = 120
 /** Bounds a `package.json` script name that `applicationPortSource` quotes (code points). */
