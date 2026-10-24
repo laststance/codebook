@@ -491,6 +491,10 @@ export const SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT = {
   viewIds: ['codebook.learningSummary'],
   destinationId: 'workbench.panel.chat',
 } as const
+/** The Application pane's own title: at its creation, and again when another writer takes its document after a browser replay retitled it (Cycle 0052 task 4). */
+export const APPLICATION_PANE_TITLE = 'codebook · Application'
+/** The Application pane's title while it shows a browser replay's recorded frames. */
+export const RECORDED_APPLICATION_PANE_TITLE = 'codebook · Recorded application'
 /** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
 export const SUMMARY_PLACEMENT_OFFER =
   'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'

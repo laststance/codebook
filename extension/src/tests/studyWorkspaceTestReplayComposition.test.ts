@@ -11,6 +11,7 @@ import {
 import { StudyError } from '../errors'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { StudyViewMessage } from '../ui/studyHtml'
 
 import {
   recordedReaderHarness,
@@ -505,6 +506,92 @@ test('Return to Live from a test replay gives the Learning summary its placehold
       ),
       true,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Records the families of the Study messages a view's webview receives from now on, by wrapping its `postMessage`; the departure tests read it to prove that no message of the wrong family reaches a view while the reader leaves a replay.
+ * @param view - The harness's Learning summary or bottom panel view.
+ * @returns The live list of each received Study message's `replayFamily` (`undefined` for a message outside a replay).
+ * @example const families = recordStudyFamilies(harness.summary)
+ */
+function recordStudyFamilies(view: {
+  webview: { postMessage: (message: StudyViewMessage) => Promise<boolean> }
+}): (StudyViewMessage['replayFamily'] | 'none')[] {
+  const families: (StudyViewMessage['replayFamily'] | 'none')[] = [],
+    post = view.webview.postMessage.bind(view.webview)
+  view.webview.postMessage = async (message: StudyViewMessage) => {
+    if (message.type === 'study') families.push(message.replayFamily ?? 'none')
+    return post(message)
+  }
+  return families
+}
+
+// Value: protects=Return to Live from a test replay withdraws the Learning summary before the reader publishes the Live state, so the summary never draws the Live Study page beside the chat; fails_when=the summary receives any Study message after the return starts (N51 saw 1 to 3 frames of Live Study content); why_new=Cycle 0052 task 2 (N51-V2): retireNodeHistorySelection published while the summary still showed the replay's document; seam=the harness's summary webview postMessage; no_claim=the native frames, which N52 (e) checks
+test('Return to Live from a test replay sends the Learning summary no Study message', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    await openByOpenReplay(harness)
+    const summaryFamilies = recordStudyFamilies(harness.summary)
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert
+    assert.deepEqual(summaryFamilies, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Return to Live from a browser replay never names the test replay family while it leaves, so neither the bottom panel nor the summary draws a history-less test replay transport; fails_when=any Study message posted after the return starts carries replayFamily 'test' (N51 saw 1 to 2 frames of 'Test journal playback'); why_new=Cycle 0052 task 3 (N51-V3): shownReplayFamily read the absence of a recording as a test replay; seam=recordedReaderHarness, the summary's and bottom panel's postMessage; no_claim=the native frames, which N52 (e) checks
+test('Return to Live from a browser replay never shows the test replay transport', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const summaryFamilies = recordStudyFamilies(harness.summary),
+      bottomPanelFamilies = recordStudyFamilies(harness.playbackPanel)
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert
+    assert.deepEqual(
+      [...summaryFamilies, ...bottomPanelFamilies].filter(
+        (family) => family === 'test',
+      ),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a browser replay's Learning summary draws its replay from its first message: no Study message without the recording reaches it while the replay opens, and none reaches it while Return to Live leaves; fails_when=the summary receives a Study message with no recording (N51 saw 1 frame of Study content at the open and at the return); why_new=Cycle 0052 task 6 (N51-V6): the summary got the generic Study document and a publish inside open() before the presented bundle; seam=recordedReaderHarness, the summary webview's postMessage; no_claim=the native frames, which N52 (d) and (e) check
+test('a browser replay’s Learning summary receives no Study message without its recording at the open or the return', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const withoutRecording: string[] = [],
+      post = harness.summary.webview.postMessage.bind(harness.summary.webview)
+    harness.summary.webview.postMessage = async (message: StudyViewMessage) => {
+      if (message.type === 'study' && message.recording === undefined)
+        withoutRecording.push(message.replayFamily ?? 'none')
+      return post(message)
+    }
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.action('return-current')
+
+    // Assert
+    assert.deepEqual(withoutRecording, [])
   } finally {
     await harness.close()
   }

@@ -445,8 +445,9 @@ test('returning to Live releases the test replay’s output index and event posi
 
     // Act
     await harness.reader.action('return-current')
+    // The Learning summary takes no Study message once the replay is left (Cycle 0052 task 2), so the bottom panel, which every publish reaches, shows the reader's state.
     await waitUntil(
-      () => lastView(harness)?.nodeHistory === undefined,
+      () => harness.playbackPanelMessages.at(-1)?.nodeHistory === undefined,
       'the reader leaves the test replay',
       READER_RESULT_BOUND_MS,
     )

@@ -1415,7 +1415,8 @@ test('returning to the current run leaves a selected Node history so its missing
     await harness.reader.action('return-current')
 
     // Assert
-    const view = harness.postedMessages().slice(-1)[0]!
+    // The Learning summary takes no Study message once the replay is left (Cycle 0052 task 2), so the bottom panel, which every publish reaches, shows the reader's state.
+    const view = harness.playbackPanelMessages.at(-1)!
     const applicationPanel = harness
       .nativePanels()
       .find((panel) => panel.kind === 'codebook.scopedBrowser')
@@ -1486,8 +1487,9 @@ test('an agent returning the reader to the current run leaves a selected Node hi
     )
     assert.equal(returned.reader.followingCurrentRun, true)
     assert.equal(returned.reader.contentTab, 'live')
+    // The Learning summary takes no Study message once the replay is left (Cycle 0052 task 2), so the bottom panel, which every publish reaches, shows the reader's state.
     assert.equal(
-      harness.postedMessages().slice(-1)[0]?.nodeHistory,
+      harness.playbackPanelMessages.at(-1)?.nodeHistory,
       undefined,
       'the MCP return never reports following the run while the journal masks the application',
     )
