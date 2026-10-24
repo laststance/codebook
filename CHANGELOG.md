@@ -8,7 +8,7 @@ Cycle 0051 ([Issue #122](https://github.com/laststance/codebook/issues/122)): a 
 
 - **Open replay and Saved studies** open a test replay as a browser replay opens: the Study pane closes, the Application pane shows the recorded test output above the recorded-source tab, Run and Debug shows the recorded stop, and the **Learning summary** stands in the chat's place. In VS Code the summary moves once into the chat's side bar; in Cursor it keeps its own container and offers Move View. Opening a replay during a live run leaves the Live arrangement for it, and Return to Live gives the Live arrangement back.
 - **The latest choice wins.** Two Open replay presses, or a test replay chosen while another one is opening, open the replay you chose last, and an answer to an earlier one-replay-at-a-time notice closes nothing.
-- **A failed open** gives the Study pane back on Saved studies and tells the failure once, with its Saved studies sentence.
+- **A failed open** brings the Study pane back with the failure on its line and tells it once: the load-failure notification, which ends `open it again from Saved studies.`, and one entry in Output › Codebook.
 - **An agent cannot open a test replay**: `codebook_playback` still refuses it, and the chat asks you to open it from Open replay or Saved studies.
 
 **The Learning summary of a test replay.**
@@ -28,7 +28,7 @@ Cycle 0051 ([Issue #122](https://github.com/laststance/codebook/issues/122)): a 
 
 **Compatibility.** The MCP API stays 1.8, the bundled skill is unchanged and no stored format changes.
 
-**Checked so far.** The host and Reader DOM tests above. A native smoke check in VS Code 1.142.0 and Cursor 3.27.12 on macOS ran on a development candidate of this branch; the native round of this release's candidate (N51) is recorded in [Issue #122](https://github.com/laststance/codebook/issues/122). Windows and Linux are not run.
+**Checked so far.** The release's code, unchanged since commit `12d8f430`, passes `pnpm test` (6,696 tests, 0 failed), `pnpm test:package` (1,071 tests, 0 failed), the five Reader DOM checks (`node extension/scripts/study-bootstrap-qa.mjs verify` among them, 282 cases, 0 errors) and the measured health gate; the pull request's CI runs them again. A development build was checked by hand in VS Code 1.142.0 and Cursor 3.27.12 on macOS. The recorded native round of this release's candidate (N51: its VSIX, requests and take SHA-256 values) is in [Issue #122](https://github.com/laststance/codebook/issues/122); the recordings stay in private storage. Windows and Linux are not run.
 
 ## [0.2.38.0] - 2026-10-24 (development candidate)
 
