@@ -814,7 +814,7 @@ for (const [name, files, opened, platform, expected] of [
   })
 
 const YARN_SHELL_NOTE =
-  "Next's default port, taken because Yarn 2 and later runs scripts in its own portable shell, which has no export, so this form can mean different things"
+  "Next's default port, taken because Yarn 2 and later runs scripts in its own portable shell, which reads this form differently from sh, so it can mean different things"
 
 /** A folder path `depth` levels below the tree root, as `d1/d2/...`. */
 const nestedFolder = (depth: number): string =>
@@ -934,6 +934,177 @@ for (const [name, files, opened, expected] of [
     assert.deepEqual(declared, expected)
   })
 
+// Value: protects=a Yarn Berry project reading a `;;` and a `;` followed by blanks at the end of the line as unread with the Yarn-shell note, since Yarn 4's shell fails on both with a syntax error while `sh` reads them, and a single trailing `;` or a mid-line `; ` still being read (F519); fails_when=`next dev -p 4013 ; ` reports 4013 in a Berry project though `yarn dev` fails to parse, or the single trailing `;` and the `; ` between statements become unread, or a Yarn 1 project stops reading the trailing `; `; why_new=F519 (OCR low; confirmed with corepack yarn 4.9.2: `echo hi; ` and `echo hi;;` fail, `echo hi;` and `echo a ; echo b` run); seam=temporary folder trees; no_claim=Yarn itself
+for (const [name, files, expected] of [
+  [
+    'a trailing semicolon followed by a blank in a Berry project',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('next dev -p 4013 ; '),
+    },
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "next dev -p …"` },
+  ],
+  [
+    'a trailing semicolon followed by two blanks in a Berry project (packageManager)',
+    {
+      'package.json': JSON.stringify({
+        packageManager: 'yarn@4.9.2',
+        scripts: { dev: 'next dev -p 4014;  ' },
+      }),
+    },
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "next dev -p …"` },
+  ],
+  [
+    'a double semicolon in a Berry project',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('NODE_ENV=development;; next dev -p 4015'),
+    },
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "NODE_ENV=…"` },
+  ],
+  [
+    'a trailing semicolon followed by a blank in a script a Berry project delegates to',
+    {
+      '.yarnrc.yml': '',
+      'package.json': packageScripts({
+        dev: 'yarn run web',
+        web: 'next dev -p 4016; ',
+      }),
+    },
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "next dev -p …"` },
+  ],
+  [
+    'a single trailing semicolon with no blank after it in a Berry project',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('next dev -p 4017;'),
+    },
+    { port: 4017, source: 'the dev script in package.json' },
+  ],
+  [
+    'a semicolon between two statements in a Berry project',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('NODE_ENV=development ; next dev -p 4018'),
+    },
+    { port: 4018, source: 'the dev script in package.json' },
+  ],
+  [
+    'a trailing semicolon followed by a blank in a Yarn 1 project',
+    {
+      '.yarnrc.yml': '',
+      'package.json': JSON.stringify({
+        packageManager: 'yarn@1.22.22',
+        scripts: { dev: 'next dev -p 4019 ; ' },
+      }),
+    },
+    { port: 4019, source: 'the dev script in package.json' },
+  ],
+] as const)
+  test(`${name} gives port ${expected.port}`, async () => {
+    // Arrange: the tree above
+
+    // Act
+    const declared = await declaredPortOfTree(files, '.')
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=a Yarn Berry project on win32 being read with Yarn's portable shell (the forms Berry runs are read as on macOS and Linux, `export` is unread with the Yarn note) and never with the cmd rules, and a packageManager of yarn@1 or another manager winning over a stray .yarnrc.yml (F520); fails_when=a Berry project on Windows gets the cmd note for `PORT=4000 next dev`, a Yarn 1 project with a stray .yarnrc.yml gets the Yarn-shell note, or a Bun project with a stray .yarnrc.yml escapes the Bun-shell note on Windows; why_new=F520 (OCR low; Berry's shell is portable and runs on Windows too); seam=temporary folder trees with the platform injected; no_claim=a real Windows host or Yarn on it
+for (const [name, files, platform, expected] of [
+  [
+    'a PORT prefix in a Berry project on Windows',
+    { '.yarnrc.yml': '', 'package.json': devScript('PORT=4020 next dev') },
+    'win32',
+    {
+      port: 4020,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'a single-quoted flag value in a Berry project on Windows',
+    { '.yarnrc.yml': '', 'package.json': devScript("next dev -p '4021'") },
+    'win32',
+    { port: 4021, source: 'the dev script in package.json' },
+  ],
+  [
+    'a semicolon in a Berry project on Windows',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('NODE_ENV=development; next dev -p 4022'),
+    },
+    'win32',
+    { port: 4022, source: 'the dev script in package.json' },
+  ],
+  [
+    'env with a PORT assignment in a Berry project on Windows',
+    { '.yarnrc.yml': '', 'package.json': devScript('env PORT=4023 next dev') },
+    'win32',
+    {
+      port: 4023,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'export in a Berry project on Windows',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('export PORT=4024 && next dev'),
+    },
+    'win32',
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "export PORT=…"` },
+  ],
+  [
+    'a PORT prefix with packageManager yarn@1 and a stray .yarnrc.yml on Windows',
+    {
+      '.yarnrc.yml': '',
+      'package.json': JSON.stringify({
+        packageManager: 'yarn@1.22.22',
+        scripts: { dev: 'PORT=4025 next dev' },
+      }),
+    },
+    'win32',
+    { port: 3000, source: `${CMD_NOTE}: "PORT=… next dev"` },
+  ],
+  [
+    'export with packageManager yarn@1 and a stray .yarnrc.yml on macOS and Linux',
+    {
+      '.yarnrc.yml': '',
+      'package.json': JSON.stringify({
+        packageManager: 'yarn@1.22.22',
+        scripts: { dev: 'export PORT=4026 && next dev' },
+      }),
+    },
+    'linux',
+    {
+      port: 4026,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'a Bun packageManager with a stray .yarnrc.yml on Windows',
+    {
+      '.yarnrc.yml': '',
+      'package.json': JSON.stringify({
+        packageManager: 'bun@1.2.0',
+        scripts: { dev: 'next dev -p 4027' },
+      }),
+    },
+    'win32',
+    { port: 3000, source: `${BUN_SHELL_NOTE}: "next dev -p …"` },
+  ],
+] as const)
+  test(`${name} gives port ${expected.port}`, async () => {
+    // Arrange: the tree above
+
+    // Act
+    const declared = await declaredPortOfTree(files, '.', platform)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
 // Value: protects=the node_modules/.bin/next path being read after bare next and `pnpm exec` only, and unread after npx and bunx, which take a package name (F516); fails_when=`npx node_modules/.bin/next dev -p 4000` reads 4000 though npx fails with ENOTDIR; why_new=F516 (OCR low, pre-existing; npx and bunx confirmed to fail on the path); seam=temporary project folders; no_claim=npx or bunx themselves
 for (const [name, script, expected] of [
   [
@@ -973,7 +1144,7 @@ for (const [name, script, expected] of [
     assert.deepEqual(declared, expected)
   })
 
-// Value: protects=the Bun lockfile search climbing at most 16 folders (the opened one included) to find the Git root, a Git root one folder beyond not counting, and an ancestor bun.lock being ignored when no .git is in range (F514, F518); fails_when=the bound is raised or lowered by one, or a bun.lock above an opened folder with no Git root is honored; why_new=F518 (OCR low, test gap); seam=temporary folder trees 15, 16 and 3 levels deep; no_claim=Bun itself
+// Value: protects=the Bun lockfile search climbing at most 16 folders (the opened one included) to find the Git root, a Git root one folder beyond not counting, and an ancestor bun.lock being ignored when no .git is in range (F514, F518); fails_when=the bound is raised or lowered by one, or a bun.lock above an opened folder with no Git root is honored; why_new=F518 (OCR low, test gap), F521 (the old no-.git cases climbed above the temp folder, so a TMPDIR inside a repository failed them); seam=temporary folder trees 15, 16 and 20 levels deep, every one under a tree root that holds its own .git, so the climb never leaves the tree and the bound, not the host, decides (F521); no_claim=Bun itself
 for (const [name, files, opened, expected] of [
   [
     'a Git root exactly 16 folders up (the opened folder is the first)',
@@ -996,26 +1167,28 @@ for (const [name, files, opened, expected] of [
     { port: 3000, source: "Next's default port" },
   ],
   [
-    'a bun.lock above the opened folder with no .git at all',
+    'a bun.lock 10 folders above the opened folder with the Git root beyond the bound',
     {
-      'bun.lock': '',
-      [`${nestedFolder(3)}/package.json`]: devScript('next dev'),
+      '.git/': '',
+      [`${nestedFolder(10)}/bun.lock`]: '',
+      [`${nestedFolder(20)}/package.json`]: devScript('next dev'),
     },
-    nestedFolder(3),
+    nestedFolder(20),
     { port: 3000, source: "Next's default port" },
   ],
   [
-    'a bun.lock in the opened folder with no .git in range',
+    'a bun.lock in the opened folder with the Git root beyond the bound',
     {
-      [`${nestedFolder(3)}/bun.lock`]: '',
-      [`${nestedFolder(3)}/package.json`]: devScript('next dev'),
+      '.git/': '',
+      [`${nestedFolder(20)}/bun.lock`]: '',
+      [`${nestedFolder(20)}/package.json`]: devScript('next dev'),
     },
-    nestedFolder(3),
+    nestedFolder(20),
     { port: 3000, source: `${BUN_ENV_NOTE}: "next dev"` },
   ],
 ] as const)
   test(`${name} gives source ${expected.source}`, async () => {
-    // Arrange: the tree above
+    // Arrange: the tree above. Every tree holds its own .git at its root and the opened folder is nested 15 to 20 folders below it, so the 16-folder climb stays inside the tree and no ancestor of the temp folder (a TMPDIR inside a repository, say) is ever read (F521).
 
     // Act
     const declared = await declaredPortOfTree(files, opened)

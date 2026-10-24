@@ -25,24 +25,31 @@ export class UnreadScriptError extends Error {
  *
  * @param line - A script line from `package.json`, or a quoted command of `concurrently`.
  * @param windows - Whether `cmd` runs the line: a single quote and `;` are then outside the grammar, as they do not mean what they mean in `sh` (F502, D74).
+ * @param yarnBerry - Whether Yarn 2 and later's portable shell runs the line: it rejects a `;;` and a `;` followed by blanks at the end of the line, which `sh` accepts (F519; confirmed with Yarn 4.9.2).
  * @returns One word list per statement, in order.
  * @throws {@link UnreadScriptError} When the line holds a character or a separator outside the grammar, an unterminated quote or an empty statement.
  *
  * @example
  * ```ts
  * tokenizeDevelopmentScript('export PORT=4000 && next dev') // [['export', 'PORT=4000'], ['next', 'dev']]
+ * tokenizeDevelopmentScript('next dev ; ', false, true) // throws UnreadScriptError with reason 'yarn-shell'
  * ```
  */
 export function tokenizeDevelopmentScript(
   line: string,
   windows = false,
+  yarnBerry = false,
 ): string[][] {
   if (!DEVELOPMENT_SCRIPT_ALLOWED_CHARACTERS.test(line))
     throw new UnreadScriptError(line.split(/\s+/).filter(Boolean))
-  const scan = new ScriptScan(windows)
+  const scan = new ScriptScan(windows, yarnBerry)
   for (let index = 0; index < line.length; index += 1)
     index = scan.step(line, index)
-  return scan.finish()
+  const statements = scan.finish()
+  // Yarn's shell rejects a last `;` that blanks follow, which `sh` reads as the end of the statement (F519).
+  if (yarnBerry && /;\s+$/.test(line))
+    throw new UnreadScriptError(statements.at(-1) ?? [], 'yarn-shell')
+  return statements
 }
 
 /** Starts a word that had a quote before its `=`; it is in no character list of the grammar, so the word matches no assignment (F501). */
@@ -59,7 +66,10 @@ class ScriptScan {
   /** The separator that ended the last statement. */
   private separator: ';' | '&&' | undefined
 
-  constructor(private readonly windows: boolean) {}
+  constructor(
+    private readonly windows: boolean,
+    private readonly yarnBerry: boolean,
+  ) {}
 
   /** Applies the character at `index` and returns the index of the last character it consumed. */
   step(line: string, index: number): number {
@@ -82,7 +92,7 @@ class ScriptScan {
 
   /** Opens a quote; under `cmd` a single quote is a literal character, not a quote. */
   private openQuote(char: string): void {
-    if (char === "'" && this.windows) this.cmdUnread()
+    if (char === "'" && this.windows) this.shellUnread('cmd')
     if (!this.word?.includes('=')) this.quotedBeforeEquals = true
     this.quote = char
     this.word ??= ''
@@ -92,7 +102,10 @@ class ScriptScan {
   private separate(line: string, index: number): number {
     if (line[index] === ';') {
       // Under `cmd` a `;` is no separator.
-      if (this.windows) this.cmdUnread()
+      if (this.windows) this.shellUnread('cmd')
+      // Yarn's shell refuses `;;`, where `sh` fails on the empty statement too (F519).
+      if (this.yarnBerry && line[index + 1] === ';')
+        this.shellUnread('yarn-shell')
       this.endStatement(';')
       return index
     }
@@ -142,10 +155,10 @@ class ScriptScan {
     this.separator = separator
   }
 
-  private cmdUnread(): never {
+  private shellUnread(reason: UnreadReason): never {
     throw new UnreadScriptError(
       this.word === undefined ? this.words : [...this.words, this.word],
-      'cmd',
+      reason,
     )
   }
 
