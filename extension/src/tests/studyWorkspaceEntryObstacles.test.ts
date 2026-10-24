@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
+import * as sanitizeCauseModule from '../utils/sanitizeCause'
 
 import {
   configuredWorkspaceHarness,
@@ -254,6 +257,213 @@ test('Open replay in Cursor beside a foreign preview tab that keeps the main edi
       true,
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Open replay refused for a learner's preview tab being answered with a modal warning that names the file and offers Keep Tab Open and Close Tab, each retrying the open, in both hosts (Cursor cuts a toast to one line, so the learner saw neither the file nor the way out); fails_when=the refusal stays a toast, the dialog names no file, a button does not clear the tab, or the open is not retried; why_new=Cycle 0050 F158 and D33 (PR-B2 spike, Cursor 3.26.13); seam=addTextPreview, the main editor never reporting focus beside it (hasMainEditorFocus), answerWarningDialogs
+for (const choice of ['Close Tab', 'Keep Tab Open'] as const)
+  test(`Open replay beside a learner's preview tab asks in a modal dialog that names the file, and ${choice} retries the open`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness()
+    try {
+      await harness.reader.close()
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      // The learner's own kept file stands in group 1 beside the preview, so the group still has a file once the preview is closed.
+      harness.focusMutableDraft('learner-notes.ts', 1)
+      const agentChat = harness.addSeparateEditorPart()
+      await writeFile(join(harness.directory, 'login-form.tsx'), 'export {}\n')
+      const preview = harness.addTextPreview(
+        join(harness.directory, 'login-form.tsx'),
+        1,
+      )
+      agentChat.focus()
+      const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+        harness.reader,
+      )
+      // The main editor reports no focus in group 1 only while the preview tab is a preview.
+      harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+        groupCount === 1 && preview.isPreview
+          ? false
+          : hasMainEditorFocus(groupCount)
+      harness.answerWarningDialogs(async () => choice)
+      let openAttempts = 0
+      const openRecording = harness.reader.openRecording.bind(harness.reader)
+      harness.reader.openRecording = (studyId: string): Promise<void> => {
+        openAttempts++
+        return openRecording(studyId)
+      }
+
+      // Act
+      await harness.reader.openLearningReplay(harness.studyId)
+      await harness.controller.settle()
+
+      // Assert
+      assert.equal(harness.warningDialogs.length, 1)
+      assert.match(harness.warningDialogs[0]!.title, /"login-form\.tsx"/)
+      assert.deepEqual(harness.warningDialogs[0]!.items, [
+        'Keep Tab Open',
+        'Close Tab',
+      ])
+      assert.equal(
+        (harness.warningDialogs[0]!.options as { modal?: boolean }).modal,
+        true,
+      )
+      // The choice retried the open once (the fake editor's chat-focus model still lets that second attempt fail for another cause, which the dialog does not answer).
+      assert.equal(openAttempts, 2)
+      assert.equal(
+        harness.groups.some((group) => group.tabs.includes(preview)),
+        choice === 'Keep Tab Open',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=Keep Tab Open on a learner's non-text preview tab (an image, a custom editor) keeping that tab and retrying the open, and telling the learner when the tab cannot be kept instead of closing it; fails_when=Keep Tab Open closes the non-text preview (the learner lost the tab the dialog promised to keep), or a tab that cannot be kept is silently dropped or the open is retried into the same refusal; why_new=Cycle 0050 F363 (the Keep branch handled text tabs only and fell through to the close); seam=addNonTextPreview, the editor's focus-group and keepEditor commands in the fake, answerWarningDialogs
+for (const scenario of [
+  { isFront: true, keeps: true },
+  { isFront: false, keeps: false },
+] as const)
+  test(`Open replay beside a learner's non-text preview tab: Keep Tab Open ${scenario.keeps ? 'keeps the tab and retries the open' : 'leaves a tab behind another one open, retries nothing and tells the learner'}`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness()
+    try {
+      await harness.reader.close()
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      harness.focusMutableDraft('learner-notes.ts', 1)
+      const agentChat = harness.addSeparateEditorPart()
+      const preview = harness.addNonTextPreview(
+        'diagram.png',
+        1,
+        scenario.isFront,
+      )
+      agentChat.focus()
+      const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+        harness.reader,
+      )
+      harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+        groupCount === 1 && preview.isPreview
+          ? false
+          : hasMainEditorFocus(groupCount)
+      harness.answerWarningDialogs(async () => 'Keep Tab Open')
+      let openAttempts = 0
+      const openRecording = harness.reader.openRecording.bind(harness.reader)
+      harness.reader.openRecording = (studyId: string): Promise<void> => {
+        openAttempts++
+        return openRecording(studyId)
+      }
+
+      // Act
+      await harness.reader.openLearningReplay(harness.studyId)
+      await harness.controller.settle()
+
+      // Assert
+      assert.equal(
+        harness.groups.some((group) => group.tabs.includes(preview)),
+        true,
+      )
+      assert.equal(preview.isPreview, !scenario.keeps)
+      assert.equal(openAttempts, scenario.keeps ? 2 : 1)
+      assert.deepEqual(
+        harness.warningDialogs.slice(1).map((dialog) => dialog.title),
+        scenario.keeps
+          ? []
+          : [
+              'Codebook could not keep "diagram.png" open. Double-click its tab to keep it, then choose Open replay again.',
+            ],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the learner who chose Keep Tab Open for a non-text preview that cannot be kept being told once, by the notice that says how to keep it, and not again by a generic "could not open the learning replay" notification about the same preview; fails_when=a refused Keep Tab Open is followed by the load-failure notification of the same refusal; why_new=Cycle 0050 F394 (the keep notice returned false, so the caller told the failure again); seam=addNonTextPreview behind another tab, the fake editor's keepEditor command, answerWarningDialogs, the harness's error notifications; no_claim=the wording of the keep notice
+test('Open replay beside a non-text preview that cannot be kept tells the learner once and shows no load-failure notification', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.close()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    const agentChat = harness.addSeparateEditorPart()
+    const preview = harness.addNonTextPreview('diagram.png', 1, false)
+    agentChat.focus()
+    const hasMainEditorFocus = harness.reader['hasMainEditorFocus'].bind(
+      harness.reader,
+    )
+    harness.reader['hasMainEditorFocus'] = (groupCount: number): boolean =>
+      groupCount === 1 && preview.isPreview
+        ? false
+        : hasMainEditorFocus(groupCount)
+    harness.answerWarningDialogs(async () => 'Keep Tab Open')
+
+    // Act
+    await harness.reader.openLearningReplay(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(
+      harness.warningDialogs.slice(1).map((dialog) => dialog.title),
+      [
+        'Codebook could not keep "diagram.png" open. Double-click its tab to keep it, then choose Open replay again.',
+      ],
+    )
+    assert.deepEqual(harness.errorMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who chose Keep Tab Open for a non-text preview that cannot be kept, when a test replay's Open replay was refused for it, being told once by the keep notice, with no second notification, and the refusal recorded in one Output › Codebook open:test-replay entry (F407); fails_when=a refused Keep Tab Open is followed by the test replay's load-failure notification, or leaves no Output entry; why_new=Cycle 0050 F394 (openNodeHistoryFromHost told the failure after the keep notice); seam=openNodeHistory answering a foreign-preview failure, addNonTextPreview behind another tab, answerWarningDialogs, the diagnostics log and the harness's error notifications; no_claim=how the replay's open meets the preview (the F158 rounds above)
+test('a test replay Open replay refused for a non-text preview that cannot be kept tells the learner once and records the refusal in one Output entry', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('learner-notes.ts', 1)
+    harness.addNonTextPreview('diagram.png', 1, false)
+    harness.answerWarningDialogs(async () => 'Keep Tab Open')
+    context.mock.method(
+      harness.reader as unknown as { openNodeHistory: () => Promise<unknown> },
+      'openNodeHistory',
+      async () => ({
+        status: 'failed',
+        error: new Error(
+          'A destination group contains a foreign preview: "diagram.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+        ),
+      }),
+    )
+
+    // Act
+    await harness.reader.openNodeHistoryFromHost('a_b')
+
+    // Assert
+    assert.deepEqual(
+      harness.warningDialogs.slice(1).map((dialog) => dialog.title),
+      [
+        'Codebook could not keep "diagram.png" open. Double-click its tab to keep it, then choose Open replay again.',
+      ],
+    )
+    assert.deepEqual(harness.errorMessages, [])
+    assert.deepEqual(
+      logged.map((entry) => [entry.surface, entry.studyId, entry.cause]),
+      [
+        [
+          'open:test-replay',
+          'a_b',
+          'A destination group contains a foreign preview: "diagram.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+        ],
+      ],
+    )
+  } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })
@@ -804,6 +1014,300 @@ test("in VS Code, a group the learner adds while an agent's Return Current waits
       'Error: Native pane, group or focus changed while presentation waited; the learner arrangement was preserved.',
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Output › Codebook entry a refused placement guard writes (F382): the entry names the guard that refused, the editor groups before and after, and the group change the editor reported while the guard waited, so the next native occurrence names its own cause; fails_when=a refusal writes no entry, names no guard, or lists no group event or no group after the change; why_new=Cycle 0050 F382 (the refusal sentence alone named no change); seam=applicationGroupMarkers, leaveEmptyLockedGroup, closeEmptyGroupsAfterPanelMove with removeGroupLeftByPanelMoveLater, the reader's agent select and returnToCurrent, the fake editor's workbench.action.newGroupAbove run as the learner, the diagnostics log; no_claim=the wording of the refusal sentence the learner reads
+test('a refused placement guard writes one Output entry that names the guard, the groups before and after and the group change it saw', async () => {
+  // Arrange: as in the learner-adds-a-group round below; the agent selected the Study cold, which put the Application into the unproven leftover.
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    const selected = harness.reader.presentationState()
+    const answer = harness.reader
+      .returnToCurrent(
+        {
+          presentationId: selected.presentationId,
+          expectedRevision: selected.reader.contentRevision,
+        },
+        'agent',
+      )
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.scopedBrowser') === 1 &&
+        harness.groups.includes(leftover) &&
+        leftover.tabs.length === 0,
+      "the Application's move out of the leftover",
+    )
+
+    // Act: the learner runs New Group Above before the editor removes the emptied leftover.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    await answer
+
+    // Assert
+    const refusals = logged.filter(
+      (entry) => entry.surface === 'presentation:placement-refused',
+    )
+    assert.equal(refusals.length, 1)
+    const lines = refusals[0]!.cause.split('\n')
+    assert.equal(lines[0], 'Guard: followRemovalOfGroupLeftByApplication')
+    assert.match(
+      lines[2]!,
+      /^Groups before: 1\* \[codebook · Application \(webview codebook\.scopedBrowser\)\] \| 2 \[\] \|/,
+    )
+    assert.match(
+      lines[3]!,
+      /^Groups after: 1\* \[\] \| 2 \[codebook · Application \(webview codebook\.scopedBrowser\)\] \|/,
+    )
+    assert.match(
+      refusals[0]!.cause,
+      /\+\d+ ms groups opened \[\] closed \[3\] changed \[1,2,3,4\]/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the extension host not sanitizing every tab label at each placement guard it arms (about thirty arms per presentation), because the snapshot is read only on the rare refusal; fails_when=a guard that ends without refusing still sanitizes the groups it noted at arm time, or the arm sanitizes at all; why_new=Cycle 0050 F393 (every arm ran sanitizeCause on up to eight labels per group); seam=the sanitizeCause export, armPlacementReport, the reader's agent select and returnToCurrent over the leftover-group layout; no_claim=the wall-clock cost of one sanitization
+test('a presentation whose placement guards are armed and never refuse sanitizes no tab label for the Output', async (context) => {
+  // Arrange: as in the refusal round above; the agent selected the Study cold, which put the Application into the unproven leftover.
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    let arms = 0
+    let sanitizedLabels = 0
+    const reader = harness.reader as unknown as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >
+    const arm = reader['armPlacementReport']!.bind(reader)
+    reader['armPlacementReport'] = (...args) => {
+      arms++
+      return arm(...args)
+    }
+    // Counts the sanitizations of a tab label wherever the product makes them: the compiled code reads the export at each call.
+    const sanitize = sanitizeCauseModule.sanitizeCause
+    context.mock.method(
+      sanitizeCauseModule,
+      'sanitizeCause',
+      (...args: Parameters<typeof sanitize>) => {
+        if (
+          harness.groups.some((group) =>
+            group.tabs.some((tab) => tab.label === args[0]),
+          )
+        )
+          sanitizedLabels++
+        return sanitize(...args)
+      },
+    )
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    const selected = harness.reader.presentationState()
+    const answer = harness.reader
+      .returnToCurrent(
+        {
+          presentationId: selected.presentationId,
+          expectedRevision: selected.reader.contentRevision,
+        },
+        'agent',
+      )
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+    await answer
+
+    // Assert
+    assert.ok(arms > 0)
+    assert.equal(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:placement-refused',
+      ).length,
+      0,
+    )
+    assert.equal(sanitizedLabels, 0)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the refusal still sanitizing the groups it reports, once for the snapshot taken at arm time and once for the groups now; fails_when=the refusal reports raw tab labels, or sanitizes only one of the two snapshots; why_new=Cycle 0050 F393 (sanitizing moved from the arm to the refusal); seam=the sanitizeCause export, refusePlacement, the fake editor's workbench.action.newGroupAbove run as the learner; no_claim=the wording of the refusal sentence the learner reads
+test('a refused placement guard sanitizes the tab labels of its two snapshots for the Output', async (context) => {
+  // Arrange: as in the refusal round above; the agent selected the Study cold, which put the Application into the unproven leftover.
+  const harness = await workspaceHarness(false)
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 229 }, { size: 349 }, { size: 109 }],
+  })
+  harness.closeEmptyGroupsAfterPanelMove()
+  harness.removeGroupLeftByPanelMoveLater()
+  try {
+    harness.applicationGroupMarkers.set('codebook.applicationGroup.v1', {
+      version: 1,
+      writer: 'the window before the reload',
+      column: 1,
+      groupCount: 3,
+      layout: {
+        orientation: 1,
+        groups: [{ size: 229 }, { size: 229 }, { size: 229 }],
+      },
+    })
+    harness.leaveEmptyLockedGroup(1)
+    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
+    harness.focusMutableDraft('auth.ts', 3)
+    harness.focusMutableDraft('actions.ts', 2)
+    let arms = 0
+    let sanitizedLabels = 0
+    const reader = harness.reader as unknown as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >
+    const arm = reader['armPlacementReport']!.bind(reader)
+    reader['armPlacementReport'] = (...args) => {
+      arms++
+      return arm(...args)
+    }
+    // Counts the sanitizations of a tab label wherever the product makes them: the compiled code reads the export at each call.
+    const sanitize = sanitizeCauseModule.sanitizeCause
+    context.mock.method(
+      sanitizeCauseModule,
+      'sanitizeCause',
+      (...args: Parameters<typeof sanitize>) => {
+        if (
+          harness.groups.some((group) =>
+            group.tabs.some((tab) => tab.label === args[0]),
+          )
+        )
+          sanitizedLabels++
+        return sanitize(...args)
+      },
+    )
+    const selection = harness.reader.presentationState()
+    await harness.reader.changePresentation(
+      {
+        presentationId: selection.presentationId,
+        expectedRevision: selection.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      },
+      'agent',
+    )
+    const selected = harness.reader.presentationState()
+    const answer = harness.reader
+      .returnToCurrent(
+        {
+          presentationId: selected.presentationId,
+          expectedRevision: selected.reader.contentRevision,
+        },
+        'agent',
+      )
+      .then(
+        () => 'returned',
+        (error: unknown) => String(error),
+      )
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.scopedBrowser') === 1 &&
+        harness.groups.includes(leftover) &&
+        leftover.tabs.length === 0,
+      "the Application's move out of the leftover",
+    )
+
+    // Act: the learner runs New Group Above before the editor removes the emptied leftover.
+    await harness.editor.commands.executeCommand(
+      'workbench.action.newGroupAbove',
+    )
+    await answer
+
+    // Assert
+    assert.ok(arms > 0)
+    assert.equal(
+      logged.filter(
+        (entry) => entry.surface === 'presentation:placement-refused',
+      ).length,
+      1,
+    )
+    assert.equal(sanitizedLabels, 10)
+  } finally {
+    context.mock.restoreAll()
     await harness.close()
   }
 })
@@ -7979,7 +8483,8 @@ test('Restore beside a kept image tab leaves the enlarged Study pane and names t
     // Act: the pane's Restore; then the step the refusal names, and Restore again.
     await harness.reader.action('arrange')
     const refused = {
-      lines: harness.reader.inspect().view!.errors.join(' | '),
+      lines: harness.reader.presentationState().reason,
+      errorRows: harness.reader.inspect().view!.errors.length,
       maximized: harness.maximizedEditorGroup(),
       maximizeCommands: maximizeCommands(),
     }
@@ -7994,6 +8499,7 @@ test('Restore beside a kept image tab leaves the enlarged Study pane and names t
     assert.deepEqual(refused, {
       lines:
         'Error: The tab "logo.png" is in front of the captured source in editor group 2. Close that tab or select the captured source\'s tab, then restore the layout again.',
+      errorRows: 0,
       maximized: false,
       maximizeCommands: 1,
     })
@@ -8007,6 +8513,192 @@ test('Restore beside a kept image tab leaves the enlarged Study pane and names t
       true,
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the next native take of an unreported main editor focus naming what the first group held; fails_when=the refusal is told only to the caller and Output › Codebook gets no entry with the groups and tabs at the refusal; why_new=Cycle 0050 F389 (the Cursor main editor's contents when the keyboard report never came were not recorded)
+test('Open Study Workspace refused for an unreported main editor focus writes one Output entry naming the first group and its tab', async (context) => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    // The editor reports a group change while the focus command runs, as Cursor does when it rebuilds its tab model; the report's event log gets that change at that moment.
+    const commands = harness.editor.commands as {
+      executeCommand: (name: string, ...rest: unknown[]) => Thenable<unknown>
+    }
+    const runCommand = commands.executeCommand.bind(commands)
+    commands.executeCommand = async (name, ...rest) => {
+      if (name === 'workbench.action.focusFirstEditorGroup')
+        harness.reader['placementEvents'].record(
+          performance.now(),
+          'groups opened [] closed [] changed [1]',
+        )
+      // Time passes before the command returns, so the report's window must start at its snapshot to list the change.
+      await advanceClock(context, 100)
+      return runCommand(name, ...rest)
+    }
+
+    // Act
+    const opening = harness.reader.open().then(
+      () => 'opened',
+      (error: unknown) => String(error),
+    )
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, opening, 6_000)
+    await opening
+    resetFakeClock(context)
+
+    // Assert
+    const entries = logged.filter(
+      (entry) => entry.surface === 'presentation:focus-unreported',
+    )
+    assert.equal(entries.length, 1)
+    assert.match(entries[0]!.cause, /Guard: main editor focus report/)
+    // The window opens with the snapshot, so the focus command's own group change is listed (F404).
+    assert.match(entries[0]!.cause, /Events while armed:\n  \+\d+ ms groups /)
+    assert.match(entries[0]!.cause, /1\*? \[Cursor Settings \(/)
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+for (const entry of [
+  "an agent's Study workspace request",
+  'Open Study Workspace',
+] as const) {
+  // Value: protects=a Study workspace request made while Cursor's Agent works and the main editor holds no editor at all (only its empty-editor watermark): the panes are arranged without the learner's click and the Agent keeps the keyboard; fails_when=the entry waits five seconds for a keyboard focus report that Cursor never gives an empty group or a Codebook pane beside the chat, and refuses with "The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …"; why_new=Cycle 0050 F389 (Cursor 3.26.16, frames of the X3 take: no tab in any group, the Agent working, two refused codebook_presentation study-workspace requests); seam=the workspace harness with one empty main group, Cursor's chat part and unreported pane focus
+  test(`${entry} made beside Cursor's Agent while the main editor holds no editor arranges the three panes and leaves the keyboard in the chat`, async (context) => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 1, groups: [{}] })
+    harness.leaveEmptyGroup(1)
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    try {
+      chat.focusTab()
+      const state = harness.reader.presentationState()
+
+      // Act
+      const request =
+        entry === 'Open Study Workspace'
+          ? harness.reader.open()
+          : harness.reader.changePresentation(
+              {
+                presentationId: state.presentationId,
+                expectedRevision: state.presentationControlRevision,
+                mode: 'study-workspace',
+                action: 'select',
+              },
+              'agent',
+            )
+      const outcome = request.then(
+        () => 'arranged',
+        (error: unknown) => String(error),
+      )
+      enableFakeClock(context)
+      await advanceClockUntilSettled(context, outcome, 6_000)
+      const result = await outcome
+      resetFakeClock(context)
+
+      // Assert
+      assert.equal(result, 'arranged')
+      assert.equal(harness.groups.length, 4)
+      assert.equal(harness.groups.at(-1)?.tabs[0]?.label, 'New Agent')
+      assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+      assert.equal(chat.focused(), true)
+    } finally {
+      resetFakeClock(context)
+      await harness.close()
+    }
+  })
+}
+
+// Value: protects=an agent's first run beside Cursor's Agent while the main editor is one empty group (the editor's empty-editor view): the run is prepared instead of the empty-group refusal; fails_when=the empty first group is refused at once before the lone-main-group check, so the F389 shape is still refused on this entry; why_new=F401 (CodeRabbit major: emptyFirstGroupObstacle threw before isSoleMainGroupBesideChat); seam=the workspace harness with one empty main group and Cursor's chat part
+test("an agent's first run beside the chat with the main editor as one empty group is prepared instead of refused", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}] })
+  harness.leaveEmptyGroup(1)
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    chat.focusTab()
+
+    // Act
+    const outcome = await Promise.resolve(
+      harness.reader.presentation.createViewport(
+        'mcp-first-run',
+        () => {},
+        () => {},
+        'normal',
+      ),
+    ).catch((error: unknown) => error)
+
+    // Assert
+    assert.equal(
+      outcome instanceof Error ? outcome.message : 'arranged',
+      'arranged',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the unreported-focus refusal for a main editor that holds a learner's page (the editor's Settings) beside Cursor's chat: only the lone empty or Codebook-only first group goes on without the focus report; fails_when=a first group with a learner's tab is arranged without a focus proof; why_new=F403 (OCR L1: no test covered a first group holding a learner's tab with two groups)
+test("an agent's Study workspace request beside the chat with a learner's page in the only main group is refused and opens no group", async (context) => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+
+    // Act
+    const outcome = harness.reader
+      .changePresentation(
+        {
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        },
+        'agent',
+      )
+      .then(
+        () => 'arranged',
+        (error: unknown) => String(error),
+      )
+    enableFakeClock(context)
+    await advanceClockUntilSettled(context, outcome, 6_000)
+    const result = await outcome
+    resetFakeClock(context)
+
+    // Assert
+    assert.match(result, /did not report the keyboard focus within 5 s/)
+    assert.equal(harness.groups.length, 2)
+    assert.equal(chat.focused(), true)
+  } finally {
+    resetFakeClock(context)
     await harness.close()
   }
 })

@@ -1696,6 +1696,30 @@ test('a foreign preview is preserved without Keep Editor or relocation when sele
   }
 })
 
+// Value: protects=the Study pane naming a refused Restore once: a foreign preview tab that blocks the pane's Restore is shown by the presentation status line, and no second error row repeats the same refusal; fails_when=the pane's Restore adds a layout error row carrying the sentence that the presentation reason already shows, so the learner reads the refusal twice; why_new=Cycle 0050 F400 (task 375: VS Code 1.142.0 showed the Welcome page refusal as a plain line and as a red row); seam=the workspace harness's foreign preview draft, the Study pane's arrange action and the reader's error rows; no_claim=the wording of the refusal, which the selection test above pins
+test('a Restore refused for a foreign preview tab shows its refusal once in the Study pane', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const draft = harness.addForeignDraft(1)
+    Reflect.set(draft, 'isPreview', true)
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'Error: A destination group contains a foreign preview: "notes.txt" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+    )
+    assert.equal(harness.reader.inspect().view!.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const boundary of ['layout read', 'layout application'] as const)
   test(`manual resume during presentation ${boundary} cannot certify or save a different live state`, async () => {
     // Arrange

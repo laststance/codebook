@@ -1180,6 +1180,121 @@ test('a recorded seek clears pending pixels and rejects their late acknowledgeme
   harness.viewport.close()
 })
 
+// Value: protects=a recorded moment's frame reaching the pane before its source and values are presented, as a frame that asks for no receipt and clears nothing; fails_when=the preview posts a `reset` with `clear: true` (a blank pane), or asks for a paint receipt that holds the moment; why_new=Cycle 0050 F3 (D29); seam=the viewport harness; no_claim=the webview's off-screen decode and swap
+test('a recorded preview posts one non-required frame and no clearing reset', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true, undefined, 'recording'),
+    epoch = '11111111-1111-1111-1111-111111111111'
+  harness.ready(epoch)
+
+  // Act
+  harness.viewport.previewRecorded('b2xk', 'Recorded 0.10 s')
+  await delay(0)
+
+  // Assert
+  const frames = harness.messages.filter((message) => message.type === 'frame')
+  assert.equal(frames.length, 1)
+  assert.equal(frames[0]?.required, false)
+  assert.equal(frames[0]?.phase, 'Recorded 0.10 s')
+  assert.equal(
+    harness.messages.some((message) => message.type === 'reset'),
+    false,
+  )
+  harness.viewport.close()
+})
+
+// Value: protects=previewRecorded telling its caller whether the frame was posted, so a dropped preview is answered by clearing the pane and not by leaving the earlier moment's pixels; fails_when=it returns true for a frame that no renderer will show (before the renderer is ready, in a live viewport, after close, or while a required frame is already pending) or false for one it posted; why_new=Cycle 0050 F374 (it returned nothing, so a drop was invisible to the workspace); seam=the viewport harness's renderer epoch and its two delivery slots; no_claim=the webview's decode and swap
+test('a recorded preview reports whether it was posted: yes with a renderer, no before one, after close or beside a pending required frame', async () => {
+  // Arrange
+  const recording = await viewportHarness(
+      'normal',
+      true,
+      undefined,
+      'recording',
+    ),
+    live = await viewportHarness('normal', true, undefined, 'live'),
+    epoch = '11111111-1111-1111-1111-111111111111',
+    beforeRenderer = recording.viewport.previewRecorded(
+      'b2xk',
+      'Recorded 0.10 s',
+    )
+  recording.ready(epoch)
+  live.ready(epoch)
+
+  // Act
+  const withRenderer = recording.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.10 s',
+  )
+  const inLiveViewport = live.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.10 s',
+  )
+  // The posted preview is still in flight, so a required frame waits behind it: the delivery takes no preview.
+  const queued = recording.viewport.present('bmV3', 'Recorded 0.30 s')
+  await delay(0)
+  const besideRequired = recording.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.40 s',
+  )
+  recording.viewport.close()
+  const afterClose = recording.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.50 s',
+  )
+  live.viewport.close()
+  await Promise.allSettled([queued])
+
+  // Assert
+  assert.deepEqual(
+    {
+      beforeRenderer,
+      withRenderer,
+      inLiveViewport,
+      besideRequired,
+      afterClose,
+    },
+    {
+      beforeRenderer: false,
+      withRenderer: true,
+      inLiveViewport: false,
+      besideRequired: false,
+      afterClose: false,
+    },
+  )
+})
+
+// Value: protects=previewRecorded refusing a preview while a pause image is pinned, the drop condition the workspace harness's fake holdPausePinned models; fails_when=the viewport posts a non-required preview over a pinned pause image or reports it posted; why_new=Cycle 0050 F396 (the fake modelled only the pending required frame; this pins the real condition it now copies); seam=the viewport harness's renderer epoch, a painted pause frame and the delivery's frozen state; no_claim=the webview's decode and swap
+test('a recorded preview is dropped while a pause image is pinned and posted again after the pause ends', async () => {
+  // Arrange
+  const harness = await viewportHarness('normal', true, undefined, 'recording'),
+    epoch = '11111111-1111-1111-1111-111111111111'
+  harness.ready(epoch)
+  const paused = harness.viewport.present('cGl4ZWxz', 'paused at stop')
+  await delay(0)
+  const frame = harness.messages.findLast((message) => message.type === 'frame')
+  harness.receive({ type: 'painted', epoch, id: frame?.id })
+  await paused
+
+  // Act
+  const whilePinned = harness.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.10 s',
+  )
+  harness.viewport.resume()
+  const afterResume = harness.viewport.previewRecorded(
+    'b2xk',
+    'Recorded 0.20 s',
+  )
+  harness.viewport.close()
+
+  // Assert
+  assert.deepEqual(
+    { whilePinned, afterResume },
+    { whilePinned: false, afterResume: true },
+  )
+})
+
 test('a recorded gap requires its own current renderer receipt and never certifies a PNG', async () => {
   // Arrange
   const harness = await viewportHarness('normal', true, undefined, 'recording'),

@@ -8,7 +8,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.8 changed node-test outcomes: a passing test whose history sealed complete reads `demonstrated` in `finalOutcome`, `studyOutcome` and `recordedStudyOutcome` (1.7 stopped at `partial`), its sealed history is a test replay (`recordingAvailable` and `replayAvailable`), and `nodeTest` adds `testResult`, `learningCoverage` and `learningMissing`. A node-test start's deterministic refusals arrive as the run's `error` before its first stop, a failed history seal makes `codebook_stop` answer `HISTORY_SEAL_FAILED`, and `codebook_playback` refuses a test replay with `PLAYBACK_PROFILE_UNSUPPORTED`.
  */
 export const API_VERSION = '1.8'
-export const EXTENSION_VERSION = '0.2.37'
+export const EXTENSION_VERSION = '0.2.38'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -476,6 +476,21 @@ export const CHAT_KEYBOARD_RETURNED_MESSAGES = {
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'
+/** The two buttons of the modal warning that answers a foreign preview tab blocking Open replay; each one retries the open (F158, D33). */
+export const FOREIGN_PREVIEW_ACTION = {
+  keepOpen: 'Keep Tab Open',
+  close: 'Close Tab',
+} as const
+/** Profile-wide (global state) key recording that Codebook moved the Learning summary beside VS Code's chat once, at the learner's first replay open; it keeps that move to once, so a place the learner chose afterwards is never overridden (F209, D31). */
+export const SUMMARY_BESIDE_CHAT_MOVED_KEY =
+  'codebook.summaryBesideChatMoved.v1'
+/** VS Code's internal command that moves views into a container; its argument is {@link SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT}. Internal to VS Code, so a missing or refusing command is expected and only reported (F209). */
+export const MOVE_VIEWS_COMMAND = 'vscode.moveViews'
+/** The argument that moves the Learning summary into VS Code's Chat container, the secondary side bar the PNG's region 2 shows (F209, D31). */
+export const SUMMARY_BESIDE_CHAT_MOVE_ARGUMENT = {
+  viewIds: ['codebook.learningSummary'],
+  destinationId: 'workbench.panel.chat',
+} as const
 /** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
 export const SUMMARY_PLACEMENT_OFFER =
   'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'
@@ -658,8 +673,20 @@ export const UI_CAUSE_MAX_CHARS = 300
 export const STUDY_SOURCE_SCHEME = 'codebook-source'
 /** The first path segment of a test replay's recorded-source slot ({@link nodeSourceSlotPath}): one Codebook-owned source document per opened test replay, whose text follows the selected moment (DS5). */
 export const NODE_SOURCE_SLOT_PATH_ROOT = 'node-history-slot'
-/** Longest wait for a test replay's recorded-source slot to show a selected moment's bytes before the selection reports that the slot could not open; the slot keeps its loading text meanwhile, never the earlier moment (EN8). */
+/** How many hex characters of the source file's folder hash {@link nodeSourceSlotPath} puts between the study id and the tab title, so two files of the same name in different folders get different slots (F200). */
+export const NODE_SOURCE_SLOT_DIRECTORY_HASH_CHARS = 12
+/** How long a test replay's recorded-source slot may take to show a selected moment's bytes before it is asked to read them again; the slot keeps its loading text meanwhile, never the earlier moment, and the selection is not failed by this bound alone ({@link NODE_HISTORY_SLOT_DEADLINE_MS} fails it) (EN8). */
 export const NODE_HISTORY_TRANSITION_BOUND_MS = 1_000
+/**
+ * How long a test replay's recorded-source slot keeps the earlier stop's bytes after the selection left that stop, so no native view still drawing the earlier stop sits beside the next moment's bytes (F385, F387).
+ * Two native views redraw after the leave, and each repaints on a delay of its own: VS Code's Call Stack view applies the debugger's `continued` in a 50 ms scheduler (`CallStackView.onCallStackChangeScheduler`) followed by the thread and stack requests, and the editor refreshes CodeLenses `provideCodeLensDebounce` after a provider change, at least 250 ms (`LanguageFeatureDebounceService.for(codeLensProvider, 'CodeLensProvide', { min: 250 })`, 1.143.0), restarted by every content change of the document.
+ * 300 ms is that 250 ms plus the time to ask the provider and paint; the bytes change once, after it.
+ */
+export const NODE_HISTORY_LEAVE_SETTLE_MS = 300
+/** One deadline over a test replay's whole recorded-source show: the document's open, its show, the wait for its bytes and the close of the earlier slot tab. When it passes first, the moment reports its `history-source` row and releases Play's pending selection (closure rule 7 of #118). */
+export const NODE_HISTORY_SLOT_DEADLINE_MS = 5_000
+/** How long closing the reader waits for the reader position writes of a test replay that are still running (F197): a write that has not returned by then is left to finish in the background, so a stuck disk cannot hold the close. */
+export const NODE_HISTORY_POSITION_DRAIN_MS = 2_000
 /** Registered view types of the editor panes Codebook creates: Application, Study and Repository Wiki. */
 export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
   'codebook.scopedBrowser',
@@ -725,6 +752,8 @@ export const PNG_WIDTH_OFFSET = 16
 export const PNG_HEIGHT_OFFSET = 20
 export const PNG_SIGNATURE_HEX = '89504e470d0a1a0a0000000d49484452'
 export const PLAYBACK_TICK_INTERVAL_MS = 50
+/** How long an explicit move within a loaded recording waits for the next frame's bytes with the shown pixels untouched before the Application pane blanks to its loading line; a frame read that passes it hides the page, a read that ends sooner swaps the pixels without a dark frame (F3, D29). */
+export const PLAYBACK_FRAME_READ_BOUND_MS = 1_000
 /** The longest Play waits between two events of a test replay, however far apart the journal recorded them (the test ran unrecorded between stops). */
 export const NODE_HISTORY_PLAY_MAX_DWELL_MS = 1_500
 export const PLAYBACK_PREFERENCE_FILE = 'playback.v1.json'
@@ -1233,6 +1262,131 @@ export const REPOSITORY_DISCOVERY_CANDIDATE_LIMIT = 2_048
 export const REPOSITORY_DISCOVERY_TIMEOUT_MS = 30_000
 export const REPOSITORY_APPLICATION_LOG_LIMIT_BYTES = 262_144
 export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
+/** Next's own development port, used when the dev script declares no port. */
+export const DEVELOPMENT_SERVER_DEFAULT_PORT = 3000
+export const DEVELOPMENT_SERVER_MAX_PORT = 65_535
+/** Bounds one loopback connect that asks whether something already listens on the project's port; a connect that times out proves nothing (Windows reports a refused loopback connect only after its SYN retries, 1 to 2 s), so the bind probe decides. */
+export const DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS = 500
+/** Bounds the wait for a port that Codebook's own earlier run is still releasing (its owned process group is exiting) before the start is refused as that run's. */
+export const DEVELOPMENT_PORT_RELEASE_WAIT_MS = 5_000
+/** The pause between two checks while {@link DEVELOPMENT_PORT_RELEASE_WAIT_MS} runs. */
+export const DEVELOPMENT_PORT_RELEASE_POLL_MS = 100
+/** The lockfiles that make a repository a Bun project: Bun loads the project's `.env` files into the environment of the scripts it runs, so a `next dev` without a port flag may start on a `PORT` from them (F499). Only their existence is checked. */
+export const DEVELOPMENT_BUN_LOCKFILES: readonly string[] = [
+  'bun.lock',
+  'bun.lockb',
+]
+/** Bounds how many folders the Bun lockfile search climbs from the opened folder while it looks for the Git root (a count): the search stops at the first folder that holds `.git`, and without one inside this bound only the opened folder counts (F514). */
+export const DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS = 16
+/** The file whose presence in the opened folder or the Git root makes a project a Yarn Berry project (Yarn 2 and later), searched like the Bun lockfiles (F515). */
+export const DEVELOPMENT_YARN_BERRY_CONFIG = '.yarnrc.yml'
+/** The first major version of Yarn that runs scripts in the portable shell (Yarn 2, "Berry"); Yarn 1 runs them with `sh` (F523). */
+export const DEVELOPMENT_YARN_BERRY_MIN_MAJOR = 2
+/** The reason the `applicationPortSource` gives when the `dev` script of a Yarn Berry project has a form that Yarn 2+'s portable shell reads differently from `sh` (`export`, which it lacks; a `;;` or a `;` followed by blanks at the end of the line, which it rejects; D75, F515, F519); the quoted statement follows it. */
+export const DEVELOPMENT_YARN_SHELL_UNREAD_REASON =
+  "Next's default port, taken because Yarn 2 and later runs scripts in its own portable shell, which reads this form differently from sh, so it can mean different things"
+/** The `packageManager` prefix of a `package.json` that makes the project a Bun project without a lockfile (F514). */
+export const DEVELOPMENT_BUN_PACKAGE_MANAGER_PREFIX = 'bun@'
+/** The reason the `applicationPortSource` gives when the `dev` script is unread on Windows because Bun runs it with Bun Shell by default and with `cmd` when `run.shell` is `system` in `bunfig.toml`, so the same text means different things (D75, F509, F514); the quoted statement follows it. */
+export const DEVELOPMENT_BUN_SHELL_UNREAD_REASON =
+  "Next's default port, taken because on Windows Bun runs scripts with its own shell, or with cmd when run.shell is set to system in bunfig.toml, so the form can mean different things"
+/** The `applicationPortSource` when the `dev` script is empty or only blanks (F511). */
+export const DEVELOPMENT_EMPTY_SCRIPT_SOURCE =
+  "Next's default port, taken because the dev script in package.json is empty"
+/** The reason the `applicationPortSource` gives when the `dev` script is unread because Bun loads `.env` files (F499); the quoted statement follows it. */
+export const DEVELOPMENT_BUN_ENV_UNREAD_REASON =
+  "Next's default port, taken because Bun loads .env files into the dev script's environment and a PORT there can decide the port when no -p/--port flag is given"
+/** The reason the `applicationPortSource` gives when the `dev` script has a form whose meaning differs under `cmd`, the shell npm, pnpm and yarn use on Windows (F502, D74); the quoted statement follows it. */
+export const DEVELOPMENT_CMD_UNREAD_REASON =
+  "Next's default port, taken because npm runs the dev script with cmd on Windows, where this form (single quotes, a PORT= or NAME= prefix, export, env, ;, a PORT variable written in another case, or a program written as a path with /) does not mean what it means in sh"
+/** Bounds how deep the `dev` script reader descends (a count, not a duration): every step into another command line grows the same depth, whether it is a quoted `concurrently` command or another script (`npm run x`, `pnpm x`). The `dev` script is depth 0; no step is taken from depth {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}, so a delegation cycle stops there and the script is reported as unread. */
+export const DEVELOPMENT_SCRIPT_NESTING_LIMIT = 2
+
+/** Bounds how many statements one `readDeclaredDevelopmentPort` call reads across every line and delegation of the `dev` script (a count, not a duration). {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} bounds depth only, so thousands of delegations that each hold thousands of delegations would otherwise run millions of reads on the extension host (F550); a real script holds a handful of statements. */
+export const DEVELOPMENT_SCRIPT_STATEMENT_LIMIT = 256
+
+/** The reason the `applicationPortSource` gives when the `dev` script runs more statements than {@link DEVELOPMENT_SCRIPT_STATEMENT_LIMIT} (F550). */
+export const DEVELOPMENT_SCRIPT_TOO_LONG_REASON =
+  "Next's default port, taken because the dev script runs more statements than Codebook reads"
+/** Bounds the part of an unread `dev` script that `applicationPortSource` quotes (code points, not bytes). */
+export const DEVELOPMENT_SCRIPT_UNREAD_SEGMENT_MAX_CHARS = 120
+/** Bounds a `package.json` script name that `applicationPortSource` quotes (code points). */
+export const DEVELOPMENT_SCRIPT_NAME_SHOWN_MAX_CHARS = 40
+/** The only characters a `dev` script may hold for the reader to assert a port from it (D72): letters, digits, blanks, `_ . , : / @ % + = -`, quotes, `&` and `;`. Any other character is shell syntax the reader does not model (`|`, `(`, `{`, `$`, a backtick, `<`, `>`, `!`, `#`, a backslash, a line break, a glob), so the script is unread. */
+export const DEVELOPMENT_SCRIPT_ALLOWED_CHARACTERS = /^[\w \t.,:/@%+='"&;-]*$/
+/** The words of the `dev` script grammar that the quoted unread segment may show (D72 rule 2): launchers, delegations, wrappers and their subcommands. */
+export const DEVELOPMENT_SCRIPT_SHOWN_WORDS: ReadonlySet<string> = new Set([
+  'next',
+  'dev',
+  'npx',
+  'bunx',
+  'npm',
+  'pnpm',
+  'yarn',
+  'bun',
+  'run',
+  'run-script',
+  'exec',
+  'cross-env',
+  'env',
+  'concurrently',
+  'export',
+])
+/** The flags the quoted unread segment may show by name (D72 rule 2): Next's `dev` options and the options of the delegation commands. */
+export const DEVELOPMENT_SCRIPT_SHOWN_FLAGS: ReadonlySet<string> = new Set([
+  '-p',
+  '--port',
+  '-H',
+  '--hostname',
+  '--turbo',
+  '--turbopack',
+  '--webpack',
+  '--experimental-https',
+  '--experimental-https-key',
+  '--experimental-https-cert',
+  '--experimental-https-ca',
+  '--silent',
+  '-s',
+  '--if-present',
+  '--',
+])
+/** The flags of `next dev` that take no value (D72). */
+export const DEVELOPMENT_SCRIPT_VALUELESS_NEXT_FLAGS: ReadonlySet<string> =
+  new Set(['--turbo', '--turbopack', '--webpack', '--experimental-https'])
+/** The names for which `pnpm <name>` and `yarn <name>` (without `run`) are read as a delegation to the script of that name (D76, F510). Each was run with pnpm 12.14.0 and yarn 1.22.22 in a project with a script of that name and ran the script; a name containing `:` is also read (no builtin has one). Every other name is unread: pnpm and yarn have about 60 builtins and aliases that change between versions, and some run a same-named script only in some versions, so a list of builtins to exclude can never be complete. `<manager> run <name>` names the script of any name. */
+export const DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES: ReadonlySet<string> =
+  new Set(['dev', 'start', 'serve', 'web', 'app', 'client', 'frontend'])
+/** Variables whose assignment before or beside a `next dev` command can change which program runs, what it loads or which port it takes, so the reader does not read past one (D72): the loader and path variables, `NODE_OPTIONS` (preloads), and the `npm_config_*` settings. */
+export const DEVELOPMENT_SCRIPT_UNSAFE_ASSIGNMENT_NAME =
+  /^(?:NODE_OPTIONS|NODE_PATH|PATH|ENV|SHELLOPTS|IFS|npm_config_.*|LD_.*|DYLD_.*|BASH_.*)$/i
+/** The only variables the owned `next dev` inherits from the extension host. */
+export const DEVELOPMENT_SERVER_INHERITED_ENVIRONMENT_NAMES = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'PNPM_HOME',
+  'USER',
+  'LOGNAME',
+] as const
+/** The loopback names that count as the owned application's origin at its port (D65); the recorded browser opens the first. */
+export const OWNED_APPLICATION_LOOPBACK_HOSTS = [
+  'localhost',
+  '127.0.0.1',
+  '[::1]',
+] as const
+/** Bounds how much of a project's package.json is read to find its declared port. */
+export const DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES = 1_048_576
+
+/** The `applicationPortSource` when `package.json` is not a regular file (a FIFO, a device, a socket or a folder), which Codebook never opens (F556). */
+export const DEVELOPMENT_PACKAGE_NOT_REGULAR_SOURCE =
+  "Next's default port, taken because package.json is not a regular file Codebook reads"
+
+/** The `applicationPortSource` when `package.json` is larger than {@link DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES}, so reading it would cut it (F556). */
+export const DEVELOPMENT_PACKAGE_TOO_LARGE_SOURCE =
+  "Next's default port, taken because package.json is larger than Codebook reads"
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT = 8
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT_CHARS = 512
@@ -1242,6 +1396,12 @@ export const REPOSITORY_PAUSE_URL_LIMIT_CHARS = 512
 export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
 /** How many pauses away from the expected stop (and how many idle `continued` events) one run journals; past it only their count is kept, so a hook that pauses in a loop cannot use up the journal. */
 export const REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT = 100
+/** How many `stop.module-parsed`, `stop.instance-sealed` and `stop.instance-refused` entries one run journals, each type up to it; past it only their count is kept, except the first entry of each type for every stop and script address, which is always journaled (the instance's hashes are the evidence). Next's HMR announces every layer's script again after each save, so a long session must not use up the evidence budget. */
+export const REPOSITORY_STOP_MODULE_JOURNAL_LIMIT = 100
+/** How many entries past {@link REPOSITORY_STOP_MODULE_JOURNAL_LIMIT} one run journals because they are the first of their type, stop and script address (an absolute second cap, a count): addresses that change per rebuild (a chunk id, a layer, a query) would otherwise add one entry per save without a ceiling (F473). Stops and layers of a run are few, so it is not reached in practice; the rest are only counted. */
+export const REPOSITORY_STOP_MODULE_FIRST_JOURNAL_BEYOND_LIMIT = 50
+/** The longest the run waits for the text of a script that may be another webpack layer's instance of a declared server stop's module (`Debugger.getScriptSource`); past it the instance is refused with that reason, and a pause held in it fails with a sentence naming it. It is shorter than the wait for a stop's own pause, so the sentence is ready when that wait ends. */
+export const REPOSITORY_STOP_INSTANCE_READ_MS = 2_000
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
 /** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */
@@ -1415,3 +1575,12 @@ export const TRANSIENT_SEAL_ERROR_CODES: readonly string[] =
 
 /** How many listed test histories keep the map of their citable events for the fast path of a changed learning material; the others read their journal again when it changes ({@link NodeTestHistoryStore.summarize}). */
 export const NODE_HISTORY_CITABLE_MEMO_LIMIT = 8
+
+/** The most tabs of one editor group a placement refusal report lists ({@link describePlacementRefusal}), in tabs. */
+export const REFUSAL_REPORT_GROUP_TABS = 8
+
+/** The longest tab label a placement refusal report shows, in characters. */
+export const REFUSAL_REPORT_LABEL_CHARS = 48
+
+/** The most editor events a {@link PlacementEventLog} keeps and a placement refusal report lists, in events. */
+export const REFUSAL_REPORT_EVENTS = 24

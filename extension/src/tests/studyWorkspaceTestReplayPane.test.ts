@@ -102,17 +102,17 @@ test('Show recorded output puts a closed Application pane back above the recorde
 
   // Assert
   assert.deepEqual(before.groups, [
-    { column: 2, tabs: ['Captured-overview.mts', 'Captured-theme.ts'] },
+    { column: 2, tabs: ['Captured-theme.ts'] },
     { column: 1, tabs: ['codebook.scopedBrowser'] },
     { column: 3, tabs: ['codebook.studyContext'] },
   ])
   assert.deepEqual(closed.groups, [
-    { column: 1, tabs: ['Captured-overview.mts', 'Captured-theme.ts'] },
+    { column: 1, tabs: ['Captured-theme.ts'] },
     { column: 2, tabs: ['codebook.studyContext'] },
   ])
   assert.deepEqual(after.groups, [
     { column: 1, tabs: ['codebook.scopedBrowser'] },
-    { column: 2, tabs: ['Captured-overview.mts', 'Captured-theme.ts'] },
+    { column: 2, tabs: ['Captured-theme.ts'] },
     { column: 3, tabs: ['codebook.studyContext'] },
   ])
   // The Application group and the source's share the left column, and the Study pane's group stays the right column.
@@ -129,7 +129,7 @@ test('Show recorded output reuses the emptied group of the closed Application pa
 
   // Assert
   assert.deepEqual(closed.groups, [
-    { column: 2, tabs: ['Captured-overview.mts', 'Captured-theme.ts'] },
+    { column: 2, tabs: ['Captured-theme.ts'] },
     { column: 1, tabs: [] },
     { column: 3, tabs: ['codebook.studyContext'] },
   ])

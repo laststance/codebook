@@ -400,7 +400,7 @@ test('a seek that is presenting when a newer seek arrives commits nothing before
   }
 })
 
-// Value: protects=a Play step that is presenting when a newer seek arrives commits nothing: while the newer seek loads, the Study pane still shows the moment Play started from, not the played event; the newer seek's moment shows when it ends; fails_when=the overtaken Play step commits its event before the newer seek has shown anything; why_new=F139 (the coordinator's review of PR-2 B): the same defect as the seek's, through Play; seam=the workspace harness's held historical debug presentation and the playback clock, moved by hand; no_claim=Play's pacing
+// Value: protects=a Play step that is presenting when a newer seek arrives commits nothing: while the newer seek loads, the Study position names the newer seek's stop and never the played event; the newer seek's moment shows when it ends; fails_when=the overtaken Play step commits its event before the newer seek has shown anything; why_new=F139 (the coordinator's review of PR-2 B): the same defect as the seek's, through Play; seam=the workspace harness's held historical debug presentation and the playback clock, moved by hand; no_claim=Play's pacing; why_changed=F388: the pending position line ends with the loading words
 test('a Play step that is presenting when a newer seek arrives commits nothing before the newer seek shows', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -425,8 +425,14 @@ test('a Play step that is presenting when a newer seek arrives commits nothing b
     await newerSeek
 
     // Assert
-    assert.deepEqual(whileNewerLoads, before)
-    assert.equal(whileNewerLoads.sequence, 3)
+    // The Study position names the newer seek's stop while it loads (D29, F203); the overtaken Play step's event never shows.
+    assert.deepEqual(whileNewerLoads, {
+      sequence: 2,
+      stepId: undefined,
+      explanation: undefined,
+      position: 'Stop 1 of 2 · 0.20 s · loading…',
+    })
+    assert.equal(before.position, 'Output · 0.25 s')
     assert.equal(shownMoment(harness).sequence, 2)
     assert.equal(controller.state().sequence, 2)
     assert.equal(controller.state().mode, 'paused')
@@ -474,7 +480,9 @@ test('Play at the result starts nothing and tells no error', async () => {
       sequence: 5,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 5 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the result is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -647,7 +655,7 @@ function unverifySecondStop(context: TestContext, harness: Harness): void {
   )
 }
 
-// Value: protects=Next stop onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable, presents no recorded values in the debugger and tells no error; fails_when=the move is refused or stays on the first stop, or the debugger presents another moment's values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × step move had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the placeholder slot's text (the source slot tests)
+// Value: protects=Next stop onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable, presents no recorded values in the debugger and tells no error; fails_when=the move is refused or stays on the first stop, or the debugger presents another moment's values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × step move had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the placeholder slot's text (the source slot tests); why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('Next stop onto a stop whose source does not verify shows it without recorded values and tells no error', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -667,6 +675,7 @@ test('Next stop onto a stop whose source does not verify shows it without record
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'Next stop lands on the unverified stop',
       READER_RESULT_BOUND_MS,
@@ -686,7 +695,7 @@ test('Next stop onto a stop whose source does not verify shows it without record
   }
 })
 
-// Value: protects=a seek onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable and presents no recorded values; fails_when=the seek is refused, lands elsewhere, or the debugger presents recorded values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × seek had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the playhead's drawing (the Reader DOM check)
+// Value: protects=a seek onto a stop whose captured source does not verify shows that moment truthfully: it commits with its source unavailable and presents no recorded values; fails_when=the seek is refused, lands elsewhere, or the debugger presents recorded values at the unverified stop; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): unverified stop × seek had no cell; seam=the store's read, whose second stop's captured text was edited; no_claim=the playhead's drawing (the Reader DOM check); why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('a seek onto a stop whose source does not verify shows it without recorded values and tells no error', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -706,6 +715,7 @@ test('a seek onto a stop whose source does not verify shows it without recorded 
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'the seek lands on the unverified stop',
       READER_RESULT_BOUND_MS,
@@ -741,7 +751,9 @@ test('Play across a stop whose source does not verify shows it without recorded 
     controller.play()
     advance(60)
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Play reaches the unverified stop',
       READER_RESULT_BOUND_MS,
     )
@@ -791,7 +803,7 @@ test('Inspect on the result is refused as no debugger stop and changes nothing',
   }
 })
 
-// Value: protects=after the learner stopped the replay debugger, an explicit Next stop is the learner's choice to see the next stop's values: it starts the debugger again there and commits the stop; fails_when=Next stop is refused like a seek, or commits the stop without recorded values; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): a stopped debugger × step move had no cell (only a seek's refusal was tested); seam=the harness's fake historical debugger, marked stopped; no_claim=the native Run and Debug view
+// Value: protects=after the learner stopped the replay debugger, an explicit Next stop is the learner's choice to see the next stop's values: it starts the debugger again there and commits the stop; fails_when=Next stop is refused like a seek, or commits the stop without recorded values; why_new=F321 (PR-2 /ship Step 9 pass 2 state-machines): a stopped debugger × step move had no cell (only a seek's refusal was tested); seam=the harness's fake historical debugger, marked stopped; no_claim=the native Run and Debug view; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('Next stop after the learner stopped the replay debugger starts it again at the next stop', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -812,6 +824,7 @@ test('Next stop after the learner stopped the replay debugger starts it again at
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'Next stop lands on the second stop',
       READER_RESULT_BOUND_MS,
@@ -860,6 +873,202 @@ test('Play after the learner stopped the replay debugger pauses at the next stop
     assert.equal(controller.state().mode, 'paused')
     assert.deepEqual(shownMoment(harness), before)
     assert.equal(harness.historicalDebuggers.length, debuggersBefore)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Play and its commits never wait for the reader position write (D39, F197): while the write of the first step's position never returns, Play goes on to the next event, the Study position and the Application header show each new moment, and the writes of the moments played meanwhile are coalesced into one that follows when the first returns, carrying the latest moment; fails_when=Play's step awaits the write before its commit is published, so a slow disk keeps the Study and Application panes on the earlier moment beside the new slot and debugger, or the write that never returns stops Play; why_new=F197 (Step 11 Codex adversarial: Play and seeks awaited the position write before the controller's publish); seam=the history store's position write, held by the test, and the playback clock, moved by hand; no_claim=the write's outcome, which the position tests cover
+test('a reader position write that never returns holds neither Play nor the moment it shows', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let releaseWrite = (): void => {}
+  const heldWrites: Promise<unknown>[] = []
+  try {
+    const store = harness.service.nodeHistoryStore!
+    await openWithChosenStep(harness)
+    const advance = playbackClock(harness)
+    const controller = advance(0)
+    const writeHeld = new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    const save = store.saveReaderPosition.bind(store)
+    const writtenSequences: number[] = []
+    context.mock.method(
+      store,
+      'saveReaderPosition',
+      (...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>) => {
+        writtenSequences.push(args[1])
+        const write = writeHeld.then(() => save(...args))
+        heldWrites.push(write)
+        return write
+      },
+    )
+    controller.play()
+
+    // Act: Play steps from the first stop to the output and on to the second stop while the first write is held.
+    void advance(1_000).tick()
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'Play shows the output while the first write is held',
+      READER_RESULT_BOUND_MS,
+    )
+    void advance(1_000).tick()
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'Play shows the second stop while the first write is held',
+      READER_RESULT_BOUND_MS,
+    )
+    const whileHeld = {
+      position: lastView(harness)?.nodeHistorySection?.position,
+      time: harness.applicationOutputs().at(-1)?.view.time,
+      writes: [...writtenSequences],
+      mode: controller.state().mode,
+    }
+    releaseWrite()
+    await waitUntil(
+      () => writtenSequences.length === 2,
+      'the moments played meanwhile are written once',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(whileHeld, {
+      position: 'Stop 2 of 2 · 0.30 s',
+      time: 'Recorded test output · 0.30 s',
+      writes: [3],
+      mode: 'playing',
+    })
+    assert.deepEqual(writtenSequences, [3, 4])
+  } finally {
+    releaseWrite()
+    await Promise.allSettled(heldWrites)
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=closing the reader waits for the reader position write a selection started, so the moment the learner left is the one saved and no write runs into storage that is being removed; fails_when=close() returns while the write is held, or the held position is never written; why_new=F197 moved the write out of the selection, so the close has to wait for it (bounded by NODE_HISTORY_POSITION_DRAIN_MS); seam=the history store's position write, held by the test; no_claim=the bound itself, which a stuck disk would hit
+test('closing the reader waits for the reader position write of the last selection', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let releaseWrite = (): void => {}
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await openWithChosenStep(harness)
+    const writeHeld = new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    const save = store.saveReaderPosition.bind(store)
+    context.mock.method(
+      store,
+      'saveReaderPosition',
+      async (
+        ...args: Parameters<NodeTestHistoryStore['saveReaderPosition']>
+      ) => {
+        await writeHeld
+        return save(...args)
+      },
+    )
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 3,
+    })
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 3 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the output commits while its position write is held',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act
+    let closed = false
+    const closing = harness.reader.close().then(() => {
+      closed = true
+    })
+    for (let turn = 0; turn < 20; turn++)
+      await new Promise((resolve) => setImmediate(resolve))
+    const closedWhileHeld = closed
+    releaseWrite()
+    await closing
+
+    // Assert
+    assert.equal(closedWhileHeld, false)
+    assert.equal(await store.readReaderPosition(history.studyId), 3)
+  } finally {
+    releaseWrite()
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=an Inspect that is presenting when a newer seek arrives commits nothing: while the seek loads, the Study position names the seek's stop, never the stop Inspect was on, and when it ends every surface shows the seek's moment only (the recorded-source slot's label, the replay debugger's stop, the Study position and the requested moment) without an error; fails_when=the overtaken Inspect ends its debugger presentation and commits (its stop in the Study pane and on the slot's label) before the newer seek has shown anything, or after it; why_new=F548 (pass-3 state-machines cell: Play and a seek overtaken by a seek were tested, Inspect, the origin with requireDebugger, was not); seam=the workspace harness's held historical debug presentation, held twice (Inspect's, then the seek's) and released in order; no_claim=the native debugger's own display between the two presentations
+test('an Inspect that is presenting when a newer seek arrives commits nothing and leaves only the seek’s moment on every surface', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    await openWithChosenStep(harness)
+    const selected = harness.reader['selectedNodeHistory']!
+    const controller = harness.reader['nodeHistoryPlaybackController']!
+    const inspectHold = harness.holdHistoricalDebugPresentation(true)
+    const inspect = harness.reader['requestNodeHistoryEvent'](selected, 2, {
+      requireDebugger: true,
+    })
+    await inspectHold.started
+
+    // Act: a seek onto the second stop arrives while Inspect presents; Inspect's presentation then ends.
+    const seekHold = harness.holdHistoricalDebugPresentation(true)
+    const seek = controller.seek(300)
+    inspectHold.release()
+    await seekHold.started
+    const whileSeekLoads = shownMoment(harness)
+    seekHold.release()
+    await seek
+    const inspectOutcome = await inspect.then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+
+    // Assert
+    assert.deepEqual(whileSeekLoads, {
+      sequence: 4,
+      stepId: undefined,
+      explanation: undefined,
+      position: 'Stop 2 of 2 · 0.30 s · loading…',
+    })
+    assert.equal(inspectOutcome, 'resolved')
+    assert.deepEqual(shownMoment(harness), {
+      sequence: 4,
+      stepId: undefined,
+      explanation: 'No saved explanation for this stop.',
+      position: 'Stop 2 of 2 · 0.30 s',
+    })
+    assert.equal(harness.reader['requestedNodeHistorySequence'], undefined)
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.label,
+      'Recorded test stop 2 · src/theme.ts:1',
+    )
+    const slotDecoration = harness
+      .sourceIdentityDecorations()
+      .filter((call) => call.uri.includes('/node-history-slot/'))
+      .at(-1)
+    assert.deepEqual(
+      (slotDecoration?.ranges ?? []).map(
+        (range) =>
+          (range as { renderOptions?: { after?: { contentText?: string } } })
+            .renderOptions?.after?.contentText,
+      ),
+      ['  Recorded: src/theme.ts:1 · 0.30 s'],
+    )
+    assert.equal(controller.state().sequence, 4)
+    assert.equal(lastView(harness)?.errors.length, 0)
   } finally {
     await harness.close()
   }

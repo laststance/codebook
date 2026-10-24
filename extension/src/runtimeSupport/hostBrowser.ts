@@ -337,7 +337,11 @@ export class HostBrowser {
         type: 'pwa-chrome',
         request: 'launch',
         runtimeExecutable,
-        runtimeArgs: ['--headless=new', '--remote-debugging-pipe'],
+        runtimeArgs: [
+          '--headless=new',
+          '--remote-debugging-pipe',
+          // No host-resolver rule (D78): a rule would map every `localhost` port and hide the learner's own `::1`-only API; the `[::1]` forwarder keeps the app's own port owned.
+        ],
         userDataDir: this.managedProfile,
         cleanUp: 'wholeBrowser',
         browserLaunchLocation: 'workspace',

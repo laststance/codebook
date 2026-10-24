@@ -260,6 +260,15 @@ export async function nativeParticipantsHarness(
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )
+  // The text the runtime holds for further scripts of a participant's module, by script id ({@link announceModuleInAnotherLayer}); a script without an entry is the sealed module.
+  const instanceSources = new Map<string, string>()
+  // Every `Debugger.getScriptSource` the run sent, in order, and the reads a test keeps unanswered until it releases them ({@link holdScriptSourceRead}).
+  const scriptSourceReads: { participant: Participant; scriptId: string }[] = []
+  const heldScriptSourceReads = new Map<string, Promise<void>>()
+  // The failure a read of one script's text ends with instead of an answer ({@link failScriptSourceRead}).
+  const failedScriptSourceReads = new Map<string, string>()
+  // The break locations a participant's adapter lists for one of its scripts instead of the participant's own list ({@link listPossibleBreakLocations}).
+  const possibleBreakLocationsOfScript = new Map<string, GeneratedPlace[]>()
   let failedRegistration = false,
     badSource = false,
     unboundPause = false,
@@ -566,6 +575,7 @@ export async function nativeParticipantsHarness(
       parameters?: {
         expression?: string
         type?: string
+        scriptId?: string
         start?: ScriptPlace
         end?: ScriptPlace
       },
@@ -633,12 +643,18 @@ export async function nativeParticipantsHarness(
         emitScript('browser')
         return {}
       }
-      if (method === 'Debugger.getScriptSource')
+      if (method === 'Debugger.getScriptSource') {
+        const scriptId = parameters?.scriptId ?? ''
+        scriptSourceReads.push({ participant: name, scriptId })
+        await heldScriptSourceReads.get(`${name}:${scriptId}`)
+        const failure = failedScriptSourceReads.get(`${name}:${scriptId}`)
+        if (failure !== undefined) throw new Error(failure)
         return {
           scriptSource: badSource
             ? 'different module'
-            : bundle(name).javascript,
+            : (instanceSources.get(scriptId) ?? bundle(name).javascript),
         }
+      }
       if (method === 'Debugger.evaluateOnCallFrame')
         return {
           result: {
@@ -649,16 +665,24 @@ export async function nativeParticipantsHarness(
         return {
           data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
         }
-      const listed = possibleBreakLocations[name]
+      const listed =
+        possibleBreakLocationsOfScript.get(
+          `${name}:${parameters?.start?.scriptId}`,
+        ) ?? possibleBreakLocations[name]
       if (
         method === 'Debugger.getPossibleBreakpoints' &&
         listed &&
         parameters?.start
       ) {
-        const { range, answer } = answerBreakLocationRequest(listed, name, {
-          start: parameters.start,
-          end: parameters.end,
-        })
+        // The locations carry the script the run asked about, as the debugger's answer does.
+        const { range, answer } = answerBreakLocationRequest(
+          listed,
+          parameters.start.scriptId,
+          {
+            start: parameters.start,
+            end: parameters.end,
+          },
+        )
         breakLocationRequests.push({ participant: name, ...range })
         const held = heldBreakLocationAnswer
         // A held answer keeps this one request open; later requests are answered at once.
@@ -846,6 +870,12 @@ export async function nativeParticipantsHarness(
         ? await loadConstantsWith(options.runtimeConstants)
         : {}),
       './ownedRepositoryBreakpoint': ownedBreakpoint,
+      // A stand-in for the real `[::1]` forwarder: it binds no socket, so parallel test files never collide on the fixed port.
+      './utils/startIpv6LoopbackForwarder': {
+        startIpv6LoopbackForwarder: async () => ({
+          close: async (): Promise<void> => undefined,
+        }),
+      },
       './runtimeSupport/cdp': {
         Cdp: {
           connect: async (url: string) => {
@@ -943,6 +973,15 @@ export async function nativeParticipantsHarness(
       },
       './utils/assertDevelopmentWorkspace': {
         assertDevelopmentWorkspace: async () => undefined,
+      },
+      './utils/readDeclaredDevelopmentPort': {
+        readDeclaredDevelopmentPort: async () => ({
+          port: 4321,
+          source: 'the dev script in package.json',
+        }),
+      },
+      './utils/assertDevelopmentPortFree': {
+        assertDevelopmentPortFree: async () => undefined,
       },
       './utils/launchDevelopmentServer': {
         launchDevelopmentServer: (
@@ -1159,6 +1198,97 @@ export async function nativeParticipantsHarness(
         executionContextId: 1,
       })
     },
+    /**
+     * Announces a participant's stop module as another webpack layer parses it, as Next does for one source file imported by several layers: a script of its own whose generated code differs from the sealed one (an extra leading line shifts every generated line by one), with its own inline source map.
+     * The address is the sealed one with its first layer group replaced by `layer`; a layer that gives the sealed address back is refused, so a test cannot announce the sealed script as an instance.
+     * @param name - The participant whose runtime parses the script.
+     * @param scriptId - The new script's id.
+     * @param layer - The webpack layer in the script address, e.g. `middleware`; it replaces the first layer group of the sealed address, whatever it is.
+     * @param mappings - The instance's own source map mappings; `;AAAA` puts the one statement on generated line 2 (zero-based line 1).
+     * @param retainedOriginal - The original text the instance's map retains instead of the frozen source, as a map of another file would.
+     * @param shape - How the script's text names itself: `modulePlaceholder` adds Next's non-identifying `//# sourceURL=[module]` line before the effective one; `sourceUrl` replaces the effective address (a text that names another address).
+     * @example harness.announceModuleInAnotherLayer('server', 'middleware', 'middleware', ';AAAA', undefined, { modulePlaceholder: true })
+     */
+    announceModuleInAnotherLayer(
+      name: Participant,
+      scriptId: string,
+      layer: string,
+      mappings: string,
+      retainedOriginal?: string,
+      shape: { modulePlaceholder?: boolean; sourceUrl?: string } = {},
+    ): void {
+      const sealed = bundle(name),
+        url = sealed.scriptUrl.replace(/\([^)/]+\)/, `(${layer})`),
+        map = {
+          ...JSON.parse(sealed.sourceMap),
+          mappings,
+          ...(retainedOriginal === undefined
+            ? {}
+            : { sourcesContent: [retainedOriginal] }),
+        }
+      if (url === sealed.scriptUrl)
+        throw new Error(
+          `The layer ${layer} derives the sealed address ${url}; announce another layer`,
+        )
+      instanceSources.set(
+        scriptId,
+        `"use strict";\n${sealed.javascript}\n${shape.modulePlaceholder ? '//# sourceURL=[module]\n' : ''}//# sourceURL=${shape.sourceUrl ?? url}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`,
+      )
+      listeners[name].get('Debugger.scriptParsed')?.({
+        scriptId,
+        url,
+        executionContextId: 1,
+      })
+    },
+    /** Every `Debugger.getScriptSource` the run sent, in order, with the participant and script it asked about. */
+    scriptSourceReads,
+    /** Keeps the run's reads of one script's text unanswered until released, as a runtime that is slow or never answers does (a release never called is a read that never answers). @example const read = harness.holdScriptSourceRead('server', 'middleware'); read.release() */
+    holdScriptSourceRead(
+      name: Participant,
+      scriptId: string,
+    ): { release(): void } {
+      let release = (): void => {}
+      heldScriptSourceReads.set(
+        `${name}:${scriptId}`,
+        new Promise<void>((resolve) => {
+          release = resolve
+        }),
+      )
+      return { release }
+    },
+    /** Makes the runtime fail the run's read of one script's text with this message, as a runtime that cannot serve a script does. @example harness.failScriptSourceRead('server', 'middleware', 'No script with this id') */
+    failScriptSourceRead(
+      name: Participant,
+      scriptId: string,
+      message: string,
+    ): void {
+      failedScriptSourceReads.set(`${name}:${scriptId}`, message)
+    },
+    /** Changes the text the runtime holds for an announced instance, as a rebuild would after the run accepted the script. @example harness.changeScriptText('middleware') */
+    changeScriptText(scriptId: string): void {
+      instanceSources.set(
+        scriptId,
+        `${instanceSources.get(scriptId)}\n// edited after the run accepted the script`,
+      )
+    },
+    /** Reports the debugger's pause at a breakpoint of a participant at a chosen generated place of a chosen script, then the adapter's `stopped` for it, as js-debug does for a breakpoint it set in that script. @example harness.pauseInScript('server', 'middleware', 1, 0) */
+    pauseInScript(
+      name: Participant,
+      scriptId: string,
+      lineNumber: number,
+      columnNumber: number,
+    ): void {
+      listeners[name].get('Debugger.paused')?.(
+        debuggerPausedEvent({
+          callFrameId: name,
+          scriptId,
+          lineNumber,
+          columnNumber,
+          hitBreakpoints: ['native'],
+        }),
+      )
+      emitStopped(name)
+    },
     /** Reports a runtime pause with no debugger stop at a chosen generated place, as the debug adapter's own breakpoints and hooks arrive. */
     emitUnannouncedPause(
       name: Participant,
@@ -1332,12 +1462,14 @@ export async function nativeParticipantsHarness(
     leaveRegistrationUnansweredAtColumn(column: number): void {
       unansweredColumn = column
     },
-    /** Makes a participant's adapter answer `Debugger.getPossibleBreakpoints` with these zero-based generated places, within the range the run asks for. @example harness.listPossibleBreakLocations('server', [{ lineNumber: 0, columnNumber: 0 }]) */
+    /** Makes a participant's adapter answer `Debugger.getPossibleBreakpoints` with these zero-based generated places, within the range the run asks for; with a script id only for that script (another layer's instance has its own places), otherwise for every script. @example harness.listPossibleBreakLocations('server', [{ lineNumber: 0, columnNumber: 0 }]) */
     listPossibleBreakLocations(
       name: Participant,
       locations: GeneratedPlace[],
+      scriptId?: string,
     ): void {
-      possibleBreakLocations[name] = locations
+      if (scriptId === undefined) possibleBreakLocations[name] = locations
+      else possibleBreakLocationsOfScript.set(`${name}:${scriptId}`, locations)
     },
     /** Every `Debugger.getPossibleBreakpoints` range the run asked for, in order, as the run sent it. */
     breakLocationRequests,

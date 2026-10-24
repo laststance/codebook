@@ -4,10 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { NODE_TEST_HISTORY_DIRECTORY, NODE_TEST_PROFILE } from '../constants'
-import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
-import type { NodeTestSourceStop } from '../ownedNodeTestRun'
-import type { NodeTestRuntime } from '../runtime'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
@@ -18,91 +15,20 @@ import {
   saveOneStopNodeHistory,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
+import { startLiveTestRun } from './utils/startLiveTestRun'
 import { saveTwoStopNodeHistory } from './utils/twoStopNodeHistory'
+import { twoStopOwnedRun } from './utils/twoStopOwnedRun'
 
 /** The last view the reader posted to its panes. */
 function lastView(harness: Awaited<ReturnType<typeof workspaceHarness>>) {
   return harness.postedMessages().slice(-1)[0]
-}
-
-/**
- * Builds a fake owned Node run with two declared stops and a passing result, as a live test run the workspace's Save acts on.
- * @param source - The cited source of both stops.
- * @param sourceText - The cited source's text, which each stop's debugger snapshot holds so the stop verifies.
- * @returns The run, which pauses at its first stop and reaches the second one when it advances.
- * @example const run = twoStopOwnedRun(configuration.source, sourceText)
- */
-function twoStopOwnedRun(
-  source: NodeTestConfiguration['source'],
-  sourceText: string,
-): NodeTestRuntime {
-  const stops = [0, 1].map(
-    (index) =>
-      ({
-        index,
-        runId: 'node-run',
-        sessionId: 'owned-session',
-        threadId: 7,
-        elapsedMs: 10 + index * 10,
-        worker: { pid: 1, processGroup: 1, workspace: '/private/test' },
-        source,
-        frame: {
-          id: 10 + index,
-          name: 'schedule',
-          line: source.line,
-          column: source.column,
-        },
-        variables: [{ name: 'delayMs', value: '5000', variablesReference: 0 }],
-        facts: [
-          { path: 'delayMs', mode: 'value', display: '5000', type: 'number' },
-        ],
-        debuggerSnapshot: {
-          version: 1,
-          frames: [
-            {
-              name: 'schedule',
-              line: source.line,
-              column: source.column,
-              source: {
-                name: source.path,
-                text: sourceText,
-                hash: sha256(sourceText),
-                line: source.line,
-              },
-              scopes: [{ name: 'Local', variables: [0] }],
-            },
-          ],
-          variables: [
-            { name: 'delayMs', value: '5000', type: 'number', children: [] },
-          ],
-          limitations: [],
-        },
-      }) satisfies NodeTestSourceStop,
-  )
-  let cursor = 0
-  return {
-    id: 'node-run',
-    async prepare() {
-      return stops[cursor]!
-    },
-    hasNextStop() {
-      return cursor < stops.length - 1
-    },
-    async advance() {
-      return stops[++cursor]!
-    },
-    async complete() {
-      return {
-        exitCode: 0,
-        signal: null,
-        output: 'Tests 1 passed',
-        elapsedMs: 40,
-      }
-    },
-    async stop(): Promise<void> {},
-  }
 }
 
 // Value: protects=Open replay of a sealed test replay while the Study pane is closed: the pane opens and the replay lands on its first verified stop with the replay debugger presented; fails_when=Open replay goes to the browser replay's controller, the closed pane stays closed, or the replay lands on the output banner; why_new=Open replay opened only browser recordings (C49-2, DS1, DS10, AC4); seam=the editor and the debugger are fakes; no_claim=the host's own pane arrangement (N49)
@@ -765,55 +691,6 @@ test('a refresh while a saved test replay is open lists the history sealed meanw
     await harness.close()
   }
 })
-
-/**
- * Starts a live test run of two declared stops on a workspace harness and waits for its preparation, so the status bar item and Save act on a run paused at its first stop.
- * @param harness - The workspace harness whose service runs it.
- * @param runName - The start's idempotency key, named by what the run is for.
- * @returns The run's record and its study id.
- * @example const { record, studyId } = await startLiveTestRun(harness, 'closed-pane-save-item')
- */
-async function startLiveTestRun(
-  harness: Pick<
-    Awaited<ReturnType<typeof workspaceHarness>>,
-    'service' | 'configuration' | 'directory'
-  >,
-  runName: string,
-) {
-  const { service, configuration } = harness
-  const sourceText = await readFile(
-    join(harness.directory, configuration.source.path),
-    'utf8',
-  )
-  service.environment.build.sourceHash = 'f'.repeat(64)
-  service.environment.createNodeTestRun = async () =>
-    twoStopOwnedRun(configuration.source, sourceText)
-  const receipt = service.start({
-    instanceId: service.instanceId,
-    profile: NODE_TEST_PROFILE,
-    key: runName,
-    configuration: {
-      version: 1,
-      adapter: 'vitest-node',
-      book: configuration.book,
-      testFile: 'src/scheduler.test.ts',
-      testHash: 'a'.repeat(64),
-      testTitles: ['job scheduler', 'runs a delayed job after its timer'],
-      source: configuration.source,
-      inspections: configuration.inspections.slice(0, 1),
-      additionalStops: [
-        {
-          ...configuration.source,
-          anchorIndex: 0,
-          inspections: configuration.inspections.slice(0, 1),
-        },
-      ],
-    },
-  })
-  const record = service.record(receipt)
-  await record.preparation
-  return { record, studyId: `${service.instanceId}_${record.id}` }
-}
 
 // Value: protects=a delayed Save click for an earlier test run: it is refused with the session-changed sentence and the current run is neither asked about nor stopped; fails_when=a stale status item click saves or stops the run now owned by the workspace; why_new=the stale-click guard was tested for browser recordings only (F23, gap E6); seam=a fake owned Node run; no_claim=the browser save's own test
 test('a delayed Save click for an earlier test run is refused and leaves the current run running', async () => {
@@ -1615,6 +1492,208 @@ test('a test replay that cannot be read names a title with a U+202E in its failu
       /^Codebook could not open the test replay "src\/theme\.test\.ts › theme › applies dark mode": /,
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Open replay after a live node-test run whose reader stood in the Live composition and whose Study entry failed once: the failure is told in Output › Codebook and a notification, not as a bare command error, and the learner's next Open replay still reaches a Study pane with the replay in it; fails_when=the composition entry's failure escapes the command with no Output entry, or the failed entry leaves the reader open, not live and without a Study pane so the retry skips the entry and shows the Application, the slot and the debugger with no transport (F384, F382 closure); why_new=Cycle 0050 F384 and F382 (N50, the first Open replay after a live run); seam=workspaceHarness with the fake owned Node run, failNextPanelCreation of the Study pane, the diagnostics log, the reader's open, continue and stop; no_claim=which native change F382's guard saw (the cause of that refusal is not settled in the harness)
+test('a failed Study entry of Open replay after a live node-test run is told in Output and the next Open replay shows the Study pane', async () => {
+  // Arrange: the reader stands in the Live composition for the run, which then completes and stops; the Study pane's creation fails once.
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const { record, studyId } = await startLiveTestRun(harness, 'failed-entry')
+    harness.focusMutableDraft('utils.ts', 1)
+    await readerSeams(harness).refresh()
+    await harness.reader.open()
+    for (const generation of [1, 2])
+      await harness.service.continue({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        participant: 'server',
+        sessionId: 'owned-session',
+        threadId: 7,
+        generation,
+      })
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+    })
+    await readerSeams(harness).refresh()
+    await harness.reader.saveLearningReplay(studyId)
+    harness.failNextPanelCreation('codebook.studyContext')
+
+    // Act
+    const firstOpen = await harness.reader.openLearningReplay(studyId).then(
+      () => 'returned',
+      (error: unknown) => String(error),
+    )
+    await harness.reader.openLearningReplay(studyId)
+
+    // Assert
+    assert.equal(firstOpen, 'returned')
+    assert.deepEqual(
+      logged.map((entry) => [entry.surface, entry.studyId, entry.cause]),
+      [['open:test-replay', studyId, 'Injected native panel creation failure']],
+    )
+    assert.equal(harness.errorMessages.length, 1)
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      studyId,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Study pane after an agent's Study workspace request was refused beside Cursor's Agent and the learner's Open replay then arranged the panes: the pane and the presentation state no longer show the refusal; fails_when=a selected test replay still reports the article's captured-source reason "The current captured source is not ready in its native pane. Use Focus source to show it again." (F390), or the entry that arranged the panes leaves the reason and error line of the agent's earlier refusal in place ("Error: The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …" above the test replay); why_new=Cycle 0050 F389 (Cursor 3.26.16: the refusal stayed in the Study pane after a successful Open replay); seam=the workspace harness with Cursor's chat part, unreported pane focus and a fake clock
+test("Open replay that arranges the panes after an agent's refused Study workspace request shows neither that refusal nor a captured-source reason", async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    const { record, studyId } = await startLiveTestRun(harness, 'agent-refusal')
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    await readerSeams(harness).refresh()
+    for (const generation of [1, 2])
+      await harness.service.continue({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        participant: 'server',
+        sessionId: 'owned-session',
+        threadId: 7,
+        generation,
+      })
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+    })
+    await readerSeams(harness).refresh()
+    await harness.reader.saveLearningReplay(studyId)
+    const before = harness.reader.presentationState()
+    enableFakeClock(context)
+    const agentRequest = harness.reader
+      .changePresentation(
+        {
+          presentationId: before.presentationId,
+          expectedRevision: before.presentationControlRevision,
+          mode: 'study-workspace',
+          action: 'select',
+        },
+        'agent',
+      )
+      .then(
+        () => 'arranged',
+        (error: unknown) => String(error),
+      )
+    await advanceClockUntilSettled(context, agentRequest, 6_000)
+    const refusal = await agentRequest
+    resetFakeClock(context)
+
+    // Act: the learner clicks into a file and opens the test replay.
+    harness.focusMutableDraft('utils.ts', 1)
+    await harness.reader.openLearningReplay(studyId)
+
+    // Assert
+    assert.match(refusal, /did not report the keyboard focus within 5 s/)
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    // No refusal of the agent's request and no captured-source reason of the article is shown beside a test replay (F389, F390).
+    assert.doesNotMatch(
+      harness.reader.presentationState().reason ?? '',
+      /captured source|did not report the keyboard focus/,
+    )
+    assert.equal(JSON.stringify(lastView(harness)?.errors), '[]')
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+// Value: protects=the first Open replay after a node-test run beside Cursor's Agent, which Cursor refuses with the unreported-focus sentence after five seconds: the refusal is told in Output › Codebook and in a notification instead of failing the command bare, and after the learner clicks into a file the next Open replay opens the Study pane with the replay; fails_when=the refusal escapes openLearningReplay with no Output entry, or the retry shows the replay without a Study pane; why_new=Cycle 0050 F384 (N50 Cursor 3.26.16); seam=workspaceHarness with the fake owned Node run, addSeparateEditorPart and leavePaneFocusUnreportedBesideChat (Cursor's chat part), the fake clock, focusMutableDraft as the learner's click; no_claim=Cursor's own focus reports
+test('Open replay refused beside the Cursor Agent is told in Output and the retry after a click into a file shows the Study pane', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  const logged: CodebookDiagnostic[] = []
+  harness.reader.diagnostics = {
+    log: (entry) => logged.push(entry),
+    show: () => undefined,
+  }
+  try {
+    readerSeams(harness).stopOwnTimer()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    const { record, studyId } = await startLiveTestRun(
+      harness,
+      'cursor-refusal',
+    )
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    await readerSeams(harness).refresh()
+    for (const generation of [1, 2])
+      await harness.service.continue({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        participant: 'server',
+        sessionId: 'owned-session',
+        threadId: 7,
+        generation,
+      })
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+    })
+    await readerSeams(harness).refresh()
+    await harness.reader.saveLearningReplay(studyId)
+
+    // Act: the five seconds of the wait for the focus report pass on a faked clock; the learner then clicks into a file and asks again.
+    enableFakeClock(context)
+    const firstOpen = harness.reader.openLearningReplay(studyId).then(
+      () => 'returned',
+      (error: unknown) => String(error),
+    )
+    await advanceClockUntilSettled(context, firstOpen, 6_000)
+    const firstResult = await firstOpen
+    resetFakeClock(context)
+    harness.focusMutableDraft('utils.ts', 1)
+    await harness.reader.openLearningReplay(studyId)
+
+    // Assert
+    assert.equal(firstResult, 'returned')
+    const openFailures = logged.filter(
+      (entry) => entry.surface === 'open:test-replay',
+    )
+    assert.equal(openFailures.length, 1)
+    assert.match(
+      openFailures[0]!.cause,
+      /did not report the keyboard focus within 5 s/,
+    )
+    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      studyId,
+    )
+  } finally {
+    resetFakeClock(context)
     await harness.close()
   }
 })

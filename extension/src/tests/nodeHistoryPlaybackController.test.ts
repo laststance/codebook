@@ -642,3 +642,96 @@ test('Play keeps the recorded spacing of events closer together than the dwell b
   assert.deepEqual(presented, [2])
   controller.dispose()
 })
+
+// Value: protects=Play that starts again after a seek or a learner's selection waits the recorded spacing from the moment it starts again, not from the earlier Play; fails_when=play() keeps the old time anchor, so the next event follows at once after a pause that lasted longer than its spacing; why_new=F188 (no test restarted the dwell after a seek or a selection during Play); seam=the injected clock; no_claim=the host's own pause handling
+for (const interruption of [
+  {
+    name: 'seek',
+    interrupt: (controller: NodeHistoryPlaybackController): Promise<void> =>
+      controller.seek(200),
+  },
+  {
+    name: 'selection',
+    interrupt: (controller: NodeHistoryPlaybackController): Promise<void> =>
+      Promise.resolve(controller.select(2)),
+  },
+]) {
+  test(`Play started again after a ${interruption.name} waits the recorded spacing from its own start`, async () => {
+    // Arrange
+    let now = 0
+    const presented: number[] = []
+    const controller = new NodeHistoryPlaybackController({
+      present: async (sequence) => {
+        presented.push(sequence)
+      },
+      changed() {},
+      now: () => now,
+      manualTicks: true,
+    })
+    controller.open(
+      [
+        { sequence: 1, elapsedMs: 0 },
+        { sequence: 2, elapsedMs: 200 },
+        { sequence: 3, elapsedMs: 400 },
+      ],
+      1,
+    )
+    controller.play()
+    now = 150
+    await interruption.interrupt(controller)
+    const modeAfterInterruption = controller.state().mode
+    const presentedBeforeResume = [...presented]
+
+    // Act: Play starts again at 150 ms, so the 200 ms spacing to the next event ends at 350 ms.
+    controller.play()
+    now = 349
+    await controller.tick()
+    const beforeSpacing = [...presented]
+    now = 350
+    await controller.tick()
+
+    // Assert
+    assert.equal(modeAfterInterruption, 'paused')
+    assert.deepEqual(beforeSpacing, presentedBeforeResume)
+    assert.deepEqual(presented, [...presentedBeforeResume, 3])
+    controller.dispose()
+  })
+}
+
+// Value: protects=a seek at exactly the first or the last recorded time is accepted and presents that event, and a tick that finds no later event pauses Play without presenting anything; fails_when=the range's ends are refused or a tick at the last time presents or throws; why_new=F188 (no test at the range's first and last time); seam=the injected clock and the controller's private play state for the tick past the end, which Play itself never reaches; no_claim=the Study pane's controls
+test('a seek at the first and the last recorded time presents those events, and a tick past the last event only pauses', async () => {
+  // Arrange
+  let now = 0
+  const presented: number[] = []
+  const controller = new NodeHistoryPlaybackController({
+    present: async (sequence) => {
+      presented.push(sequence)
+    },
+    changed() {},
+    now: () => now,
+    manualTicks: true,
+  })
+  controller.open(
+    [
+      { sequence: 4, elapsedMs: 100 },
+      { sequence: 7, elapsedMs: 1_000 },
+    ],
+    7,
+  )
+
+  // Act
+  await controller.seek(100)
+  const atFirst = controller.state().sequence
+  await controller.seek(1_000)
+  const atLast = controller.state().sequence
+  controller['mode'] = 'playing'
+  now = 10_000
+  await controller.tick()
+
+  // Assert
+  assert.deepEqual(presented, [4, 7])
+  assert.equal(atFirst, 4)
+  assert.equal(atLast, 7)
+  assert.equal(controller.state().mode, 'paused')
+  controller.dispose()
+})

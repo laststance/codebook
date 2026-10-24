@@ -22,55 +22,85 @@ export function extractDevelopmentModule(
     throw new Error('Application chunk exceeds byte limit')
   const candidates: BundleSource[] = []
   // Scan the two webpack eval literal forms without recursive regexp matching on large chunks.
-  const literals = webpackEvalLiterals(chunk)
+  const literals = webpackEvalLiterals(chunk),
+    chunkHash = sha256(chunk)
   for (const literal of literals) {
     if (performance.now() >= deadline)
       throw new Error('Module discovery deadline exceeded')
-    const javascript: string = JSON.parse(literal)
-    const urls = [...javascript.matchAll(/^\/\/# sourceURL=(.+)$/gm)]
-    if (!urls.some((url) => sameScriptUrl(scriptUrl, url[1]!))) continue
-    if (Buffer.byteLength(javascript) > REPOSITORY_JAVASCRIPT_LIMIT_BYTES)
-      throw new Error('Selected JavaScript module exceeds byte limit')
-    // Next webpack emits a non-identifying placeholder before the effective final script URL.
-    if (
-      !sameScriptUrl(scriptUrl, urls.at(-1)![1]!) ||
-      urls.slice(0, -1).some((url) => url[1] !== '[module]')
-    )
-      throw new Error('Module has ambiguous script identity')
-    const encodedMaps = [
-      ...javascript.matchAll(
-        /^\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-8)?;base64,([A-Za-z\d+/=]+)$/gm,
-      ),
-    ]
-    if (encodedMaps.length !== 1)
-      throw new Error('Module has missing or ambiguous inline maps')
-    const mapBytes = Buffer.from(encodedMaps[0]![1]!, 'base64')
-    if (mapBytes.byteLength > REPOSITORY_MAP_LIMIT_BYTES)
-      throw new Error('Inline map exceeds byte limit')
-    if (mapBytes.toString('base64') !== encodedMaps[0]![1])
-      throw new Error('Inline map encoding is malformed')
-    const sourceMap = new TextDecoder('utf-8', {
-        fatal: true,
-        ignoreBOM: true,
-      }).decode(mapBytes),
-      payload = mapSchema.parse(JSON.parse(sourceMap))
-    if (!payload.sources.includes(sourcePath))
-      throw new Error('Selected module does not name the exact original')
-    candidates.push({
-      sourcePath,
-      source,
-      sourceMap,
-      javascript,
-      mapSource: sourcePath,
+    const bundle = bundleOfEvaluatedModule(
+      JSON.parse(literal),
+      { sourcePath, source, chunkPath, chunkHash },
       scriptUrl,
-      chunkPath,
-      chunkHash: sha256(chunk),
-    })
+    )
+    if (bundle) candidates.push(bundle)
   }
   if (performance.now() >= deadline)
     throw new Error('Module discovery deadline exceeded')
   if (candidates.length > 1) throw new Error('Ambiguous evaluated module')
   return candidates[0]
+}
+
+/**
+ * Reads one evaluated webpack module's text (its code, `sourceURL` and inline source map) as a sealed bundle of a cited original, for {@link extractDevelopmentModule} (each eval literal of a built chunk) and {@link ConfiguredBrowserRun}'s sealing of a runtime instance (the text a runtime reports for a script it parsed).
+ * An instance of another webpack layer of a declared stop's module is accepted only as the same original: its inline map must name the exact source path, and the caller's verifier ({@link createBundleVerifier}) refuses a map whose retained original differs from the frozen text. Its generated code may differ from the sealed instance's, which is why it carries its own map; pass the stop's sealed bundle as `identity` and the announced address as `scriptUrl`.
+ * @param javascript - The evaluated module text.
+ * @param identity - The cited original and the chunk it was acquired from, kept as the bundle's identity: `sourcePath` is the original's absolute path, `source` its frozen text, `chunkPath` the built chunk and `chunkHash` that chunk's SHA-256. One object typed from {@link BundleSource}, so a caller cannot swap the four strings.
+ * @param scriptUrl - The script address the module must carry as its effective `sourceURL`.
+ * @returns The bundle, or `undefined` when the module carries another script address.
+ * @throws When the module's script identity or inline map is ambiguous, malformed or over its byte limit, or its map does not name the exact original.
+ * @example
+ * ```ts
+ * bundleOfEvaluatedModule(text, { sourcePath: '/repo/auth.ts', source, chunkPath, chunkHash }, 'webpack-internal:///(middleware)/./auth.ts')
+ * ```
+ */
+export function bundleOfEvaluatedModule(
+  javascript: string,
+  identity: Pick<
+    BundleSource,
+    'sourcePath' | 'source' | 'chunkPath' | 'chunkHash'
+  >,
+  scriptUrl: string,
+): BundleSource | undefined {
+  const { sourcePath, source, chunkPath, chunkHash } = identity
+  const urls = [...javascript.matchAll(/^\/\/# sourceURL=(.+)$/gm)]
+  if (!urls.some((url) => sameScriptUrl(scriptUrl, url[1]!))) return undefined
+  if (Buffer.byteLength(javascript) > REPOSITORY_JAVASCRIPT_LIMIT_BYTES)
+    throw new Error('Selected JavaScript module exceeds byte limit')
+  // Next webpack emits a non-identifying placeholder before the effective final script URL.
+  if (
+    !sameScriptUrl(scriptUrl, urls.at(-1)![1]!) ||
+    urls.slice(0, -1).some((url) => url[1] !== '[module]')
+  )
+    throw new Error('Module has ambiguous script identity')
+  const encodedMaps = [
+    ...javascript.matchAll(
+      /^\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-8)?;base64,([A-Za-z\d+/=]+)$/gm,
+    ),
+  ]
+  if (encodedMaps.length !== 1)
+    throw new Error('Module has missing or ambiguous inline maps')
+  const mapBytes = Buffer.from(encodedMaps[0]![1]!, 'base64')
+  if (mapBytes.byteLength > REPOSITORY_MAP_LIMIT_BYTES)
+    throw new Error('Inline map exceeds byte limit')
+  if (mapBytes.toString('base64') !== encodedMaps[0]![1])
+    throw new Error('Inline map encoding is malformed')
+  const sourceMap = new TextDecoder('utf-8', {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(mapBytes),
+    payload = mapSchema.parse(JSON.parse(sourceMap))
+  if (!payload.sources.includes(sourcePath))
+    throw new Error('Selected module does not name the exact original')
+  return {
+    sourcePath,
+    source,
+    sourceMap,
+    javascript,
+    mapSource: sourcePath,
+    scriptUrl,
+    chunkPath,
+    chunkHash,
+  }
 }
 
 /** Scans large webpack chunks for {@link extractDevelopmentModule} without executing payloads or recursive regexp matching. @example [...webpackEvalLiterals('eval("work()");')] */

@@ -1473,14 +1473,13 @@ test('Arrange reports interrupted source placement and a later explicit retry re
     // Assert
     assert.equal(
       harness.reader
-        .inspect()
-        .view!.errors.some((error) =>
-          error.includes(
-            'The selected source changed before it could be arranged',
-          ),
+        .presentationState()
+        .reason?.includes(
+          'The selected source changed before it could be arranged',
         ),
       true,
     )
+    assert.equal(harness.reader.inspect().view!.errors.length, 0)
     await harness.reader.action('arrange')
     await harness.reader.action('source')
     assert.equal(

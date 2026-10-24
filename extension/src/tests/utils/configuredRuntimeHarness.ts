@@ -8,6 +8,7 @@ import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
 import { REPOSITORY_LITERAL_LIMIT_CHARS } from '../../constants'
+import { StudyError } from '../../errors'
 import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
 import type { BundleSource } from '../../repositoryBundle'
 import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
@@ -75,6 +76,8 @@ export async function configuredRuntimeHarness(
     runtimeConstants?: RuntimeConstantOverrides
     /** The stand-in browser closes without a failure and then names this profile folder as one it could not remove, as the real adapter does. */
     browserProfileLeft?: ProfileLeft
+    /** How the stand-in `[::1]` forwarder starts: its own (default), absent on a host without IPv6 loopback, or refused because another process holds `[::1]`. */
+    ipv6Loopback?: 'owned' | 'absent' | 'held'
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -141,12 +144,14 @@ export async function configuredRuntimeHarness(
   const clock = createManualClock()
   let requestSequence = 0
   const bindingWaitBudgetsMs: (number | undefined)[] = []
+  const navigations: string[] = []
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
     removedAck = true,
     bound = false,
     rejectBinding = false,
+    pageOrigin = 'http://127.0.0.1:4321',
     executedScriptSource: string | undefined,
     ready = true,
     beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
@@ -363,7 +368,7 @@ export async function configuredRuntimeHarness(
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
   const pageEvaluation = (expression: string | undefined): unknown => {
     if (expression === 'location.href') return 'about:blank'
-    if (expression === 'location.origin') return 'http://127.0.0.1:4321'
+    if (expression === 'location.origin') return pageOrigin
     if (
       expression === afterExpression &&
       !run.view().operation?.inputDispatched
@@ -408,6 +413,7 @@ export async function configuredRuntimeHarness(
       method: string,
       parameters?: {
         expression?: string
+        url?: string
         type?: string
         start?: ScriptPlace
         end?: ScriptPlace
@@ -446,6 +452,7 @@ export async function configuredRuntimeHarness(
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
+        navigations.push(String(parameters?.url))
         bound = !rejectBinding
         // VS Code can surface a bound source stop during hydration when Codebook arms its breakpoint too early.
         if (
@@ -714,6 +721,31 @@ export async function configuredRuntimeHarness(
       './utils/assertDevelopmentWorkspace': {
         assertDevelopmentWorkspace: async () => undefined,
       },
+      './utils/readDeclaredDevelopmentPort': {
+        readDeclaredDevelopmentPort: async () => ({
+          port: 4321,
+          source: 'the dev script in package.json',
+        }),
+      },
+      './utils/assertDevelopmentPortFree': {
+        assertDevelopmentPortFree: async () => undefined,
+      },
+      './utils/startIpv6LoopbackForwarder': {
+        startIpv6LoopbackForwarder: async (port: number) => {
+          if (options.ipv6Loopback === 'absent') return undefined
+          if (options.ipv6Loopback === 'held')
+            throw new StudyError(
+              'PREREQUISITE_MISSING',
+              `Port ${port} is in use on this machine at [::1]`,
+            )
+          releases.push('ipv6 forwarder started')
+          return {
+            close: async (): Promise<void> => {
+              releases.push('ipv6 forwarder')
+            },
+          }
+        },
+      },
       './utils/launchDevelopmentServer': {
         launchDevelopmentServer: () => ({
           ready: async () => {
@@ -831,6 +863,12 @@ export async function configuredRuntimeHarness(
     setScreenshot(base64: string): void {
       screenshot = base64
     },
+    /** Makes the page report this `location.origin`, as after a redirect to another loopback name. @example harness.setPageOrigin('http://localhost:4321') */
+    setPageOrigin(origin: string): void {
+      pageOrigin = origin
+    },
+    /** Every URL the run navigated the page to, in order. */
+    navigations,
     rejectBreakpointBinding(): void {
       rejectBinding = true
     },

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -106,7 +106,7 @@ test('an unreadable Node history folder is reported while the saved-study reader
   }
 })
 
-// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger through the replay's one recorded-source slot (PR-B2, DS5; counts follow recorded-stop presentations, as the debugger also starts on the "Not recorded" thread), and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview
+// Value: protects=a saved test replay opens in the Study reader beside browser studies, pages its events, sends each selected stop's recorded values and sealed source to the native debugger through the replay's one recorded-source slot (PR-B2, DS5; counts follow recorded-stop presentations, as the debugger also starts on the "Not recorded" thread), and shows in the Application pane exactly the recorded output up to the selected event; fails_when=the reader enters browser playback, the Application pane shows output recorded after the selected event or no recorded output document, or a reopened store loses the selected moment; why_new=PR-B1 moved the recorded output from the Study pane's block to the Application pane (Design 3, AC5); seam=the workspace harness's posted messages and native panels; no_claim=the document's pixels or its in-place updates in a real webview; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('saved Node history is selectable in the reader without entering browser playback', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -381,9 +381,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       sequence: 20,
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        20,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 20 && !position.pending
+      },
       'last event on the first page is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -394,9 +397,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       direction: 'next',
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        21,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 21 && !position.pending
+      },
       'next event crosses into the second page',
       READER_RESULT_BOUND_MS,
     )
@@ -454,7 +460,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     const slotUri = new URL(firstPresentation.sourceDocument.uri)
     assert.equal(
       slotUri.pathname,
-      `/node-history-slot/${header.studyId}/Captured-${basename(header.configuration.source.path)}`,
+      `/node-history-slot/${header.studyId}/${sha256(dirname(header.configuration.source.path)).slice(0, 12)}/Captured-${basename(header.configuration.source.path)}`,
     )
     // A per-stop source address of an earlier version still refuses a hash its sealed stop does not have.
     await assert.rejects(
@@ -562,9 +568,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       sequence: 24,
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        24,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 24 && !position.pending
+      },
       'inter-stop output event is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -577,8 +586,9 @@ test('saved Node history is selectable in the reader without entering browser pl
     )
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
-    assert.ok(
-      harness.historicalDebugInvalidations() > invalidationsBeforeOutput,
+    assert.equal(
+      harness.historicalDebugInvalidations() - invalidationsBeforeOutput,
+      1,
       'the previous stop is cleared during an output-only interval',
     )
     assert.equal(
@@ -599,9 +609,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       direction: 'next',
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        25,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 25 && !position.pending
+      },
       'next recorded stop is restored',
       READER_RESULT_BOUND_MS,
     )
@@ -612,9 +625,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       direction: 'previous',
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        24,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 24 && !position.pending
+      },
       'backward navigation restores the output gap',
       READER_RESULT_BOUND_MS,
     )
@@ -626,9 +642,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       sequence: 26,
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        26,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 26 && !position.pending
+      },
       'terminal result event is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -638,8 +657,9 @@ test('saved Node history is selectable in the reader without entering browser pl
     assert.match(terminalMessage.nodeHistorySection?.position ?? '', /^Result /)
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
-    assert.ok(
-      harness.historicalDebugInvalidations() > invalidationsBeforeResult,
+    assert.equal(
+      harness.historicalDebugInvalidations() - invalidationsBeforeResult,
+      1,
       'terminal events do not retain historical debugger values',
     )
     assert.equal(
@@ -745,9 +765,12 @@ test('saved Node history is selectable in the reader without entering browser pl
       sequence: 24,
     })
     await waitUntil(
-      () =>
-        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
-        24,
+      () => {
+        const position = harness
+          .postedMessages()
+          .slice(-1)[0]?.nodeHistoryPosition
+        return position?.sequence === 24 && !position.pending
+      },
       'output-only position replaces the saved stop',
       READER_RESULT_BOUND_MS,
     )
@@ -851,7 +874,7 @@ test('saved Node history is selectable in the reader without entering browser pl
       'result',
     )
 
-    // Arrange: a native debugger preview from this Node history can outlive its selected journal.
+    // Arrange: tabs at the old per-stop address, which nothing opens since the recorded-source slot replaced the per-stop editors (F183).
     const obsoletePreview = harness.addNodeHistoryPreview(header.studyId, 2)
     const pinnedPreview = harness.addNodeHistoryPreview(header.studyId, 2, {
       pinned: true,
@@ -868,7 +891,7 @@ test('saved Node history is selectable in the reader without entering browser pl
     }
     await learningLibrary.saveStudy(browserStudy)
 
-    // Act: choosing browser history retires only the previous journal's disposable source preview.
+    // Act: choosing browser history retires the previous journal's recorded-source slot and closes no tab at the old address.
     harness.receive({
       type: 'history',
       revision: lastPage.revision,
@@ -882,9 +905,9 @@ test('saved Node history is selectable in the reader without entering browser pl
       READER_RESULT_BOUND_MS,
     )
 
-    // Assert: learner-pinned, edited and unrelated tabs remain available.
+    // Assert: every tab at the old address stays, with the learner's pinned, edited and unrelated tabs.
     const retainedTabs = harness.groups.flatMap((group) => group.tabs)
-    assert.equal(retainedTabs.includes(obsoletePreview), false)
+    assert.equal(retainedTabs.includes(obsoletePreview), true)
     assert.equal(retainedTabs.includes(pinnedPreview), true)
     assert.equal(retainedTabs.includes(editedPreview), true)
     assert.equal(retainedTabs.includes(otherHistoryPreview), true)
@@ -1065,7 +1088,12 @@ test('Node journal time seeking restores exact stops and clears debugger across 
     )
     assert.match(shownTestOutput(harness), /between stops/)
     assert.doesNotMatch(shownTestOutput(harness), /Tests 1 passed/)
-    assert.equal(await store.readReaderPosition(history.studyId), 4)
+    // The position is written after the commit and never awaited by it (F197).
+    await waitUntil(
+      async () => (await store.readReaderPosition(history.studyId)) === 4,
+      'the second stop’s reader position is written',
+      READER_RESULT_BOUND_MS,
+    )
 
     // Act: seek into the output interval and then to the final result.
     harness.receiveContext({
@@ -1381,7 +1409,6 @@ test('returning to the current run leaves a selected Node history so its missing
       'the recorded stop reaches the native debugger',
       1_000,
     )
-    const preview = harness.addNodeHistoryPreview(history.studyId, 2)
     const invalidationsBefore = harness.historicalDebugInvalidations()
 
     // Act
@@ -1405,12 +1432,17 @@ test('returning to the current run leaves a selected Node history so its missing
     // The pane no longer shows the test replay's output document: the live run takes it back.
     assert.doesNotMatch(applicationPanel.webview.html, /id="test-output"/)
     assert.equal(
-      harness.groups.flatMap((group) => group.tabs).includes(preview),
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .some((tab) =>
+          JSON.stringify(tab.input).includes('/node-history-slot/'),
+        ),
       false,
-      'the Node history debugger preview is closed',
+      'the recorded-source slot of the Node history is closed',
     )
-    assert.ok(
-      harness.historicalDebugInvalidations() > invalidationsBefore,
+    assert.equal(
+      harness.historicalDebugInvalidations() - invalidationsBefore,
+      1,
       'the historical debugger no longer shows the Node stop',
     )
   } finally {
@@ -2935,6 +2967,7 @@ test('starting live explanation retires only its previous empty explanation grou
   }
 })
 
+// Value: protects=a live run's own entry retiring the explanation pane and arranging the chat beside the run; fails_when=the entry keeps the Study pane, leaves another layout or never confirms it; why_changed=F361: the reader's 250 ms refresh can carry that entry, and the click's own refresh then returns before the entry ends, so the result is awaited instead of read when the click returns; seam=the workspace harness's panels and native layout; no_claim=how long the entry takes
 test('a normal chat run retires the explanation pane without reopening the reader', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -2952,6 +2985,13 @@ test('a normal chat run retires the explanation pane without reopening the reade
     await [...harness.service.records.values()][0]!.preparation
     // Act: the ordinary chat starts execution without requesting another Open.
     await harness.reader.action('click')
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.studyContext') === undefined &&
+        harness.reader.inspect().presentation.layoutConfirmed,
+      'the live entry retires the explanation pane and confirms its layout',
+      READER_RESULT_BOUND_MS,
+    )
     // Assert
     assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
     assert.equal(harness.groups.length, 3)
@@ -2961,6 +3001,45 @@ test('a normal chat run retires the explanation pane without reopening the reade
       groups: [{ size: 0.25 }, { size: 0.25 }],
     })
     assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a live run's entry that the reader's timed refresh carries still retiring the explanation pane, though the click's own refresh joins it and returns first (F361); fails_when=that entry is lost or leaves the Study pane open; why_new=the gate run on a6f6378 met this order, and the earlier test read the pane when the click returned; seam=the reader's refresh started as its 250 ms timer starts it, before the click; no_claim=the timer's period
+test('a live entry that the reader’s timed refresh carries retires the explanation pane after a click', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    const chat = harness.addSeparateEditorPart()
+    await harness.reader.open()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    // Act: the timer's refresh is in flight when the learner clicks, so it carries the run's entry.
+    const timedRefresh = harness.reader['refresh']()
+    await harness.reader.action('click')
+    await timedRefresh
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.studyContext') === undefined &&
+        harness.reader.inspect().presentation.layoutConfirmed,
+      'the live entry retires the explanation pane and confirms its layout',
+      READER_RESULT_BOUND_MS,
+    )
+    // Assert
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.groups.at(-1)!.tabs[0], chat.tab)
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.25 }, { size: 0.25 }],
+    })
   } finally {
     await harness.close()
   }

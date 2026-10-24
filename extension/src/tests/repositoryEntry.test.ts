@@ -103,7 +103,7 @@ function inputHarness() {
   let active: Input | undefined,
     selected: Input | undefined,
     replacements = false,
-    wrongOrigin = false,
+    pageOrigin = 'http://127.0.0.1:4000',
     obscured = false,
     duplicates = false,
     disconnected = false
@@ -134,7 +134,7 @@ function inputHarness() {
     HTMLTextAreaElement: class {},
     location: {
       get origin() {
-        return wrongOrigin ? 'http://foreign.invalid' : 'http://127.0.0.1:4000'
+        return pageOrigin
       },
     },
     document: {
@@ -220,7 +220,10 @@ function inputHarness() {
       replacements = true
     },
     foreign: (): void => {
-      wrongOrigin = true
+      pageOrigin = 'http://foreign.invalid'
+    },
+    pageAt: (origin: string): void => {
+      pageOrigin = origin
     },
     obscure: (): void => {
       obscured = true
@@ -235,7 +238,7 @@ function inputHarness() {
       prepareRepositoryInputs(
         cdp,
         [{ selector: '#email', text: 'invalid@example.invalid' }],
-        'http://127.0.0.1:4000',
+        ['http://localhost:4000', 'http://127.0.0.1:4000', 'http://[::1]:4000'],
         assertCurrent,
       ),
   }
@@ -309,4 +312,30 @@ test('cancellation before target acquisition sends no browser operation', async 
   )
   input.close()
   assert.deepEqual(input.commands, [])
+})
+
+// Value: protects=input preparation accepts the page on any loopback name of the owned port and refuses another port (D65, F426); fails_when=the in-page origin check compares one exact host; why_new=the browser now opens localhost while the server reports 127.0.0.1; seam=the emitted page functions run against a fake location; no_claim=a real page
+for (const pageOrigin of ['http://localhost:4000', 'http://[::1]:4000'])
+  test(`input preparation types into a page at ${pageOrigin}`, async () => {
+    // Arrange
+    const input = inputHarness()
+    input.pageAt(pageOrigin)
+
+    // Act
+    await input.prepare()
+    input.close()
+
+    // Assert
+    assert.equal(input.original.value, 'invalid@example.invalid')
+  })
+
+test('input preparation refuses a page on another port of the same host', async () => {
+  // Arrange
+  const input = inputHarness()
+  input.pageAt('http://localhost:4001')
+
+  // Act / Assert
+  await assert.rejects(input.prepare())
+  input.close()
+  assert.equal(input.commands.includes('Input.insertText'), false)
 })

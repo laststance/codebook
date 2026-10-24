@@ -126,6 +126,8 @@ export interface StudyViewMessage {
     startMs?: number
     endMs?: number
     loading: boolean
+    /** The shown time is the moment being selected, not yet committed: the readout says it is loading (F388). */
+    pending?: boolean
   }
   nodeHistoryPosition?: {
     sequence: number
@@ -135,11 +137,15 @@ export interface StudyViewMessage {
     /** The owned native session shows this stop now. */
     debuggerAvailable?: boolean
     nativeValuesUninspected?: boolean
+    /** The selection has left the committed moment and not committed this one yet: its row is the selected one, loading, and no control acts on a stop meanwhile (D29). */
+    pending?: boolean
   }
   /** The Application pane's view of the selected test replay at the selected event (Design 3); the pane is its one output surface. */
   nodeHistoryApplication?: NodeTestApplicationView
   /** The Study pane's test replay section, every line already worded (Designs 5 and 6). */
   nodeHistorySection?: NodeTestSectionView
+  /** Names the open that selected the shown test replay; the pane scrolls the test replay section into view once for each value (F156, D32). */
+  nodeHistoryScrollToken?: number
   /** The test replay's learning material for the one summary renderer, each referenced step with its event (Design 5). */
   nodeHistoryLearningSummary?: NodeLearningSummaryProjection
   contentTab?: 'overview' | 'live' | 'recording'
@@ -197,18 +203,18 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 
 <div ${markupOnlyIn(kind, 'moments', 'hidden')}>
 <section id="learning-material" hidden><h2 id="learning-title"></h2><p id="learning-question" class="muted"></p><p id="learning-summary"></p><p class="muted">Saved path · links inspect recorded stops. Source-derived and unknown steps do not establish execution.</p><div id="learning-sequence"></div></section><p id="learning-unavailable" class="muted" hidden>No processing summary or sequence was saved with this recording.</p>
-<div role="tablist" aria-label="Study content"><button id="overview-tab" role="tab" data-tab="overview" aria-controls="overview" aria-selected="true">Overview</button><button id="live-tab" role="tab" data-tab="live" aria-controls="live-content" aria-selected="false" tabindex="-1">Live</button><button id="recording-tab" role="tab" data-tab="recording" aria-controls="live-content" aria-selected="false" tabindex="-1">Recording</button></div>
+<div id="content-tabs" role="tablist" aria-label="Study content"><button id="overview-tab" role="tab" data-tab="overview" aria-controls="overview" aria-selected="true">Overview</button><button id="live-tab" role="tab" data-tab="live" aria-controls="live-content" aria-selected="false" tabindex="-1">Live</button><button id="recording-tab" role="tab" data-tab="recording" aria-controls="live-content" aria-selected="false" tabindex="-1">Recording</button></div>
 <div id="loading" class="status" hidden>Loading the selected observation…</div><div id="selected"><div class="status" id="observation"></div><div id="overview" role="tabpanel" aria-labelledby="overview-tab"><h2>Source-derived overview</h2><p id="overview-text"></p><button class="link" data-action="source">Read the linked source</button></div><div id="live-content" role="tabpanel" aria-labelledby="live-tab"><section><h2>Agent interpretation</h2><div id="interpretations" role="region" aria-label="Agent interpretation" tabindex="0"></div></section></div>
 <details id="later-annotations" hidden><summary>Later annotations — not available at this recorded time</summary><p class="muted">These explanations were added later. They do not change what was observed in the recording.</p><div id="later-interpretations"></div></details>
 <section><div class="row"><button class="link" data-action="source">Captured / source-derived document</button><button class="link" data-action="current-file">Open current file</button></div><p id="source-version" class="muted"></p><p id="source-drift" class="error"></p><label><input id="understood" type="checkbox" aria-describedby="understanding-description"><span><span id="understanding-label">I understand this source revision</span><span id="save-state" class="muted"></span></span></label><p id="understanding-description" class="muted" hidden>Applies to this article and every captured citation shown here.</p><p id="progress" class="muted"></p></section></div>
-<section><h2>Source-linked flow</h2><div id="flow"></div><p id="correspondence" class="muted"></p></section>
+<section id="source-flow"><h2>Source-linked flow</h2><div id="flow"></div><p id="correspondence" class="muted"></p></section>
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
 <p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
-<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><p id="node-history-capture-reason" class="muted"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled><div id="node-history-coverage" class="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="node-history-coverage-label" class="history-coverage-label muted"></span></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
+<section id="node-history"><h2>${STUDY_UI_OPTIONS.testReplay.heading}</h2><p id="node-history-status" class="status" role="status"></p><p id="node-history-capture-reason" class="muted"></p><div id="node-history-moment" role="status" aria-live="polite"><p id="node-history-position" class="status"></p><p id="node-history-explanation"></p></div><p id="node-history-not-recorded" class="muted"></p><p id="node-history-unverified" class="muted"></p><p id="node-history-pointer" class="muted"></p><div id="node-history-closed" class="row" hidden><button type="button" data-action="focus-app">${STUDY_UI_OPTIONS.testReplay.showRecordedOutput}</button></div><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><button id="node-history-inspect" type="button" hidden>Inspect in native debugger</button><div id="node-history-transport"><div class="playback-row"><button id="node-history-stop-previous" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousStop}">${STUDY_UI_OPTIONS.testReplay.previousStop}</button><button id="node-history-stop-next" class="primary" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextStop}">${STUDY_UI_OPTIONS.testReplay.nextStop}</button><button id="node-history-playback-toggle" type="button" data-node-history-playback="play">${STUDY_UI_OPTIONS.testReplay.play}</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled><div id="node-history-coverage" class="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="node-history-coverage-label" class="history-coverage-label muted"></span></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><div class="row"><button id="node-history-moment-previous" type="button" title="${STUDY_UI_OPTIONS.testReplay.previousEvent}">${STUDY_UI_OPTIONS.testReplay.previousEvent}</button><button id="node-history-moment-next" type="button" title="${STUDY_UI_OPTIONS.testReplay.nextEvent}">${STUDY_UI_OPTIONS.testReplay.nextEvent}</button></div></div><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Test replay learning sequence"></div><details id="node-learning-steps-details"><summary>${STUDY_UI_OPTIONS.testReplay.stepDetails}</summary><div id="node-learning-steps"></div></details></section><p id="node-history-no-material" class="muted" hidden>${STUDY_UI_OPTIONS.testReplay.noMaterial}</p><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><details id="node-history-events-details"><summary id="node-history-events-summary">Events</summary><div class="row"><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></details></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
-<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
+<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="${STUDY_UI_OPTIONS.coverage.unknownName}" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()})</script></body></html>`
 }
@@ -352,37 +358,38 @@ function studyClient(
    * @param coverage - The strip element, hidden when there is nothing to mark.
    * @param label - The legend element beside the slider.
    * @param marks - The range with its gaps and recorded stops, or `undefined` when no coverage is known.
-   * @param legends - The legend for a range with gaps, for one without, and for no known coverage.
-   * @example renderTimelineCoverage(strip, legend, { startMs: 0, endMs: 900, gaps: [{ startMs: 0, endMs: 900 }], recordedPoints: [420] }, legends)
+   * @param legend - The legend its caller words for these marks: {@link browserCoverageLegend} for the browser transport, the test replay's one legend (its strip marks the whole range as not recorded) or nothing when no test replay is shown.
+   * @example renderTimelineCoverage(strip, legend, { startMs: 0, endMs: 900, gaps: [{ startMs: 0, endMs: 900 }], recordedPoints: [420] }, 'Striped: …')
    */
   const renderTimelineCoverage = (
     coverage: HTMLElement,
     label: HTMLElement,
     marks: CoverageMarks | undefined,
-    legends: {
-      gapsLegend: string
-      noGapsLegend: string
-      unknownLegend: string
-    },
+    legend: string,
   ): void => {
     coverage.hidden = !marks
-    label.textContent = marks
-      ? marks.gaps.length
-        ? legends.gapsLegend
-        : legends.noGapsLegend
-      : legends.unknownLegend
+    label.textContent = legend
     // Without known coverage the strip is emptied and says so.
     if (!marks) {
       coverage.replaceChildren()
       delete coverage.dataset.signature
-      coverage.setAttribute(
-        'aria-label',
-        'Historical source and debugger coverage unknown',
-      )
+      coverage.setAttribute('aria-label', options.coverage.unknownName)
       return
     }
     coverage.setAttribute('aria-label', describeCoverageMarks(marks))
     drawCoverageMarks(coverage, marks)
+  }
+  /**
+   * Words the browser transport's coverage legend: the stripes and ticks for a range with gaps, the recorded range without them, or unknown coverage; called with {@link renderTimelineCoverage} for the browser transport.
+   * @param marks - The recording's mapped range with its gaps and recorded stops, or `undefined` when its coverage is not known.
+   * @returns The legend beside the slider.
+   * @example browserCoverageLegend(undefined) // => 'Historical source/debugger coverage unknown'
+   */
+  const browserCoverageLegend = (marks: CoverageMarks | undefined): string => {
+    if (!marks) return 'Historical source/debugger coverage unknown'
+    return marks.gaps.length
+      ? 'Striped: source/debugger not recorded · ticks: recorded stops'
+      : 'Source/debugger history recorded across this range'
   }
   /**
    * Names a coverage strip for assistive technology: how many gaps and recorded stops it marks, with their times; called by {@link renderTimelineCoverage}.
@@ -395,7 +402,15 @@ function studyClient(
       .map((gap) => `${seconds(gap.startMs)}–${seconds(gap.endMs)}`)
       .join(', ')
     const stopTimes = marks.recordedPoints.map(seconds).join(', ')
-    return `${marks.gaps.length} source/debugger history gap${marks.gaps.length === 1 ? '' : 's'}${gapTimes ? `: ${gapTimes}` : ''}; ${marks.recordedPoints.length} recorded stop${marks.recordedPoints.length === 1 ? '' : 's'}${stopTimes ? `: ${stopTimes}` : ''}`
+    const gapWords =
+      marks.gaps.length === 1
+        ? options.coverage.gapSingular
+        : options.coverage.gapPlural
+    const stopWords =
+      marks.recordedPoints.length === 1
+        ? options.coverage.stopSingular
+        : options.coverage.stopPlural
+    return `${marks.gaps.length} ${gapWords}${gapTimes ? `: ${gapTimes}` : ''}; ${marks.recordedPoints.length} ${stopWords}${stopTimes ? `: ${stopTimes}` : ''}`
   }
   /**
    * Draws a coverage strip's gap spans and stop ticks, once per distinct set of marks; called by {@link renderTimelineCoverage}.
@@ -425,7 +440,7 @@ function studyClient(
       mark.setAttribute('aria-hidden', 'true')
       mark.style.left = `${((gap.startMs - marks.startMs) / durationMs) * options.timelineFullWidthPercent}%`
       mark.style.width = `${((gap.endMs - gap.startMs) / durationMs) * options.timelineFullWidthPercent}%`
-      mark.title = `Not recorded at this moment · ${seconds(gap.startMs)}–${seconds(gap.endMs)}`
+      mark.title = `${options.coverage.gapTitle} · ${seconds(gap.startMs)}–${seconds(gap.endMs)}`
       coverage.append(mark)
     }
     for (const positionMs of marks.recordedPoints) {
@@ -433,7 +448,7 @@ function studyClient(
       mark.className = 'history-stop'
       mark.setAttribute('aria-hidden', 'true')
       mark.style.left = `${((positionMs - marks.startMs) / durationMs) * options.timelineFullWidthPercent}%`
-      mark.title = `Recorded source and debugger · ${seconds(positionMs)}`
+      mark.title = `${options.coverage.stopTitle} · ${seconds(positionMs)}`
       coverage.append(mark)
     }
   }
@@ -496,6 +511,7 @@ function studyClient(
   const readerOptions = element('reader-options')
   let selectedContentTab: StudyViewMessage['contentTab']
   let revealedFollowedObservationId: string | undefined
+  let scrolledNodeHistoryToken: number | undefined
   let readerOptionsOpenedByLearner = false
   readerOptions.querySelector('summary')?.addEventListener('click', () => {
     readerOptionsOpenedByLearner = !readerOptions.hasAttribute('open')
@@ -1874,7 +1890,7 @@ function studyClient(
    * Gives the control of the pane that stays and takes a lost focus when no disclosure around the control that left is shown; read by {@link focusTargetFor}.
    * @param leaving - The control that left while it held the focus.
    * @returns
-   * - In the Study pane: the selected content tab
+   * - In the Study pane: the selected content tab while it is shown; while a selected test replay hides the content tabs ({@link hideArticleForTestReplay}), the first test replay transport control that can be used (F567)
    * - In the bottom panel's pane, which has no content tabs: Play or the next transport control that can be used while the transport is shown, else the first control the pane shows
    * @example stayingControl(button('stop')!)?.id // => 'live-tab'
    */
@@ -1885,10 +1901,16 @@ function studyClient(
         preferred: options.replayTransportFocus,
         section: 'study-content',
       })
-    return (
-      document.querySelector<HTMLElement>('[role=tab][aria-selected=true]') ??
-      undefined
+    const tab = document.querySelector<HTMLElement>(
+      '[role=tab][aria-selected=true]',
     )
+    // A hidden tab cannot take the focus, which would then rest on the document body.
+    if (tab?.checkVisibility()) return tab
+    return usableTransportControl({
+      leaving,
+      preferred: options.nodeTransportFocus,
+      section: 'node-history',
+    })
   }
   // The pane's memory of the control the learner left it at, which it shares with the Repository Wiki pane ({@link installPaneFocusMemory}). The control the learner left stays the holder of the pane's focus while the learner is away: the editor took the focus from it, as the page does from a control it disables. On return it takes the focus again when it is still shown, or the place its part or the pane's general rule ({@link settleFocus}) gives it when it left. The memory's listener for the window's focus event is added here, after the ones of the parts that place a focus of their own, so the pane's general rule runs last.
   const {
@@ -2012,6 +2034,20 @@ function studyClient(
     (presentation.layoutConfirmed
       ? ''
       : 'Layout not confirmed. Restore it or focus a pane below.')
+  /**
+   * Hides the Repository article's tabs, observation, current-source block and flow while a test replay is selected, so its own section is the first thing under the controls and no source warning that is not about the replay is shown (D32, F390); called by the Study render after it set the article block's visibility.
+   * @param message - The current Study message; a test replay is selected when it carries its index.
+   * @example hideArticleForTestReplay(message) // the "Current source unavailable" lines are hidden
+   */
+  const hideArticleForTestReplay = (message: StudyViewMessage): void => {
+    const replay = Boolean(message.nodeHistory)
+    element('content-tabs').hidden = replay
+    element('source-flow').hidden = replay
+    // The loading line and the selected block were just set from the article's own state; a shown test replay only hides them.
+    if (!replay) return
+    element('loading').hidden = true
+    element('selected').hidden = true
+  }
   /**
    * Gives what the status line under "Study view and pane controls" says about the presentation; read on every Study message that carries a presentation.
    * The host sends such a message when a tab or a tab group of the editor changes while the reader is not changing tabs itself, so the line says that the layout is not confirmed as soon as the learner closes a pane's tab or the captured source's tab by hand. A change that no tab event tells (a sash the learner drags) reaches the line only with the next message after the host read the layout, at an agent's status read or at Restore.
@@ -2337,6 +2373,17 @@ function studyClient(
     renderTestReplayEvents(message, section, replaying)
   }
   /**
+   * Says whether the section shows a committed stop whose controls may be offered, so the values hint, Show Variables and Inspect never ride on a selection that has left the committed moment and not committed the new one (D29, F370); called by {@link renderTestReplayMoment}.
+   * @param message - The current Study message.
+   * @param suppressed - Whether a browser replay holds the bottom panel.
+   * @returns `false` while suppressed or while the position is pending, even when a host sent the earlier stop's fields with `pending: true`.
+   * @example isTestReplayStopSettled(message, false) // => false for a position { pending: true, sourceAvailable: true, nativeValuesUninspected: true }
+   */
+  const isTestReplayStopSettled = (
+    message: StudyViewMessage,
+    suppressed: boolean,
+  ): boolean => !suppressed && !message.nodeHistoryPosition?.pending
+  /**
    * Writes the section's status, the selected moment's locator and explanation (one polite live region), the not-recorded lines, where the output is, and the values hint; called by {@link renderTestReplay}.
    * @param message - The current Study message.
    * @param section - The section's worded view, absent while suppressed or without a test replay.
@@ -2355,10 +2402,11 @@ function studyClient(
         ? options.testReplay.chooseReplay
         : options.testReplay.noReplay
     renderTestReplayLines(section, idle)
+    // While a selection is pending the earlier stop's fields may still ride on the position: no stop control is offered then (D29, F370).
+    const settled = isTestReplayStopSettled(message, suppressed)
     // A saved stop committed without native values keeps the same muted guidance row as replay, separate from the position facts.
     const uninspected =
-      !suppressed &&
-      Boolean(message.nodeHistoryPosition?.nativeValuesUninspected)
+      settled && Boolean(message.nodeHistoryPosition?.nativeValuesUninspected)
     text('node-history-hint', uninspected ? options.nativeValuesHint : '')
     offerShowVariables(
       'node-history-show-variables',
@@ -2368,7 +2416,7 @@ function studyClient(
     )
     // The row's Inspect is wanted while the stop's values are not loaded (beside Show Variables) and whenever the debugger does not show the selected stop: after the learner ended its session, or when it could not start, the press starts it again (F348).
     const inspectWanted =
-      !suppressed &&
+      settled &&
       (uninspected || !message.nodeHistoryPosition?.debuggerAvailable)
     renderTestReplayInspect(message, inspectWanted, replaying)
   }
@@ -2516,15 +2564,12 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     unavailable: boolean,
   ): void => {
+    const marks = unavailable ? undefined : section?.timeline
     renderTimelineCoverage(
       element('node-history-coverage'),
       element('node-history-coverage-label'),
-      unavailable ? undefined : section?.timeline,
-      {
-        gapsLegend: options.testReplay.timelineLegend,
-        noGapsLegend: options.testReplay.timelineLegend,
-        unknownLegend: '',
-      },
+      marks,
+      marks ? options.testReplay.timelineLegend : '',
     )
   }
   /**
@@ -2619,7 +2664,10 @@ function studyClient(
     nodePlayhead.max = String(range.endMs)
     if (nodeHistoryScrubbing) return
     nodePlayhead.value = String(range.positionMs)
-    describeTestReplayPlayhead(playbackState?.positionMs)
+    describeTestReplayPlayhead(
+      playbackState?.positionMs,
+      testReplayLoadingSuffix(playbackState),
+    )
   }
   /**
    * Reads the slider's range and position from a test replay's playback state; called by {@link renderTestReplayPlayhead}.
@@ -2649,22 +2697,35 @@ function studyClient(
     }
   }
   /**
+   * Words the end of the time readout: the loading words while the shown time is a moment the selection is still going to (F388); called by {@link renderTestReplayPlayhead}.
+   * @param playbackState - The test replay's playback state.
+   * @returns The catalog's loading suffix, or an empty string.
+   * @example testReplayLoadingSuffix({ pending: true, loading: false, mode: 'paused' }) // => ' · loading…'
+   */
+  const testReplayLoadingSuffix = (
+    playbackState: StudyViewMessage['nodeHistoryPlayback'],
+  ): string => (playbackState?.pending ? options.testReplay.loadingSuffix : '')
+  /**
    * Says the selected test time to assistive technology and beside the slider, never the raw millisecond value; called by {@link renderTestReplayPlayhead}.
    * @param positionMs - The selected time, if any.
-   * @example describeTestReplayPlayhead(420)
+   * @param suffix - What both texts end with: the loading words while the time is a moment still being selected, else nothing (F388).
+   * @example describeTestReplayPlayhead(420, ' · loading…')
    */
-  const describeTestReplayPlayhead = (positionMs: number | undefined): void => {
+  const describeTestReplayPlayhead = (
+    positionMs: number | undefined,
+    suffix: string,
+  ): void => {
     nodePlayhead.setAttribute(
       'aria-valuetext',
       positionMs === undefined
         ? 'No recorded test time selected'
-        : `${seconds(positionMs)} of recorded test time`,
+        : `${seconds(positionMs)} of recorded test time${suffix}`,
     )
     text(
       'node-history-playback-position',
       positionMs === undefined
         ? 'Test journal playback'
-        : `Recorded test time · ${(positionMs / options.secondMs).toFixed(2)} s`,
+        : `Recorded test time · ${(positionMs / options.secondMs).toFixed(2)} s${suffix}`,
     )
   }
   /**
@@ -2887,13 +2948,17 @@ function studyClient(
     section: StudyViewMessage['nodeHistorySection'],
     replaying: boolean,
   ): unknown[] => {
-    const position = message.nodeHistoryPosition
+    // No selected moment reads as a position without fields.
+    const position: Partial<
+      NonNullable<StudyViewMessage['nodeHistoryPosition']>
+    > = message.nodeHistoryPosition ?? {}
     return [
       message.nodeHistory?.entries ?? [],
       replaying,
-      position?.sequence,
-      Boolean(position?.debuggerAvailable),
-      position?.sourceAvailable,
+      position.sequence,
+      Boolean(position.pending),
+      Boolean(position.debuggerAvailable),
+      position.sourceAvailable,
       message.nodeHistoryUnverifiedStops ?? [],
       section?.verdict,
     ]
@@ -2940,22 +3005,72 @@ function studyClient(
     const words = testReplayEventWords(entry, section)
     heading.textContent = words.heading
     body.textContent = words.body
-    row.append(heading, body)
-    const isSelected = entry.sequence === message.nodeHistoryPosition?.sequence
+    const { isSelected, loading } = testReplayEventRowState(entry, message)
+    row.append(
+      heading,
+      body,
+      testReplayEventSelect(entry.sequence, isSelected, replaying),
+    )
+    markTestReplayEventRow(row, isSelected, loading)
+    // A stop's Inspect waits for the commit while its row loads, so no control acts on the earlier stop.
+    if (entry.type === 'stop' && !loading)
+      row.append(
+        testReplayInspectControl(entry, message, isSelected, replaying),
+      )
+    return row
+  }
+  /**
+   * Says whether an event is the selected one and whether it is still loading: the selection has left the committed moment for it and not committed it yet (D29); called by {@link testReplayEventRow}.
+   * @param entry - The event.
+   * @param message - The current Study message.
+   * @returns Whether the event is selected, and whether it loads.
+   * @example testReplayEventRowState(stop, message) // => { isSelected: true, loading: true } while the host shows that stop
+   */
+  const testReplayEventRowState = (
+    entry: NonNullable<StudyViewMessage['nodeHistory']>['entries'][number],
+    message: StudyViewMessage,
+  ): { isSelected: boolean; loading: boolean } => {
+    const position = message.nodeHistoryPosition
+    const isSelected = entry.sequence === position?.sequence
+    return { isSelected, loading: isSelected && position?.pending === true }
+  }
+  /**
+   * Builds an event row's Select event control, pressed and inert on the selected event; called by {@link testReplayEventRow}.
+   * @param sequence - The event's sequence, which the press sends.
+   * @param isSelected - Whether the event is the selected one.
+   * @param replaying - Whether a browser recording is shown, which disables the control.
+   * @returns The control.
+   * @example testReplayEventSelect(4, true, false).textContent // => 'Selected event'
+   */
+  const testReplayEventSelect = (
+    sequence: number,
+    isSelected: boolean,
+    replaying: boolean,
+  ): HTMLButtonElement => {
     const select = document.createElement('button')
     select.type = 'button'
-    select.dataset.nodeHistorySequence = String(entry.sequence)
+    select.dataset.nodeHistorySequence = String(sequence)
     select.textContent = isSelected ? 'Selected event' : 'Select event'
     // The selected control stays focusable so keyboard focus survives the press; it then sends nothing.
     select.disabled = replaying
     if (isSelected) select.setAttribute('aria-disabled', 'true')
     select.setAttribute('aria-pressed', String(isSelected))
-    row.append(select)
-    if (entry.type === 'stop')
-      row.append(
-        testReplayInspectControl(entry, message, isSelected, replaying),
-      )
-    return row
+    return select
+  }
+  /**
+   * Marks the selected event's row as the current one, and as busy while it loads until the host commits it (D29); called by {@link testReplayEventRow}.
+   * @param row - The event's row.
+   * @param isSelected - Whether the event is the selected one.
+   * @param loading - Whether the selected event is still loading.
+   * @example markTestReplayEventRow(row, true, true) // row: aria-current="true" aria-busy="true"
+   */
+  const markTestReplayEventRow = (
+    row: HTMLElement,
+    isSelected: boolean,
+    loading: boolean,
+  ): void => {
+    if (isSelected) row.setAttribute('aria-current', 'true')
+    if (loading) row.setAttribute('aria-busy', 'true')
   }
   /**
    * Words one event of the test replay's event list: `Output · <channel> · <t> s` with its text, `Stop <n> · <path>:<line>:<column> · <t> s` with its frame and captured facts, or `Result · <verdict> · <t> s` with the output tail; called by {@link testReplayEventRow}.
@@ -3126,6 +3241,37 @@ function studyClient(
     }
   }
   window.addEventListener('resize', offerClampedTitles)
+  /**
+   * Says whether the test replay section is in the page for a message, so an open's scroll token is spent only on a section that can be scrolled to (F371); called by {@link revealNodeHistoryOnOpen}.
+   * @param message - The current Study message.
+   * @returns `false` while the message loads, names no section, or shows a browser replay in the bottom panel (which holds the section back).
+   * @example isNodeHistoryRevealable(message) // => false for a message whose nodeHistorySection is absent
+   */
+  const isNodeHistoryRevealable = (message: StudyViewMessage): boolean =>
+    !message.loading &&
+    Boolean(message.nodeHistorySection) &&
+    !isReplayInBottomPanel(message)
+  /**
+   * Puts the test replay section in view once per open, so the Study's article above it does not push the transport out of sight (F156, D32); called after every Study message.
+   * A message without a new scroll token leaves the learner's scroll alone; the token is kept, not spent, until the section shows (F371).
+   * @param message - The current Study message.
+   * @example revealNodeHistoryOnOpen(message) // the section scrolled to the top once for token 7
+   */
+  const revealNodeHistoryOnOpen = (message: StudyViewMessage): void => {
+    const token = message.nodeHistoryScrollToken
+    if (
+      token === undefined ||
+      token === scrolledNodeHistoryToken ||
+      !isNodeHistoryRevealable(message)
+    )
+      return
+    scrolledNodeHistoryToken = token
+    element('node-history').scrollIntoView({
+      block: 'start',
+      inline: 'nearest',
+      behavior: 'instant',
+    })
+  }
   // Listeners of one event run in the order they were added: this one reads the focus before the message changes the page.
   window.addEventListener('message', readFocusHolder)
   window.addEventListener('message', (event) => {
@@ -3345,23 +3491,19 @@ function studyClient(
       }
       const mapped =
         timeline.status === 'mapped' && range && range.endMs > range.startMs
+      const marks = mapped
+        ? {
+            startMs: range.startMs,
+            endMs: range.endMs,
+            gaps: timeline.gaps,
+            recordedPoints: timeline.recordedPoints,
+          }
+        : undefined
       renderTimelineCoverage(
         element('history-coverage'),
         element('history-coverage-label'),
-        mapped
-          ? {
-              startMs: range.startMs,
-              endMs: range.endMs,
-              gaps: timeline.gaps,
-              recordedPoints: timeline.recordedPoints,
-            }
-          : undefined,
-        {
-          gapsLegend:
-            'Striped: source/debugger not recorded · ticks: recorded stops',
-          noGapsLegend: 'Source/debugger history recorded across this range',
-          unknownLegend: 'Historical source/debugger coverage unknown',
-        },
+        marks,
+        browserCoverageLegend(marks),
       )
     }
     const item = model.progressByItem.find(
@@ -3490,6 +3632,7 @@ function studyClient(
           : 'Loading the selected observation…',
     )
     element('selected').hidden = message.loading
+    hideArticleForTestReplay(message)
     for (const tab of Array.from(
       document.querySelectorAll<HTMLButtonElement>('[data-tab]'),
     )) {
@@ -3772,6 +3915,7 @@ function studyClient(
       })
       revealedFollowedObservationId = model.observation?.id
     }
+    revealNodeHistoryOnOpen(message)
     api.postMessage({
       type: 'rendered',
       revision: message.revision,

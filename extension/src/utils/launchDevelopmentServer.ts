@@ -12,38 +12,26 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { isEndpointClosed } from '../runtimeSupport/utils/isEndpointClosed'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
+import { buildDevelopmentServerEnvironment } from './developmentServerEnvironment'
 import { isProcessGroupGone } from './isProcessGroupGone'
+import {
+  beginReleaseOfOwnedDevelopmentPort,
+  claimOwnedDevelopmentPort,
+  releaseOwnedDevelopmentPort,
+} from './ownedDevelopmentPorts'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
 import { signalProcessGroup } from './signalProcessGroup'
 import { verifyServerInspectorOwnership } from './verifyServerInspectorOwnership'
 
-/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @example const app = launchDevelopmentServer(target, node, record); await app.ready(signal) */
+/** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @param inspectServer - Whether to open the native server inspector. @param port - The project's own port ({@link readDeclaredDevelopmentPort}); required, so no caller can skip the lookup and the app is never started on another port. @example const app = launchDevelopmentServer(target, node, record, false, 3165); await app.ready(signal) */
 export function launchDevelopmentServer(
   target: string,
   node: string,
   record: (type: string, detail?: unknown) => unknown,
-  inspectServer = false,
+  inspectServer: boolean,
+  port: number,
 ) {
-  const environment: NodeJS.ProcessEnv = {
-    NEXT_TELEMETRY_DISABLED: '1',
-    // Next's default100ms child cutoff can kill native lock cleanup before this closer's bounded wait.
-    NEXT_EXIT_TIMEOUT_MS: String(REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS),
-    HUSKY: '0',
-    CI: 'true',
-  }
-  // Inherit only basic process settings; credentials and unrelated application configuration stay outside the owned process.
-  for (const name of [
-    'PATH',
-    'HOME',
-    'TMPDIR',
-    'SHELL',
-    'LANG',
-    'LC_ALL',
-    'PNPM_HOME',
-    'USER',
-    'LOGNAME',
-  ])
-    environment[name] = process.env[name]
+  const environment = buildDevelopmentServerEnvironment()
   const arguments_ = [
     join(target, 'node_modules/next/dist/bin/next'),
     'dev',
@@ -51,7 +39,7 @@ export function launchDevelopmentServer(
     '--hostname',
     '127.0.0.1',
     '--port',
-    '0',
+    String(port),
   ]
   if (inspectServer) arguments_.push('--inspect', '127.0.0.1:0')
   const child = spawn(node, arguments_, {
@@ -95,6 +83,7 @@ export function launchDevelopmentServer(
       inspectorError = cause instanceof Error ? cause : new Error(String(cause))
     }
   })
+  const claim = claimOwnedDevelopmentPort(port)
   record('application.acquired', {
     pid: child.pid,
     node,
@@ -165,7 +154,7 @@ export function launchDevelopmentServer(
         signal,
       )
     },
-    /** Waits for the actual ephemeral listener, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @example await app.ready(signal, '/login') */
+    /** Waits for the listener on the declared port, then proves readiness through the configured entry page (the root page only when entryPath is "/"); called during preparation. @param entryPath - Configured first page; a non-root entry must answer 200 without a redirect. @example await app.ready(signal, '/login') */
     async ready(signal: AbortSignal, entryPath = '/') {
       repositoryEntryPathSchema.parse(entryPath)
       origin = await waitUntil(
@@ -175,8 +164,8 @@ export function launchDevelopmentServer(
               error ??
               new Error(`Application exited: ${child.exitCode}: ${log}`)
             )
-          // Process chunks may split a port; only a received delimiter proves its complete value.
-          return /http:\/\/127\.0\.0\.1:\d+(?=\D)/.exec(
+          // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
+          return new RegExp(`http://127\\.0\\.0\\.1:${port}(?=\\D)`).exec(
             log.toString('utf8'),
           )?.[0]
         },
@@ -215,6 +204,7 @@ export function launchDevelopmentServer(
     /** Stops only the acquired process group and verifies its listener; cleanup calls this even after failed readiness. @example await app.close() */
     async close(): Promise<void> {
       const attempt = (closing ??= (async () => {
+        beginReleaseOfOwnedDevelopmentPort(claim)
         if (child.pid) {
           const processGroup = child.pid
           // A group whose exited members macOS has not reaped yet answers EPERM; both utilities wait for it instead of failing the release.
@@ -246,6 +236,7 @@ export function launchDevelopmentServer(
             'owned Next listener exit',
             REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
           )
+        releaseOwnedDevelopmentPort(claim)
         record('application.closed', {
           pid: child.pid,
           origin,

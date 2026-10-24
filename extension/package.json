@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.37",
+  "version": "0.2.38",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -230,19 +230,17 @@
           "id": "codebook",
           "title": "codebook",
           "icon": "src/assets/book.svg"
+        },
+        {
+          "id": "codebookLearning",
+          "title": "Learning summary",
+          "icon": "src/assets/book.svg"
         }
       ],
       "panel": [
         {
           "id": "codebookMoments",
           "title": "codebook",
-          "icon": "src/assets/book.svg"
-        }
-      ],
-      "secondarySidebar": [
-        {
-          "id": "codebookLearning",
-          "title": "Learning summary",
           "icon": "src/assets/book.svg"
         }
       ]

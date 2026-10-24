@@ -8,17 +8,17 @@ const resultSchema = z.object({
   reason: z.string().optional(),
 })
 
-/** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @example await prepareRepositoryInputs(cdp, inputs, origin, assertCurrent) */
+/** Prepares declared text controls on the owned page before its learning breakpoint is armed; uncertain inserts are never retried. @example await prepareRepositoryInputs(cdp, inputs, origins, assertCurrent) */
 export async function prepareRepositoryInputs(
   cdp: Pick<Cdp, 'request'>,
   inputs: NonNullable<RepositoryConfiguration['initialInputs']>,
-  origin: string,
+  origins: readonly string[],
   assertCurrent: () => void,
 ): Promise<void> {
   for (const [index, input] of inputs.entries()) {
     assertCurrent()
     const selected = await cdp.request('Runtime.evaluate', {
-      expression: `(${selectInput.toString()})(${JSON.stringify(input.selector)},${JSON.stringify(origin)})`,
+      expression: `(${selectInput.toString()})(${JSON.stringify(input.selector)},${JSON.stringify(origins)})`,
       returnByValue: false,
     })
     const objectId = selected.result.objectId
@@ -35,7 +35,7 @@ export async function prepareRepositoryInputs(
         const result = await cdp.request('Runtime.callFunctionOn', {
           objectId,
           functionDeclaration: inspectInput.toString(),
-          arguments: [{ value: { ...input, origin, phase } }],
+          arguments: [{ value: { ...input, origins, phase } }],
           returnByValue: true,
         })
         assertCurrent()
@@ -58,9 +58,9 @@ export async function prepareRepositoryInputs(
   }
 }
 
-/** Resolves one node without modifying the target page or copying its current input value. @example selectInput('#email', origin) */
-function selectInput(selector: string, origin: string) {
-  if (location.origin !== origin) return undefined
+/** Resolves one node without modifying the target page or copying its current input value. @example selectInput('#email', origins) */
+function selectInput(selector: string, origins: readonly string[]) {
+  if (!origins.includes(location.origin)) return undefined
   const matches = document.querySelectorAll(selector)
   return matches.length === 1 ? matches[0] : undefined
 }
@@ -71,11 +71,11 @@ function inspectInput(
   input: {
     selector: string
     text: string
-    origin: string
+    origins: readonly string[]
     phase: 'focus' | 'verify'
   },
 ) {
-  if (location.origin !== input.origin)
+  if (!input.origins.includes(location.origin))
     return { ready: false, reason: 'wrong-origin' }
   const matches = document.querySelectorAll(input.selector),
     element = matches[0]

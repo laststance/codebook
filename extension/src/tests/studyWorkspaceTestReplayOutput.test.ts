@@ -16,7 +16,7 @@ import {
   saveTwoStopNodeHistory,
 } from './utils/twoStopNodeHistory'
 
-// Value: protects=the Application pane of a test replay is one document per history: opening writes it once, each later moment reaches it as a posted view with a newer generation and that moment's time and output, and the result's view ends with the verdict; fails_when=a moment of the same history writes the document again (the learner's scroll, selection and focus there are lost), a moment posts no view, or a later view carries an older generation; why_new=EN3 replaces a document written per event; seam=none; no_claim=the document's own application of a view, which the Reader DOM check covers (stand-ins: the harness records the Application panel's document and posted views)
+// Value: protects=the Application pane of a test replay is one document per history: opening writes it once, each later moment reaches it as a posted view with a newer generation and that moment's time and output, and the result's view ends with the verdict; fails_when=a moment of the same history writes the document again (the learner's scroll, selection and focus there are lost), a moment posts no view, or a later view carries an older generation; why_new=EN3 replaces a document written per event; seam=none; no_claim=the document's own application of a view, which the Reader DOM check covers (stand-ins: the harness records the Application panel's document and posted views); why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('a test replay’s Application document is written once and each later moment is posted into it', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -29,6 +29,7 @@ test('a test replay’s Application document is written once and each later mome
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
       READER_RESULT_BOUND_MS,
@@ -47,7 +48,9 @@ test('a test replay’s Application document is written once and each later mome
       sequence: 5,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 5 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the result is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -59,7 +62,9 @@ test('a test replay’s Application document is written once and each later mome
       unit: 'event',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the second stop is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -73,16 +78,23 @@ test('a test replay’s Application document is written once and each later mome
       atOpen?.view.lines.map((line) => line.text),
       ['RUN src/theme.test.ts'],
     )
-    const later = harness.applicationOutputs().slice(updatesAtOpen)
+    // Each move posts the header that waits for the commit (D29, F203) and then the moment itself.
+    const allLater = harness.applicationOutputs().slice(updatesAtOpen)
     // Every later moment reaches the Application pane itself, not another pane (F126).
     assert.deepEqual(
-      later.map((update) => update.panel),
-      ['codebook.scopedBrowser', 'codebook.scopedBrowser'],
+      allLater.map((update) => update.panel),
+      Array(4).fill('codebook.scopedBrowser'),
     )
     assert.deepEqual(
-      later.map((update) => update.view.time),
-      ['Recorded test output · 0.40 s', 'Recorded test output · 0.30 s'],
+      allLater.map((update) => update.view.time),
+      [
+        'Recorded test output',
+        'Recorded test output · 0.40 s',
+        'Recorded test output',
+        'Recorded test output · 0.30 s',
+      ],
     )
+    const later = [allLater[1]!, allLater[3]!]
     assert.equal(later[0]?.view.end, 'Test passed · exit code 0')
     assert.deepEqual(
       later[1]?.view.lines.map((line) => [line.channel, line.text]),
@@ -92,8 +104,10 @@ test('a test replay’s Application document is written once and each later mome
       ],
     )
     assert.ok(
-      (atOpen?.generation ?? 0) < (later[0]?.generation ?? 0) &&
-        (later[0]?.generation ?? 0) < (later[1]?.generation ?? 0),
+      (atOpen?.generation ?? 0) < (allLater[0]?.generation ?? 0) &&
+        (allLater[0]?.generation ?? 0) < (allLater[1]?.generation ?? 0) &&
+        (allLater[1]?.generation ?? 0) < (allLater[2]?.generation ?? 0) &&
+        (allLater[2]?.generation ?? 0) < (allLater[3]?.generation ?? 0),
       'each later moment carries a newer generation',
     )
     // The Study views never carry the recorded output, which is the Application pane's alone.
@@ -103,7 +117,7 @@ test('a test replay’s Application document is written once and each later mome
   }
 })
 
-// Value: protects=Previous stop and Next stop move from the selected event to the nearest stop, past outputs and the result, and a summary step's action selects its event and that step, which Next and Previous then leave for the event's first step; fails_when=a stop move lands on an output or the result, a chosen same-moment step is not shown, or a chosen step outlives a move; why_new=DS12 makes stop moves the transport's primary buttons and DS21 keeps the selected step apart from the event; seam=none; no_claim=the section's drawing, which the Reader DOM check covers
+// Value: protects=Previous stop and Next stop move from the selected event to the nearest stop, past outputs and the result, and a summary step's action selects its event and that step, which Next and Previous then leave for the event's first step; fails_when=a stop move lands on an output or the result, a chosen same-moment step is not shown, or a chosen step outlives a move; why_new=DS12 makes stop moves the transport's primary buttons and DS21 keeps the selected step apart from the event; seam=none; no_claim=the section's drawing, which the Reader DOM check covers; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('stop moves skip outputs and a summary step’s action selects its event and that step until the next move', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -116,6 +130,7 @@ test('stop moves skip outputs and a summary step’s action selects its event an
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
       READER_RESULT_BOUND_MS,
@@ -182,7 +197,9 @@ test('stop moves skip outputs and a summary step’s action selects its event an
       unit: 'stop',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Next stop reaches the second stop',
       READER_RESULT_BOUND_MS,
     )
@@ -195,7 +212,9 @@ test('stop moves skip outputs and a summary step’s action selects its event an
       unit: 'stop',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 2,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Previous stop returns to the first stop',
       READER_RESULT_BOUND_MS,
     )
@@ -219,7 +238,7 @@ test('stop moves skip outputs and a summary step’s action selects its event an
   }
 })
 
-// Value: protects=the Study pane's test replay section tells the truth about the Application pane: once the learner closes the pane by hand the section says it is closed, and moving to another event still works with nothing posted into the closed pane; fails_when=the section keeps saying the output is in the Application pane after the close, the close publishes no new section, or a move with the pane closed reports an error or posts a view into the gone pane; why_new=PR-B1 wires DS7's closed-pane line to the workspace's own pane (projectNodeTestSection's test passes the flag by hand), and presentNodeHistoryApplication must not touch a pane that is gone; seam=none; no_claim=Show recorded output's restoring of the pane, which needs the native layout and which neither this test nor the Reader DOM check drives (stand-ins: the workspace harness's closeTabByHand (it closes the Application tab and tells the tab listeners), its posted messages and its recorded Application updates)
+// Value: protects=the Study pane's test replay section tells the truth about the Application pane: once the learner closes the pane by hand the section says it is closed, and moving to another event still works with nothing posted into the closed pane; fails_when=the section keeps saying the output is in the Application pane after the close, the close publishes no new section, or a move with the pane closed reports an error or posts a view into the gone pane; why_new=PR-B1 wires DS7's closed-pane line to the workspace's own pane (projectNodeTestSection's test passes the flag by hand), and presentNodeHistoryApplication must not touch a pane that is gone; seam=none; no_claim=Show recorded output's restoring of the pane, which needs the native layout and which neither this test nor the Reader DOM check drives (stand-ins: the workspace harness's closeTabByHand (it closes the Application tab and tells the tab listeners), its posted messages and its recorded Application updates); why_changed=F388: the wait requires the move to commit, as the pending position line now ends with the loading words
 test('closing the Application pane makes the test replay section say so and moving on posts nothing into it', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -258,8 +277,10 @@ test('closing the Application pane makes the test replay section say so and movi
       unit: 'stop',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
-      'Next stop reaches the second stop',
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'Next stop commits the second stop',
       READER_RESULT_BOUND_MS,
     )
 
@@ -315,7 +336,7 @@ test('Focus application in a browser replay leaves an Application pane the learn
   }
 })
 
-// Value: protects=Show recorded output, the Study line under "The Application pane is closed.", brings a closed Application pane back with the selected moment's recorded output, so the learner who closed the pane by hand can read the output again without leaving the replay; fails_when=the button sends an action that needs all three Study panes (Restore Study arrangement fails with "The three retained Study panes are unavailable."), the action leaves the pane closed, or the new pane shows another moment's output or no output document; why_new=Step 7's coverage audit and Step 9's QA found the line's button bound to Restore, which cannot rebuild a closed pane (DS7); seam=none; no_claim=the native placement of the new pane, which the harness does not lay out (stand-ins: the workspace harness's closeTabByHand, its native panel list and the panel's recorded document)
+// Value: protects=Show recorded output, the Study line under "The Application pane is closed.", brings a closed Application pane back with the selected moment's recorded output, so the learner who closed the pane by hand can read the output again without leaving the replay; fails_when=the button sends an action that needs all three Study panes (Restore Study arrangement fails with "The three retained Study panes are unavailable."), the action leaves the pane closed, or the new pane shows another moment's output or no output document; why_new=Step 7's coverage audit and Step 9's QA found the line's button bound to Restore, which cannot rebuild a closed pane (DS7); seam=none; no_claim=the native placement of the new pane, which the harness does not lay out (stand-ins: the workspace harness's closeTabByHand, its native panel list and the panel's recorded document); why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('Show recorded output brings a closed Application pane back at the selected moment', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -328,6 +349,7 @@ test('Show recorded output brings a closed Application pane back at the selected
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
       READER_RESULT_BOUND_MS,
@@ -350,7 +372,9 @@ test('Show recorded output brings a closed Application pane back at the selected
       unit: 'stop',
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 4,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 4 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'Next stop reaches the second stop',
       READER_RESULT_BOUND_MS,
     )
@@ -437,7 +461,7 @@ test('returning to Live releases the test replay’s output index and event posi
   }
 })
 
-// Value: protects=a step the learner chose stays only with its own moment: a seek or an Inspect that leaves the moment and comes back shows that moment's first step, as Previous stop and Next stop do (DS21); fails_when=the chosen step outlives the move and returns when the selection comes back to its event (the explanation of `keep` in place of `read`); why_new=Step 9's state-machines review found seek, Play and Inspect leaving the choice in place; seam=none; no_claim=Play's own pacing
+// Value: protects=a step the learner chose stays only with its own moment: a seek or an Inspect that leaves the moment and comes back shows that moment's first step, as Previous stop and Next stop do (DS21); fails_when=the chosen step outlives the move and returns when the selection comes back to its event (the explanation of `keep` in place of `read`); why_new=Step 9's state-machines review found seek, Play and Inspect leaving the choice in place; seam=none; no_claim=Play's own pacing; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('a seek or an Inspect away from a chosen step and back shows the moment’s first step', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -450,6 +474,7 @@ test('a seek or an Inspect away from a chosen step and back shows the moment’s
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
       READER_RESULT_BOUND_MS,
@@ -475,6 +500,7 @@ test('a seek or an Inspect away from a chosen step and back shows the moment’s
       waitUntil(
         () =>
           lastView(harness)?.nodeHistoryPosition?.sequence === sequence &&
+          !lastView(harness)?.nodeHistoryPosition?.pending &&
           !lastView(harness)?.loading,
         what,
         READER_RESULT_BOUND_MS,
@@ -970,7 +996,11 @@ test('a view the Application webview did not take is posted again at the next pu
     const attempts: number[] = []
     let refuseNext = true
     application.webview.postMessage = (message) => {
-      if (message.type === 'node-history-output') {
+      // The header that waits for the commit (D29, F203) is posted too; the refused view is the moment's own.
+      if (
+        message.type === 'node-history-output' &&
+        message.view.time !== 'Recorded test output'
+      ) {
         attempts.push(message.generation)
         if (refuseNext) {
           refuseNext = false
@@ -1059,7 +1089,7 @@ test('a rewritten Application document takes the learner’s reading the host fi
   }
 })
 
-// Value: protects=the document's ready message is answered with the host's current view and reading when the document's view is older or its follow choice differs (VS Code reloaded the page in place from an earlier write), and with nothing when the document is current; fails_when=a reloaded document stays on an earlier moment until the next move, a current document is sent the view again, or a ready message of another replay is answered; why_new=F141; seam=none; no_claim=the document's drawing of the answer, which the Reader DOM check covers
+// Value: protects=the document's ready message is answered with the host's current view and reading when the document's view is older or its follow choice differs (VS Code reloaded the page in place from an earlier write), and with nothing when the document is current; fails_when=a reloaded document stays on an earlier moment until the next move, a current document is sent the view again, or a ready message of another replay is answered; why_new=F141; seam=none; no_claim=the document's drawing of the answer, which the Reader DOM check covers; why_changed=a move leaves the earlier moment for 300 ms before it commits (F385, F387), so the wait also requires the position not to be pending
 test('a ready Application document that is behind is sent the current view and reading, one that is current is not', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1072,6 +1102,7 @@ test('a ready Application document that is behind is sent the current view and r
     await waitUntil(
       () =>
         lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
         !lastView(harness)?.loading,
       'the test replay lands on its first stop',
       READER_RESULT_BOUND_MS,
@@ -1083,7 +1114,9 @@ test('a ready Application document that is behind is sent the current view and r
       sequence: 5,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 5 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
       'the result is selected',
       READER_RESULT_BOUND_MS,
     )
@@ -1217,7 +1250,7 @@ test('a background render while a test replay is selected keeps its Application 
   }
 })
 
-// Value: protects=a move to a stop or an event that does not exist (a press that raced ahead of the disabled button, or a keyboard repeat) is refused by name and changes nothing: Previous stop at the first stop and Next event at the result each leave one error line that names the move, and the selected moment, the step the learner chose and the Application pane stay as they were; fails_when=a refused move resets the chosen step (the explanation changes with no new moment), moves the selection, posts a view into the Application pane, says nothing, or names the wrong unit; why_new=PR-B1 adds the stop unit (DS12) and keeps the chosen step apart from the selected event (DS21), so the handler must refuse before it clears the choice; no test pressed a move past either end; seam=none; no_claim=the buttons' disabled state, which the Reader DOM check reads and which keeps a learner from pressing a move that does not exist
+// Value: protects=a move to a stop or an event that does not exist (a press that raced ahead of the disabled button, or a keyboard repeat) is refused by name and changes nothing: Previous stop at the first stop and Next event at the result each leave one error line that names the move, and the selected moment, the step the learner chose and the Application pane stay as they were; fails_when=a refused move resets the chosen step (the explanation changes with no new moment), moves the selection, posts a view into the Application pane, says nothing, or names the wrong unit; why_new=PR-B1 adds the stop unit (DS12) and keeps the chosen step apart from the selected event (DS21), so the handler must refuse before it clears the choice; no test pressed a move past either end; seam=none; no_claim=the buttons' disabled state, which the Reader DOM check reads and which keeps a learner from pressing a move that does not exist; why_changed=F388: the wait requires the result to commit, as the pending position line now ends with the loading words
 test('a move to a stop or event that does not exist is refused by name and keeps the moment, the chosen step and the Application pane', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1276,8 +1309,10 @@ test('a move to a stop or event that does not exist is refused by name and keeps
       sequence: 5,
     })
     await waitUntil(
-      () => lastView(harness)?.nodeHistoryPosition?.sequence === 5,
-      'the result is selected',
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 5 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending,
+      'the result is committed',
       READER_RESULT_BOUND_MS,
     )
     const updatesAtResult = harness.applicationOutputs().length

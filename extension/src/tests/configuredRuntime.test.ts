@@ -4205,3 +4205,120 @@ test('two stops declared on different lines that bind on one place fail when the
   assert.equal(run.view().snapshots.length, 1)
   assert.equal(commands.filter((command) => command === 'continue').length, 0)
 })
+
+// Value: protects=the recorded browser opens the app at http://localhost:<port> and the run resource reports it (D65, F426), while the server stays on 127.0.0.1; fails_when=the page is opened at 127.0.0.1 or applicationOrigin names it, so the project's AUTH_URL host (localhost) and its session cookie no longer match; why_new=R2 run on e638c1b ended partial after the sign-in redirect; seam=the run with a fake server reporting Next's Local line (127.0.0.1:4321) and a recording CDP; no_claim=a real Chrome (checked apart: Chrome reached a 127.0.0.1-only server through localhost)
+test('the recorded browser opens the app at localhost on the owned port and the run reports that origin', async (context) => {
+  // Arrange
+  const { run, navigations } = await configuredRuntimeHarness(context)
+
+  // Act
+  await run.prepare()
+
+  // Assert
+  assert.deepEqual(navigations, ['http://localhost:4321/'])
+  assert.equal(run.view().applicationOrigin, 'http://localhost:4321')
+  await run.stop()
+})
+
+// Value: protects=a page that moves between the loopback names of the owned port (the sign-in redirect from 127.0.0.1 to localhost) stays owned; fails_when=the origin check refuses localhost, 127.0.0.1 or [::1] at the owned port ("Selected page left its owned application origin"); why_new=F426; seam=the run with the page's reported location.origin set; no_claim=Auth.js itself
+for (const pageOrigin of [
+  'http://localhost:4321',
+  'http://127.0.0.1:4321',
+  'http://[::1]:4321',
+])
+  test(`a page at ${pageOrigin} is the owned application origin`, async (context) => {
+    // Arrange
+    const harness = await configuredRuntimeHarness(context)
+    harness.setPageOrigin(pageOrigin)
+
+    // Act
+    await harness.run.prepare()
+
+    // Assert
+    assert.equal(harness.run.view().status, 'ready')
+    await harness.run.stop()
+  })
+
+// Value: protects=another port or another host still counts as leaving the owned origin; fails_when=the widened check accepts a foreign port or host; why_new=F426 widening bound; seam=the run with the page's reported location.origin set; no_claim=every redirect shape
+for (const pageOrigin of [
+  'http://localhost:4322',
+  'http://127.0.0.1:3000',
+  'http://example.invalid:4321',
+  'https://localhost:4321',
+])
+  test(`a page at ${pageOrigin} is refused as leaving the owned application origin`, async (context) => {
+    // Arrange
+    const harness = await configuredRuntimeHarness(context)
+    harness.setPageOrigin(pageOrigin)
+
+    // Act / Assert
+    await assert.rejects(
+      harness.run.prepare(),
+      /Selected page left its owned application origin/,
+    )
+    await harness.run.stop()
+  })
+
+// Value: protects=Codebook holds [::1] at the owned port from the app's readiness to the run's end and releases it on success and on failure (D66, F427); fails_when=the forwarder is missing while the run lives or stays after stop or after a failed preparation; why_new=a process taking [::1] after the pre-check would be treated as the owned app; seam=the run with a stand-in forwarder recording its start and close; no_claim=real sockets (ipv6LoopbackForwarder.test)
+test('the [::1] forwarder exists while the run lives and is closed with it', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context)
+
+  // Act
+  await harness.run.prepare()
+  const whileRunning = [...harness.releases]
+  await harness.run.stop()
+
+  // Assert
+  assert.ok(whileRunning.includes('ipv6 forwarder started'))
+  assert.equal(whileRunning.includes('ipv6 forwarder'), false)
+  assert.ok(harness.releases.includes('ipv6 forwarder'))
+})
+
+test('the [::1] forwarder is closed after a preparation that fails on a foreign page', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context)
+  harness.setPageOrigin('http://example.invalid:4321')
+
+  // Act
+  await assert.rejects(
+    harness.run.prepare(),
+    /left its owned application origin/,
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.ok(harness.releases.includes('ipv6 forwarder'))
+  assert.ok(harness.releases.includes('application'))
+})
+
+// Value: protects=another process that holds [::1] at the port refuses the start and the app is still released (D66); fails_when=the start continues on the foreign endpoint or leaks the app; why_new=F427; seam=a stand-in forwarder that refuses; no_claim=the real refusal text (ipv6LoopbackForwarder.test)
+test('a start whose [::1] endpoint is held by another process fails and releases the app', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    ipv6Loopback: 'held',
+  })
+
+  // Act
+  await assert.rejects(harness.run.prepare(), /at \[::1\]/)
+  await harness.run.stop()
+
+  // Assert
+  assert.ok(harness.releases.includes('application'))
+})
+
+// Value: protects=on a host without IPv6 loopback [::1] is not accepted as owned (D66); fails_when=a page at [::1] is owned although Codebook holds no listener there; why_new=F427; seam=the run with no forwarder; no_claim=a real host
+test('a page at [::1] is not owned when the host has no IPv6 loopback', async (context) => {
+  // Arrange
+  const harness = await configuredRuntimeHarness(context, undefined, [], {
+    ipv6Loopback: 'absent',
+  })
+  harness.setPageOrigin('http://[::1]:4321')
+
+  // Act / Assert
+  await assert.rejects(
+    harness.run.prepare(),
+    /left its owned application origin/,
+  )
+  await harness.run.stop()
+})

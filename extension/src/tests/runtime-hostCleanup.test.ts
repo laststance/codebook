@@ -97,7 +97,10 @@ async function loadHostBrowser(
 async function managedBrowser(
   context: TestContext,
   options: {
-    startDebugging?: () => Promise<boolean>
+    startDebugging?: (
+      folder: unknown,
+      configuration: { runtimeArgs?: string[] },
+    ) => Promise<boolean>
     onEvent?: (type: string) => void
     removeFolder?: typeof removeWithoutFollowing
     removeAbandonedProfiles?: (root: string) => Promise<string[]>
@@ -1736,4 +1739,30 @@ test('a sweep of abandoned profile folders that fails leaves the launch and the 
       'browser.cleanup-verified',
     ],
   )
+})
+
+// Value: protects=the learner's own API on another port that listens only on ::1 stays reachable in VS Code's recorded Chrome (no localhost-wide resolver rule); fails_when=the launch restores --host-resolver-rules=MAP localhost 127.0.0.1; why_new=F527 (D78; Red Team of /ship pass 1); seam=the real adapter with the editor's debugger start recording its configuration; no_claim=Chrome honoring or ignoring a rule (checked natively); the app's own port stays owned by the [::1] forwarder
+test('the managed Chrome launch leaves localhost resolution to the system', async (context) => {
+  // Arrange
+  let runtimeArgs: string[] | undefined
+  const managed = await managedBrowser(context, {
+    startDebugging: async (_folder, configuration) => {
+      runtimeArgs = configuration.runtimeArgs
+      return true
+    },
+  })
+
+  // Act
+  await managed.browser.launch(
+    { type: 'editor-browser', name: 'owned', request: 'launch' },
+    new AbortController().signal,
+  )
+  await managed.browser.close()
+
+  // Assert
+  // The adapter runs in its own context, so its array is copied before the comparison.
+  assert.deepEqual(Array.from(runtimeArgs ?? []), [
+    '--headless=new',
+    '--remote-debugging-pipe',
+  ])
 })

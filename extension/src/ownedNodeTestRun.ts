@@ -252,7 +252,6 @@ export class OwnedNodeTestRun {
       launch.stops[0]!.file,
       launch.stops[0]!.source.line,
       launch.stops[0]!.source.column,
-      'declared-line',
     )
     const started = await vscode.debug.startDebugging(
       vscode.workspace.getWorkspaceFolder(vscode.Uri.file(launch.workspace)),
@@ -316,6 +315,13 @@ export class OwnedNodeTestRun {
       NODE_TEST_ATTACH_TIMEOUT_MS,
       signal,
     )
+    // js-debug reports no entry pause when the owned breakpoint lies in the test file that Vitest pauses at the start of: the first pause is then the breakpoint's own hit, the declared stop (F155). Continuing it as an entry pause would run the test past its declared stop.
+    if (this.isOwnedBreakpointHit(entry)) {
+      this.record('node-test.entry-pause-absent', {
+        elapsedMs: this.owned.elapsedMs(),
+      })
+      return this.captureStop(0, this.stops.indexOf(entry))
+    }
     const fromIndex = this.stops.length
     // An adapter that never answers would hold the preparation, which a stop waits for; every request below takes the run's cancellation for the same reason.
     await awaitResponse(
@@ -329,6 +335,21 @@ export class OwnedNodeTestRun {
       elapsedMs: this.owned.elapsedMs(),
     })
     return this.captureStop(0, fromIndex)
+  }
+
+  /**
+   * Tells whether a pause is the hit of the owned breakpoint itself, which {@link prepareOwned} must not take for the entry pause.
+   * @param stop - A `stopped` event of the bound session.
+   * @returns `true` for a `breakpoint` pause whose hit breakpoint ids include the id the adapter acknowledged for the owned breakpoint; `false` for the entry pause and for a learner's own breakpoint.
+   * @example
+   * this.isOwnedBreakpointHit({ reason: 'breakpoint', hitBreakpointIds: [7], ... }) // => true when the owned breakpoint is 7
+   */
+  private isOwnedBreakpointHit(stop: NativePause): boolean {
+    return (
+      stop.reason === 'breakpoint' &&
+      this.ownedBreakpointId !== undefined &&
+      stop.hitBreakpointIds?.includes(this.ownedBreakpointId) === true
+    )
   }
 
   /**
@@ -481,7 +502,6 @@ export class OwnedNodeTestRun {
         next.file,
         next.source.line,
         next.source.column,
-        'declared-line',
       )
       const registered = await this.registeredAsDeclared(next.source, signal)
       this.ownedBreakpointId = registered.breakpointId

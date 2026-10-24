@@ -31,6 +31,7 @@ import {
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+import { READER_RESULT_BOUND_MS } from './utils/readerResultBound'
 import {
   REPLAY_MODEL_SELECTION_SCENARIO,
   selectionsThroughScenario,
@@ -210,8 +211,12 @@ for (const pinDuringOpen of [false, true]) {
         'const nextTheme = "dark";\n',
       )
       assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [])
+      // Changed for F410: the leave now clears the label together with the stopped line, so the only calls allowed are clears; no label is drawn over the protected bytes.
       assert.deepEqual(
-        harness.sourceIdentityDecorations().slice(identitiesBefore),
+        harness
+          .sourceIdentityDecorations()
+          .slice(identitiesBefore)
+          .filter((call) => call.ranges.length > 0),
         [],
       )
       assert.match(harness.reader.inspect().view!.errors.join('\n'), /pinned/)
@@ -740,8 +745,10 @@ test('historical source annotations identify the recorded file, time, hash and s
                   start: { line: 0, character: 25 },
                   end: { line: 0, character: 25 },
                 },
-                hoverMessage:
-                  'Recorded: src/theme.ts:1 · 0.10 s · declared 1 · captured SHA-256 f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771',
+                hoverMessage: {
+                  value:
+                    'Recorded:&nbsp;src/theme.ts:1&nbsp;·&nbsp;0.10&nbsp;s&nbsp;·&nbsp;declared&nbsp;1&nbsp;·&nbsp;captured&nbsp;SHA\\-256&nbsp;f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771',
+                },
                 renderOptions: {
                   after: {
                     contentText:
@@ -756,8 +763,10 @@ test('historical source annotations identify the recorded file, time, hash and s
                   start: { line: 0, character: 31 },
                   end: { line: 0, character: 31 },
                 },
-                hoverMessage:
-                  'Recorded source · Not recorded at this moment · captured SHA-256 17ded4ea5073e886425bd977a54edd857924d864f44b3c1b83d9e8aec53893e1',
+                hoverMessage: {
+                  value:
+                    'Recorded&nbsp;source&nbsp;·&nbsp;Not&nbsp;recorded&nbsp;at&nbsp;this&nbsp;moment&nbsp;·&nbsp;captured&nbsp;SHA\\-256&nbsp;17ded4ea5073e886425bd977a54edd857924d864f44b3c1b83d9e8aec53893e1',
+                },
                 renderOptions: {
                   after: {
                     contentText:
@@ -769,6 +778,59 @@ test('historical source annotations identify the recorded file, time, hash and s
       )
     }
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the browser replay's recorded-source label leaves with the stopped line at the leave of a stop move (D29, F410): while the next stop's source read is held, the pane shows no end-of-line label; the commit then draws the new stop's label; fails_when=the leave clears the stopped line but keeps `Recorded: src/theme.ts:1 · 0.10 s · declared 1` beside the Application header of the requested moment (N50's 0.6 s of mixed moments); why_new=no test read the browser replay's source label between the leave and the commit; seam=the workspace harness's held native source read and its source-identity decoration calls; no_claim=the native frames of the transition, which the driving agent's N50 recheck reads
+test('a browser replay stop move removes the recorded-source label with the stopped line before the next stop is shown', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  let releaseSource = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const sourceUri = harness.reader.inspect().sourceUri
+    assert.ok(sourceUri)
+    assert.equal(
+      harness.sourceIdentityDecorations().at(-1)?.ranges.length,
+      1,
+      'The stop at 0.10 s shows its label before the move.',
+    )
+    const held = harness.holdNextSource({ uri: sourceUri })
+    releaseSource = held.release
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 20,
+    })
+    await held.started
+
+    // Assert
+    assert.deepEqual(
+      harness.sourceIdentityDecorations().at(-1)?.ranges,
+      [],
+      'The label must leave with the stopped line while the next source is still being read.',
+    )
+    held.release()
+    await harness.controller.settle()
+    assert.equal(
+      harness.sourceIdentityDecorations().at(-1)?.ranges.length,
+      1,
+      'The commit draws the gap label for the requested moment.',
+    )
+  } finally {
+    releaseSource()
     await harness.close()
   }
 })
@@ -3896,7 +3958,7 @@ test('Play across the end of a stop’s recorded pause on the same frame keeps t
 })
 
 // Value: protects=the recorded application image staying painted when Play reaches the end of a stop's recorded pause and the application has already sent a newer frame, until that frame replaces it, while Run and Debug, the stop's native session and its source highlight end there; fails_when=the pause end clears the Application pane because the next moment's frame differs (native check F18 on candidate 20: 0.6 s dark at 153.19 and 183.46 s, where the next frame arrived 49 and 14 ms after the pause ended), or the stop's values or highlight stay; why_new=Cycle 0045 NF-13d; seam=duringStop records a newer frame at the 900 ms continuation, and the test reads the displayed image when the newer frame is sent
-test('Play across the end of a stop’s recorded pause onto a newer frame keeps the stop’s image painted until the newer frame replaces it, while Run and Debug, the stop’s session and its source highlight end', async () => {
+test('Play across the end of a stop’s recorded pause onto a newer frame keeps the stop’s image painted until the newer frame replaces it at the leave, without a blank, while Run and Debug, the stop’s session and its source highlight end', async () => {
   // Arrange: a stop with recorded debugger state committed at 100 ms and paused until 900 ms of a film that ended at 1,000 ms; the application sent a new frame at 900 ms.
   const newerPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
@@ -3973,10 +4035,11 @@ test('Play across the end of a stop’s recorded pause onto a newer frame keeps 
 
     // Assert
     assert.equal(imageAtStop, png.toString('base64'))
+    // The newer frame was handed to the pane at the leave (F3, D29), so it is already painted when the moment's own frame is sent for its receipt; the stop's image was never cleared in between.
     assert.deepEqual(imagePresentations, [
       {
         atMs: 900,
-        shownBefore: png.toString('base64'),
+        shownBefore: newerPng.toString('base64'),
         sent: newerPng.toString('base64'),
       },
     ])
@@ -3993,6 +4056,241 @@ test('Play across the end of a stop’s recorded pause onto a newer frame keeps 
       [0, 0],
     )
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application pane keeping its pixels while a seek's next frame is read from storage, and swapping to that frame without a blank; fails_when=the seek clears the recorded pixels (the `reset` with `clear: true`) before the frame resolves, which showed dark frames at a stop's entry (F3, D29); why_new=Cycle 0050 F3 (Cycle 0044 on Linux: 0.5 to 1.2 s of dark frames and a short Canceled); seam=a held RecordingStore.readFrame and the harness's viewport; no_claim=the webview's own decode and swap (the native check inspects every frame)
+test('a seek holds the shown pixels while the next frame is read and swaps to it without clearing the pane', async () => {
+  // Arrange: a stop is shown with its frame; the application sent a newer frame at 900 ms.
+  const newerPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const harness = await recordedReaderHarness(
+    true,
+    true,
+    1,
+    async (stopped) => {
+      const recording = [...stopped.service.records.values()][0]!.recording!
+      recording.frame({ bytes: newerPng, elapsedMs: 900, kind: 'stream' })
+    },
+  )
+  try {
+    const { controller, studyId, png } = harness
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    const viewport = harness.viewportInstances.find(
+      (instance) => instance.mode === 'recording',
+    )!
+    const clearedAtMs: Array<number | undefined> = [],
+      clearImage = viewport.clearRecorded.bind(viewport)
+    viewport.clearRecorded = (): void => {
+      clearedAtMs.push(controller.state().requestedMs)
+      clearImage()
+    }
+    const recordings = harness.reader['recordings']!,
+      readFrame = recordings.readFrame.bind(recordings)
+    let releaseRead = (): void => {}
+    const readHeld = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let reads = 0
+    recordings.readFrame = async (id, hash) => {
+      reads++
+      await readHeld
+      return readFrame(id, hash)
+    }
+
+    // Act: the seek to the newer frame waits for its bytes.
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 900,
+    })
+    await waitUntil(
+      () => reads === 1,
+      'the seek reads the next frame',
+      READER_RESULT_BOUND_MS,
+    )
+    const shownWhileHeld = harness.displayedImage(),
+      clearedWhileHeld = [...clearedAtMs]
+    releaseRead()
+    await controller.settle()
+
+    // Assert
+    assert.equal(shownWhileHeld, png.toString('base64'))
+    assert.deepEqual(clearedWhileHeld, [])
+    assert.deepEqual(clearedAtMs, [])
+    assert.equal(harness.displayedImage(), newerPng.toString('base64'))
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a seek whose preview frame the viewport drops (a required frame is pending) clearing the pane instead of leaving the earlier moment's pixels beside the next moment's source and values; fails_when=the invalidation ignores that previewRecorded returned false, so the earlier frame stays painted while the next moment's debugger and source are shown; why_new=Cycle 0050 F374 (the fake showed every preview at once and the product never read whether a preview was posted); seam=the harness's fake recorded viewport dropping previews under holdRequiredFramePending and a held paint of the required frame; no_claim=the webview's own swap
+test('a seek whose preview frame is dropped clears the pane rather than keeping the earlier moment’s pixels', async () => {
+  // Arrange: a stop is shown with its frame; the application sent a newer frame at 900 ms.
+  const newerPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const harness = await recordedReaderHarness(
+    true,
+    true,
+    1,
+    async (stopped) => {
+      const recording = [...stopped.service.records.values()][0]!.recording!
+      recording.frame({ bytes: newerPng, elapsedMs: 900, kind: 'stream' })
+    },
+  )
+  try {
+    const { controller, studyId, png } = harness
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    assert.equal(harness.displayedImage(), png.toString('base64'))
+    harness.holdRequiredFramePending(true)
+    // The required frame of the seek's moment is held in the renderer, so what the pane shows before it paints is what the invalidation left.
+    const paint = harness.holdNextImage()
+
+    // Act
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 900,
+    })
+    await paint.started
+    const shownBeforePaint = harness.displayedImage()
+    paint.release()
+    await controller.settle()
+
+    // Assert
+    assert.equal(shownBeforePaint, undefined)
+    assert.equal(harness.displayedImage(), newerPng.toString('base64'))
+  } finally {
+    harness.holdRequiredFramePending(false)
+    await harness.close()
+  }
+})
+
+// Value: protects=a seek whose preview frame the viewport drops (a pause image is pinned) clearing the pane instead of leaving the earlier moment's pixels beside the next moment's source and values; fails_when=the invalidation ignores that previewRecorded returned false while a pause image is pinned, so the earlier frame stays painted; why_new=Cycle 0050 F396 (the fake dropped previews only beside a pending required frame, so a regression in the other two drop conditions could not be reproduced); seam=the harness's fake recorded viewport dropping previews under holdPausePinned and a held paint of the required frame; no_claim=the webview's own swap
+test('a seek whose preview frame is dropped while a pause image is pinned clears the pane rather than keeping the earlier moment’s pixels', async () => {
+  // Arrange: a stop is shown with its frame; the application sent a newer frame at 900 ms.
+  const newerPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const harness = await recordedReaderHarness(
+    true,
+    true,
+    1,
+    async (stopped) => {
+      const recording = [...stopped.service.records.values()][0]!.recording!
+      recording.frame({ bytes: newerPng, elapsedMs: 900, kind: 'stream' })
+    },
+  )
+  try {
+    const { controller, studyId, png } = harness
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    assert.equal(harness.displayedImage(), png.toString('base64'))
+    harness.holdPausePinned(true)
+    // The required frame of the seek's moment is held in the renderer, so what the pane shows before it paints is what the invalidation left.
+    const paint = harness.holdNextImage()
+
+    // Act
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 900,
+    })
+    await paint.started
+    const shownBeforePaint = harness.displayedImage()
+    paint.release()
+    await controller.settle()
+
+    // Assert
+    assert.equal(shownBeforePaint, undefined)
+    assert.equal(harness.displayedImage(), newerPng.toString('base64'))
+  } finally {
+    harness.holdPausePinned(false)
+    await harness.close()
+  }
+})
+
+// Value: protects=a seek whose preview frame the viewport drops (the delivery has no renderer epoch) clearing the pane instead of leaving the earlier moment's pixels beside the next moment's source and values; fails_when=the invalidation ignores that previewRecorded returned false while the delivery has no renderer epoch, so the earlier frame stays painted; why_new=Cycle 0050 F396 (the fake dropped previews only beside a pending required frame, so a regression in the other two drop conditions could not be reproduced); seam=the harness's fake recorded viewport dropping previews under holdRendererEpochMissing and a held paint of the required frame; no_claim=the webview's own swap
+test('a seek whose preview frame is dropped while the renderer has no epoch clears the pane rather than keeping the earlier moment’s pixels', async () => {
+  // Arrange: a stop is shown with its frame; the application sent a newer frame at 900 ms.
+  const newerPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCBd81ytgAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const harness = await recordedReaderHarness(
+    true,
+    true,
+    1,
+    async (stopped) => {
+      const recording = [...stopped.service.records.values()][0]!.recording!
+      recording.frame({ bytes: newerPng, elapsedMs: 900, kind: 'stream' })
+    },
+  )
+  try {
+    const { controller, studyId, png } = harness
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    assert.equal(harness.displayedImage(), png.toString('base64'))
+    harness.holdRendererEpochMissing(true)
+    // The required frame of the seek's moment is held in the renderer, so what the pane shows before it paints is what the invalidation left.
+    const paint = harness.holdNextImage()
+
+    // Act
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 900,
+    })
+    await paint.started
+    const shownBeforePaint = harness.displayedImage()
+    paint.release()
+    await controller.settle()
+
+    // Assert
+    assert.equal(shownBeforePaint, undefined)
+    assert.equal(harness.displayedImage(), newerPng.toString('base64'))
+  } finally {
+    harness.holdRendererEpochMissing(false)
     await harness.close()
   }
 })

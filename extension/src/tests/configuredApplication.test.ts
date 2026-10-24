@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { createServer } from 'node:net'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -10,6 +12,7 @@ import { runInNewContext } from 'node:vm'
 import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
 import { launchDevelopmentServer } from '../utils/launchDevelopmentServer'
 import type * as ServerModule from '../utils/launchDevelopmentServer'
+import { ownedDevelopmentPortState } from '../utils/ownedDevelopmentPorts'
 
 test('development readiness waits for a complete port across process output chunks', async () => {
   // Arrange
@@ -69,12 +72,130 @@ test('development readiness waits for a complete port across process output chun
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    43217,
   )
   // Act
   const origin = await server.ready(new AbortController().signal)
   // Assert
   assert.equal(origin, 'http://127.0.0.1:43217')
   assert.deepEqual(requestedOrigins, ['http://127.0.0.1:43217'])
+})
+
+// Value: protects=readiness names the declared port's origin even when the server's log prints another local URL first (F552); fails_when=the first 127.0.0.1 URL in the log is taken and the run opens the wrong application; why_new=F552 (Step 11, third round); seam=the launcher run in an isolated module context with a stub child and waitUntil; no_claim=a real next dev process
+test('readiness takes the declared port origin when the log prints another local URL first', async () => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {},
+    requestedOrigins: string[] = []
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42002,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      fetch: async (origin: string) => {
+        requestedOrigins.push(origin)
+        return { ok: true }
+      },
+      require(name: string) {
+        if (name === 'node:child_process') return { spawn: () => child }
+        if (name.endsWith('/utils/waitUntil'))
+          return {
+            waitUntil: async (read: () => unknown) => {
+              child.stdout.emit(
+                'data',
+                Buffer.from(
+                  'proxy: http://127.0.0.1:5555/api\nLocal: http://127.0.0.1:43217\nReady',
+                ),
+              )
+              return read()
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  const server = exports.launchDevelopmentServer!(
+    '/isolated-target',
+    '/node',
+    () => {},
+    false,
+    43217,
+  )
+
+  // Act
+  const origin = await server.ready(new AbortController().signal)
+
+  // Assert
+  assert.equal(origin, 'http://127.0.0.1:43217')
+  assert.deepEqual(requestedOrigins, ['http://127.0.0.1:43217'])
+})
+
+// Value: protects=the repository-browser run starts the app on the port the project declares (F411, D63), so its pinned auth origin stays reachable; fails_when=the spawned next dev still gets `--port 0` or a port other than the declared one; why_new=N50's run started on 53273 while AUTH_URL pointed to 3165; seam=the launcher run in an isolated module context with a recording spawn; no_claim=a real next dev process or the Auth.js redirect, which the native R2 run reads
+test('the app starts on the declared port and on no other', async () => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {}
+  let spawnedArguments: string[] = []
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        if (name === 'node:child_process')
+          return {
+            spawn: (_node: string, argumentsList: string[]) => {
+              spawnedArguments = argumentsList
+              return child
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+
+  // Act
+  exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    () => {},
+    false,
+    3165,
+  )
+
+  // Assert
+  assert.deepEqual(Array.from(spawnedArguments.slice(1)), [
+    'dev',
+    '--webpack',
+    '--hostname',
+    '127.0.0.1',
+    '--port',
+    '3165',
+  ])
 })
 
 test('shutdown kills surviving workers even when the process group leader already exited', async (context) => {
@@ -130,6 +251,8 @@ test('shutdown kills surviving workers even when the process group leader alread
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   // Act
   await server.close()
@@ -184,12 +307,77 @@ test('a later stop retries an application signal failure instead of replaying it
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   // Act
   await assert.rejects(server.close(), /Transient process signal failure/)
   await server.close()
   // Assert
   assert.equal(termCount, 2)
+})
+
+// Value: protects=a failed stop keeps the port claimed as stopping and only the retried stop that succeeds frees it, so a new run is never told the port is free while the old group may still hold it; fails_when=close() releases the claim before the exit is verified, or never releases it after the retry; why_new=F534 (test gap of the F425 release order); seam=the launcher run in an isolated module context with a recording process.kill, reading the real claim registry; no_claim=a real next dev process or the port check of a following run
+test('a failed stop leaves the port claimed as stopping and the retried stop frees it', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {}
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: 0,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  const port = 39341
+  let termCount = 0
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 0)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      if (signal === 'SIGTERM' && ++termCount === 1)
+        throw new Error('Transient process signal failure')
+      child.emit('exit')
+      return true
+    },
+  )
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        return name === 'node:child_process'
+          ? { spawn: () => child }
+          : nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    () => {},
+    false,
+    port,
+  )
+  assert.equal(ownedDevelopmentPortState(port), 'running')
+
+  // Act
+  await assert.rejects(server.close(), /Transient process signal failure/)
+  const afterFailedStop = ownedDevelopmentPortState(port)
+  await server.close()
+  const afterRetriedStop = ownedDevelopmentPortState(port)
+
+  // Assert
+  assert.equal(afterFailedStop, 'stopping')
+  assert.equal(afterRetriedStop, undefined)
 })
 
 // Cycle 0044 (0041-F2): red while the closer accepted only ESRCH, so macOS's EPERM for an exited, unreaped member rejected close() with "kill EPERM".
@@ -243,6 +431,8 @@ test('stopping the application resolves while macOS still answers its exited, un
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   child.emit('exit')
   // Act
@@ -312,6 +502,8 @@ test('server inspection is opt-in and waits for complete stderr identity without
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
   // Act / Assert
   await assert.rejects(
@@ -324,6 +516,7 @@ test('server inspection is opt-in and waits for complete stderr identity without
     '/node',
     () => {},
     true,
+    3000,
   )
   assert.equal(
     await inspected.inspectorEndpoint(new AbortController().signal),
@@ -366,6 +559,7 @@ test('competing inspector announcements and an exited application cannot reuse a
     '/node',
     () => {},
     true,
+    3000,
   )
   child.stderr.emit(
     'data',
@@ -444,6 +638,8 @@ test('an application without a root page is ready through its selected entry pat
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    43217,
   )
 
   // Act
@@ -500,6 +696,8 @@ test('a selected entry path that redirects to sign-in does not count as a ready 
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    43217,
   )
 
   // Act
@@ -557,6 +755,8 @@ test('an application whose root page fails is not ready when the root is its ent
     '/isolated-target',
     '/node',
     () => {},
+    false,
+    3000,
   )
 
   // Act
@@ -567,6 +767,15 @@ test('an application whose root page fails is not ready when the root is its ent
 })
 
 // Value: protects=a second real development run after Stop; fails_when=Next's 100ms parent grace kills its still-cleaning worker and leaves .next/dev/lock, although Codebook reports resources released; why_new=Cycle0046 row376, native Cursor407/411; seam=real parent/worker processes and the product launch/close/prerequisite APIs.
+/** Asks the system for a free loopback port and releases it, for a launcher whose readiness must match the port it was given. */
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const { port } = probe.address() as AddressInfo
+  await new Promise((resolve) => probe.close(resolve))
+  return port
+}
+
 test('a stopped development server lets its worker release the build lock before another run checks the workspace', async (context) => {
   // Arrange: the Next-shaped parent has its actual default100ms child cutoff; the worker needs250ms to release its native lock after TERM.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-next-shutdown-'))
@@ -578,7 +787,7 @@ test('a stopped development server lets its worker release the build lock before
     String.raw`
 const { spawn } = require('node:child_process');
 const path = require('node:path');
-const worker = spawn(process.execPath, [path.join(__dirname, 'worker.cjs')], { stdio: ['ignore', 'inherit', 'inherit'] });
+const worker = spawn(process.execPath, [path.join(__dirname, 'worker.cjs'), process.argv[process.argv.indexOf('--port') + 1]], { stdio: ['ignore', 'inherit', 'inherit'] });
 let stopping = false;
 const stop = () => {
   if (stopping) return;
@@ -602,7 +811,7 @@ const lock = path.join(process.cwd(), '.next/dev/lock');
 fs.mkdirSync(path.dirname(lock), { recursive: true });
 fs.writeFileSync(lock, '');
 const server = http.createServer((request, response) => { response.writeHead(200); response.end('ready'); });
-server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:' + server.address().port));
+server.listen(Number(process.argv[2]), '127.0.0.1', () => console.log('Local: http://127.0.0.1:' + server.address().port));
 let stopping = false;
 process.on('SIGTERM', () => {
   if (stopping) return;
@@ -612,7 +821,13 @@ process.on('SIGTERM', () => {
 });
 `,
   )
-  const server = launchDevelopmentServer(directory, process.execPath, () => {})
+  const server = launchDevelopmentServer(
+    directory,
+    process.execPath,
+    () => {},
+    false,
+    await freePort(),
+  )
   context.after(() => server.close())
   await server.ready(new AbortController().signal, '/login')
   assert.equal((await stat(join(directory, '.next/dev/lock'))).isFile(), true)

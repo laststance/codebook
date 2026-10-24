@@ -765,6 +765,30 @@ export class BrowserViewport {
       })
   }
 
+  /**
+   * Shows the next recorded moment's frame at once, before its source and values are presented: the webview decodes it off-screen and swaps only when it can paint, so the pane never shows a blank page between two moments. It asks for no receipt and holds nothing; the moment's own required frame follows with the receipt ({@link present}).
+   * The frame is dropped, and the pane keeps the earlier pixels, when the viewport is not a recording, is closed or historical, or its delivery takes no preview now (no renderer yet, a pause image pinned, a required frame pending): the caller clears the pane then, so the earlier moment's pixels do not stand beside the next moment's source and values (F374).
+   * @param data - The PNG as base64.
+   * @param phase - The phase line under the recording's header.
+   * @returns `true` when the frame was posted for delivery; `false` when it was dropped.
+   * @example if (!viewport.previewRecorded(png.toString('base64'), 'Recorded · 1.50 s')) viewport.clearRecorded()
+   */
+  previewRecorded(data: string, phase: string): boolean {
+    if (this.mode !== 'recording' || this.closed || this.historical)
+      return false
+    if (!this.delivery.accepts(false)) return false
+    void this.delivery
+      .offer({
+        data,
+        hash: sha256(Buffer.from(data, 'base64')),
+        phase,
+        required: false,
+        delayAck: false,
+      })
+      .catch(() => undefined)
+    return true
+  }
+
   /** Displays an explicit recorded gap with no substituted PNG or fabricated frame receipt. @example await viewport.presentMissing('Missing recorded interval') */
   presentMissing(reason: string, signal?: AbortSignal): Promise<void> {
     return this.withRenderer(() => this.presentMissingNow(reason, signal))
