@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.2.38.0] - 2026-10-24 (development candidate)
+
+Cycle 0050's third pull request ([Issue #118](https://github.com/laststance/codebook/issues/118)): a test replay's recorded-source tab and the moves between its moments, opening a replay, Cursor's Learning summary, the browser replay's frames, and a repository-browser run on the project's own port. With it, every defect Cycle 0049 carried is fixed or closed with evidence.
+
+**The recorded-source tab of a test replay.**
+
+- **One tab follows the selected stop.** `Captured-<file>` shows the source that ran at the stop, with the stopped line, an end-of-line label and a CodeLens above the line that carries the whole `Recorded: <path>:<line> · <time> s`. Files of the same name in different folders get their own tab. At an output or the result the tab shows its placeholder from the first line, and Focus source brings the tab forward. A recorded path cannot turn into a link or an icon in the hover or the CodeLens.
+- **The tab ends with its replay.** Closing the Study workspace or opening a browser recording closes it, and a pinned tab of a retired replay shows the placeholder, not the last stop.
+- **A test replay opened over a browser replay** closes the captured-source tabs that replay had open when you left it, once. Your own files, a pinned or edited tab, and a tab you open afterwards stay, also at the same address; a tab the editor refused to close is closed at the next stop.
+
+**Moving between moments.**
+
+- **Every surface leaves the earlier moment together.** At Next stop, Previous stop, a seek or Play, the position line and the playback time already name the requested moment and say `loading…` until it is shown, the event list marks its row, the debugger empties, and the earlier stop's CodeLens and call stack never stand beside another moment's source.
+- **Slow or failed moves stay usable.** One 5-second deadline bounds a recorded-source tab's show; Play pauses at a stop whose tab cannot open, and Retry shows that moment again without restarting a replay debugger you stopped. A move you overtake or withdraw leaves only the newest moment on every surface, and selecting a stop again while an output is still being shown shows the stop.
+
+**Opening a replay.**
+
+- **Open replay right after a live run** opens the Study pane with its transport, also beside Cursor's Agent, and an empty main editor beside Cursor's Agent is arranged without a click.
+- **No article lines beside a test replay.** The Study pane hides the Repository article's source tab, its `Current source unavailable` lines and its flow while a test replay is selected, and the Test replay section scrolls into view once when the replay opens.
+- **A file open as a preview tab** no longer stops Open replay. When a destination is still blocked, a dialog names the tab and offers **Keep Tab Open** or **Close Tab**; a tab the editor cannot keep open is told once and written to Output › Codebook.
+- **Restore Study workspace layout** with a test replay selected brings the recorded-source tab back to the front without taking the keyboard and gives the grid its sizes back; when it cannot, the Study pane says why, once.
+- **Output › Codebook records why a placement was refused** (`presentation:placement-refused`, `presentation:focus-unreported`): the groups and tabs before and after, and the editor's events.
+
+**Cursor's Learning summary.** In Cursor the Learning summary has its own Activity Bar container, with no contribution error. In VS Code it moves once into the chat's side bar at your first replay open, and a view you moved yourself is never moved back.
+
+**The browser replay.** Stepping between stops no longer shows dark frames or `Canceled`: the shown frame stays until the next one is ready, also on a seek. The recorded-source label leaves together with the stopped line.
+
+**Test stops.** A stop declared at the column the debugger advises pauses, and the refusal for a binding elsewhere on the line says where the stop is captured.
+
+**A repository-browser run on the project's own port.**
+
+- **The app runs where its origin points.** Codebook starts `next dev` on the port the project's `dev` script declares (its `-p`/`--port`, or a `PORT` it sets), never on another port, and opens it at `http://localhost:<port>`. `localhost`, `127.0.0.1` and `[::1]` at that port are one application origin, and Codebook holds `[::1]:<port>` for the run, so no other process answers there. The recorded browser resolves `localhost` as the system does, so the app's calls to your other local services reach them.
+- **A busy port is refused, not moved.** Your own dev server on that port, an earlier Codebook run that is still stopping, a port the system does not permit and any other bind failure are each refused with the port and the recovery.
+- **The `dev` script is read, never run.** Codebook reads a fixed set of forms and reads each script with the meaning of the shell that runs it (`sh`, `cmd` on Windows, Bun's shell, Yarn 2's portable shell). Any other form takes Next's default 3000, and the run resource's `applicationPortSource` says why and quotes the statement by its structure only, never a value. A `dev` script that runs more than 256 statements, and a `package.json` that is not a regular file or is larger than 1 MiB, are not read. The run resource reports `applicationOrigin` and `applicationPortSource`.
+- **Server stops in every webpack layer.** A declared server stop is captured in whichever layer's copy of its module runs (`(action-browser)`, `(middleware)`, `(rsc)`), each placed by its own source map.
+
+**Compatibility.** The MCP API stays 1.8 and the bundled skill is unchanged; the run resource adds `applicationOrigin` and `applicationPortSource`. No stored format changes.
+
+**Observed natively.** In VS Code 1.142.0 and Cursor 3.26.16 on macOS: the recorded-source tab, its label and CodeLens and the moves between moments, frame by frame; the first Open replay after live runs (with Cursor's Agent too); Restore; Cursor's Learning summary container; the browser replay's frames; a sign-in through the project's own port and origin to the dashboard, with a server stop in Next's middleware layer. Windows and Linux are not run.
+
 ## [0.2.37.0] - 2026-10-23 (development candidate)
 
 Cycle 0050's second pull request ([Issue #118](https://github.com/laststance/codebook/issues/118)): a test replay's Application pane and Study section. The recorded-source tab and the moves between moments come with the third.
