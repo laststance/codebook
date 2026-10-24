@@ -851,3 +851,54 @@ test('only the tabs of the browser replay left last close at a test replay, not 
     await harness.close()
   }
 })
+
+// Value: protects=Return to Live from a test replay ending the record of the left browser replay's tabs, so a test replay opened afterwards does not close a tab the editor refused to close at the first open (F482); fails_when=the retirement of the selected test replay keeps the record, so the second test replay's first slot show closes the tab the learner has kept; why_new=F537 (review finding: only the reader-close half of F482 was tested); seam=the workspace harness's restoreLeftoverCapturedSource with refuseClose, acceptLeftoverClose, returnCurrentSelection and openLearningReplay; no_claim=the wording of the refusal's warning
+test('a browser replay tab that survived a refused close stays beside a test replay opened again after Return to Live', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const browserTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-actions.ts`,
+      refuseClose: true,
+    })
+    await harness.reader['returnCurrentSelection']('learner')
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+    const tabs = (): unknown[] => harness.groups.flatMap((group) => group.tabs)
+    const keptAtFirstOpen = tabs().includes(browserTab)
+    // The editor lets go of the tab only after the learner returned to live.
+    await harness.reader['returnCurrentSelection']('learner')
+    harness.acceptLeftoverClose()
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop again',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(keptAtFirstOpen, true)
+    assert.equal(tabs().includes(browserTab), true)
+  } finally {
+    await harness.close()
+  }
+})
