@@ -101,7 +101,7 @@ test('a server stop is captured when its line runs in the module parsed for anot
   assert.equal(harness.run.view().snapshots.length, 1)
 })
 
-// Value: protects=the recorded JavaScript and source map of a server stop captured in another webpack layer's instance of its module being that instance's own, so the run's historical source resources (`snapshots/<id>/source/javascript` and `…/map`) answer them and pass their hash check, and the run's evidence keeps the bytes those hashes name; fails_when=`source(item, snapshotId)` serves the sealed module's bundle, whose hashes differ from the snapshot's `javascriptHash` and `mapHash`, so the resource read fails with EvidenceIntegrityError, or the instance's code and map are not written beside the snapshot; why_new=F565 (hosted CodeRabbit on #121); why_changed=F569 (local CodeRabbit CLI): the resources are read as an agent reads them, not through `source()`; seam=a service stand-in for the run's record, with StudyService's own `uri` and `snapshot`; no_claim=that a real Next layer's instance differs from the sealed module in these bytes (native trial)
+// Value: protects=the recorded JavaScript and source map of a server stop captured in another webpack layer's instance of its module being that instance's own, so the run's historical source resources (`snapshots/<id>/source/javascript` and `…/map`) answer them and pass their hash check, and the run's evidence keeps the bytes those hashes name; fails_when=`source(item, snapshotId)` serves the sealed module's bundle, whose hashes differ from the snapshot's `javascriptHash` and `mapHash`, so the resource read fails with EvidenceIntegrityError, or the instance's code and map are not written beside the snapshot; why_new=F565 (hosted CodeRabbit on #121); why_changed=F569 (local CodeRabbit CLI): the resources are read as an agent reads them, not through `source()`; F572 (hosted CodeRabbit): the map's mappings are pinned to the instance's own, so a sealed map recorded under its own hash fails too; seam=a service stand-in for the run's record, with StudyService's own `uri` and `snapshot`; no_claim=that a real Next layer's instance differs from the sealed module in these bytes (native trial)
 test('a server stop captured in another webpack layer’s module serves and keeps that module’s own JavaScript and source map', async (context) => {
   // Arrange: the (middleware) copy's text starts with "use strict", so its generated code and map differ from the sealed module's.
   const harness = await nativeParticipantsHarness(context, ['server'])
@@ -161,6 +161,7 @@ test('a server stop captured in another webpack layer’s module serves and keep
   assert.ok(javascript.startsWith('"use strict";\n'))
   assert.equal(sha256(javascript), server.source.javascriptHash)
   assert.equal(sha256(sourceMap), server.source.mapHash)
+  assert.equal(JSON.parse(sourceMap).mappings, ';AAAA')
   assert.equal(keptJavaScript, javascript)
   assert.equal(keptMap, sourceMap)
 })
