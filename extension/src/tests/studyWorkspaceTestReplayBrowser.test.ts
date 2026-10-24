@@ -902,3 +902,68 @@ test('a browser replay tab that survived a refused close stays beside a test rep
     await harness.close()
   }
 })
+
+// Value: protects=a browser replay's captured-source tab that Cursor rebuilt as a new object, matched by its address, and that the editor refused to close at the first slot show staying on the record, so the next slot show closes it once the editor lets go (F484, F498); fails_when=an entry matched by address is dropped whatever the close answered, so the tab stays beside the test replay for good; why_new=F538 (review finding: the refused close was tested with live tab objects only); seam=the workspace harness's Cursor model (rebuildTabObjectsNow), restoreLeftoverCapturedSource, refuseCloseOfTabsShowing, returnCurrentSelection, openLearningReplay and the Next stop message; no_claim=the native tab strip
+test('a rebuilt captured-source tab the editor refused to close at the first stop is closed at the next stop', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const path = `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-actions.ts`
+    harness.restoreLeftoverCapturedSource({ active: false, path })
+    await harness.reader['returnCurrentSelection']('learner')
+    // Cursor builds every tab object anew: the record holds the old one, whose address stands for it.
+    harness.rebuildTabObjectsNow()
+    const acceptClose = harness.refuseCloseOfTabsShowing('Captured-actions.ts')
+    const countOpenAt = (): number =>
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter(
+          (tab) => (tab.input as { uri?: { path: string } }).uri?.path === path,
+        ).length
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+    const openAtFirstStop = countOpenAt()
+    acceptClose()
+
+    // Act
+    void harness.reader['receive'](
+      {
+        type: 'node-history-step',
+        revision: harness.reader['message']().revision,
+        studyId: history.studyId,
+        direction: 'next',
+        unit: 'stop',
+      },
+      'context',
+    )
+    await waitUntil(
+      () => harness.reader['message']().nodeHistoryPosition?.sequence === 4,
+      'the Next stop lands on the second stop',
+      READER_RESULT_BOUND_MS,
+    )
+    await waitUntil(
+      () => countOpenAt() === 0,
+      'the rebuilt captured-source tab closes once the editor lets go',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(openAtFirstStop, 1)
+    assert.equal(countOpenAt(), 0)
+  } finally {
+    await harness.close()
+  }
+})
