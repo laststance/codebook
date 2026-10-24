@@ -9,6 +9,7 @@ import { runInNewContext } from 'node:vm'
 
 import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
 import { launchDevelopmentServer } from '../utils/launchDevelopmentServer'
+import { ownedDevelopmentPortState } from '../utils/ownedDevelopmentPorts'
 import type * as ServerModule from '../utils/launchDevelopmentServer'
 
 test('development readiness waits for a complete port across process output chunks', async () => {
@@ -252,6 +253,69 @@ test('a later stop retries an application signal failure instead of replaying it
   await server.close()
   // Assert
   assert.equal(termCount, 2)
+})
+
+// Value: protects=a failed stop keeps the port claimed as stopping and only the retried stop that succeeds frees it, so a new run is never told the port is free while the old group may still hold it; fails_when=close() releases the claim before the exit is verified, or never releases it after the retry; why_new=F534 (test gap of the F425 release order); seam=the launcher run in an isolated module context with a recording process.kill, reading the real claim registry; no_claim=a real next dev process or the port check of a following run
+test('a failed stop leaves the port claimed as stopping and the retried stop frees it', async (context) => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {}
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42000,
+    exitCode: 0,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  const port = 39341
+  let termCount = 0
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 0)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      if (signal === 'SIGTERM' && ++termCount === 1)
+        throw new Error('Transient process signal failure')
+      child.emit('exit')
+      return true
+    },
+  )
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      require(name: string) {
+        return name === 'node:child_process'
+          ? { spawn: () => child }
+          : nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  assert.ok(exports.launchDevelopmentServer)
+  const server = exports.launchDevelopmentServer(
+    '/isolated-target',
+    '/node',
+    () => {},
+    false,
+    port,
+  )
+  assert.equal(ownedDevelopmentPortState(port), 'running')
+
+  // Act
+  await assert.rejects(server.close(), /Transient process signal failure/)
+  const afterFailedStop = ownedDevelopmentPortState(port)
+  await server.close()
+  const afterRetriedStop = ownedDevelopmentPortState(port)
+
+  // Assert
+  assert.equal(afterFailedStop, 'stopping')
+  assert.equal(afterRetriedStop, undefined)
 })
 
 // Cycle 0044 (0041-F2): red while the closer accepted only ESRCH, so macOS's EPERM for an exited, unreaped member rejected close() with "kill EPERM".
