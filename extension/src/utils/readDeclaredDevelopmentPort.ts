@@ -18,6 +18,7 @@ import {
   DEVELOPMENT_SERVER_DEFAULT_PORT,
   DEVELOPMENT_SERVER_MAX_PORT,
   DEVELOPMENT_YARN_BERRY_CONFIG,
+  DEVELOPMENT_YARN_BERRY_MIN_MAJOR,
   DEVELOPMENT_YARN_SHELL_UNREAD_REASON,
 } from '../constants'
 
@@ -79,6 +80,12 @@ async function exists(path: string): Promise<boolean> {
  * Called by {@link readDeclaredDevelopmentPort} once per read, for {@link isBunProject} and {@link isYarnBerryProject}.
  *
  * @param root - The opened folder; resolved to an absolute path, so a relative root climbs the real folders above it.
+ * @returns The folders to search, the opened one first; one folder when no Git root is in range.
+ *
+ * @example
+ * ```ts
+ * await projectMarkerFolders('/repo/apps/web') // ['/repo/apps/web', '/repo/apps', '/repo'] when /repo holds .git
+ * ```
  */
 async function projectMarkerFolders(root: string): Promise<string[]> {
   const folders: string[] = []
@@ -116,6 +123,12 @@ async function anyFolderHolds(
  *
  * @param folders - The folders from {@link projectMarkerFolders}.
  * @param packageManager - The `packageManager` field of that `package.json`, if any.
+ *
+ * @example
+ * ```ts
+ * await isBunProject(['/repo'], undefined) // true when /repo holds bun.lock
+ * await isBunProject(['/repo'], 'bun@1.2.0') // true
+ * ```
  */
 async function isBunProject(
   folders: readonly string[],
@@ -130,22 +143,30 @@ async function isBunProject(
 }
 
 /**
- * Whether the project is a Yarn Berry (Yarn 2 and later) project: a `packageManager` of `yarn@` with a major of 2 or more, or a `.yarnrc.yml` in {@link projectMarkerFolders} (F515). Berry runs scripts in its own portable shell, which has no `export`.
+ * Whether the project is a Yarn Berry (Yarn 2 and later) project: a `packageManager` of `yarn@` with a major of {@link DEVELOPMENT_YARN_BERRY_MIN_MAJOR} or more, or, when the `package.json` names no package manager, a `.yarnrc.yml` in {@link projectMarkerFolders} (F515). A `packageManager` that names Yarn 1 or another manager wins over a stray `.yarnrc.yml` (F520). Berry runs scripts in its own portable shell, which has no `export` and rejects a `;;` and a `;` followed by blanks at the end of the line, on every platform.
  *
  * Called by {@link readDeclaredDevelopmentPort} once per read.
  *
  * @param folders - The folders from {@link projectMarkerFolders}.
  * @param packageManager - The `packageManager` field of the opened `package.json`, if any.
+ *
+ * @example
+ * ```ts
+ * await isYarnBerryProject(['/repo'], 'yarn@4.5.0') // true
+ * await isYarnBerryProject(['/repo'], 'yarn@1.22.22') // false, even with /repo/.yarnrc.yml
+ * ```
  */
 async function isYarnBerryProject(
   folders: readonly string[],
   packageManager: unknown,
 ): Promise<boolean> {
-  const major =
-    typeof packageManager === 'string'
-      ? /^yarn@(\d+)/.exec(packageManager)?.[1]
-      : undefined
-  if (major !== undefined && Number(major) >= 2) return true
+  // A declared package manager decides; the `.yarnrc.yml` only counts when none is declared (F520).
+  if (typeof packageManager === 'string') {
+    const major = /^yarn@(\d+)/.exec(packageManager)?.[1]
+    return (
+      major !== undefined && Number(major) >= DEVELOPMENT_YARN_BERRY_MIN_MAJOR
+    )
+  }
   return anyFolderHolds(folders, [DEVELOPMENT_YARN_BERRY_CONFIG])
 }
 
@@ -403,8 +424,18 @@ function readProgram(
 
 /**
  * Reads `export PORT=<digits>`: the one `export` the grammar accepts.
+ *
+ * Called by {@link readStatement} for a statement that starts with `export`.
+ *
+ * @param words - The words of the statement, `export` first.
+ * @param scope - The line's scope; its shell decides whether `export` exists.
  * @returns The exported `PORT` the statements after it run with.
  * @throws {@link UnreadScriptError} For any other `export`, and for `export` where the script's shell has none: `cmd` on Windows (F502, D74) and Yarn 2+'s portable shell (D75, F515).
+ *
+ * @example
+ * ```ts
+ * readExport(['export', 'PORT=4000'], scope) // { port: 4000 } under sh
+ * ```
  */
 function readExport(words: string[], scope: LineScope): PortEnv {
   if (scope.windows) throw new UnreadScriptError([], 'cmd')
@@ -457,7 +488,11 @@ function readLine(
 ): DevelopmentCommand | undefined {
   let current = env
   let first: DevelopmentCommand | undefined
-  for (const words of tokenizeDevelopmentScript(line, scope.windows)) {
+  for (const words of tokenizeDevelopmentScript(
+    line,
+    scope.windows,
+    scope.yarnBerry,
+  )) {
     const step = readStatement(words, current, scope)
     current = step.env
     first ??= step.command
@@ -524,7 +559,7 @@ function readDevScript(
     // A chain that never runs `next dev` has nothing to read a port from.
     if (!command)
       throw new UnreadScriptError(
-        tokenizeDevelopmentScript(dev, windows).flat(),
+        tokenizeDevelopmentScript(dev, windows, yarnBerry).flat(),
       )
     return { command }
   } catch (error) {
@@ -544,8 +579,8 @@ function readDevScript(
  * Finds the port the project's own `dev` script would start `next dev` on, so the app runs on the origin its auth and callback settings point to.
  *
  * Called during repository-browser preparation by {@link ConfiguredBrowserRun}, before {@link launchDevelopmentServer}.
- * The script is read as text, never run, against a fixed grammar (D72): statements joined by `&&` or `;`, each an assignment (`PORT=4000`, `export PORT=4000`), a `next dev` command (reached by `next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next` or a `node_modules/.bin/next` path, after `cross-env` or `env` with assignments only, with Next's own `dev` flags and literal values; the last `-p`/`--port` wins), a delegation without arguments (`npm run x`, `pnpm run x`, `yarn run x`, `bun run x`, and `pnpm x` or `yarn x` only for the names of {@link DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES} or a name with `:` (D76), followed down to {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} levels) or one `concurrently` whose quoted commands are read by the same grammar. The port is the last `-p`/`--port`, else the `PORT` the script exports or assigns before the command, else Next's default 3000 (the sources D67 names). `.env*` files are not read because Next reads `PORT` before it loads them; but Bun loads them into the environment of the scripts it runs, so a `next dev` without a port flag and without a `PORT` assigned in the script is unread when it is reached by `bun run` or the project is a Bun project (a lockfile up to the Git root or `packageManager: bun@`, F514; F499). A Yarn Berry project (`packageManager: yarn@2+` or a `.yarnrc.yml` found the same way) reads `export` forms as unread with a note naming Yarn's portable shell (D75, F515). `npx` and `bunx` take only the bare package name `next`, not a path (F516).
- * The script is read with the meaning of the shell that runs it (D74): `sh` on macOS and Linux, `cmd` on `win32`, where single quotes, `NAME=value` prefixes, `export`, `env`, `;`, a `port` variable in another case than `PORT` and a program path with `/` are unread with a note naming `cmd`; a Bun project and `bun run` are unread there with a note naming Bun's shell (D75). An empty script is told as empty (F511). One trailing `;` is allowed, and a word with a quote before its `=` is no assignment.
+ * The script is read as text, never run, against a fixed grammar (D72): statements joined by `&&` or `;`, each an assignment (`PORT=4000`, `export PORT=4000`), a `next dev` command (reached by `next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next` or a `node_modules/.bin/next` path, after `cross-env` or `env` with assignments only, with Next's own `dev` flags and literal values; the last `-p`/`--port` wins), a delegation without arguments (`npm run x`, `pnpm run x`, `yarn run x`, `bun run x`, and `pnpm x` or `yarn x` only for the names of {@link DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES} or a name with `:` (D76), followed down to {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} levels) or one `concurrently` whose quoted commands are read by the same grammar. The port is the last `-p`/`--port`, else the `PORT` the script exports or assigns before the command, else Next's default 3000 (the sources D67 names). `.env*` files are not read because Next reads `PORT` before it loads them; but Bun loads them into the environment of the scripts it runs, so a `next dev` without a port flag and without a `PORT` assigned in the script is unread when it is reached by `bun run` or the project is a Bun project (a lockfile up to the Git root or `packageManager: bun@`, F514; F499). A Yarn Berry project (`packageManager: yarn@2+` or a `.yarnrc.yml` found the same way) reads `export` forms, a `;;` and a `;` followed by blanks at the end of the line as unread with a note naming Yarn's portable shell (D75, F515, F519); a `packageManager` of `yarn@1` or of another manager wins over a stray `.yarnrc.yml` (F520). `npx` and `bunx` take only the bare package name `next`, not a path (F516).
+ * The script is read with the meaning of the shell that runs it (D74): `sh` on macOS and Linux, `cmd` on `win32` (Yarn 2+'s portable shell on every platform for a Yarn Berry project, F520), where single quotes, `NAME=value` prefixes, `export`, `env`, `;`, a `port` variable in another case than `PORT` and a program path with `/` are unread with a note naming `cmd`; a Bun project and `bun run` are unread there with a note naming Bun's shell (D75). An empty script is told as empty (F511). One trailing `;` is allowed, and a word with a quote before its `=` is no assignment.
  * Anything outside the grammar makes the script unread: no port is asserted, Next's default 3000 is returned, and the source quotes the structure of the statement that left the grammar (program and flag names only).
  *
  * @param root - The trusted workspace root that holds `package.json`; a relative path is resolved against the current directory first (F517).
@@ -582,12 +617,14 @@ export async function readDeclaredDevelopmentPort(
   if (dev.trim() === '')
     return { ...fallback, source: DEVELOPMENT_EMPTY_SCRIPT_SOURCE }
   const folders = await projectMarkerFolders(root)
+  const yarnBerry = await isYarnBerryProject(folders, packageManager)
   const read = readDevScript(
     dev,
     scripts,
     await isBunProject(folders, packageManager),
-    platform === 'win32',
-    await isYarnBerryProject(folders, packageManager),
+    // Yarn 2+ runs scripts in its own portable shell on every platform, never in `cmd` (F520).
+    platform === 'win32' && !yarnBerry,
+    yarnBerry,
   )
   if ('unread' in read)
     return {

@@ -1280,9 +1280,11 @@ export const DEVELOPMENT_BUN_LOCKFILES: readonly string[] = [
 export const DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS = 16
 /** The file whose presence in the opened folder or the Git root makes a project a Yarn Berry project (Yarn 2 and later), searched like the Bun lockfiles (F515). */
 export const DEVELOPMENT_YARN_BERRY_CONFIG = '.yarnrc.yml'
-/** The reason the `applicationPortSource` gives when the `dev` script of a Yarn Berry project uses `export`: Yarn 2+ runs scripts in its own portable shell, which has no `export` (D75, F515); the quoted statement follows it. */
+/** The first major version of Yarn that runs scripts in the portable shell (Yarn 2, "Berry"); Yarn 1 runs them with `sh` (F523). */
+export const DEVELOPMENT_YARN_BERRY_MIN_MAJOR = 2
+/** The reason the `applicationPortSource` gives when the `dev` script of a Yarn Berry project has a form that Yarn 2+'s portable shell reads differently from `sh` (`export`, which it lacks; a `;;` or a `;` followed by blanks at the end of the line, which it rejects; D75, F515, F519); the quoted statement follows it. */
 export const DEVELOPMENT_YARN_SHELL_UNREAD_REASON =
-  "Next's default port, taken because Yarn 2 and later runs scripts in its own portable shell, which has no export, so this form can mean different things"
+  "Next's default port, taken because Yarn 2 and later runs scripts in its own portable shell, which reads this form differently from sh, so it can mean different things"
 /** The `packageManager` prefix of a `package.json` that makes the project a Bun project without a lockfile (F514). */
 export const DEVELOPMENT_BUN_PACKAGE_MANAGER_PREFIX = 'bun@'
 /** The reason the `applicationPortSource` gives when the `dev` script is unread on Windows because Bun runs it with Bun Shell by default and with `cmd` when `run.shell` is `system` in `bunfig.toml`, so the same text means different things (D75, F509, F514); the quoted statement follows it. */
