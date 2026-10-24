@@ -1547,3 +1547,39 @@ test('another open during a same-study Reload keeps the Reload’s Learning summ
     await harness.close()
   }
 })
+
+// Value: protects=a test replay opened from the Study composition leaves no empty editor group behind when the Study pane closes, in an editor that removes emptied groups as VS Code does by default; fails_when=the composition keeps the Study pane's emptied group, or an empty group of its own; why_new=Cycle 0052 task 24 (Cycle 0051 /ship review: the harness never removed an emptied group, so one would go unnoticed); seam=closeDisposedPanelTabsLater and closeEmptyGroupsAfterPanelMove (closeEmptyGroups on, VS Code's default); no_claim=an editor with closeEmptyGroups off, which keeps emptied groups by the learner's setting
+test('a test replay opened from the Study composition leaves no empty editor group when the editor closes emptied groups', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    // The editor removes a group its last tab left, by a close or by a move, as VS Code does with `workbench.editor.closeEmptyGroups` on (its default).
+    harness.closeDisposedPanelTabsLater()
+    harness.closeEmptyGroupsAfterPanelMove()
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await landsOn(harness, 2, 'Open replay lands on the first stop')
+    await waitUntil(
+      () => harness.panelColumn('codebook.studyContext') === undefined,
+      'the Study pane closed',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.closePendingDisposedPanelTabs()
+
+    // Assert
+    assert.deepEqual(
+      harness.groups
+        .filter((group) => group.tabs.length === 0)
+        .map((group) => group.viewColumn),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
