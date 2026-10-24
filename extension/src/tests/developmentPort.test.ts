@@ -24,6 +24,7 @@ import {
 import {
   beginReleaseOfOwnedDevelopmentPort,
   claimOwnedDevelopmentPort,
+  isOwnedDevelopmentPortReleasing,
   ownedDevelopmentPortState,
   releaseOwnedDevelopmentPort,
 } from '../utils/ownedDevelopmentPorts'
@@ -2647,6 +2648,25 @@ test("releasing one run's claim keeps the other run's claim on the same port", (
   assert.equal(ownedDevelopmentPortState(54001), 'running')
   releaseOwnedDevelopmentPort(runB)
   assert.equal(ownedDevelopmentPortState(54001), undefined)
+})
+
+// Value: protects=a newer run on a port still stopping is reported running while the older run's release stays visible until it ends, so the start check keeps waiting for the old group (F535); fails_when=isOwnedDevelopmentPortReleasing reads only the newest claim, or ownedDevelopmentPortState prefers stopping over running; why_new=F535 (test gap); seam=the registry with an older stopping claim and a newer running claim on one port; no_claim=the launcher's wiring
+test("a newer run's claim reads running while the older run's release stays visible until it ends", () => {
+  // Arrange
+  const older = claimOwnedDevelopmentPort(54002)
+  beginReleaseOfOwnedDevelopmentPort(older)
+
+  // Act
+  const newer = claimOwnedDevelopmentPort(54002)
+
+  // Assert
+  assert.equal(ownedDevelopmentPortState(54002), 'running')
+  assert.equal(isOwnedDevelopmentPortReleasing(54002), true)
+  releaseOwnedDevelopmentPort(older)
+  assert.equal(ownedDevelopmentPortState(54002), 'running')
+  assert.equal(isOwnedDevelopmentPortReleasing(54002), false)
+  releaseOwnedDevelopmentPort(newer)
+  assert.equal(ownedDevelopmentPortState(54002), undefined)
 })
 
 // Value: protects=a cancelled run does not wait out the release bound (F432); fails_when=the abort is ignored or swallowed and the cancel takes the full wait; why_new=OCR L5; seam=a stuck claim and an abort after 50 ms; no_claim=the run's own cancellation path
