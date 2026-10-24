@@ -8188,6 +8188,9 @@ export class StudyWorkspace {
       if (retiredContextGroup)
         this.rememberCreatedContextGroup(retiredContextGroup.viewColumn)
       if (compositionChanged) {
+        // A reader that leaves the summary composition withdraws the Learning summary's replay document, for a test replay as a browser replay's departure does, so no stale summary with controls that answer nothing stays beside the chat (Cycle 0051, DS-A).
+        if (this.summaryComposition && !summaryComposition)
+          this.clearLearningSummary()
         this.layoutReceipt = undefined
         this.presentationConfirmed = false
         this.liveComposition = liveComposition

@@ -484,6 +484,32 @@ test('Return to Live from a test replay retires it and keeps the Study pane clos
   }
 })
 
+// Value: protects=Return to Live from a test replay withdraws the Learning summary's replay document, as a browser replay's Return to Live does, so no stale summary with controls that answer nothing stays beside the chat; fails_when=the summary keeps the test replay's document after the reader left the summary composition; why_new=Cycle 0051 /ship review pass 2 (Codex structured: leaving a test replay never cleared the summary, AC15); seam=none; no_claim=the native view's look
+test('Return to Live from a test replay gives the Learning summary its placeholder, as a browser replay’s Return to Live does', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    await openByOpenReplay(harness)
+    const replayDocumentShown = harness.summary.webview.html.includes(
+      'id="recording-transport"',
+    )
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert
+    assert.equal(replayDocumentShown, true)
+    assert.equal(
+      harness.summary.webview.html.includes(
+        'Open saved learning from Codebook to view its summary.',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a refused test replay move shows the host's sentence in the shared transport's status line, read with the summary hidden too, and leaves the committed moment; fails_when=the refusal reaches only the Study pane's error lines, or the moment changes; why_new=Cycle 0051 DS-G (AC14); seam=the projection's nodeHistoryRefusal; no_claim=the status line's rendering (Reader DOM)
 test('a refused Previous stop at the first stop shows its sentence for the transport and keeps the moment', async () => {
   // Arrange
