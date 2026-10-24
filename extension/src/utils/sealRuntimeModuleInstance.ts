@@ -49,10 +49,7 @@ export function sealRuntimeModuleInstance(
 ): BundleSource | undefined {
   return bundleOfEvaluatedModule(
     scriptSource,
-    sealed.sourcePath,
-    sealed.source,
-    sealed.chunkPath,
-    sealed.chunkHash,
+    sealed,
     url,
   )
 }

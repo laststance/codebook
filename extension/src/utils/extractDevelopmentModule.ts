@@ -29,10 +29,7 @@ export function extractDevelopmentModule(
       throw new Error('Module discovery deadline exceeded')
     const bundle = bundleOfEvaluatedModule(
       JSON.parse(literal),
-      sourcePath,
-      source,
-      chunkPath,
-      chunkHash,
+      { sourcePath, source, chunkPath, chunkHash },
       scriptUrl,
     )
     if (bundle) candidates.push(bundle)
@@ -46,26 +43,24 @@ export function extractDevelopmentModule(
 /**
  * Reads one evaluated webpack module's text (its code, `sourceURL` and inline source map) as a sealed bundle of a cited original, for {@link extractDevelopmentModule} (each eval literal of a built chunk) and {@link sealRuntimeModuleInstance} (the text a runtime reports for a script it parsed).
  * @param javascript - The evaluated module text.
- * @param sourcePath - The absolute path of the cited original.
- * @param source - The frozen text of the cited original.
- * @param chunkPath - The built chunk the module was acquired from, kept as the bundle's identity.
- * @param chunkHash - The SHA-256 of that chunk.
+ * @param identity - The cited original and the chunk it was acquired from, kept as the bundle's identity: `sourcePath` is the original's absolute path, `source` its frozen text, `chunkPath` the built chunk and `chunkHash` that chunk's SHA-256. One object typed from {@link BundleSource}, so a caller cannot swap the four strings.
  * @param scriptUrl - The script address the module must carry as its effective `sourceURL`.
  * @returns The bundle, or `undefined` when the module carries another script address.
  * @throws When the module's script identity or inline map is ambiguous, malformed or over its byte limit, or its map does not name the exact original.
  * @example
  * ```ts
- * bundleOfEvaluatedModule(text, '/repo/auth.ts', source, chunkPath, chunkHash, 'webpack-internal:///(middleware)/./auth.ts')
+ * bundleOfEvaluatedModule(text, { sourcePath: '/repo/auth.ts', source, chunkPath, chunkHash }, 'webpack-internal:///(middleware)/./auth.ts')
  * ```
  */
 export function bundleOfEvaluatedModule(
   javascript: string,
-  sourcePath: string,
-  source: string,
-  chunkPath: string,
-  chunkHash: string,
+  identity: Pick<
+    BundleSource,
+    'sourcePath' | 'source' | 'chunkPath' | 'chunkHash'
+  >,
   scriptUrl: string,
 ): BundleSource | undefined {
+  const { sourcePath, source, chunkPath, chunkHash } = identity
   const urls = [...javascript.matchAll(/^\/\/# sourceURL=(.+)$/gm)]
   if (!urls.some((url) => sameScriptUrl(scriptUrl, url[1]!))) return undefined
   if (Buffer.byteLength(javascript) > REPOSITORY_JAVASCRIPT_LIMIT_BYTES)
