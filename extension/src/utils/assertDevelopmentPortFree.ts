@@ -84,7 +84,8 @@ const tryBind: BindProbe = async (port) => {
   })
 }
 
-/** Looks once at a port: a connection to either loopback address or a refused bind means taken; EACCES means the host does not let Codebook listen there. */
+/** Looks once at a port: a connection to either loopback address or a refused bind means taken; EACCES means the host does not let Codebook listen there.
+ * @throws `PREREQUISITE_MISSING` naming the port and the error code only, for any other bind failure (F559). */
 async function lookAtPort(
   port: number,
   connect: ConnectLoopback,
@@ -102,7 +103,15 @@ async function lookAtPort(
   if (!failure) return 'free'
   if (failure.code === 'EADDRINUSE') return 'in-use'
   if (failure.code === 'EACCES') return 'not-permitted'
-  throw failure
+  // Any other bind failure is a typed refusal naming the port and the error code only (as F453 does for [::1]).
+  const code = /^[A-Z0-9_]{1,32}$/.test(failure.code ?? '')
+    ? failure.code
+    : 'unknown error'
+  throw new StudyError(
+    'PREREQUISITE_MISSING',
+    `Codebook could not check whether port ${port} is free (${code}), and the project declares it, so Codebook never starts the app on another port. Ask the learner to resolve the network problem on this machine or to declare another port for the project, then start again.`,
+    `bind ${code} on 127.0.0.1:${port}`,
+  )
 }
 
 /** Test seams of {@link assertDevelopmentPortFree}; production passes none. */

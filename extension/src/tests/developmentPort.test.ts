@@ -2569,6 +2569,36 @@ test('a port the system refuses to let Codebook listen on is refused as not perm
   )
 })
 
+// Value: protects=a bind failure other than EADDRINUSE or EACCES is a typed refusal that names the port and the error code only, never the raw error with its address text (F559); fails_when=the raw error escapes or its message text reaches the learner; why_new=F559 (Step 11, third round); seam=an injected bind that fails with EADDRNOTAVAIL; no_claim=which codes a real host raises
+test('an unexpected bind failure is refused as a typed error naming only the port and the code', async () => {
+  // Arrange
+  const port = await freePort()
+  const bind = async () =>
+    Object.assign(
+      new Error('listen EADDRNOTAVAIL: address not available 10.1.2.3'),
+      {
+        code: 'EADDRNOTAVAIL',
+      },
+    )
+
+  // Act
+  const refusal = await assertDevelopmentPortFree(
+    { port, source: 'the dev script in package.json' },
+    { connect: silentConnect, bind },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    refusal.message,
+    `Codebook could not check whether port ${port} is free (EADDRNOTAVAIL), and the project declares it, so Codebook never starts the app on another port. Ask the learner to resolve the network problem on this machine or to declare another port for the project, then start again.`,
+  )
+})
+
 // Value: protects=a port that Codebook's own stopping run releases within the wait does not fail the next start (F422); fails_when=the check refuses at once or blames the learner; why_new=OCR L3; seam=a real listener closed after 150 ms and the recorded owned port; no_claim=the real process-group exit
 test('a port that Codebook own stopping run releases within the wait passes the start check', async () => {
   // Arrange
