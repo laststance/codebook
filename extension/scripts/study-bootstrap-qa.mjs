@@ -9878,7 +9878,8 @@ async function check(page, options, collected) {
         window.sent.some((message) => message.type === 'ready'),
       )
     }
-    let regionTwoRevision = 200
+    // The region-2 cases' messages stand 200 steps after the first message and count on from there, as revisionAt(step) reads a distance.
+    let regionTwoStep = 200
     const c51Hash = 'c'.repeat(64)
     /** One recorded stop of the revenue query's test replay. */
     const c51Stop = (sequence, index, elapsedMs, line) => ({
@@ -10018,7 +10019,7 @@ async function check(page, options, collected) {
       )
       return {
         ...options.message,
-        revision: revisionAt(regionTwoRevision++),
+        revision: revisionAt(regionTwoStep++),
         replayFamily: 'test',
         playbackPanelVisible: false,
         nodeHistoryEventCount: c51Entries.length,
@@ -10084,12 +10085,12 @@ async function check(page, options, collected) {
     /** A browser replay's Study message in the summary composition, paused at 5 s of a 20 s recording. */
     const browserReplayAt = (extra = {}) => ({
       ...options.message,
-      revision: revisionAt(regionTwoRevision++),
+      revision: revisionAt(regionTwoStep++),
       contentTab: 'recording',
       replayFamily: 'browser',
       playbackPanelVisible: false,
       recording: {
-        revision: revisionAt(regionTwoRevision++),
+        revision: revisionAt(regionTwoStep++),
         mode: 'paused',
         readiness: 'ready',
         cleared: false,
