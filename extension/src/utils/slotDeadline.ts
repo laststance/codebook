@@ -25,9 +25,9 @@ export interface SlotDeadline {
   cancel(): void
   /**
    * Races a piece of work against this deadline.
+   * After the deadline passed, every call refuses at once, whatever state `work` is in (a step that starts late does not succeed). After {@link cancel}, the bounded work is over and no timer runs: the call returns `work` itself, unbounded.
    * @param work - The work; it keeps running after a loss, and its later outcome is for the caller to clean up.
    * @param what - What is waited for, named in the timeout; the deadline's own description when omitted.
-   * After the deadline passed, every call refuses at once, whatever state `work` is in (a step that starts late does not succeed). After {@link cancel}, the bounded work is over and no timer runs: the call returns `work` itself, unbounded.
    * @returns What `work` returns when it ends first.
    * @throws {@link WaitTimeoutError} when the deadline passed before the call or passes first; `work`'s own failure when it ends first.
    */

@@ -338,7 +338,7 @@ export class OwnedRepositoryBreakpoint {
     )
   }
 
-  /** Accepts only a successful matching setBreakpoints response on the requested line, or on another line the owner's rule accepts, at whichever column the adapter bound unless the owner asked for the requested column; a retirement response must exclude the owned stop. @example owned.onResponse(session, response) */
+  /** Accepts only a successful matching setBreakpoints response on the requested line, or on another line the owner's rule accepts, at whichever column the adapter bound; a retirement response must exclude the owned stop. @example owned.onResponse(session, response) */
   onResponse(
     session: vscode.DebugSession,
     response: DebugProtocol.Response,
