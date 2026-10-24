@@ -1923,7 +1923,7 @@ test('returning to the shown output while a stop still presents leaves the debug
   }
 })
 
-// Value: protects=a Play step or seek whose caller withdrew it after its recorded-source slot showed the next stop, with no newer selection to follow, leaves no surface on that stop: the slot shows the committed stop's sealed source again with its stopped line and label, and the replay debugger shows the committed stop, beside the Study position that stayed there; fails_when=the withdrawn selection returns after the slot and the debugger moved, so the slot holds another stop's source (and the debugger its frames) while the Study pane names the committed stop; why_new=F351 (hosted CodeRabbit on #120, Major); seam=the workspace harness's held document open of the next stop's slot, with the caller's isCurrent turned false while the open is held; no_claim=the controller paths that withdraw a step (a seek selects its own moment at once, a close or a browser recording retires the replay)
+// Value: protects=a Play step or seek whose caller withdrew it after its recorded-source slot showed the next stop, with no newer selection to follow, leaves no surface on that stop: the slot shows the committed stop's sealed source again with its stopped line and label, and the replay debugger shows the committed stop, beside the Study position that stayed there; fails_when=the withdrawn selection returns after the slot and the debugger moved, so the slot holds another stop's source (and the debugger its frames) while the Study pane names the committed stop; why_new=F351 (hosted CodeRabbit on #120, Major), F543 (no error row asserted); seam=the workspace harness's held document open of the next stop's slot, with the caller's isCurrent turned false while the open is held; no_claim=the controller paths that withdraw a step (a seek selects its own moment at once, a close or a browser recording retires the replay)
 test('a Play step withdrawn after its slot showed the next stop shows the committed stop again in the slot and the debugger', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -1967,6 +1967,7 @@ test('a Play step withdrawn after its slot showed the next stop shows the commit
       harness.historicalDebugPresentations.at(-1)?.sourceDocument?.uri,
       tabs[0],
     )
+    assert.equal(lastView(harness)?.errors.length, 0)
   } finally {
     await harness.close()
   }
@@ -4058,7 +4059,7 @@ function frontOfGroup(harness: Harness, column: number): string | undefined {
   return input?.uri?.toString()
 }
 
-// Value: protects=a selection of a stop whose source does not verify, overtaken while its placeholder slot opens, commits nothing: the slot, its label, the debugger and the Study position all show the newer verified stop alone (F539 cell unverified stop x overtaken by a newer selection); fails_when=the overtaken unverified stop's placeholder, its empty debugger or its Study position outlive the newer selection; why_new=F539 (overtaking was tested for a verified stop and an output only); seam=the store's read, whose second stop's captured text was edited, and the workspace harness's held document open of the placeholder slot; no_claim=Play's own pacing
+// Value: protects=a selection of a stop whose source does not verify, overtaken while its placeholder slot opens, commits nothing: the slot, its label, the debugger and the Study position all show the newer verified stop alone (F539 cell unverified stop x overtaken by a newer selection); fails_when=the overtaken unverified stop's placeholder, its empty debugger or its Study position outlive the newer selection; why_new=F539 (overtaking was tested for a verified stop and an output only), F543 (the overtaken step's outcome asserted, not swallowed); seam=the store's read, whose second stop's captured text was edited, and the workspace harness's held document open of the placeholder slot; no_claim=Play's own pacing
 test('an unverified stop selection overtaken by a newer stop selection leaves only the newer stop on every surface', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -4078,7 +4079,10 @@ test('an unverified stop selection overtaken by a newer stop selection leaves on
     // Act
     await selectMoment(harness, history.studyId, 2)
     held.release()
-    await overtaken.catch(() => undefined)
+    const overtakenOutcome = await overtaken.then(
+      () => 'resolved',
+      (error: unknown) => error,
+    )
     await waitUntil(
       () =>
         harness.historicalDebugPresentations.at(-1)?.label ===
@@ -4097,6 +4101,7 @@ test('an unverified stop selection overtaken by a newer stop selection leaves on
     assert.deepEqual(slotLabels(harness), [
       '  Recorded: src/theme.ts:1 · 0.20 s',
     ])
+    assert.equal(overtakenOutcome, 'resolved')
     assert.equal(lastView(harness)?.errors.length, 0)
   } finally {
     context.mock.restoreAll()
@@ -4104,7 +4109,7 @@ test('an unverified stop selection overtaken by a newer stop selection leaves on
   }
 })
 
-// Value: protects=a Play step to a stop whose source does not verify, withdrawn by its caller after its placeholder slot showed, with no newer selection, leaves no surface on that stop: the slot shows the committed stop's sealed source again with its stopped line and label, and the replay debugger shows the committed stop (F351 cell unverified stop x withdrawn by its caller); fails_when=the withdrawn selection returns nothing, so the slot keeps the placeholder and the debugger stays empty while the Study position names the committed stop; why_new=F540 (the withdrawn Play step tests used verified stops); seam=the store's read, whose second stop's captured text was edited, and the workspace harness's held document open of the placeholder slot, with the caller's isCurrent turned false while the open is held; no_claim=the controller paths that withdraw a step
+// Value: protects=a Play step to a stop whose source does not verify, withdrawn by its caller after its placeholder slot showed, with no newer selection, leaves no surface on that stop: the slot shows the committed stop's sealed source again with its stopped line and label, and the replay debugger shows the committed stop (F351 cell unverified stop x withdrawn by its caller); fails_when=the withdrawn selection returns nothing, so the slot keeps the placeholder and the debugger stays empty while the Study position names the committed stop; why_new=F540 (the withdrawn Play step tests used verified stops), F543 (no error row asserted); seam=the store's read, whose second stop's captured text was edited, and the workspace harness's held document open of the placeholder slot, with the caller's isCurrent turned false while the open is held; no_claim=the controller paths that withdraw a step
 test('a Play step to a stop whose source does not verify, withdrawn after its slot showed, shows the committed stop again in the slot and the debugger', async (context) => {
   // Arrange
   const harness = await workspaceHarness()
@@ -4152,13 +4157,14 @@ test('a Play step to a stop whose source does not verify, withdrawn after its sl
       harness.historicalDebugPresentations.at(-1)?.sourceDocument?.uri,
       tabs[0],
     )
+    assert.equal(lastView(harness)?.errors.length, 0)
   } finally {
     context.mock.restoreAll()
     await harness.close()
   }
 })
 
-// Value: protects=a Play step to an output, withdrawn by its caller after its placeholder slot showed, with no newer selection, leaves no surface on the output: the slot shows the committed stop's sealed source again with its stopped line and label, and the replay debugger shows the committed stop (F351 cell output x withdrawn by its caller); fails_when=the withdrawn selection returns nothing, so the slot keeps the output's placeholder and the debugger stays empty while the Study position names the committed stop; why_new=F541 (the withdrawn Play step tests used stops); seam=the workspace harness's held document open of the output's slot, with the caller's isCurrent turned false while the open is held; no_claim=the controller paths that withdraw a step
+// Value: protects=a Play step to an output, withdrawn by its caller after its placeholder slot showed, with no newer selection, leaves no surface on the output: the slot shows the committed stop's sealed source again with its stopped line and label, and the replay debugger shows the committed stop (F351 cell output x withdrawn by its caller); fails_when=the withdrawn selection returns nothing, so the slot keeps the output's placeholder and the debugger stays empty while the Study position names the committed stop; why_new=F541 (the withdrawn Play step tests used stops), F543 (no error row asserted); seam=the workspace harness's held document open of the output's slot, with the caller's isCurrent turned false while the open is held; no_claim=the controller paths that withdraw a step
 test('a Play step to an output, withdrawn after its slot showed, shows the committed stop again in the slot and the debugger', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -4205,6 +4211,7 @@ test('a Play step to an output, withdrawn after its slot showed, shows the commi
       harness.historicalDebugPresentations.at(-1)?.sourceDocument?.uri,
       tabs[0],
     )
+    assert.equal(lastView(harness)?.errors.length, 0)
   } finally {
     await harness.close()
   }

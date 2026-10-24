@@ -796,7 +796,7 @@ test('a captured-source tab the learner moved to another group after leaving a b
   }
 })
 
-// Value: protects=the record of the browser replay left last being the only record a test replay's first slot show closes from, after an earlier browser replay was left and a newer one loaded (F474); fails_when=the load of the newer browser replay keeps the earlier record and the leave of the newer one merges into it, or a tab the learner opens after the last leave is closed; why_new=F536 (review finding: the clear at a browser replay's start decided no tested outcome); seam=the workspace harness's tab model, restoreLeftoverCapturedSource, returnCurrentSelection, openRecording and openLearningReplay; no_claim=that the clear alone is observable: the leave of the newer replay also replaces the whole record, so this guards the learner's result of the sequence
+// Value: protects=the record of the browser replay left last being the only record a test replay's first slot show closes from, after an earlier browser replay was left and a newer one loaded (F474); fails_when=the newer replay's start keeps the earlier record while its leave keeps that record instead of replacing it (the two back each other up), so the newer replay's tab is never closed, or a tab the learner opens after the last leave is closed; why_new=F536 (review finding: the clear at a browser replay's start decided no tested outcome), F542 (the earlier tab, closed by hand, is no assertion); seam=the workspace harness's tab model, restoreLeftoverCapturedSource, returnCurrentSelection, openRecording and openLearningReplay; no_claim=that either half alone is observable, or what happens to an earlier replay's tab the learner leaves open (the newer leave records it as its own)
 test('only the tabs of the browser replay left last close at a test replay, not an earlier one or one opened after', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)
@@ -844,7 +844,6 @@ test('only the tabs of the browser replay left last close at a test replay, not 
     await harness.controller.settle()
 
     // Assert
-    assert.equal(tabs().includes(earlierTab), false)
     assert.equal(tabs().includes(newerTab), false)
     assert.equal(tabs().includes(openedAfterTab), true)
   } finally {
