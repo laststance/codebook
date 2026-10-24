@@ -340,8 +340,7 @@ export class HostBrowser {
         runtimeArgs: [
           '--headless=new',
           '--remote-debugging-pipe',
-          // Defense in depth for D66: `localhost` resolves to the server's own 127.0.0.1 here, never to another listener on ::1.
-          '--host-resolver-rules=MAP localhost 127.0.0.1',
+          // No host-resolver rule (D78): a rule would map every `localhost` port and hide the learner's own `::1`-only API; the `[::1]` forwarder keeps the app's own port owned.
         ],
         userDataDir: this.managedProfile,
         cleanUp: 'wholeBrowser',
