@@ -646,6 +646,53 @@ test('a browser replay left while an earlier close is held keeps its tab on the 
   }
 })
 
+// Value: protects=a browser replay left while an earlier close is held, whose tab Cursor then rebuilds as a new object, still being closed at the next slot show (F498); fails_when=the finished close excludes the newer record's entry by the replaced address of the older record, so the entry is dropped and its open tab stays beside the test replay; why_new=F498 (CodeRabbit CLI minor of the review of 673b2923..7fc7c8fb: F493's fix applies the closed record's address exclusions to the current record); seam=the workspace harness's tab model and Cursor rebuild (rebuildTabObjectsNow), restoreLeftoverCapturedSource, holdNextTabCloseEffect, returnCurrentSelection, openRecording, and the workspace's private close of the retired record; no_claim=the native tab strip
+test('a browser replay left during a held close keeps its tab for the next close after Cursor rebuilt the tab objects', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const path = `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-actions.ts`
+    harness.restoreLeftoverCapturedSource({ active: false, path })
+    await harness.reader['returnCurrentSelection']('learner')
+    // Cursor builds every tab object anew: the record holds the old one, whose address stands for it.
+    harness.rebuildTabObjectsNow()
+    const held = harness.holdNextTabCloseResponse()
+    const closing = harness.reader['closeRetiredBrowserReplaySourceTabs']()
+    await held.started
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    // The learner opens the same captured file again, leaves the replay again, and Cursor rebuilds the tab objects again while the first close's answer is held.
+    harness.restoreLeftoverCapturedSource({ active: false, path })
+    await harness.reader['returnCurrentSelection']('learner')
+    harness.rebuildTabObjectsNow()
+    const countOpenAt = () =>
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter(
+          (tab) => (tab.input as { uri?: { path: string } }).uri?.path === path,
+        ).length
+    const openBeforeAnswer = countOpenAt()
+
+    // Act
+    held.release()
+    await closing
+    const recordedAfterClose = [
+      ...(harness.reader['retiredBrowserReplayTabs']?.values() ?? []),
+    ].some((address) => address.endsWith('/Captured-actions.ts'))
+    await harness.reader['closeRetiredBrowserReplaySourceTabs']()
+
+    // Assert
+    assert.equal(openBeforeAnswer, 1)
+    assert.equal(recordedAfterClose, true)
+    assert.equal(countOpenAt(), 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a captured-source tab that the learner closes by hand after Cursor rebuilt the tab objects, and reopens at the same address, surviving the test replay (F494); fails_when=the close of a rebuilt tab matches no entry, so the entry stays and the next slot show closes the tab the learner reopened by its address; why_new=F494 (OCR low, CodeRabbit CLI major, of the review of c9664ea3..673b2923: F485's fallback by address keeps entries nothing can end); seam=the workspace harness's Cursor model (rebuildTabObjectsAtGroupRemoval and rebuildTabObjectsNow), restoreLeftoverCapturedSource, closeTabByHand, returnCurrentSelection and openLearningReplay; no_claim=the native tab strip
 test('a captured-source tab the learner closes after Cursor rebuilt the tab objects and reopens at that address survives the test replay', async () => {
   // Arrange
