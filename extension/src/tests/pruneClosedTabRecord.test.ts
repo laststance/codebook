@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { pruneClosedTabRecord } from '../utils/pruneClosedTabRecord'
+import { replacedTabAddresses } from '../utils/replacedTabAddresses'
 
 type FakeTab = { address?: string }
 
@@ -52,4 +53,21 @@ test('a closed rebuilt tab keeps the entry while another live tab shows the addr
 
   // Assert
   assert.equal(pruned, record)
+})
+
+// Value: protects=the address of a recorded tab object the editor rebuilt standing for that tab when the record's tabs are closed; fails_when=a rebuilt tab matches nothing and stays open; why_new=Cycle 0052 task 15 (replacedTabAddresses, shared by both records); seam=none; no_claim=Cursor's rebuild itself
+test('a recorded tab object the editor no longer shows gives its address', () => {
+  // Arrange
+  const shown: FakeTab = { address: 'codebook-source://key/a' }
+  const rebuilt: FakeTab = { address: 'codebook-source://key/b' }
+  const record = new Map([
+    [shown, 'codebook-source://key/a'],
+    [rebuilt, 'codebook-source://key/b'],
+  ])
+
+  // Act
+  const addresses = replacedTabAddresses(record, new Set([shown]))
+
+  // Assert
+  assert.deepEqual([...addresses], ['codebook-source://key/b'])
 })

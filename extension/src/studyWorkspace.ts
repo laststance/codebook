@@ -327,6 +327,7 @@ import {
   recordedLeftoverGroups,
 } from './utils/recordedLeftoverGroups'
 import { recordingNotShownReason } from './utils/recordingNotShownReason'
+import { replacedTabAddresses } from './utils/replacedTabAddresses'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { sanitizeCause } from './utils/sanitizeCause'
 import { sanitizedStack } from './utils/sanitizedStack'
@@ -24653,14 +24654,10 @@ export class StudyWorkspace {
     const retired = this.nodeSourceSlotTabsAwaitingArea
     if (!retired) return
     this.nodeSourceSlotTabsAwaitingArea = undefined
-    const live = new Set(
-      vscode.window.tabGroups.all.flatMap((group) => group.tabs),
-    )
     // A tab object the editor rebuilt meanwhile (Cursor) is in no entry: its address stands for it.
-    const replacedAddresses = new Set(
-      [...retired]
-        .filter(([tab]) => !live.has(tab))
-        .map(([, address]) => address),
+    const replacedAddresses = replacedTabAddresses(
+      retired,
+      new Set(vscode.window.tabGroups.all.flatMap((group) => group.tabs)),
     )
     try {
       // Only the retired replay's own tabs close.
@@ -25863,14 +25860,10 @@ export class StudyWorkspace {
   private async closeRetiredBrowserReplaySourceTabs(): Promise<void> {
     const retired = this.retiredBrowserReplayTabs
     if (!retired) return
-    const live = new Set(
-      vscode.window.tabGroups.all.flatMap((group) => group.tabs),
-    )
     // A tab object the editor replaced is no longer live; its address stands for it, unless the learner closed that tab (its entry is gone then).
-    const replacedAddresses = new Set(
-      [...retired]
-        .filter(([tab]) => !live.has(tab))
-        .map(([, address]) => address),
+    const replacedAddresses = replacedTabAddresses(
+      retired,
+      new Set(vscode.window.tabGroups.all.flatMap((group) => group.tabs)),
     )
     await this.closeCapturedSourceTabs(
       (uri, tab) =>
