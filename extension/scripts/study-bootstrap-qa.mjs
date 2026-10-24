@@ -10707,6 +10707,8 @@ async function check(page, options, collected) {
     await regionTwoCase(
       "a browser replay's transport in the Learning summary keeps exactly today's controls (ids, order, labels): the 5A button ",
       async () => {
+        // The group publishes its own starting state: a browser replay in the Learning summary.
+        await publish(browserReplayAt())
         const browserSummaryControls = await transportControls()
         cases.push({
           name: 'a browser replay’s transport in the Learning summary keeps exactly its controls, ids, order and labels',
@@ -11188,6 +11190,49 @@ async function check(page, options, collected) {
         })
       },
     )
+    // Value: protects=a test replay's summary reads the replay alone: the saved browser study behind it (its Open article, its recording line and its Evidence status) stays out of the summary; fails_when=the summary shows the browser study's parts above the test replay; why_new=Cycle 0051 native smoke in VS Code 1.142.0 (the host sends the selected browser study with the replay); seam=none; no_claim=the host's selection (studyWorkspace tests)
+    await regionTwoCase(
+      "a test replay's summary reads the replay alone: the saved browser study behind it stays out of the summary",
+      async () => {
+        await freshPane('context')
+        await publish(
+          regionTwoAt(2, {
+            repositoryArticleAvailable: true,
+            study: {
+              terminal: true,
+              studyOutcome: 'demonstrated',
+              historyOutcome: 'saved',
+              finalOutcome: 'demonstrated',
+            },
+          }),
+        )
+        const browserStudyParts = await page.evaluate(() => ({
+          openArticle: document
+            .querySelector('[data-action="open-article"]')
+            .checkVisibility(),
+          evidence: document
+            .getElementById('evidence-details')
+            .checkVisibility(),
+          recordingLine: document.getElementById('recording-save-state')
+            .textContent,
+          testReplayShown: document
+            .getElementById('node-history-position')
+            .checkVisibility(),
+        }))
+        cases.push({
+          name: 'a test replay’s Learning summary leaves out the saved browser study behind it: no Open article, no recording line, no Evidence status',
+          actual: browserStudyParts,
+          passed:
+            JSON.stringify(browserStudyParts) ===
+            JSON.stringify({
+              openArticle: false,
+              evidence: false,
+              recordingLine: '',
+              testReplayShown: true,
+            }),
+        })
+      },
+    )
     // Value: protects=the step mark and the event buttons' text keep a contrast of at least 4.5:1 against the editor background in the four supported themes' variable sets, and the mark keeps its non-color cue; fails_when=a theme's link or button color falls below 4.5:1, or the cue is color alone; why_new=Cycle 0051 AC14; seam=the four themes' variable sets (fixtures); no_claim=installed themes (N51 (f) covers two per host)
     await regionTwoCase(
       "the step mark and the event buttons' text keep a contrast of at least 4.5:1 against the editor background in the four su",
@@ -11412,6 +11457,9 @@ async function check(page, options, collected) {
     await regionTwoCase(
       "5A's Learning summary button in the bottom panel: labelled Learning summary with the accessible name Show learning summa",
       async () => {
+        // The group opens its own bottom panel with a test replay in it.
+        await freshPane('moments', { width: 1200, height: 260 })
+        await publish(regionTwoAt(2, { playbackPanelVisible: true }))
         await clearSent()
         await page.locator('#show-learning-summary').click()
         const learningSummaryButton = await page.evaluate(() => {

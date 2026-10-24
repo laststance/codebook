@@ -956,6 +956,8 @@ export class StudyWorkspace {
   private liveComposition = false
   /** Counts the learner's test replay entries ({@link openNodeHistoryFromHost}) in the order they were made, so the latest one wins also while an earlier one still enters the summary composition (EN19, Cycle 0051). */
   private nodeHistoryEntryRequest = 0
+  /** Settles when the test replay entry in front has entered its composition: entries take turns there, so two entries never run {@link open} at once (one would be refused as busy and leave no replay shown). */
+  private nodeHistoryEntryTurn: Promise<void> = Promise.resolve()
   /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   private hostOpeningTestReplay = false
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
@@ -11688,22 +11690,18 @@ export class StudyWorkspace {
     revision?: number,
   ): Promise<void> {
     const entry = ++this.nodeHistoryEntryRequest
-    if (!(await this.closeBrowserReplayForTestReplay())) return
+    // Entries take turns entering the composition; a newer entry made meanwhile is the learner's latest choice (EN19).
+    const previousTurn = this.nodeHistoryEntryTurn
+    let releaseTurn!: () => void
+    this.nodeHistoryEntryTurn = new Promise<void>((resolve) => {
+      releaseTurn = resolve
+    })
     try {
-      await this.enterSummaryCompositionForReplay()
-    } catch (error) {
-      // A newer entry answers for the learner now.
-      if (entry !== this.nodeHistoryEntryRequest) return
-      // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
-      await this.leaveEmptySummaryComposition()
-      await this.tellTestReplayOpenFailure(
-        studyId,
-        error,
-        sanitizeCause(error, this.service?.causeRoots ?? { storage: [] }),
-      )
-      return
+      await previousTurn
+      if (!(await this.enterCompositionForEntry(studyId, entry))) return
+    } finally {
+      releaseTurn()
     }
-    // A newer entry made while this one entered the composition is the learner's latest choice (EN19).
     if (entry !== this.nodeHistoryEntryRequest) return
     const outcome = await this.openNodeHistory(
       studyId,
@@ -11722,12 +11720,49 @@ export class StudyWorkspace {
   }
 
   /**
-   * Answers a test replay entry made during a browser replay: one replay shows at a time, so the learner is told so and may close the browser replay first (DS10); called by {@link openNodeHistoryFromHost}.
-   * @returns `true` when no browser replay is open, or the learner closed it; `false` when it stays open.
-   * @example if (!(await this.closeBrowserReplayForTestReplay())) return
+   * Brings a test replay entry into the summary composition in its turn: a browser replay is closed first when the learner agrees, and a refused entry is told like a failed open (F382, F384); called by {@link openNodeHistoryFromHost} while the entry holds its turn.
+   * @param studyId - The test replay's study id.
+   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
+   * @returns `true` when the entry stands in the composition and is still the latest; `false` when a newer entry took over, the browser replay stays open, or the failure was told.
+   * @example if (!(await this.enterCompositionForEntry(studyId, entry))) return
    */
-  private async closeBrowserReplayForTestReplay(): Promise<boolean> {
+  private async enterCompositionForEntry(
+    studyId: string,
+    entry: number,
+  ): Promise<boolean> {
+    if (entry !== this.nodeHistoryEntryRequest) return false
+    if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
+    if (entry !== this.nodeHistoryEntryRequest) return false
+    try {
+      await this.enterSummaryCompositionForReplay()
+    } catch (error) {
+      // A newer entry answers for the learner now.
+      if (entry !== this.nodeHistoryEntryRequest) return false
+      // A refused entry is told like a failed replay open: one Output › Codebook entry and the notification, never a bare command failure (F382, F384).
+      await this.leaveEmptySummaryComposition()
+      await this.tellTestReplayOpenFailure(
+        studyId,
+        error,
+        sanitizeCause(error, this.service?.causeRoots ?? { storage: [] }),
+      )
+      return false
+    }
+    return entry === this.nodeHistoryEntryRequest
+  }
+
+  /**
+   * Answers a test replay entry made during a browser replay: one replay shows at a time, so the learner is told so and may close the browser replay first (DS10); called by {@link enterCompositionForEntry}.
+   * The notice is not modal: the browser replay it names is closed only while it is still the one shown and the entry is still the latest, so an answer never closes a replay opened after the notice.
+   * @param entry - The entry's ticket ({@link nodeHistoryEntryRequest}).
+   * @returns `true` when no browser replay is open, or the learner closed the one named; `false` when it stays open or another replay or entry took over.
+   * @example if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
+   */
+  private async closeBrowserReplayForTestReplay(
+    entry: number,
+  ): Promise<boolean> {
     if (!this.recordingActive) return true
+    const studyId = this.selection.studyId,
+      revision = this.playback?.state().revision
     const refusal = describeNodeLearningSave({ kind: 'open-refused' })
     const action = await showPlainNotice(
       vscode.window,
@@ -11735,7 +11770,14 @@ export class StudyWorkspace {
       refusal.text,
       ...(refusal.actions ?? []),
     )
-    if (action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay) return false
+    if (
+      action !== NODE_LEARNING_SAVE_ACTION.closeBrowserReplay ||
+      entry !== this.nodeHistoryEntryRequest ||
+      !this.recordingActive ||
+      this.selection.studyId !== studyId ||
+      this.playback?.state().revision !== revision
+    )
+      return false
     await this.returnCurrentSelection('learner')
     return !this.recordingActive
   }
@@ -14835,7 +14877,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the source the layout shows is ready: the article's captured source ({@link sourceReady}), or, while a test replay is selected or opening, the replay's own recorded-source slot with its tab in front at the source position and its content committed (F402).
+   * Says whether the source the layout shows is ready: the article's captured source ({@link sourceReady}), or, while a test replay is selected or opening, the replay's own recorded-source slot with its tab in front and its content committed (F402): in any group in the summary composition, as a browser replay's source, else at the source position.
    * Read by {@link presentationState} for `layoutConfirmed` and by {@link confirmEnlargedLayout} before an Enlarge's Restore confirms, so both apply one rule.
    * @returns `true` when the source of the current composition is shown.
    * @example this.layoutSourceReady() // => false while the slot's tab is closed under a selected test replay
@@ -14852,15 +14894,18 @@ export class StudyWorkspace {
       held.address !== slot.uri.toString()
     )
       return false
+    const isSlotInFront = (group: vscode.TabGroup): boolean =>
+      group.activeTab?.input instanceof vscode.TabInputText &&
+      group.activeTab.input.uri.toString() === slot.uri.toString()
+    // The summary composition shows the slot as a browser replay shows its captured source, in front of any group: the learner's own groups may hold the source column there (Cycle 0051, DS-A).
+    if (this.summaryComposition)
+      return vscode.window.tabGroups.all.some(isSlotInFront)
     // The slot shows at the selected mode's source column, as {@link nodeSourceSlotColumn} places it (F424).
     const column = STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
-    const front = vscode.window.tabGroups.all.find(
-      (group) => group.viewColumn === column,
-    )?.activeTab?.input
-    return (
-      front instanceof vscode.TabInputText &&
-      front.uri.toString() === slot.uri.toString()
+    const group = vscode.window.tabGroups.all.find(
+      (candidate) => candidate.viewColumn === column,
     )
+    return group !== undefined && isSlotInFront(group)
   }
 
   /** Confirms the selected immutable source reached an active native tab before control or MCP reveal succeeds. @example this.sourceReady() */

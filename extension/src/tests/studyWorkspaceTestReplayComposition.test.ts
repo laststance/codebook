@@ -1013,3 +1013,116 @@ test('after a reload no test replay reopens by itself, and its reopen lands on t
     await harness.close()
   }
 })
+
+// Value: protects=two test replay entries made at once on a closed reader: the entries take turns entering the composition, so the latest one opens its replay instead of being refused as busy while the earlier one is cancelled and no replay shows; fails_when=both entries run open() together and neither replay is shown; why_new=Cycle 0051 local CodeRabbit CLI finding (major): the entry ticket cancelled the first entry while the second met its busy open; seam=two Open replay calls without awaiting the first; no_claim=native timing of the editor's open
+test('two Open replay entries made at once on a closed reader open the latest replay', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const first = await saveTwoStopNodeHistory(store)
+    const second = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    const openedBefore = harness.reader.inspect().opened
+
+    // Act
+    await Promise.all([
+      harness.reader.openLearningReplay(first.studyId),
+      harness.reader.openLearningReplay(second.studyId),
+    ])
+    await landsOn(harness, 2, 'the latest replay lands on its first stop')
+
+    // Assert
+    assert.equal(openedBefore, false)
+    assert.equal(lastView(harness)?.nodeHistory?.header.studyId, second.studyId)
+    assert.deepEqual(harness.errorMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the one-replay-at-a-time notice closes only the browser replay it named, for the latest entry: an answer to an earlier entry's notice that a newer entry overtook closes nothing, and the newer entry's answer closes the replay and opens its test replay; fails_when=the earlier answer closes the browser replay for a stale entry; why_new=Cycle 0051 local CodeRabbit CLI findings (the notice is not modal); seam=recordedReaderHarness, answerWarningDialogs held per notice; no_claim=a second browser recording opened meanwhile (the same guard compares its study and revision)
+test('an answer to an overtaken one-replay-at-a-time notice closes nothing, and the latest entry’s answer opens its replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const first = await saveTwoStopNodeHistory(store)
+    const second = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      READER_RESULT_BOUND_MS,
+    )
+    const answers: Array<(choice: string | undefined) => void> = []
+    harness.answerWarningDialogs(
+      () =>
+        new Promise((resolve) => {
+          answers.push(resolve)
+        }),
+    )
+    const firstEntry = harness.reader.openLearningReplay(first.studyId)
+    await waitUntil(
+      () => answers.length === 1,
+      'the first notice is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    const secondEntry = harness.reader.openLearningReplay(second.studyId)
+
+    // Act: the first notice is answered after the second entry was made.
+    answers[0]!('Close browser replay')
+    await firstEntry
+    const recordingAfterStaleAnswer = harness.controller.state().studyId
+    await waitUntil(
+      () => answers.length === 2,
+      'the second notice is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    answers[1]!('Close browser replay')
+    await secondEntry
+    await landsOn(
+      harness,
+      2,
+      'the latest entry’s replay lands on its first stop',
+    )
+
+    // Assert
+    assert.equal(recordingAfterStaleAnswer, harness.studyId)
+    assert.equal(lastView(harness)?.nodeHistory?.header.studyId, second.studyId)
+    assert.equal(harness.controller.state().studyId, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a test replay's layout in the summary composition reads confirmed when its recorded-source tab is in front of a group other than the Study mode's source column (the learner's own group holds that column), as a browser replay's captured source does; fails_when=the slot is looked for at the source column only and the summary shows "The recorded source of the test replay is not shown in its pane." over a slot in front; why_new=Cycle 0051 native smoke in VS Code 1.142.0 (the line showed beside the slot in front); seam=the fake editor's two-group layout with the learner's file at column 2; no_claim=the native placement of the groups
+test('a test replay whose recorded-source tab stands in another group than the source column reads its layout as confirmed', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    harness.focusMutableDraft('utils.ts', 2)
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await landsOn(harness, 2, 'the replay lands on its first stop')
+    const slotColumn = harness.groups.find(
+      (group) => group.activeTab?.label === 'Captured-theme.ts',
+    )?.viewColumn
+    const state = harness.reader.presentationState()
+
+    // Assert
+    assert.equal(slotColumn, 3)
+    assert.equal(state.layoutConfirmed, true)
+    assert.equal(state.reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})

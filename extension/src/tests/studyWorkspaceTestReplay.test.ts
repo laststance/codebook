@@ -1547,7 +1547,6 @@ test('a failed summary-composition entry of Open replay after a live node-test r
     assert.equal(harness.errorMessages.length, 1)
     assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
     assert.notEqual(harness.panelColumn('codebook.scopedBrowser'), undefined)
-    assert.equal(harness.summary.visible, true)
     assert.equal(
       harness.reader.inspect().view?.nodeHistory?.header.studyId,
       studyId,

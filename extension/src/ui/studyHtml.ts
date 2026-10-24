@@ -3637,9 +3637,11 @@ function studyClient(
       ? 'Focus learning summary'
       : 'Focus explanation'
     button('return-wiki')!.hidden = !message.repositoryReturnAvailable
+    // A test replay's summary reads the replay alone: the article and the saved study behind it stay out (DS-B).
     button('open-article')!.hidden =
       !message.repositoryArticleAvailable ||
-      Boolean(message.repositoryReturnAvailable)
+      Boolean(message.repositoryReturnAvailable) ||
+      replayFamily === 'test'
     element('next-scenario').hidden = Boolean(replayFamily)
     element('study-controls').hidden = Boolean(replayFamily)
     // A visible bottom panel owns transport; closing it restores the summary fallback.
@@ -3862,9 +3864,14 @@ function studyClient(
     // Without a study, and in the bottom panel during a replay, the line is empty and takes no room; it stays rendered, so the first label is a change of a status region that exists.
     text(
       'recording-save-state',
-      message.study && !isReplayInBottomPanel(message) ? recordingLabel : '',
+      message.study &&
+        !isReplayInBottomPanel(message) &&
+        replayFamily !== 'test'
+        ? recordingLabel
+        : '',
     )
-    element('evidence-details').hidden = !message.study
+    element('evidence-details').hidden =
+      !message.study || replayFamily === 'test'
     text('evidence-summary', `Evidence status · ${outcomeLabel}`)
     // Why the last run did not start comes first; Retry storage / refresh cannot fix it, so it does not count for that button.
     text(
