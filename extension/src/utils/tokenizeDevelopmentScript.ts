@@ -1,7 +1,7 @@
 import { DEVELOPMENT_SCRIPT_ALLOWED_CHARACTERS } from '../constants'
 
 /** The shell meanings that make a statement unread although it is in the grammar's syntax. */
-export type UnreadReason = 'bun-env' | 'bun-shell' | 'cmd'
+export type UnreadReason = 'bun-env' | 'bun-shell' | 'cmd' | 'yarn-shell'
 
 /**
  * Says that the `dev` script has a form outside the grammar the reader asserts a port for (D72); thrown by {@link tokenizeDevelopmentScript} and the readers of {@link readDeclaredDevelopmentPort}, caught only there.
