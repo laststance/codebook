@@ -845,3 +845,55 @@ test('restoring the panel after a browser study was chosen from a maximized test
     await harness.close()
   }
 })
+
+// Value: protects=a test replay opened after a browser study was chosen with the bottom panel maximized keeps its own recorded-source tab when the wait for the editor area ends; fails_when=the end of the wait closes every slot tab, the new replay's among them (OCR self-review of b37912f4); why_new=Cycle 0052 task 15's deferred slot close; seam=recordedReaderHarness with a maximized bottom panel, restorePanel and the reader's refresh; no_claim=the native editor's own restore of the area
+test('a test replay opened while a chosen browser study waits for the editor area keeps its slot tab when the wait ends', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayBesideBrowserStudy(harness)
+    harness.maximizePanel()
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: lastView(harness)!.revision,
+      studyId: harness.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory === undefined &&
+        harness.reader.inspect().view?.model.selection.studyId ===
+          harness.studyId &&
+        !harness.reader.inspect().view?.loading,
+      'the browser study is chosen',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Act
+    await harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistoryPosition?.sequence === 2 &&
+        !harness.reader.inspect().view?.loading,
+      'the second test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.equal(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter((tab) =>
+          JSON.stringify(tab.input).includes('/node-history-slot/'),
+        ).length,
+      1,
+    )
+  } finally {
+    await harness.close()
+  }
+})

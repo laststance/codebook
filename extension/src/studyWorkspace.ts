@@ -9488,6 +9488,8 @@ export class StudyWorkspace {
     this.presentationReason = undefined
     this.repositoryRecordingOpen = undefined
     this.recordingReloadStudyId = undefined
+    // The reader's close closes its owned tabs, the slot's among them.
+    this.nodeSourceSlotTabsAwaitingArea = false
     // A test replay entry still waiting for its turn belongs to the closed reader and never opens it again (Cycle 0052 task 12).
     this.nodeHistoryEntryRequest++
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
@@ -12841,12 +12843,7 @@ export class StudyWorkspace {
       // The retired replay's recorded-source slot goes with it, with any slot tab a rename still opening or one that failed left.
       else await this.closeNodeSourceSlotTabs()
     } catch (error) {
-      this.report(
-        'layout',
-        new Error(
-          `The previous recorded source tab could not close. Arrange the Codebook panes manually. ${String(error)}`,
-        ),
-      )
+      this.reportSlotCloseFailure(error)
     }
     // A slot tab that stays open (pinned) no longer holds the last stop's bytes: the document asks the provider again.
     const remaining = vscode.window.tabGroups.all
@@ -24625,15 +24622,25 @@ export class StudyWorkspace {
     if (!this.nodeSourceSlotTabsAwaitingArea) return
     this.nodeSourceSlotTabsAwaitingArea = false
     try {
-      await this.closeNodeSourceSlotTabs()
+      // A test replay shown meanwhile keeps its own slot tab.
+      await this.closeNodeSourceSlotTabs(this.nodeSourceSlot?.uri)
     } catch (error) {
-      this.report(
-        'layout',
-        new Error(
-          `The previous recorded source tab could not close. Arrange the Codebook panes manually. ${String(error)}`,
-        ),
-      )
+      this.reportSlotCloseFailure(error)
     }
+  }
+
+  /**
+   * Tells on the layout line that an earlier recorded-source tab could not close; called by {@link retireNodeSourceSlot} and {@link closeSlotTabsAwaitingArea}.
+   * @param error - What the editor's close threw.
+   * @example this.reportSlotCloseFailure(error)
+   */
+  private reportSlotCloseFailure(error: unknown): void {
+    this.report(
+      'layout',
+      new Error(
+        `The previous recorded source tab could not close. Arrange the Codebook panes manually. ${String(error)}`,
+      ),
+    )
   }
 
   /** Says whether the selected saved study still waits for the editor area the learner hid before choosing it; the reader's timer then leaves the panes as they are, while an explicit entry, selection or placement shows them. @example if (!this.studyAwaitsEditorArea()) await this.renderSelection(true, false, signal) */
