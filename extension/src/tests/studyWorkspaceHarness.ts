@@ -1063,7 +1063,8 @@ export async function workspaceHarness(
     { wait: Promise<void>; entered(): void } | undefined
   let nextLayoutResponse: { wait: Promise<void>; entered(): void } | undefined
   const commands: string[] = []
-  let constrainStudyGrid = false
+  // The group count of the Study grid the fake editor settles at other sizes than given (see `constrainStudyGrid`); `undefined`: every layout is kept as given.
+  let constrainedStudyGridGroups: 2 | 3 | undefined
   /** The editor area in which the fake editor answers a layout given in proportions as pixels; see `answerProportionsAsPixels`. `undefined`: such a layout is kept as it was given. */
   let proportionsAnsweredInPx: { width: number; height: number } | undefined
   let hideGridWhileMaximized = false
@@ -4375,8 +4376,11 @@ export async function workspaceHarness(
               layout = proportionsAsPixels(layout, proportionsAnsweredInPx)
             // A layout given to the main grid brings a hidden editor area back; the given layout replaces the sizes of that return.
             returnHiddenEditorArea()
-            settledLayout =
-              constrainStudyGrid && nativeGroupCount(layout) === 3
+            const constrained =
+              nativeGroupCount(layout) === constrainedStudyGridGroups
+            settledLayout = !constrained
+              ? structuredClone(layout)
+              : constrainedStudyGridGroups === 3
                 ? {
                     orientation: 0,
                     groups: [
@@ -4384,7 +4388,8 @@ export async function workspaceHarness(
                       { size: 220 },
                     ],
                   }
-                : structuredClone(layout)
+                : // The summary composition's two groups, the Application above the recorded source, settle at sizes the editor chose.
+                  { orientation: 1, groups: [{ size: 100 }, { size: 40 }] }
             editorLayout = transientLayout
               ? {
                   orientation: 0,
@@ -5191,6 +5196,9 @@ export async function workspaceHarness(
     repositoryWikiReaders.push(wiki)
     return wiki
   }
+  /** Says whether the reader last published a replay's summary composition, in which the Study pane is closed and the Learning summary view shows the study's content (Cycle 0051, DS-A). @example isSummaryCompositionShown() // => true while a test replay is selected */
+  const isSummaryCompositionShown = (): boolean =>
+    Boolean(postedMessages.at(-1)?.replayFamily)
   return {
     ...harness,
     createRepositoryWikiReader,
@@ -5340,13 +5348,20 @@ export async function workspaceHarness(
     viewFocusCommands,
     articleOpens,
     articleReturns,
-    receiveContext: (message: unknown): void =>
-      receivers.get('codebook.studyContext')!(message),
+    /** Delivers a message as the pane that shows the study's content posts it: the Study pane, or the Learning summary view while a replay holds the summary composition and the Study pane is closed (Cycle 0051, DS-A). @example harness.receiveContext({ type: 'node-history-step', studyId, direction: 'next', unit: 'stop' }) */
+    receiveContext: (message: unknown): void => {
+      if (isSummaryCompositionShown()) {
+        for (const listener of summaryListeners) listener(message)
+      } else receivers.get('codebook.studyContext')!(message)
+    },
     /** Delivers a message to the host as the Application pane's webview posts it (its test replay document's reports). @example harness.receiveApplication({ type: 'node-history-output-ready', history, generation: 1, follow: true }) */
     receiveApplication: (message: unknown): void =>
       receivers.get('codebook.scopedBrowser')!(message),
     receive: (message: unknown): void => {
-      if (reader.inspect().view?.contentTab === 'recording') {
+      if (
+        reader.inspect().view?.contentTab === 'recording' ||
+        isSummaryCompositionShown()
+      ) {
         for (const listener of summaryListeners) listener(message)
       } else receivers.get('codebook.studyContext')!(message)
     },
@@ -6781,8 +6796,9 @@ export async function workspaceHarness(
       activeTabGroup.activeTab = activeTabGroup.tabs[0]
       changedGroups({ opened: [...groups], closed: previous, changed: [] })
     },
-    constrainStudyGrid(): void {
-      constrainStudyGrid = true
+    /** Makes the fake editor settle a Study grid of that many groups at sizes of its own, as an editor with a minimum group size does: three for the Study composition (two columns), two for the summary composition (Cycle 0051). @example harness.constrainStudyGrid(2) */
+    constrainStudyGrid(groupCount: 2 | 3 = 3): void {
+      constrainedStudyGridGroups = groupCount
     },
     /**
      * Makes `workbench.action.newGroupAbove` leave the text editor reported before it as the active text editor until a pane's tab stands in front of the new empty group, as Cursor 3.23.12 reported it in a Repository Wiki recording visit (C61 c61-cu-695c: the first-group focus made the Wiki's cited copy the active text editor, the insertion and the lock of the Application's group left it so, and the active text editor was reported as none only 43 ms after the lock, while the parked Application pane moved into the new group; Cycle 0046 row 710). Off by default: the other tests keep the fake editor's report of no active text editor at the insertion.

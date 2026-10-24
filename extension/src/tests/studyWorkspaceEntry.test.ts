@@ -2975,8 +2975,8 @@ test("a live entry from the three-pane Study layout stays confirmed when the con
   }
 })
 
-// Value: protects=Open replay during a live run: the learner reaches the test replay's Study pane (its transport, position and summary) instead of a replay shown only in the Application, the slot and the debugger; fails_when=the live composition keeps the reader without a Study pane while a test replay is opening or selected; why_new=Cycle 0050 F208 (N49 Cursor part 7: Open replay after a live run opened no Study pane); seam=workspaceHarness with the controlled runtime, the reader's open, returnToCurrent and openLearningReplay, panelColumn
-test('Open replay during a live run creates the Study pane and selects the test replay in it', async () => {
+// Value: protects=Open replay during a live run: the learner reaches the test replay's transport, position and summary in the summary composition (the Learning summary in the chat's place) instead of a replay shown only in the Application, the slot and the debugger; fails_when=the live composition is kept while a test replay is opening or selected, or the Study pane comes back for it; why_new=Cycle 0050 F208 (N49 Cursor part 7), changed in Cycle 0051 (DS-A, moves with D8, F123): a test replay no longer lives in the Study pane; seam=workspaceHarness with the controlled runtime, the reader's open, returnToCurrent and openLearningReplay, panelColumn, the harness's summary view
+test('Open replay during a live run enters the summary composition with the test replay selected', async () => {
   // Arrange: the learner returned the Study to the current run, and a run started, so the reader stands in the Live composition without a Study pane.
   const harness = await workspaceHarness(false)
   await harness.reader.attach(harness.service)
@@ -3010,7 +3010,9 @@ test('Open replay during a live run creates the Study pane and selects the test 
     await harness.reader.openLearningReplay(history.studyId)
 
     // Assert
-    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.summary.visible, true)
+    assert.equal(harness.postedMessages().at(-1)?.replayFamily, 'test')
     assert.equal(
       harness.reader.inspect().view?.nodeHistory?.header.studyId,
       history.studyId,
@@ -3064,8 +3066,8 @@ test('Open Study Workspace after the Application pane left its allocated group o
   }
 })
 
-// Value: protects=Focus Explanation for a test replay whose Study pane is gone: the command opens the pane again so the transport, position and summary are reachable, instead of changing nothing visible; fails_when=the focus action only reveals an existing pane; why_new=Cycle 0050 F208 (Focus Explanation changed nothing visible after Open replay lost its Study pane); seam=workspaceHarness, openLearningReplay, tabGroups.close of the Study pane's tab, the reader's focus-context action, panelColumn
-test('Focus Explanation opens the Study pane again for a selected test replay whose pane was closed', async () => {
+// Value: protects=Focus Explanation for a test replay whose Learning summary is hidden: the command shows the summary again so the position and summary are reachable, instead of changing nothing visible; fails_when=the focus action changes nothing, or opens the Study pane the summary composition closes; why_new=Cycle 0050 F208, changed in Cycle 0051 (DS-A and DS-E, moves with D8, F123): a test replay's content is the Learning summary's; seam=workspaceHarness, openLearningReplay, hideSummary, the reader's focus-context action, panelColumn
+test('Focus Explanation shows the hidden Learning summary of a selected test replay and keeps the Study pane closed', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
@@ -3074,23 +3076,14 @@ test('Focus Explanation opens the Study pane again for a selected test replay wh
     )
     await harness.reader.action('retry')
     await harness.reader.openLearningReplay(history.studyId)
-    await harness.editor.window.tabGroups.close(
-      harness.groups
-        .flatMap((group) => group.tabs)
-        .filter(
-          (tab) =>
-            tab.input instanceof harness.editor.TabInputWebview &&
-            tab.input.viewType.includes('codebook.studyContext'),
-        ),
-      true,
-    )
-    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    harness.hideSummary()
 
     // Act
     await harness.reader.action('focus-context')
 
     // Assert
-    assert.notEqual(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.summary.visible, true)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
   } finally {
     await harness.close()
   }

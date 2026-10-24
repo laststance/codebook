@@ -6,7 +6,7 @@ import type { CodebookDiagnostic } from '../utils/formatCodebookDiagnostic'
 import { readerSeams, workspaceHarness } from './studyWorkspaceHarness'
 import { startLiveTestRun } from './utils/startLiveTestRun'
 
-// Value: protects=the first Open replay after a node-test run whose live Application pane closed at the run's end and left its empty, locked group at column 1 beside a learner's source group and a Welcome group (F382, VS Code 1.142.0 N50 round 1): the replay is shown with the Application at column 1 and the Study pane, nothing is written as a refused placement, and the learner's Welcome and source tabs stay; fails_when=the first Open replay refuses with the placement sentence, writes a placement-refused entry, shows no replay, or loses the learner's tabs; why_new=Cycle 0050 F382 (the native layout before the press: an empty locked group above the source group and a Welcome group to the right); seam=workspaceHarness with the fake owned Node run, the run's own Application preparation with the reader closed (prepareApplicationGroup), closeApplicationPaneOfEndedRun with refuseNextGroupClose (the group the editor keeps), the diagnostics log; no_claim=this passes on the code of 5868b54, so it does not show F382's cause: the native refusal is not reproduced by the fake editor
+// Value: protects=the first Open replay after a node-test run whose live Application pane closed at the run's end and left its empty, locked group at column 1 beside a learner's source group and a Welcome group (F382, VS Code 1.142.0 N50 round 1): the replay is shown with the Application at column 1 in the summary composition (no Study pane since Cycle 0051, moves with D8, F123), nothing is written as a refused placement, and the learner's Welcome and source tabs stay; fails_when=the first Open replay refuses with the placement sentence, writes a placement-refused entry, shows no replay, or loses the learner's tabs; why_new=Cycle 0050 F382 (the native layout before the press: an empty locked group above the source group and a Welcome group to the right); seam=workspaceHarness with the fake owned Node run, the run's own Application preparation with the reader closed (prepareApplicationGroup), closeApplicationPaneOfEndedRun with refuseNextGroupClose (the group the editor keeps), the diagnostics log; no_claim=this passes on the code of 5868b54, so it does not show F382's cause: the native refusal is not reproduced by the fake editor
 test('the first Open replay after a node-test run that left its empty locked Application group shows the replay without a placement refusal', async () => {
   // Arrange: the run's Application stood in its own locked group above the source group; the run ended, the pane closed and the editor kept the emptied group.
   const harness = await workspaceHarness()
@@ -46,15 +46,17 @@ test('the first Open replay after a node-test run that left its empty locked App
     harness.refuseNextGroupClose()
     await harness.reader['closeApplicationPaneOfEndedRun']()
     await harness.reader.saveLearningReplay(studyId)
-    const leftover = harness.groups.find((group) => group.viewColumn === 1)!
 
     // Act
     await harness.reader.openLearningReplay(studyId)
 
-    // Assert
-    assert.equal(leftover.tabs.length, 1)
+    // Assert: the summary composition (Cycle 0051, DS-A) has no Study pane; the leftover group stands empty no more.
+    assert.equal(
+      harness.groups.some((group) => group.tabs.length === 0),
+      false,
+    )
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
-    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
     assert.equal(
       harness.reader.inspect().view?.nodeHistory?.header.studyId,
       studyId,
@@ -127,7 +129,8 @@ test('the first Open replay after a window reload retires the restored empty loc
     // Assert
     assert.equal(harness.groups.includes(leftover), false)
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
-    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    // The summary composition (Cycle 0051, DS-A) has no Study pane.
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
     assert.equal(
       harness.reader.inspect().view?.nodeHistory?.header.studyId,
       studyId,

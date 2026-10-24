@@ -752,7 +752,9 @@ test('a failed presentation is reported as itself when the return to the committ
     )
     // The rejection is awaited below, after the held presentation fails.
     const outcome = assert.rejects(selecting, {
-      message: 'The presentation failed.',
+      // The move's failure carries the open path's recovery clause and names the presentation's own cause (Cycle 0051, DS-G).
+      message:
+        'The replay debugger could not start: The presentation failed. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.',
     })
     await held.started
 
@@ -3502,7 +3504,9 @@ test('the playback time follows the pending stop and returns to the committed mo
       4,
     )
     const outcome = assert.rejects(selecting, {
-      message: 'The presentation failed.',
+      // The move's failure carries the open path's recovery clause and names the presentation's own cause (Cycle 0051, DS-G).
+      message:
+        'The replay debugger could not start: The presentation failed. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.',
     })
     await held.started
 
@@ -3545,7 +3549,9 @@ test('the position line and the playback readout say the requested moment is loa
       4,
     )
     const outcome = assert.rejects(selecting, {
-      message: 'The presentation failed.',
+      // The move's failure carries the open path's recovery clause and names the presentation's own cause (Cycle 0051, DS-G).
+      message:
+        'The replay debugger could not start: The presentation failed. The last moment is still shown. Select this stop or use Inspect in native debugger to restart it.',
     })
     await held.started
 
@@ -3889,12 +3895,10 @@ test('Restore with a test replay selected gives the grid back the sizes the lear
     const arranged = await harness.editor.commands.executeCommand(
       'vscode.getEditorLayout',
     )
+    // The learner resizes the summary composition's two groups, the Application above the recorded source (Cycle 0051, DS-A).
     await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
-      orientation: 0,
-      groups: [
-        { size: 0.8, groups: [{ size: 0.5 }, { size: 0.5 }] },
-        { size: 0.2 },
-      ],
+      orientation: 1,
+      groups: [{ size: 0.8 }, { size: 0.2 }],
     })
     const resized = await harness.editor.commands.executeCommand(
       'vscode.getEditorLayout',
@@ -3957,8 +3961,8 @@ test('Restore with a test replay selected fronts the slot and leaves the keyboar
   }
 })
 
-// Value: protects=a test replay opened in a saved layout whose source column is not the Study workspace's (Living book: the third column) reading its layout as confirmed once the slot stands at that column; fails_when=layoutSourceReady looks for the slot in the Study workspace's second column whatever the mode, so the layout can never confirm; why_new=F424 (OCR L5: layoutSourceReady hardcoded the study-workspace source column while matchingColumns no longer checked it); seam=the workspace harness with a saved Living book preference and a test replay opened through Open replay; no_claim=a native Living book arrangement, which is retired and selectable by no command
-test('a test replay opened in a saved layout with another source column reads its layout as confirmed', async () => {
+// Value: protects=a test replay opened with a saved Living book preference reading its layout as confirmed: the summary composition gives it the Study workspace mode, as it gives a browser replay, and the slot stands at that mode's source column; fails_when=the retired mode's source column is looked for, so the layout never confirms; why_new=F424 (OCR L5), changed in Cycle 0051 (DS-A, moves with D8, F123): a test replay enters the summary composition, whose mode is the Study workspace; seam=the workspace harness with a saved Living book preference and a test replay opened through Open replay; no_claim=a native Living book arrangement, which is retired and selectable by no command
+test('a test replay opened with a saved Living book preference stands in the Study workspace mode and reads its layout as confirmed', async () => {
   // Arrange
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
@@ -3976,7 +3980,7 @@ test('a test replay opened in a saved layout with another source column reads it
     await openReplayAt(harness, history.studyId, 2)
 
     // Assert
-    assert.equal(harness.reader.presentationState().mode, 'living-book')
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace')
     assert.equal(harness.reader.presentationState().layoutConfirmed, true)
   } finally {
     await harness.close()
@@ -3993,12 +3997,10 @@ test('a test replay Restore whose layout command fails reads the layout as uncon
       harness.service.nodeHistoryStore!,
     )
     await openReplayAt(harness, history.studyId, 2)
+    // The learner resizes the summary composition's two groups, the Application above the recorded source (Cycle 0051, DS-A).
     await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
-      orientation: 0,
-      groups: [
-        { size: 0.8, groups: [{ size: 0.5 }, { size: 0.5 }] },
-        { size: 0.2 },
-      ],
+      orientation: 1,
+      groups: [{ size: 0.8 }, { size: 0.2 }],
     })
     const confirmedBefore = harness.reader.presentationState().layoutConfirmed
     harness.failNextCommand('vscode.setEditorLayout')
@@ -4062,7 +4064,7 @@ test('a test replay Restore that finds a pane outside its Study destination keep
   }
 })
 
-// Value: protects=a test replay's Restore whose grid step ends with the editor not keeping the Study layout telling that sentence as the reason, without the error class in front of it; fails_when=the failure text is String(error) ("Error: The editor did not keep ..."); why_new=F443 (the failure wording of the Restore's other steps, next to the Restore's own refusal); seam=the workspace harness's constrainStudyGrid (a three-group layout settles at two columns) after the learner's resize; no_claim=the editor's own wording of a layout it does not keep
+// Value: protects=a test replay's Restore whose grid step ends with the editor not keeping the Study layout telling that sentence as the reason, without the error class in front of it; fails_when=the failure text is String(error) ("Error: The editor did not keep ..."); why_new=F443 (the failure wording of the Restore's other steps, next to the Restore's own refusal); seam=the workspace harness's constrainStudyGrid(2) (the summary composition's two groups settle at the editor's own sizes) after the learner's resize; no_claim=the editor's own wording of a layout it does not keep
 test('a test replay Restore whose layout the editor does not keep tells that failure as the reason without an error prefix', async () => {
   // Arrange
   const harness = await workspaceHarness()
@@ -4072,14 +4074,12 @@ test('a test replay Restore whose layout the editor does not keep tells that fai
       harness.service.nodeHistoryStore!,
     )
     await openReplayAt(harness, history.studyId, 2)
+    // The learner resizes the summary composition's two groups, the Application above the recorded source (Cycle 0051, DS-A).
     await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
-      orientation: 0,
-      groups: [
-        { size: 0.8, groups: [{ size: 0.5 }, { size: 0.5 }] },
-        { size: 0.2 },
-      ],
+      orientation: 1,
+      groups: [{ size: 0.8 }, { size: 0.2 }],
     })
-    harness.constrainStudyGrid()
+    harness.constrainStudyGrid(2)
     const before = harness.reader.presentationState()
 
     // Act
