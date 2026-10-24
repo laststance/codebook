@@ -164,8 +164,8 @@ export function launchDevelopmentServer(
               error ??
               new Error(`Application exited: ${child.exitCode}: ${log}`)
             )
-          // Process chunks may split a port; only a received delimiter proves its complete value.
-          return /http:\/\/127\.0\.0\.1:\d+(?=\D)/.exec(
+          // Process chunks may split a port; only a received delimiter proves its complete value. Only the declared port counts: another local URL in the log (an API, a proxy) is not the app's origin (F552).
+          return new RegExp(`http://127\\.0\\.0\\.1:${port}(?=\\D)`).exec(
             log.toString('utf8'),
           )?.[0]
         },

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { createServer } from 'node:net'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -71,10 +73,70 @@ test('development readiness waits for a complete port across process output chun
     '/node',
     () => {},
     false,
-    3000,
+    43217,
   )
   // Act
   const origin = await server.ready(new AbortController().signal)
+  // Assert
+  assert.equal(origin, 'http://127.0.0.1:43217')
+  assert.deepEqual(requestedOrigins, ['http://127.0.0.1:43217'])
+})
+
+// Value: protects=readiness names the declared port's origin even when the server's log prints another local URL first (F552); fails_when=the first 127.0.0.1 URL in the log is taken and the run opens the wrong application; why_new=F552 (Step 11, third round); seam=the launcher run in an isolated module context with a stub child and waitUntil; no_claim=a real next dev process
+test('readiness takes the declared port origin when the log prints another local URL first', async () => {
+  // Arrange
+  const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
+    nativeRequire = createRequire(filename)
+  const exports: Partial<typeof ServerModule> = {},
+    requestedOrigins: string[] = []
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42002,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  })
+  runInNewContext(
+    await readFile(filename, 'utf8'),
+    {
+      exports,
+      AbortSignal,
+      Buffer,
+      process: { env: {} },
+      fetch: async (origin: string) => {
+        requestedOrigins.push(origin)
+        return { ok: true }
+      },
+      require(name: string) {
+        if (name === 'node:child_process') return { spawn: () => child }
+        if (name.endsWith('/utils/waitUntil'))
+          return {
+            waitUntil: async (read: () => unknown) => {
+              child.stdout.emit(
+                'data',
+                Buffer.from(
+                  'proxy: http://127.0.0.1:5555/api\nLocal: http://127.0.0.1:43217\nReady',
+                ),
+              )
+              return read()
+            },
+          }
+        return nativeRequire(name)
+      },
+    },
+    { filename },
+  )
+  const server = exports.launchDevelopmentServer!(
+    '/isolated-target',
+    '/node',
+    () => {},
+    false,
+    43217,
+  )
+
+  // Act
+  const origin = await server.ready(new AbortController().signal)
+
   // Assert
   assert.equal(origin, 'http://127.0.0.1:43217')
   assert.deepEqual(requestedOrigins, ['http://127.0.0.1:43217'])
@@ -577,7 +639,7 @@ test('an application without a root page is ready through its selected entry pat
     '/node',
     () => {},
     false,
-    3000,
+    43217,
   )
 
   // Act
@@ -635,7 +697,7 @@ test('a selected entry path that redirects to sign-in does not count as a ready 
     '/node',
     () => {},
     false,
-    3000,
+    43217,
   )
 
   // Act
@@ -705,6 +767,15 @@ test('an application whose root page fails is not ready when the root is its ent
 })
 
 // Value: protects=a second real development run after Stop; fails_when=Next's 100ms parent grace kills its still-cleaning worker and leaves .next/dev/lock, although Codebook reports resources released; why_new=Cycle0046 row376, native Cursor407/411; seam=real parent/worker processes and the product launch/close/prerequisite APIs.
+/** Asks the system for a free loopback port and releases it, for a launcher whose readiness must match the port it was given. */
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const { port } = probe.address() as AddressInfo
+  await new Promise((resolve) => probe.close(resolve))
+  return port
+}
+
 test('a stopped development server lets its worker release the build lock before another run checks the workspace', async (context) => {
   // Arrange: the Next-shaped parent has its actual default100ms child cutoff; the worker needs250ms to release its native lock after TERM.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-next-shutdown-'))
@@ -716,7 +787,7 @@ test('a stopped development server lets its worker release the build lock before
     String.raw`
 const { spawn } = require('node:child_process');
 const path = require('node:path');
-const worker = spawn(process.execPath, [path.join(__dirname, 'worker.cjs')], { stdio: ['ignore', 'inherit', 'inherit'] });
+const worker = spawn(process.execPath, [path.join(__dirname, 'worker.cjs'), process.argv[process.argv.indexOf('--port') + 1]], { stdio: ['ignore', 'inherit', 'inherit'] });
 let stopping = false;
 const stop = () => {
   if (stopping) return;
@@ -740,7 +811,7 @@ const lock = path.join(process.cwd(), '.next/dev/lock');
 fs.mkdirSync(path.dirname(lock), { recursive: true });
 fs.writeFileSync(lock, '');
 const server = http.createServer((request, response) => { response.writeHead(200); response.end('ready'); });
-server.listen(0, '127.0.0.1', () => console.log('Local: http://127.0.0.1:' + server.address().port));
+server.listen(Number(process.argv[2]), '127.0.0.1', () => console.log('Local: http://127.0.0.1:' + server.address().port));
 let stopping = false;
 process.on('SIGTERM', () => {
   if (stopping) return;
@@ -755,7 +826,7 @@ process.on('SIGTERM', () => {
     process.execPath,
     () => {},
     false,
-    3000,
+    await freePort(),
   )
   context.after(() => server.close())
   await server.ready(new AbortController().signal, '/login')
