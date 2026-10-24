@@ -21,7 +21,15 @@ const LOCAL_ENV = {}
 /** Creates an owned Git repository with an `extension/` directory; cleanup belongs to the test context. @example const repository = await repositoryFixture(context) */
 async function repositoryFixture(context) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-git-hooks-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  // A Git fixture's removal can meet ENOTEMPTY for a moment on macOS (F561), so it is retried as Node allows.
+  context.after(() =>
+    rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    }),
+  )
   await run('git', ['init', '--quiet', directory])
   await mkdir(join(directory, 'extension'))
   return directory

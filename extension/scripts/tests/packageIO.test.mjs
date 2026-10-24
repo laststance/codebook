@@ -33,7 +33,15 @@ import { withPackageOutput } from '../utils/withPackageOutput.mjs'
 /** Gives publication failures an owned directory and previous artifact whose bytes must survive. @example const fixture = await outputFixture(context) */
 async function outputFixture(context) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-output-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  // A Git fixture's removal can meet ENOTEMPTY for a moment on macOS (F561), so it is retried as Node allows.
+  context.after(() =>
+    rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    }),
+  )
   const output = join(directory, 'existing.vsix')
   await writeFile(output, 'previous good artifact')
   return { directory, output }
