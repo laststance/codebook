@@ -1188,6 +1188,64 @@ test('a move from a stop to an output asks the editor for the slot’s text once
   }
 })
 
+// Value: protects=a stop reselected while the slot's show of an output is still in flight shows that stop's bytes, label, debugger frames and sequence once the output's show ends, instead of reusing the slot that already serves the output's placeholder; fails_when=the slot's held bytes outlive the change that made the document serve the placeholder, so the reselect returns early with no provider event or text wait and the stop's debugger and line commit beside the placeholder text; why_new=F551 (Codex adversarial, Step 11 third round); seam=the workspace harness's held document show of the slot, with the reselect made while it is held; no_claim=how the native editor orders two shows of one document
+test('a stop reselected while the slot still shows an output’s placeholder shows the stop’s source, label and debugger', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const slot = slotTabs(harness)[0]!
+    const outputShow = harness.holdNextTextDocumentShow({ uri: slot })
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 3,
+    })
+    await outputShow.started
+    const asked = countSlotRequests(harness)
+
+    // Act: the stop is selected again while the output's show is held, then the output's show ends.
+    harness.receiveContext({
+      type: 'node-history-event',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    outputShow.release()
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.nodeHistoryPosition?.pending &&
+        harness.historicalDebugPresentations.at(-1)?.label ===
+          'Recorded test stop 1 · src/theme.ts:1',
+      'the stop is selected again and its debugger shows',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(asked.providerEvents, 1)
+    assert.equal(
+      await harness.readCapturedSource(slotTabs(harness)[0]!),
+      THEME_TEXT,
+    )
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.sourceDocument?.uri,
+      slotTabs(harness)[0],
+    )
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the slider's marks of a test replay are mapped from its journal once per opened history (F162, F190): every Study message and every move carries the very same timeline object, so no publish maps the whole journal again or verifies every stop's sealed source again; fails_when=a Study message maps the journal onto the timeline again; why_new=F162 and F190 (projectNodeTestSection mapped the whole history at every message); seam=the reader's message, read by hand, with object identity as the count of projections; no_claim=the marks' values, which the projection's own tests pin
 test('the slider’s marks are mapped once per opened test replay, not at every Study message', async () => {
   // Arrange

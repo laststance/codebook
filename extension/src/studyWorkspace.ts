@@ -25017,6 +25017,8 @@ export class StudyWorkspace {
         return request === this.selectedNodeHistoryRequest ? uri : undefined
       }
       // The stopped line and label wait for the commit ({@link selectNodeHistoryEvent}), so no editor event draws them before the debugger shows the stop.
+      // The document serves the new text from here on, so the old held bytes no longer describe it: a quick reselect of them must show again, not reuse the slot (F551).
+      this.nodeSourceSlotHeld = undefined
       this.nodeSourceSlot = { studyId, uri, text }
       this.sourceChanges.fire(uri)
       shown = this.openNodeSourceSlot(
