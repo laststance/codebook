@@ -90,7 +90,15 @@ function branchyBody() {
  */
 async function createFixture(context, files = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-health-fixture-'))
-  context.after(() => rm(directory, { recursive: true, force: true }))
+  // A Git fixture's removal can meet ENOTEMPTY for a moment on macOS (F561), so it is retried as Node allows.
+  context.after(() =>
+    rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    }),
+  )
   const repository = join(directory, 'repository'),
     root = join(repository, 'extension'),
     temporary = join(directory, 'temporary')
