@@ -1011,7 +1011,7 @@ for (const [name, files, expected] of [
     assert.deepEqual(declared, expected)
   })
 
-// Value: protects=a Yarn Berry project on win32 being read with Yarn's portable shell (the forms Berry runs are read as on macOS and Linux, `export` is unread with the Yarn note) and never with the cmd rules, and a packageManager of yarn@1 or another manager winning over a stray .yarnrc.yml (F520); fails_when=a Berry project on Windows gets the cmd note for `PORT=4000 next dev`, a Yarn 1 project with a stray .yarnrc.yml gets the Yarn-shell note, or a Bun project with a stray .yarnrc.yml escapes the Bun-shell note on Windows; why_new=F520 (OCR low; Berry's shell is portable and runs on Windows too); seam=temporary folder trees with the platform injected; no_claim=a real Windows host or Yarn on it
+// Value: protects=a Yarn Berry project on win32 being read with Yarn's portable shell (the forms Berry runs are read as on macOS and Linux, `export` is unread with the Yarn note) and never with the cmd rules, and a packageManager of yarn@1 or another manager winning over a stray .yarnrc.yml (F520); fails_when=a Berry project on Windows gets the cmd note for `PORT=4000 next dev`, a Yarn 1 project with a stray .yarnrc.yml gets the Yarn-shell note, a Bun project with a stray .yarnrc.yml escapes the Bun-shell note on Windows, or a script that a Berry project reaches through `npm run`, `pnpm run`, `bun run` or `concurrently` is read with Berry's shell on Windows instead of `cmd` or Bun's shell (F524); why_new=F520 (OCR low; Berry's shell is portable and runs on Windows too); seam=temporary folder trees with the platform injected; no_claim=a real Windows host or Yarn on it
 for (const [name, files, platform, expected] of [
   [
     'a PORT prefix in a Berry project on Windows',
@@ -1097,6 +1097,62 @@ for (const [name, files, platform, expected] of [
 ] as const)
   test(`${name} gives port ${expected.port}`, async () => {
     // Arrange: the tree above
+
+    // Act
+    const declared = await declaredPortOfTree(files, '.', platform)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=each script of a Yarn Berry project being read with the shell of the program that runs it: Berry's for `yarn run` and the top dev line, `cmd` on Windows (`sh` elsewhere) for `npm run`, `pnpm run` and the quoted commands of `concurrently`, and Bun's shell for `bun run` on Windows (F524); fails_when=`npm run b`, `pnpm run b` or `concurrently "PORT=4000 next dev"` in a Berry project on win32 reports 4000 though cmd never passes `PORT`, `bun run b` skips the Bun-shell note, `yarn run b` stops being read in Berry's shell, or `npm run b` on linux stops reading 4000; why_new=F524 (OCR major, F520's fix turned `cmd` off for the whole read); seam=temporary folder trees with the platform injected; no_claim=a real Windows host, npm, pnpm, Bun or Yarn on it
+const berryPackage = (scripts: Record<string, string>): string =>
+  JSON.stringify({ packageManager: 'yarn@4.9.2', scripts })
+const B_SCRIPT_SOURCE =
+  'a PORT assignment in the "b" script that the dev script runs in package.json'
+for (const [name, dev, platform, expected] of [
+  [
+    'npm run in a Berry project on Windows',
+    'npm run b',
+    'win32',
+    { port: 3000, source: `${CMD_NOTE}: "PORT=… next dev"` },
+  ],
+  [
+    'pnpm run in a Berry project on Windows',
+    'pnpm run b',
+    'win32',
+    { port: 3000, source: `${CMD_NOTE}: "PORT=… next dev"` },
+  ],
+  [
+    'concurrently with a quoted PORT command in a Berry project on Windows',
+    'concurrently "PORT=4000 next dev"',
+    'win32',
+    { port: 3000, source: `${CMD_NOTE}: "PORT=… next dev"` },
+  ],
+  [
+    'bun run in a Berry project on Windows',
+    'bun run b',
+    'win32',
+    { port: 3000, source: `${BUN_SHELL_NOTE}: "bun run b"` },
+  ],
+  [
+    'yarn run in a Berry project on Windows',
+    'yarn run b',
+    'win32',
+    { port: 4000, source: B_SCRIPT_SOURCE },
+  ],
+  [
+    'npm run in a Berry project on Linux',
+    'npm run b',
+    'linux',
+    { port: 4000, source: B_SCRIPT_SOURCE },
+  ],
+] as const)
+  test(`${name} is read with the shell of the program that runs the script`, async () => {
+    // Arrange
+    const files = {
+      'package.json': berryPackage({ dev, b: 'PORT=4000 next dev' }),
+    }
 
     // Act
     const declared = await declaredPortOfTree(files, '.', platform)

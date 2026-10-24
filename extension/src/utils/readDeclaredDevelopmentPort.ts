@@ -317,8 +317,14 @@ type LineScope = {
   scripts: Scripts
   depth: number
   bun: boolean
+  /** Whether `cmd` runs this line's script (the platform is `win32` and the program that runs it is not Yarn Berry). */
   windows: boolean
+  /** Whether Yarn Berry's portable shell runs this line's script. */
   yarnBerry: boolean
+  /** Whether the platform is `win32`, whatever shell the current step uses. */
+  win32: boolean
+  /** Whether the project is a Yarn Berry project: only scripts that Yarn runs use its shell (F524). */
+  berryProject: boolean
 }
 
 /** Steps into another command line one level deeper. @throws {@link UnreadScriptError} At {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}. */
@@ -333,16 +339,20 @@ function readDelegation(
   name: string,
   env: PortEnv,
   scope: LineScope,
-  viaBun: boolean,
+  manager: string,
 ): DevelopmentCommand | undefined {
   const script = Object.hasOwn(scope.scripts ?? {}, name)
     ? scope.scripts?.[name]
     : undefined
   if (typeof script !== 'string') throw new UnreadScriptError()
   // A script reached by `bun run` runs with Bun's `.env` loading, whatever starts it further down (F499).
+  // The shell is the one of the program that runs the script: Berry's for `yarn` in a Berry project, `cmd` or `sh` for `npm` and `pnpm` (F524).
+  const berry = scope.berryProject && manager === 'yarn'
   const inner = readLine(script, env, {
     ...descend(scope),
-    bun: scope.bun || viaBun,
+    bun: scope.bun || manager === 'bun',
+    windows: scope.win32 && !berry,
+    yarnBerry: berry,
   })
   return inner && { ...inner, delegate: inner.delegate ?? name }
 }
@@ -356,7 +366,12 @@ function readConcurrently(
   // A quoted command holds a blank; a flag, a name or a reference (`npm:dev`) is outside the grammar.
   if (!args.length || args.some((arg) => !/\s/.test(arg)))
     throw new UnreadScriptError()
-  const inner = descend(scope)
+  // `concurrently` runs each quoted command in the platform shell, not in the shell that started it (F524).
+  const inner = {
+    ...descend(scope),
+    windows: scope.win32,
+    yarnBerry: false,
+  }
   const found = args
     .map((arg) => readLine(arg, env, inner))
     .filter((command) => command !== undefined)
@@ -417,9 +432,9 @@ function readProgram(
   const name = delegatedScriptName(program)
   if (name === undefined) throw new UnreadScriptError()
   // On Windows `bun run` uses Bun Shell, or `cmd` with `run.shell = "system"`; the text means different things (D75).
-  if (scope.windows && program[0] === 'bun')
+  if (scope.win32 && program[0] === 'bun')
     throw new UnreadScriptError([], 'bun-shell')
-  return readDelegation(name, env, scope, program[0] === 'bun')
+  return readDelegation(name, env, scope, program[0]!)
 }
 
 /**
@@ -542,19 +557,29 @@ function readDevScript(
   dev: string,
   scripts: Scripts,
   bun: boolean,
-  windows: boolean,
+  win32: boolean,
   yarnBerry: boolean,
 ):
   | { command: DevelopmentCommand }
   | { unread: readonly string[]; reason?: UnreadReason } {
+  // The top line runs in Berry's shell in a Berry project, else in the platform shell (F520, F524).
+  const windows = win32 && !yarnBerry
   try {
     // A Bun project runs its scripts with Bun Shell on Windows (or `cmd` by setting), whatever the script says (D75, F514).
-    if (windows && bun)
+    if (win32 && !yarnBerry && bun)
       throw new UnreadScriptError(dev.split(/\s+/).filter(Boolean), 'bun-shell')
     const command = readLine(
       dev,
       {},
-      { scripts, depth: 0, bun, windows, yarnBerry },
+      {
+        scripts,
+        depth: 0,
+        bun,
+        windows,
+        yarnBerry,
+        win32,
+        berryProject: yarnBerry,
+      },
     )
     // A chain that never runs `next dev` has nothing to read a port from.
     if (!command)
@@ -580,7 +605,7 @@ function readDevScript(
  *
  * Called during repository-browser preparation by {@link ConfiguredBrowserRun}, before {@link launchDevelopmentServer}.
  * The script is read as text, never run, against a fixed grammar (D72): statements joined by `&&` or `;`, each an assignment (`PORT=4000`, `export PORT=4000`), a `next dev` command (reached by `next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next` or a `node_modules/.bin/next` path, after `cross-env` or `env` with assignments only, with Next's own `dev` flags and literal values; the last `-p`/`--port` wins), a delegation without arguments (`npm run x`, `pnpm run x`, `yarn run x`, `bun run x`, and `pnpm x` or `yarn x` only for the names of {@link DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES} or a name with `:` (D76), followed down to {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} levels) or one `concurrently` whose quoted commands are read by the same grammar. The port is the last `-p`/`--port`, else the `PORT` the script exports or assigns before the command, else Next's default 3000 (the sources D67 names). `.env*` files are not read because Next reads `PORT` before it loads them; but Bun loads them into the environment of the scripts it runs, so a `next dev` without a port flag and without a `PORT` assigned in the script is unread when it is reached by `bun run` or the project is a Bun project (a lockfile up to the Git root or `packageManager: bun@`, F514; F499). A Yarn Berry project (`packageManager: yarn@2+` or a `.yarnrc.yml` found the same way) reads `export` forms, a `;;` and a `;` followed by blanks at the end of the line as unread with a note naming Yarn's portable shell (D75, F515, F519); a `packageManager` of `yarn@1` or of another manager wins over a stray `.yarnrc.yml` (F520). `npx` and `bunx` take only the bare package name `next`, not a path (F516).
- * The script is read with the meaning of the shell that runs it (D74): `sh` on macOS and Linux, `cmd` on `win32` (Yarn 2+'s portable shell on every platform for a Yarn Berry project, F520), where single quotes, `NAME=value` prefixes, `export`, `env`, `;`, a `port` variable in another case than `PORT` and a program path with `/` are unread with a note naming `cmd`; a Bun project and `bun run` are unread there with a note naming Bun's shell (D75). An empty script is told as empty (F511). One trailing `;` is allowed, and a word with a quote before its `=` is no assignment.
+ * The script is read with the meaning of the shell that runs it (D74): `sh` on macOS and Linux, `cmd` on `win32` (Yarn 2+'s portable shell on every platform for the lines that Yarn runs in a Berry project, F520; `npm run`, `pnpm run` and the quoted commands of `concurrently` keep `cmd` on `win32` and `sh` elsewhere, as each script is read with the shell of the program that runs it, F524), where single quotes, `NAME=value` prefixes, `export`, `env`, `;`, a `port` variable in another case than `PORT` and a program path with `/` are unread with a note naming `cmd`; a Bun project and `bun run` are unread there with a note naming Bun's shell (D75). An empty script is told as empty (F511). One trailing `;` is allowed, and a word with a quote before its `=` is no assignment.
  * Anything outside the grammar makes the script unread: no port is asserted, Next's default 3000 is returned, and the source quotes the structure of the statement that left the grammar (program and flag names only).
  *
  * @param root - The trusted workspace root that holds `package.json`; a relative path is resolved against the current directory first (F517).
@@ -622,8 +647,7 @@ export async function readDeclaredDevelopmentPort(
     dev,
     scripts,
     await isBunProject(folders, packageManager),
-    // Yarn 2+ runs scripts in its own portable shell on every platform, never in `cmd` (F520).
-    platform === 'win32' && !yarnBerry,
+    platform === 'win32',
     yarnBerry,
   )
   if ('unread' in read)
