@@ -23,12 +23,15 @@ import {
 import { readDeclaredDevelopmentPort } from '../utils/readDeclaredDevelopmentPort'
 
 /** Makes a project folder with the given files, runs the check and removes the folder. */
-async function declaredPortOf(files: Record<string, string>) {
+async function declaredPortOf(
+  files: Record<string, string>,
+  platform: NodeJS.Platform = 'linux',
+) {
   const root = await mkdtemp(join(tmpdir(), 'codebook-port-'))
   try {
     for (const [name, text] of Object.entries(files))
       await writeFile(join(root, name), text)
-    return await readDeclaredDevelopmentPort(root)
+    return await readDeclaredDevelopmentPort(root, platform)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -348,6 +351,216 @@ for (const [name, files, expected] of [
 
     // Assert
     assert.deepEqual(declared, expected)
+  })
+
+const CMD_NOTE =
+  "Next's default port, taken because npm runs the dev script with cmd on Windows, where this form (single quotes, a PORT= or NAME= prefix, export, env or ;) does not mean what it means in sh"
+
+// Value: protects=on Windows, where npm, pnpm and yarn run the script with cmd, the forms whose meaning differs from sh (single quotes, PORT=/NAME= prefixes, export, env, `;`) are unread with a note naming cmd, in the script and in a script it delegates to (F502, D74); fails_when=the reader asserts a port that cmd would never pass to next, or the note does not name cmd; why_new=F502 (OCR low, to verify on Windows, of the review of 673b2923..7fc7c8fb); seam=temporary project folders with the platform set to win32, so the Windows rows run on any host; no_claim=what a real cmd does (not run here)
+for (const [name, scripts, segment] of [
+  ['a PORT prefix', { dev: 'PORT=4801 next dev' }, 'PORT=… next dev'],
+  [
+    'a NAME prefix',
+    { dev: 'NODE_ENV=x next dev -p 4802' },
+    'NODE_ENV=… next dev -p …',
+  ],
+  ['an export', { dev: 'export PORT=4803 && next dev' }, 'export PORT=…'],
+  ['an env prefix', { dev: 'env PORT=4804 next dev' }, 'env PORT=… next dev'],
+  ['a semicolon', { dev: 'next dev -p 4805; next dev' }, 'next dev -p …'],
+  ['a single-quoted value', { dev: "next dev -p '4806'" }, 'next dev -p'],
+  [
+    'a prefix in a delegated script',
+    { dev: 'npm run web', web: 'PORT=4807 next dev' },
+    'PORT=… next dev',
+  ],
+] as const)
+  test(`on Windows ${name} is unread and the note names cmd`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files, 'win32')
+
+    // Assert
+    assert.deepEqual(declared, {
+      port: 3000,
+      source: `${CMD_NOTE}: "${segment}"`,
+    })
+  })
+
+// Value: protects=the forms whose cmd meaning is the same as sh (next dev with literal flags, cross-env, delegations, a double-quoted concurrently) still being read on Windows, and the same scripts that cmd would misread still being read on macOS and Linux (F502, D74); fails_when=the Windows rule unreads a form that means the same under cmd, or leaks into sh; why_new=F502; seam=temporary project folders with the platform set to win32 and linux; no_claim=what a real cmd does (not run here)
+for (const [name, scripts, platform, expected] of [
+  ['a port flag', { dev: 'next dev -p 4811' }, 'win32', 4811],
+  [
+    'cross-env',
+    { dev: 'cross-env NODE_ENV=x PORT=4812 next dev' },
+    'win32',
+    4812,
+  ],
+  [
+    'a delegation',
+    { dev: 'npm run web', web: 'next dev --port=4813' },
+    'win32',
+    4813,
+  ],
+  [
+    'cross-env before a delegation',
+    { dev: 'cross-env PORT=4814 npm run web', web: 'next dev' },
+    'win32',
+    4814,
+  ],
+  [
+    'a double-quoted concurrently',
+    { dev: 'concurrently "next dev -p 4815"' },
+    'win32',
+    4815,
+  ],
+  ['a PORT prefix on macOS', { dev: 'PORT=4816 next dev' }, 'darwin', 4816],
+  [
+    'an export and a semicolon on Linux',
+    { dev: 'export PORT=4817; next dev' },
+    'linux',
+    4817,
+  ],
+  [
+    'a single-quoted value on macOS',
+    { dev: "next dev -p '4818'" },
+    'darwin',
+    4818,
+  ],
+] as const)
+  test(`${name} on ${platform} is read as port ${expected}`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files, platform)
+
+    // Assert
+    assert.equal(declared.port, expected)
+    assert.ok(!declared.source.includes('cmd'), declared.source)
+  })
+
+// Value: protects=a script name that the package manager's own command shadows (pnpm info, yarn workspaces, pnpm install) is no delegation, while pnpm run <name> still is, and yarn next with a script named next is no launcher (F500, F506); fails_when=the reader follows a script a builtin shadows and reports its port; why_new=F500 (pnpm 12.14 runs the builtin); seam=temporary project folders; no_claim=the package manager itself
+for (const [name, scripts] of [
+  ['pnpm info', { dev: 'pnpm info', info: 'next dev -p 4821' }],
+  ['pnpm env', { dev: 'pnpm env', env: 'next dev -p 4822' }],
+  ['pnpm audit', { dev: 'pnpm audit', audit: 'next dev -p 4823' }],
+  ['pnpm outdated', { dev: 'pnpm outdated', outdated: 'next dev -p 4824' }],
+  ['pnpm root', { dev: 'pnpm root', root: 'next dev -p 4825' }],
+  ['pnpm version', { dev: 'pnpm version', version: 'next dev -p 4826' }],
+  ['yarn info', { dev: 'yarn info', info: 'next dev -p 4827' }],
+  [
+    'yarn workspaces',
+    { dev: 'yarn workspaces', workspaces: 'next dev -p 4828' },
+  ],
+  ['pnpm install', { dev: 'pnpm install', install: 'next dev -p 4829' }],
+  [
+    'yarn next with a script named next',
+    { dev: 'yarn next dev -p 4830', next: 'echo' },
+  ],
+] as const)
+  test(`${name} with a script of that name is unread and takes Next's default 3000`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.port, 3000)
+    assert.ok(declared.source.startsWith(`${UNREAD_NOTE}: "`), declared.source)
+  })
+
+// Value: protects=pnpm run <name> and yarn run <name> still reading a script whose name a builtin shadows (F500); fails_when=the builtin list also unreads the explicit run form; why_new=F500; seam=temporary project folders; no_claim=the package manager itself
+for (const [name, scripts, port] of [
+  ['pnpm run info', { dev: 'pnpm run info', info: 'next dev -p 4831' }, 4831],
+  ['yarn run info', { dev: 'yarn run info', info: 'next dev -p 4832' }, 4832],
+] as const)
+  test(`${name} reads the script of that name`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.port, port)
+  })
+
+// Value: protects=a word with a quote before its `=` (or an unsafe or extra assignment) being no assignment, as sh runs it as a command (F501, F506); fails_when=the quoted word is read as PORT=4000 or an unsafe assignment name in another case is read past; why_new=F501 and F506 (surviving mutants: the /i of the unsafe names, the export length check, the backslash in the character list); seam=temporary project folders; no_claim=what sh does (the real-sh table checks it)
+for (const [name, scripts] of [
+  ['a fully quoted assignment', { dev: '"PORT=4841" next dev' }],
+  ['a quoted assignment name', { dev: '"PORT"=4842 next dev' }],
+  ['a single-quoted assignment', { dev: "'PORT=4843' next dev" }],
+  [
+    'a quoted assignment after cross-env',
+    { dev: 'cross-env "PORT=4844" next dev' },
+  ],
+  ['a mixed-case unsafe name', { dev: 'Path=/x next dev -p 4845' }],
+  [
+    'an upper-case npm_config name',
+    { dev: 'NPM_CONFIG_PORT=1 next dev -p 4846' },
+  ],
+  [
+    'an export of two variables',
+    { dev: 'export PORT=4847 NODE_OPTIONS=x && next dev' },
+  ],
+  [
+    'a backslash inside a script name',
+    { dev: 'npm run web\\x', 'web\\x': 'next dev -p 4848' },
+  ],
+] as const)
+  test(`${name} is unread and takes Next's default 3000`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.port, 3000)
+    assert.ok(declared.source.startsWith(`${UNREAD_NOTE}: "`), declared.source)
+  })
+
+// Value: protects=a quoted assignment VALUE staying an assignment (PORT="4849" next dev), and one trailing `;` being allowed (F501, F503); fails_when=the quote rule unreads a quoted value, or a trailing semicolon unreads the script; why_new=F501 and F503; seam=temporary project folders; no_claim=what sh does
+for (const [name, script, port] of [
+  ['a double-quoted value', 'PORT="4849" next dev', 4849],
+  ['a single-quoted value', "PORT='4850' next dev", 4850],
+  ['a trailing semicolon', 'next dev -p 4851;', 4851],
+  ['a trailing semicolon after a prefix', 'PORT=4852 next dev;', 4852],
+  ['a trailing semicolon after a blank', 'next dev -p 4853; ', 4853],
+] as const)
+  test(`${name} reads port ${port}`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.port, port)
+  })
+
+// Value: protects=an empty statement being unread and never quoted as an empty text: the previous statement's structure, or the whole script's words, is quoted (F503); fails_when=the note quotes ""; why_new=F503 (OCR low, usability); seam=temporary project folders; no_claim=what sh does
+for (const [name, script, segment] of [
+  ['a doubled semicolon', 'next dev -p 4861;;', 'next dev -p …'],
+  ['a trailing &&', 'next dev -p 4862 &&', 'next dev -p …'],
+  ['an && then a semicolon', 'next dev -p 4863 && ;', 'next dev -p …'],
+  ['a leading semicolon', '; next dev -p 4864', '… next dev -p …'],
+] as const)
+  test(`${name} is unread and the note quotes ${segment}`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, {
+      port: 3000,
+      source: `${UNREAD_NOTE}: "${segment}"`,
+    })
   })
 
 // Value: protects=a `next dev` with no port anywhere is read, so the run takes Next's default 3000 with no unread note (D72); fails_when=a plain next dev or a PORT-free chain is reported as unread; why_new=D72 grammar; seam=temporary project folders; no_claim=that 3000 is free
@@ -1045,6 +1258,13 @@ for (const [name, script, unread] of [
   ['a shell default', 'next dev -p ${PORT:-4621}', true],
   ['a single-quoted sh -c', "PORT=4622 sh -c 'next dev'", true],
   ['a heredoc', 'next dev -p 4623 <<EOF\nEOF', true],
+  // F505, F501, F503
+  ['an export before a lone &', 'export PORT=4000 & next dev', true],
+  ['a fully quoted assignment', '"PORT=4000" next dev', true],
+  ['a quoted assignment name', '"PORT"=4000 next dev', true],
+  ['a double-quoted assignment value', 'PORT="4624" next dev', false],
+  ['a single-quoted assignment value', "PORT='4625' next dev", false],
+  ['a trailing semicolon', 'next dev -p 4626;', false],
 ] as const)
   test(`${name} never reports a port the real shell would not start`, async (context) => {
     // Arrange
@@ -1066,6 +1286,173 @@ for (const [name, script, unread] of [
       else assert.equal(declared.port, shellRan)
     } finally {
       await rm(folder, { recursive: true, force: true })
+    }
+  })
+
+/** A fake package manager or launcher for the real-shell test: a Node program, installed under every name it plays, that does what the real one does for the forms of the grammar (runs a `package.json` script with `/bin/sh`, runs the command it is given, sets `cross-env` assignments, runs each `concurrently` argument) and prints nothing else. A builtin name of pnpm and yarn (`info`) runs no script. */
+const FAKE_LAUNCHER = `#!${process.execPath}
+const { spawnSync } = require('node:child_process')
+const { readFileSync } = require('node:fs')
+const { basename } = require('node:path')
+const name = basename(process.argv[1])
+const args = process.argv.slice(2)
+const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts ?? {}
+const BUILTINS = ['info', 'env', 'audit', 'install', 'workspaces']
+const sh = (text) => spawnSync('/bin/sh', ['-c', text], { stdio: 'inherit' })
+const run = (command, rest) => spawnSync(command, rest, { stdio: 'inherit' })
+const runScript = (script) => {
+  if (typeof scripts[script] !== 'string') process.exit(1)
+  sh(scripts[script])
+}
+if (name === 'npm' || name === 'bun') {
+  if (args[0] === 'run' || args[0] === 'run-script') runScript(args[1])
+} else if (name === 'pnpm' || name === 'yarn') {
+  if (args[0] === 'run') runScript(args[1])
+  else if (name === 'pnpm' && args[0] === 'exec') run(args[1], args.slice(2))
+  else if (BUILTINS.includes(args[0])) process.exit(0)
+  else if (typeof scripts[args[0]] === 'string') runScript(args[0])
+  else if (name === 'yarn') run(args[0], args.slice(1))
+} else if (name === 'npx' || name === 'bunx') {
+  run(args[0], args.slice(1))
+} else if (name === 'cross-env') {
+  const env = { ...process.env }
+  let index = 0
+  for (; /^\\w+=/.test(args[index] ?? ''); index += 1) {
+    const [key, ...value] = args[index].split('=')
+    env[key] = value.join('=')
+  }
+  spawnSync(args[index], args.slice(index + 1), { stdio: 'inherit', env })
+} else if (name === 'concurrently') {
+  for (const arg of args) sh(arg)
+}
+`
+
+/** Runs a dev script in the real `/bin/sh` inside a project folder, with the fake `next` and the fake launchers first on a `PATH`-only environment; `undefined` when the shell prints no port. */
+async function portOfRealShellInProject(
+  script: string,
+  tools: string,
+  project: string,
+): Promise<number | undefined> {
+  const run = promisify(execFile)
+  const result = await run('/bin/sh', ['-c', script], {
+    cwd: project,
+    env: { PATH: `${tools}:/usr/bin:/bin` },
+    timeout: 10_000,
+  }).catch((error: { stdout?: string }) => ({ stdout: error.stdout ?? '' }))
+  const last = String(result.stdout).trim().split('\n').pop() ?? ''
+  return /^\d+$/.test(last) ? Number(last) : undefined
+}
+
+// Value: protects=for delegations (npm, pnpm, yarn, bun reading the package.json), cross-env, concurrently, the npx, bunx, pnpm exec and yarn launchers and quoting, the reader's port is the port a real /bin/sh starts, and a builtin that shadows a script reaches no port (D72 rule 3; F507, F500); fails_when=the reader asserts a port the shell does not start, or reads a script nothing runs; why_new=F507 (OCR low, test gap: the agreement test covered only bare next, env and PORT prefixes); seam=temporary folders, a real /bin/sh and fake launchers that run the package.json scripts, a PATH-only environment, skipped on Windows; no_claim=the real npm, pnpm, yarn, bun, cross-env and concurrently
+for (const [name, scripts, expected] of [
+  ['npm run', { dev: 'npm run web', web: 'next dev -p 4701' }, 4701],
+  [
+    'npm run-script',
+    { dev: 'npm run-script web', web: 'next dev -p 4702' },
+    4702,
+  ],
+  ['pnpm <name>', { dev: 'pnpm web', web: 'next dev -p 4703' }, 4703],
+  ['pnpm run', { dev: 'pnpm run web', web: 'next dev --port=4704' }, 4704],
+  ['yarn <name>', { dev: 'yarn web', web: 'next dev -p4705' }, 4705],
+  ['yarn run', { dev: 'yarn run web', web: 'next dev -p 4706' }, 4706],
+  ['bun run', { dev: 'bun run web', web: 'next dev -p 4707' }, 4707],
+  [
+    'a PORT assignment before a delegation',
+    { dev: 'PORT=4708 npm run web', web: 'next dev' },
+    4708,
+  ],
+  [
+    'a flag inside a delegated script that follows a PORT',
+    { dev: 'PORT=4709 npm run web', web: 'next dev -p 4710' },
+    4710,
+  ],
+  [
+    'a delegation through two scripts',
+    { dev: 'npm run a', a: 'pnpm b', b: 'next dev -p 4711' },
+    4711,
+  ],
+  ['cross-env', { dev: 'cross-env PORT=4712 next dev' }, 4712],
+  [
+    'cross-env with two assignments',
+    { dev: 'cross-env NODE_ENV=x PORT=4713 next dev --turbo' },
+    4713,
+  ],
+  [
+    'cross-env before a delegation',
+    { dev: 'cross-env PORT=4714 npm run web', web: 'next dev' },
+    4714,
+  ],
+  ['concurrently', { dev: 'concurrently "next dev -p 4715"' }, 4715],
+  [
+    'concurrently with an assignment inside',
+    { dev: 'concurrently "PORT=4716 next dev"' },
+    4716,
+  ],
+  ['npx', { dev: 'npx next dev -p 4717' }, 4717],
+  ['bunx', { dev: 'bunx next dev --port 4718' }, 4718],
+  ['pnpm exec', { dev: 'pnpm exec next dev -p 4719' }, 4719],
+  ['yarn next', { dev: 'yarn next dev -p 4720' }, 4720],
+  ['a double-quoted flag value', { dev: 'next dev -p "4721"' }, 4721],
+  ['a single-quoted flag value', { dev: "next dev --port '4722'" }, 4722],
+  ['a quoted assignment value', { dev: 'PORT="4723" next dev' }, 4723],
+  [
+    'pnpm info shadowing a script',
+    { dev: 'pnpm info', info: 'next dev -p 4724' },
+    undefined,
+  ],
+  [
+    'yarn info shadowing a script',
+    { dev: 'yarn info', info: 'next dev -p 4725' },
+    undefined,
+  ],
+  [
+    'pnpm run naming the shadowed script',
+    { dev: 'pnpm run info', info: 'next dev -p 4726' },
+    4726,
+  ],
+  ['a fully quoted assignment', { dev: '"PORT=4727" next dev' }, undefined],
+] as const)
+  test(`${name} reaches the port the reader declares through a real shell`, async (context) => {
+    // Arrange
+    if (process.platform === 'win32') return context.skip('needs /bin/sh')
+    const tools = await mkdtemp(join(tmpdir(), 'codebook-tools-'))
+    const project = await mkdtemp(join(tmpdir(), 'codebook-project-'))
+    try {
+      await writeFile(join(tools, 'next'), FAKE_NEXT)
+      await chmod(join(tools, 'next'), 0o755)
+      for (const launcher of [
+        'npm',
+        'pnpm',
+        'yarn',
+        'bun',
+        'npx',
+        'bunx',
+        'cross-env',
+        'concurrently',
+      ]) {
+        await writeFile(join(tools, launcher), FAKE_LAUNCHER)
+        await chmod(join(tools, launcher), 0o755)
+      }
+      await writeFile(join(project, 'package.json'), packageScripts(scripts))
+
+      // Act
+      const declared = await readDeclaredDevelopmentPort(project, 'linux')
+      const shellRan = await portOfRealShellInProject(
+        scripts.dev,
+        tools,
+        project,
+      )
+
+      // Assert
+      assert.equal(shellRan, expected)
+      assert.equal(declared.port, expected ?? 3000)
+      assert.equal(
+        declared.source.includes('Codebook does not read'),
+        expected === undefined,
+      )
+    } finally {
+      await rm(tools, { recursive: true, force: true })
+      await rm(project, { recursive: true, force: true })
     }
   })
 

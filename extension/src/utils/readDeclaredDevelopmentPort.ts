@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   DEVELOPMENT_BUN_ENV_UNREAD_REASON,
   DEVELOPMENT_BUN_LOCKFILES,
+  DEVELOPMENT_CMD_UNREAD_REASON,
   DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES,
   DEVELOPMENT_SCRIPT_NESTING_LIMIT,
   DEVELOPMENT_SCRIPT_PACKAGE_MANAGER_COMMANDS,
@@ -22,6 +23,7 @@ import {
 import {
   tokenizeDevelopmentScript,
   UnreadScriptError,
+  type UnreadReason,
 } from './tokenizeDevelopmentScript'
 
 /** Where {@link readDeclaredDevelopmentPort} found the port, named in the refusal a busy port produces. */
@@ -184,7 +186,7 @@ function readNextDevCommand(
   const port = readNextDevFlags(args.slice(1))
   if (port !== undefined) return { port, via: 'flag' }
   if (env.port !== undefined) return { port: env.port, via: 'assignment' }
-  if (scope.bun) throw new UnreadScriptError([], true)
+  if (scope.bun) throw new UnreadScriptError([], 'bun-env')
   return {}
 }
 
@@ -206,7 +208,12 @@ function delegatedScriptName(program: string[]): string | undefined {
 }
 
 /** What one line is read with: the project's scripts, how deep the reader already is, and whether Bun runs it (a Bun project, or a script reached by `bun run`), so that its `.env` files may set `PORT` (F499). */
-type LineScope = { scripts: Scripts; depth: number; bun: boolean }
+type LineScope = {
+  scripts: Scripts
+  depth: number
+  bun: boolean
+  windows: boolean
+}
 
 /** Steps into another command line one level deeper. @throws {@link UnreadScriptError} At {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}. */
 function descend(scope: LineScope): LineScope {
@@ -272,8 +279,15 @@ function readAssignments(
 function readPrefix(
   words: string[],
   env: PortEnv,
+  scope: LineScope,
 ): { program: string[]; env: PortEnv } {
   const first = readAssignments(words, env)
+  // Under `cmd` a leading `NAME=value` and `env` are commands, not a prefix (F502, D74); `cross-env` parses its own arguments and stays read.
+  if (
+    scope.windows &&
+    (first.rest.length < words.length || first.rest[0] === 'env')
+  )
+    throw new UnreadScriptError([], 'cmd')
   const wrapped = first.rest[0] === 'cross-env' || first.rest[0] === 'env'
   if (!wrapped) return { program: first.rest, env: first.env }
   const second = readAssignments(first.rest.slice(1), first.env)
@@ -307,11 +321,13 @@ function readStatement(
 ): { env: PortEnv; command?: DevelopmentCommand } {
   try {
     if (words[0] === 'export') {
+      // `export` is no command under `cmd` (F502, D74).
+      if (scope.windows) throw new UnreadScriptError([], 'cmd')
       const match = words.length === 2 ? /^PORT=(.*)$/.exec(words[1]!) : null
       if (!match) throw new UnreadScriptError()
       return { env: { port: parsePort(match[1]) } }
     }
-    const prefix = readPrefix(words, env)
+    const prefix = readPrefix(words, env, scope)
     if (!prefix.program.length) {
       // Assignments alone are shell variables of this line; a bare `PORT=N` may or may not reach a later program (it does when `PORT` is already exported), so it is outside the grammar.
       if (
@@ -324,7 +340,7 @@ function readStatement(
     return { env, command: readProgram(prefix.program, prefix.env, scope) }
   } catch (error) {
     if (error instanceof UnreadScriptError && !error.words.length)
-      throw new UnreadScriptError(words, error.bunEnv)
+      throw new UnreadScriptError(words, error.reason)
     throw error
   }
 }
@@ -342,7 +358,7 @@ function readLine(
 ): DevelopmentCommand | undefined {
   let current = env
   let first: DevelopmentCommand | undefined
-  for (const words of tokenizeDevelopmentScript(line)) {
+  for (const words of tokenizeDevelopmentScript(line, scope.windows)) {
     const step = readStatement(words, current, scope)
     current = step.env
     first ??= step.command
@@ -369,9 +385,14 @@ function cutForSource(text: string): string {
 }
 
 /** Says why Next's default was taken when the script is outside the grammar: the quoted structure of the statement that left it (D72 rule 2). */
-function describeUnread(segment: string, bunEnv: boolean): string {
-  if (bunEnv)
+function describeUnread(
+  segment: string,
+  reason: UnreadReason | undefined,
+): string {
+  if (reason === 'bun-env')
     return `${DEVELOPMENT_BUN_ENV_UNREAD_REASON}: "${cutForSource(segment)}"`
+  if (reason === 'cmd')
+    return `${DEVELOPMENT_CMD_UNREAD_REASON}: "${cutForSource(segment)}"`
   return `Next's default port, taken because the dev script has a form Codebook does not read: "${cutForSource(segment)}"`
 }
 
@@ -383,18 +404,27 @@ function readDevScript(
   dev: string,
   scripts: Scripts,
   bun: boolean,
+  windows: boolean,
 ):
   | { command: DevelopmentCommand }
-  | { unread: readonly string[]; bunEnv: boolean } {
+  | { unread: readonly string[]; reason?: UnreadReason } {
   try {
-    const command = readLine(dev, {}, { scripts, depth: 0, bun })
+    const command = readLine(dev, {}, { scripts, depth: 0, bun, windows })
     // A chain that never runs `next dev` has nothing to read a port from.
     if (!command)
-      throw new UnreadScriptError(tokenizeDevelopmentScript(dev).flat())
+      throw new UnreadScriptError(
+        tokenizeDevelopmentScript(dev, windows).flat(),
+      )
     return { command }
   } catch (error) {
     if (error instanceof UnreadScriptError)
-      return { unread: error.words, bunEnv: error.bunEnv }
+      return {
+        // A statement the tokenizer could not name is quoted as the whole script's words, never as an empty text (F503).
+        unread: error.words.length
+          ? error.words
+          : dev.split(/\s+/).filter(Boolean),
+        reason: error.reason,
+      }
     throw error
   }
 }
@@ -407,6 +437,7 @@ function readDevScript(
  * Anything outside the grammar makes the script unread: no port is asserted, Next's default 3000 is returned, and the source quotes the structure of the statement that left the grammar (program and flag names only).
  *
  * @param root - The trusted workspace root that holds `package.json`.
+ * @param platform - The platform whose shell runs the script: `cmd` on `win32`, `sh` elsewhere (D74); tests set it to read the Windows meaning on any host.
  * @returns The port and a short description of the step that gave it.
  *
  * @example
@@ -416,6 +447,7 @@ function readDevScript(
  */
 export async function readDeclaredDevelopmentPort(
   root: string,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<DeclaredDevelopmentPort> {
   const packageText = await readProjectFile(join(root, 'package.json'))
   let scripts: Scripts
@@ -430,13 +462,18 @@ export async function readDeclaredDevelopmentPort(
   const fallback = { port: DEVELOPMENT_SERVER_DEFAULT_PORT }
   if (typeof dev !== 'string')
     return { ...fallback, source: "Next's default port" }
-  const read = readDevScript(dev, scripts, await hasBunLockfile(root))
+  const read = readDevScript(
+    dev,
+    scripts,
+    await hasBunLockfile(root),
+    platform === 'win32',
+  )
   if ('unread' in read)
     return {
       ...fallback,
       source: describeUnread(
         showDevelopmentScriptSegment(read.unread, scripts),
-        read.bunEnv,
+        read.reason,
       ),
     }
   if (read.command.port !== undefined)
