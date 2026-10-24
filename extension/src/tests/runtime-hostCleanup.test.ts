@@ -1741,8 +1741,8 @@ test('a sweep of abandoned profile folders that fails leaves the launch and the 
   )
 })
 
-// Value: protects=the recorded Chrome resolves localhost to 127.0.0.1 only (D66 defense in depth: no other listener on ::1 can answer for the owned origin); fails_when=the launch omits the host-resolver rule; why_new=F427; seam=the real adapter with the editor's debugger start recording its configuration; no_claim=Chrome honoring the rule (checked natively)
-test('the managed Chrome launch maps localhost to 127.0.0.1', async (context) => {
+// Value: protects=the learner's own API on another port that listens only on ::1 stays reachable in VS Code's recorded Chrome (no localhost-wide resolver rule); fails_when=the launch restores --host-resolver-rules=MAP localhost 127.0.0.1; why_new=F527 (D78; Red Team of /ship pass 1); seam=the real adapter with the editor's debugger start recording its configuration; no_claim=Chrome honoring or ignoring a rule (checked natively); the app's own port stays owned by the [::1] forwarder
+test('the managed Chrome launch leaves localhost resolution to the system', async (context) => {
   // Arrange
   let runtimeArgs: string[] | undefined
   const managed = await managedBrowser(context, {
@@ -1764,6 +1764,5 @@ test('the managed Chrome launch maps localhost to 127.0.0.1', async (context) =>
   assert.deepEqual(Array.from(runtimeArgs ?? []), [
     '--headless=new',
     '--remote-debugging-pipe',
-    '--host-resolver-rules=MAP localhost 127.0.0.1',
   ])
 })

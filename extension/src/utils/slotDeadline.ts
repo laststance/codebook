@@ -51,20 +51,17 @@ export function startSlotDeadline(
   timers: DeadlineTimers,
 ): SlotDeadline {
   const controller = new AbortController()
-  let passed = false
   let cancelled = false
-  let lapse: () => void = () => undefined
+  // The abort is the one record that the deadline passed: `expired` reads it and `within` races its event.
   const lapsed = new Promise<void>((resolve) => {
-    lapse = resolve
+    controller.signal.addEventListener('abort', () => resolve(), { once: true })
   })
   const cancelTimer = timers.set(() => {
-    passed = true
     controller.abort(new WaitTimeoutError(waitTimeoutText(description)))
-    lapse()
   }, delayMs)
   return {
     signal: controller.signal,
-    expired: () => passed,
+    expired: () => controller.signal.aborted,
     cancel: (): void => {
       cancelled = true
       cancelTimer()
@@ -73,7 +70,7 @@ export function startSlotDeadline(
       // The lost work's own failure is the caller's to clean up, not an unhandled rejection.
       work.catch(() => undefined)
       // A passed deadline refuses at once: a settled `work` must not win the race against the rejection.
-      if (passed) {
+      if (controller.signal.aborted) {
         return Promise.reject(new WaitTimeoutError(waitTimeoutText(what)))
       }
       // A cancelled deadline has no timer to lapse, so racing it would only hang on never-ending work.
