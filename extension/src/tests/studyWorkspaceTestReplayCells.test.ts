@@ -1008,3 +1008,68 @@ test('closing the reader waits for the reader position write of the last selecti
     await harness.close()
   }
 })
+
+// Value: protects=an Inspect that is presenting when a newer seek arrives commits nothing: while the seek loads, the Study position names the seek's stop, never the stop Inspect was on, and when it ends every surface shows the seek's moment only (the recorded-source slot's label, the replay debugger's stop, the Study position and the requested moment) without an error; fails_when=the overtaken Inspect ends its debugger presentation and commits (its stop in the Study pane and on the slot's label) before the newer seek has shown anything, or after it; why_new=F548 (pass-3 state-machines cell: Play and a seek overtaken by a seek were tested, Inspect, the origin with requireDebugger, was not); seam=the workspace harness's held historical debug presentation, held twice (Inspect's, then the seek's) and released in order; no_claim=the native debugger's own display between the two presentations
+test('an Inspect that is presenting when a newer seek arrives commits nothing and leaves only the seek’s moment on every surface', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    await openWithChosenStep(harness)
+    const selected = harness.reader['selectedNodeHistory']!
+    const controller = harness.reader['nodeHistoryPlaybackController']!
+    const inspectHold = harness.holdHistoricalDebugPresentation(true)
+    const inspect = harness.reader['requestNodeHistoryEvent'](selected, 2, {
+      requireDebugger: true,
+    })
+    await inspectHold.started
+
+    // Act: a seek onto the second stop arrives while Inspect presents; Inspect's presentation then ends.
+    const seekHold = harness.holdHistoricalDebugPresentation(true)
+    const seek = controller.seek(300)
+    inspectHold.release()
+    await seekHold.started
+    const whileSeekLoads = shownMoment(harness)
+    seekHold.release()
+    await seek
+    const inspectOutcome = await inspect.then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+
+    // Assert
+    assert.deepEqual(whileSeekLoads, {
+      sequence: 4,
+      stepId: undefined,
+      explanation: undefined,
+      position: 'Stop 2 of 2 · 0.30 s · loading…',
+    })
+    assert.equal(inspectOutcome, 'resolved')
+    assert.deepEqual(shownMoment(harness), {
+      sequence: 4,
+      stepId: undefined,
+      explanation: 'No saved explanation for this stop.',
+      position: 'Stop 2 of 2 · 0.30 s',
+    })
+    assert.equal(harness.reader['requestedNodeHistorySequence'], undefined)
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.label,
+      'Recorded test stop 2 · src/theme.ts:1',
+    )
+    const slotDecoration = harness
+      .sourceIdentityDecorations()
+      .filter((call) => call.uri.includes('/node-history-slot/'))
+      .at(-1)
+    assert.deepEqual(
+      (slotDecoration?.ranges ?? []).map(
+        (range) =>
+          (range as { renderOptions?: { after?: { contentText?: string } } })
+            .renderOptions?.after?.contentText,
+      ),
+      ['  Recorded: src/theme.ts:1 · 0.30 s'],
+    )
+    assert.equal(controller.state().sequence, 4)
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
