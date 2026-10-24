@@ -69,26 +69,37 @@ class ScriptScan {
       if (char === this.quote) this.quote = undefined
       else this.word = (this.word ?? '') + char
     } else if (char === '"' || char === "'") {
-      // Under `cmd` a single quote is a literal character, not a quote.
-      if (char === "'" && this.windows) this.cmdUnread()
-      if (!this.word?.includes('=')) this.quotedBeforeEquals = true
-      this.quote = char
-      this.word ??= ''
+      this.openQuote(char)
     } else if (char === ' ' || char === '\t') {
       this.endWord()
-    } else if (char === ';') {
-      // Under `cmd` a `;` is no separator.
-      if (this.windows) this.cmdUnread()
-      this.endStatement(';')
-    } else if (char === '&') {
-      // A `&` alone backgrounds a command: not in the grammar.
-      if (line[index + 1] !== '&') this.unread()
-      this.endStatement('&&')
-      return index + 1
+    } else if (char === ';' || char === '&') {
+      return this.separate(line, index)
     } else {
       this.word = (this.word ?? '') + char
     }
     return index
+  }
+
+  /** Opens a quote; under `cmd` a single quote is a literal character, not a quote. */
+  private openQuote(char: string): void {
+    if (char === "'" && this.windows) this.cmdUnread()
+    if (!this.word?.includes('=')) this.quotedBeforeEquals = true
+    this.quote = char
+    this.word ??= ''
+  }
+
+  /** Ends the statement at a `;` or `&&` and returns the index of the last character it consumed. */
+  private separate(line: string, index: number): number {
+    if (line[index] === ';') {
+      // Under `cmd` a `;` is no separator.
+      if (this.windows) this.cmdUnread()
+      this.endStatement(';')
+      return index
+    }
+    // A `&` alone backgrounds a command: not in the grammar.
+    if (line[index + 1] !== '&') this.unread()
+    this.endStatement('&&')
+    return index + 1
   }
 
   /** Ends the scan: no quote may stay open and the last statement may not be empty. */
