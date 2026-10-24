@@ -795,3 +795,59 @@ test('a captured-source tab the learner moved to another group after leaving a b
     await harness.close()
   }
 })
+
+// Value: protects=the record of the browser replay left last being the only record a test replay's first slot show closes from, after an earlier browser replay was left and a newer one loaded (F474); fails_when=the load of the newer browser replay keeps the earlier record and the leave of the newer one merges into it, or a tab the learner opens after the last leave is closed; why_new=F536 (review finding: the clear at a browser replay's start decided no tested outcome); seam=the workspace harness's tab model, restoreLeftoverCapturedSource, returnCurrentSelection, openRecording and openLearningReplay; no_claim=that the clear alone is observable: the leave of the newer replay also replaces the whole record, so this guards the learner's result of the sequence
+test('only the tabs of the browser replay left last close at a test replay, not an earlier one or one opened after', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const earlierTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-earlier.ts`,
+    })
+    await harness.reader['returnCurrentSelection']('learner')
+    // The earlier browser replay's tab is gone before the newer one is left.
+    harness.closeTabByHand(earlierTab)
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const newerTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-newer.ts`,
+    })
+    await harness.reader['returnCurrentSelection']('learner')
+    const openedAfterTab = harness.restoreLeftoverCapturedSource({
+      active: false,
+      path: `/${harness.studyId}/repository%2Finterface%2Ftheme/hash/app/Captured-after.ts`,
+    })
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistoryPosition?.sequence === 2 &&
+        !lastView(harness)?.loading,
+      'the test replay lands on its first stop',
+      READER_RESULT_BOUND_MS,
+    )
+    const tabs = (): unknown[] => harness.groups.flatMap((group) => group.tabs)
+    await waitUntil(
+      () => !tabs().includes(newerTab),
+      'the newer browser replay’s captured-source tab closes',
+      READER_RESULT_BOUND_MS,
+    )
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(tabs().includes(earlierTab), false)
+    assert.equal(tabs().includes(newerTab), false)
+    assert.equal(tabs().includes(openedAfterTab), true)
+  } finally {
+    await harness.close()
+  }
+})
