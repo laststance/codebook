@@ -954,9 +954,9 @@ export class StudyWorkspace {
   }
   private contextPanel?: vscode.WebviewPanel
   private liveComposition = false
-  /** `true` while {@link openNodeHistoryFromHost} enters the Study composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   /** Counts the learner's test replay entries ({@link openNodeHistoryFromHost}) in the order they were made, so the latest one wins also while an earlier one still enters the summary composition (EN19, Cycle 0051). */
   private nodeHistoryEntryRequest = 0
+  /** `true` while {@link openNodeHistoryFromHost} enters the summary composition for a test replay that has not begun opening ({@link testReplayHoldsComposition}). */
   private hostOpeningTestReplay = false
   /** The editor's recent group and active text editor changes, for {@link refusePlacement}'s report (F382). */
   private readonly placementEvents = new PlacementEventLog()
