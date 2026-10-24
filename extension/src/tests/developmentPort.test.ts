@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { createServer } from 'node:net'
 import type { Socket } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
@@ -805,6 +812,248 @@ for (const [name, files, opened, platform, expected] of [
     // Assert
     assert.deepEqual(declared, expected)
   })
+
+const YARN_SHELL_NOTE =
+  "Next's default port, taken because Yarn 2 and later runs scripts in its own portable shell, which has no export, so this form can mean different things"
+
+/** A folder path `depth` levels below the tree root, as `d1/d2/...`. */
+const nestedFolder = (depth: number): string =>
+  Array.from({ length: depth }, (_, i) => `d${i + 1}`).join('/')
+
+// Value: protects=a Yarn Berry project (Yarn 2+, found by packageManager or a .yarnrc.yml in the opened folder or the Git root) reading `export PORT=N` as unread with a note naming Yarn's portable shell, while the forms Berry runs (PORT=N prefix, env, ;) stay read and Yarn 1 still reads export (D75, F515); fails_when=a Berry project's `export PORT=4000 && next dev` reports 4000 though `yarn dev` fails with "command not found: export", or a form Berry runs becomes unread; why_new=F515 (OCR low; confirmed with corepack yarn 4.5.0: command not found: export); seam=temporary folder trees; no_claim=Yarn itself
+for (const [name, files, opened, expected] of [
+  [
+    'export in a project with packageManager yarn@4',
+    {
+      'package.json': JSON.stringify({
+        packageManager: 'yarn@4.5.0',
+        scripts: { dev: 'export PORT=4000 && next dev' },
+      }),
+    },
+    '.',
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "export PORT=…"` },
+  ],
+  [
+    'export in a project with packageManager yarn@2',
+    {
+      'package.json': JSON.stringify({
+        packageManager: 'yarn@2.4.3',
+        scripts: { dev: 'export PORT=4001 && next dev' },
+      }),
+    },
+    '.',
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "export PORT=…"` },
+  ],
+  [
+    'export in a project with a .yarnrc.yml in the opened folder',
+    {
+      '.yarnrc.yml': 'nodeLinker: node-modules',
+      'package.json': devScript('export PORT=4002 && next dev'),
+    },
+    '.',
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "export PORT=…"` },
+  ],
+  [
+    'export in a project with a .yarnrc.yml at the Git root above',
+    {
+      '.git/': '',
+      '.yarnrc.yml': 'nodeLinker: node-modules',
+      'apps/web/package.json': devScript('export PORT=4003 && next dev'),
+    },
+    'apps/web',
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "export PORT=…"` },
+  ],
+  [
+    'export in a project with packageManager yarn@1',
+    {
+      'package.json': JSON.stringify({
+        packageManager: 'yarn@1.22.22',
+        scripts: { dev: 'export PORT=4004 && next dev' },
+      }),
+    },
+    '.',
+    {
+      port: 4004,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'export in a project with a .yarnrc.yml above the Git root',
+    {
+      '.yarnrc.yml': 'nodeLinker: node-modules',
+      'repo/.git/': '',
+      'repo/package.json': devScript('export PORT=4005 && next dev'),
+    },
+    'repo',
+    {
+      port: 4005,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'a PORT prefix in a Yarn Berry project',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('PORT=4006 next dev'),
+    },
+    '.',
+    {
+      port: 4006,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'env with a PORT assignment in a Yarn Berry project',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('env PORT=4007 next dev'),
+    },
+    '.',
+    {
+      port: 4007,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'a semicolon and a quoted flag value in a Yarn Berry project',
+    {
+      '.yarnrc.yml': '',
+      'package.json': devScript('NODE_ENV=development; next dev -p "4008"'),
+    },
+    '.',
+    { port: 4008, source: 'the dev script in package.json' },
+  ],
+] as const)
+  test(`${name} gives port ${expected.port}`, async () => {
+    // Arrange: the tree above
+
+    // Act
+    const declared = await declaredPortOfTree(files, opened)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=the node_modules/.bin/next path being read after bare next and `pnpm exec` only, and unread after npx and bunx, which take a package name (F516); fails_when=`npx node_modules/.bin/next dev -p 4000` reads 4000 though npx fails with ENOTDIR; why_new=F516 (OCR low, pre-existing; npx and bunx confirmed to fail on the path); seam=temporary project folders; no_claim=npx or bunx themselves
+for (const [name, script, expected] of [
+  [
+    'npx with a node_modules path',
+    'npx node_modules/.bin/next dev -p 4000',
+    { port: 3000, source: UNREAD_SOURCE('npx next dev -p …') },
+  ],
+  [
+    'bunx with a node_modules path',
+    'bunx node_modules/.bin/next dev -p 4000',
+    { port: 3000, source: UNREAD_SOURCE('bunx next dev -p …') },
+  ],
+  [
+    'pnpm exec with a node_modules path',
+    'pnpm exec node_modules/.bin/next dev -p 4009',
+    { port: 4009, source: 'the dev script in package.json' },
+  ],
+  [
+    'a bare node_modules path',
+    'node_modules/.bin/next dev -p 4010',
+    { port: 4010, source: 'the dev script in package.json' },
+  ],
+  [
+    'npx with bare next',
+    'npx next dev -p 4011',
+    { port: 4011, source: 'the dev script in package.json' },
+  ],
+] as const)
+  test(`${name} gives port ${expected.port}`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=the Bun lockfile search climbing at most 16 folders (the opened one included) to find the Git root, a Git root one folder beyond not counting, and an ancestor bun.lock being ignored when no .git is in range (F514, F518); fails_when=the bound is raised or lowered by one, or a bun.lock above an opened folder with no Git root is honored; why_new=F518 (OCR low, test gap); seam=temporary folder trees 15, 16 and 3 levels deep; no_claim=Bun itself
+for (const [name, files, opened, expected] of [
+  [
+    'a Git root exactly 16 folders up (the opened folder is the first)',
+    {
+      '.git/': '',
+      'bun.lock': '',
+      [`${nestedFolder(15)}/package.json`]: devScript('next dev'),
+    },
+    nestedFolder(15),
+    { port: 3000, source: `${BUN_ENV_NOTE}: "next dev"` },
+  ],
+  [
+    'a Git root one folder beyond the bound',
+    {
+      '.git/': '',
+      'bun.lock': '',
+      [`${nestedFolder(16)}/package.json`]: devScript('next dev'),
+    },
+    nestedFolder(16),
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'a bun.lock above the opened folder with no .git at all',
+    {
+      'bun.lock': '',
+      [`${nestedFolder(3)}/package.json`]: devScript('next dev'),
+    },
+    nestedFolder(3),
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'a bun.lock in the opened folder with no .git in range',
+    {
+      [`${nestedFolder(3)}/bun.lock`]: '',
+      [`${nestedFolder(3)}/package.json`]: devScript('next dev'),
+    },
+    nestedFolder(3),
+    { port: 3000, source: `${BUN_ENV_NOTE}: "next dev"` },
+  ],
+] as const)
+  test(`${name} gives source ${expected.source}`, async () => {
+    // Arrange: the tree above
+
+    // Act
+    const declared = await declaredPortOfTree(files, opened)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=a root given as a relative path still finding the Git root and the Bun lockfile above the current directory, since the climb works on the resolved folder (F517); fails_when=a relative root `web` climbs only to `.` and reads a Bun monorepo's plain next dev without the Bun note; why_new=F517 (OCR low: the reader's root must be absolute or resolved); seam=temporary folder tree with the current directory moved into it for the call and restored; no_claim=how callers build the root
+test('a relative root finds the Bun lockfile at the Git root above the current directory', async () => {
+  // Arrange
+  const tree = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-port-relative-')),
+  )
+  const originalCwd = process.cwd()
+  try {
+    await mkdir(join(tree, '.git'))
+    await writeFile(join(tree, 'bun.lock'), '')
+    await mkdir(join(tree, 'apps', 'web'), { recursive: true })
+    await writeFile(
+      join(tree, 'apps', 'web', 'package.json'),
+      devScript('next dev'),
+    )
+    process.chdir(join(tree, 'apps'))
+
+    // Act
+    const declared = await readDeclaredDevelopmentPort('web', 'linux')
+
+    // Assert
+    assert.deepEqual(declared, {
+      port: 3000,
+      source: `${BUN_ENV_NOTE}: "next dev"`,
+    })
+  } finally {
+    process.chdir(originalCwd)
+    await rm(tree, { recursive: true, force: true })
+  }
+})
 
 // Value: protects=pnpm run <name> and yarn run <name> still reading a script whose name a builtin shadows (F500); fails_when=the builtin list also unreads the explicit run form; why_new=F500; seam=temporary project folders; no_claim=the package manager itself
 for (const [name, scripts, port] of [
