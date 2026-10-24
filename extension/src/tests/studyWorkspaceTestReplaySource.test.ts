@@ -4216,3 +4216,176 @@ test('a Play step to an output, withdrawn after its slot showed, shows the commi
     await harness.close()
   }
 })
+
+// Value: protects=a Play step to a stop, withdrawn by its caller after its slot showed the stop's source, with no newer selection, while an output is the committed moment, leaves no surface on the stop: the slot shows the output's placeholder again, the replay debugger shows no stop, the Study position stays on the output, and no error row appears (F351 cell committed output x withdrawn by its caller); fails_when=the return keeps the withdrawn stop or the last stop for a committed output, so the slot holds a stop's sealed source with a stopped line and label and the debugger a stop's frames beside the Study position that names the output; why_new=F546 (pass-3 state-machines cell: every withdrawn-step restore test began from a committed stop, so the stop passed as undefined to the slot and the debugger had no test); seam=the workspace harness's held document open of the next stop's slot, with the caller's isCurrent turned false while the open is held; no_claim=the controller paths that withdraw a step
+test('a Play step to a stop, withdrawn after its slot showed, shows the committed output’s placeholder in the slot and no stop in the debugger', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    await selectMoment(harness, history.studyId, 3)
+    const selected = harness.reader['selectedNodeHistory']!
+    const presentationsBefore = harness.historicalDebugPresentations.length
+    const invalidationsBefore = harness.historicalDebugInvalidations()
+    let wanted = true
+    const held = harness.holdNextSource()
+    const step = harness.reader['requestNodeHistoryEvent'](selected, 4, {
+      publish: false,
+      alignPlayback: false,
+      isCurrent: () => wanted,
+    })
+    await held.started
+
+    // Act: the caller withdraws the step while the next stop's slot opens; the open then completes.
+    wanted = false
+    held.release()
+    await step
+    await waitUntil(
+      () => harness.reader['nodeSurfacesSequence'] === 3,
+      'the surfaces are back on the output',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(harness.reader['selectedNodeHistorySequence'], 3)
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 3)
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), PLACEHOLDER)
+    assert.deepEqual(slotLabels(harness), [])
+    assert.equal(
+      harness.historicalDebugInvalidationLabels().at(-1),
+      'Not recorded at this moment',
+    )
+    // The withdrawn stop was presented once before the withdrawal was seen; the return presents no stop, it empties the debugger again (the leave step's invalidation and the return's).
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore + 1,
+    )
+    assert.equal(
+      harness.historicalDebugInvalidations(),
+      invalidationsBefore + 2,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Play step, withdrawn by its caller after its slot showed the next stop, while the learner stopped the replay debugger before the return, returns the slot to the committed stop's sealed source with its stopped line and label, and does not start the debugger again (a debugger the learner stopped is restarted only by the learner's own selection); fails_when=the return presents the committed stop in a stopped debugger, which replaces the owner and starts a new session the learner just ended; why_new=F547 (pass-3 state-machines cell: withdrawn step x learner-stopped debugger had no test); seam=the workspace harness's held document open of the next stop's slot, with the caller's isCurrent turned false while the open is held, and the ended historical debugger session, which the learner ends in the turn between the step's end and the return's timer; no_claim=the controller paths that withdraw a step
+test('a Play step withdrawn after its slot showed shows the committed stop in the slot but does not restart a debugger the learner stopped', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    const selected = harness.reader['selectedNodeHistory']!
+    let wanted = true
+    const held = harness.holdNextSource()
+    const step = harness.reader['requestNodeHistoryEvent'](selected, 4, {
+      publish: false,
+      alignPlayback: false,
+      isCurrent: () => wanted,
+    })
+    await held.started
+    wanted = false
+    held.release()
+    await step
+
+    // Act: the learner stops the replay debugger before the return runs (it waits one turn of the event loop).
+    const presentationsBefore = harness.historicalDebugPresentations.length
+    harness.endHistoricalDebugSession()
+    await waitUntil(
+      () => harness.reader['nodeSurfacesSequence'] === 2,
+      'the surfaces are back on the committed stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(harness.reader['selectedNodeHistorySequence'], 2)
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.match(tabs[0]!, /\/Captured-theme\.ts$/)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      presentationsBefore,
+    )
+    assert.equal(
+      harness.historicalDebuggers.every(
+        (debuggerView) => !debuggerView.available,
+      ),
+      true,
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Retry of a failed recorded-source slot that a newer seek overtakes while Retry's tab is still being shown leaves the seek's moment alone on every surface: the seek owns the slot (its sealed source, line and label), the replay debugger and the Study position, and the tab Retry's late show opens is closed, so no second slot tab stays; fails_when=the overtaken Retry's late show is never cleaned up, so a slot tab of the file Retry was showing stays beside the seek's slot, or Retry's commit replaces the seek's moment; why_new=F549 (pass-3 state-machines cell: Retry of a failed slot was tested at its commit and at a failed presentation, not overtaken while its slot show is in flight); seam=the workspace harness's injected failure of a non-file document open, its held text document show of Retry's slot (the editor puts the tab in front only on release) and the playback controller's seek; no_claim=a Retry whose show is overtaken before the editor opens the document, which opens no tab to clean
+test('a Retry of a failed slot that a newer seek overtakes while its tab is shown leaves the seek’s moment alone with one slot tab', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    harness.failCurrentSourceOpen()
+    await selectMoment(harness, history.studyId, 4)
+    harness.restoreCurrentSourceOpen()
+    const retrySlot = slotTabs(harness)[0]!.replace(
+      /Captured-theme\.ts$/,
+      'Captured-theme-next.ts',
+    )
+    const held = harness.holdNextTextDocumentShow({ uri: retrySlot })
+    const retry = harness.reader.action('retry')
+    await held.started
+
+    // Act: a seek onto the first stop arrives while Retry's slot is shown; Retry's show then ends.
+    await harness.reader['nodeHistoryPlaybackController']!.seek(200)
+    held.release()
+    const retryOutcome = await retry.then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+    await waitUntil(
+      () => slotTabs(harness).length === 1,
+      'the tab of the overtaken Retry is closed',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(retryOutcome, 'resolved')
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.equal(harness.reader['selectedNodeHistorySequence'], 2)
+    assert.equal(harness.reader['requestedNodeHistorySequence'], undefined)
+    const tabs = slotTabs(harness)
+    assert.match(tabs[0]!, /\/Captured-theme\.ts$/)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.label,
+      'Recorded test stop 1 · src/theme.ts:1',
+    )
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.sourceDocument?.uri,
+      tabs[0],
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
