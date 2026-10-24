@@ -48,6 +48,8 @@ export async function startIpv6LoopbackForwarder(
         allowHalfOpen: true,
       })
       for (const socket of [client, upstream]) {
+        // Forward each small write at once: Nagle's delay would add latency to every request/response of the learner's app (F555).
+        socket.setNoDelay(true)
         sockets.add(socket)
         socket.once('close', () => sockets.delete(socket))
       }

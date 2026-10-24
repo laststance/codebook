@@ -2054,6 +2054,94 @@ test('a dev script word of 100000 characters is read in well under a second', as
   assert.ok(Date.now() - started < 1000)
 })
 
+// Value: protects=a dev script whose delegations multiply (thousands of `npm run a`, each running thousands of `npm run b`) is refused after a bounded number of statements instead of running millions of reads on the extension host (F550); fails_when=breadth is unbounded and the read takes seconds or minutes; why_new=F550 (Step 11, third round); seam=temporary project folders and the clock; no_claim=the absolute time on a slow machine (the bound is generous)
+test('a dev script whose delegations multiply is left unread within a second', async () => {
+  // Arrange
+  const files = {
+    'package.json': packageScripts({
+      dev: Array.from({ length: 2000 }, () => 'npm run a').join(' && '),
+      a: Array.from({ length: 2000 }, () => 'npm run b').join(' && '),
+      b: 'next dev -p 4000',
+    }),
+  }
+  const started = Date.now()
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, {
+    port: 3000,
+    source:
+      "Next's default port, taken because the dev script runs more statements than Codebook reads",
+  })
+  // gstack-timing-ok: the bound is the contract (F550); the unbounded read made millions of statement reads, and the budgeted read stops at the first oversized line
+  assert.ok(Date.now() - started < 1000)
+})
+
+// Value: protects=a real-sized dev script (a few chained delegations) is still read after the statement budget (F550); fails_when=the budget is so small or so wrongly counted that a normal script reads as too long; why_new=F550 (Step 11, third round); seam=temporary project folders; no_claim=scripts beyond 256 statements
+test('a dev script of 19 delegations to a six-statement script still declares its port', async () => {
+  // Arrange
+  const files = {
+    'package.json': packageScripts({
+      dev: Array.from({ length: 19 }, () => 'npm run a').join(' && '),
+      a: 'export PORT=1 && export PORT=2 && export PORT=3 && export PORT=4 && export PORT=5 && next dev -p 4000',
+    }),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.equal(declared.port, 4000)
+})
+
+// Value: protects=a package.json that is a FIFO is never opened (an open would block the extension host with no cancellation) and the result says why (F556); fails_when=the reader opens the FIFO and the call hangs; why_new=F556 (Step 11, third round); seam=a temporary project folder with a real mkfifo, skipped on Windows; no_claim=other special files
+test(
+  'a package.json that is a FIFO is refused at once with a note',
+  { skip: process.platform === 'win32', timeout: 5000 },
+  async () => {
+    // Arrange
+    const root = await mkdtemp(join(tmpdir(), 'codebook-port-fifo-'))
+    await promisify(execFile)('mkfifo', [join(root, 'package.json')])
+
+    try {
+      // Act
+      const declared = await readDeclaredDevelopmentPort(root, 'linux')
+
+      // Assert
+      assert.deepEqual(declared, {
+        port: 3000,
+        source:
+          "Next's default port, taken because package.json is not a regular file Codebook reads",
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=a package.json over the 1 MiB source limit is told as too large instead of being cut and read as Next's plain default (F556); fails_when=the cut file reads as an empty or broken script with no note; why_new=F556 (Step 11, third round); seam=temporary project folders; no_claim=the exact byte limit beyond the stated one
+test('a package.json larger than 1 MiB is refused with a size note', async () => {
+  // Arrange
+  const files = {
+    'package.json': JSON.stringify({
+      scripts: { dev: 'next dev -p 4000' },
+      padding: 'a'.repeat(1_048_576),
+    }),
+  }
+
+  // Act
+  const declared = await declaredPortOf(files)
+
+  // Assert
+  assert.deepEqual(declared, {
+    port: 3000,
+    source:
+      "Next's default port, taken because package.json is larger than Codebook reads",
+  })
+})
+
 /** A `next` that prints the port it would start on (the last `-p N`, `-pN`, `--port N` or `--port=N`, else `PORT`, else 3000). */
 const FAKE_NEXT = `#!/bin/sh
 port="\${PORT:-3000}"
@@ -2478,6 +2566,36 @@ test('a port the system refuses to let Codebook listen on is refused as not perm
   assert.equal(
     refusal.message,
     `Port ${port} is not permitted for Codebook on this machine (the operating system refuses to let this program listen on it, as for a port below 1024 without administrator rights or a port range the system reserves), and the project declares it (the dev script in package.json): the app's own origin, such as AUTH_URL, points there, so Codebook never starts it on another port. Ask the learner to declare a port from 1024 up for the project (the -p/--port of next dev or a PORT= in the dev script), or to allow listening on port ${port}, then start again.`,
+  )
+})
+
+// Value: protects=a bind failure other than EADDRINUSE or EACCES is a typed refusal that names the port and the error code only, never the raw error with its address text (F559); fails_when=the raw error escapes or its message text reaches the learner; why_new=F559 (Step 11, third round); seam=an injected bind that fails with EADDRNOTAVAIL; no_claim=which codes a real host raises
+test('an unexpected bind failure is refused as a typed error naming only the port and the code', async () => {
+  // Arrange
+  const port = await freePort()
+  const bind = async () =>
+    Object.assign(
+      new Error('listen EADDRNOTAVAIL: address not available 10.1.2.3'),
+      {
+        code: 'EADDRNOTAVAIL',
+      },
+    )
+
+  // Act
+  const refusal = await assertDevelopmentPortFree(
+    { port, source: 'the dev script in package.json' },
+    { connect: silentConnect, bind },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+
+  // Assert
+  assert.ok(refusal instanceof StudyError)
+  assert.equal(refusal.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    refusal.message,
+    `Codebook could not check whether port ${port} is free (EADDRNOTAVAIL), and the project declares it, so Codebook never starts the app on another port. Ask the learner to resolve the network problem on this machine or to declare another port for the project, then start again.`,
   )
 })
 
