@@ -4057,3 +4057,49 @@ function frontOfGroup(harness: Harness, column: number): string | undefined {
     ?.activeTab?.input as { uri?: { toString(): string } } | undefined
   return input?.uri?.toString()
 }
+
+// Value: protects=a selection of a stop whose source does not verify, overtaken while its placeholder slot opens, commits nothing: the slot, its label, the debugger and the Study position all show the newer verified stop alone (F539 cell unverified stop x overtaken by a newer selection); fails_when=the overtaken unverified stop's placeholder, its empty debugger or its Study position outlive the newer selection; why_new=F539 (overtaking was tested for a verified stop and an output only); seam=the store's read, whose second stop's captured text was edited, and the workspace harness's held document open of the placeholder slot; no_claim=Play's own pacing
+test('an unverified stop selection overtaken by a newer stop selection leaves only the newer stop on every surface', async (context) => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    unverifyStop(context, harness, 4)
+    await openReplayAt(harness, history.studyId, 2)
+    const held = harness.holdNextSource()
+    const overtaken = harness.reader['requestNodeHistoryEvent'](
+      harness.reader['selectedNodeHistory']!,
+      4,
+    )
+    await held.started
+
+    // Act
+    await selectMoment(harness, history.studyId, 2)
+    held.release()
+    await overtaken.catch(() => undefined)
+    await waitUntil(
+      () =>
+        harness.historicalDebugPresentations.at(-1)?.label ===
+        'Recorded test stop 1 · src/theme.ts:1',
+      'the debugger shows the newer stop',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.equal(harness.reader['selectedNodeHistorySequence'], 2)
+    const tabs = slotTabs(harness)
+    assert.equal(tabs.length, 1)
+    assert.match(tabs[0]!, /\/Captured-theme\.ts$/)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
