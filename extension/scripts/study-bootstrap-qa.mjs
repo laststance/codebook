@@ -1366,8 +1366,10 @@ async function check(page, options, collected) {
             }),
       })
       // Arrange: the Node history reader alone, with its selected stop shown by the native session.
+      // The host shows a selected test replay in the summary composition and names its family (Cycle 0051, DS-A).
       const nodeReader = {
         ...options.message,
+        replayFamily: 'test',
         revision: revisionAt(5),
         nodeHistoryEventCount: 1,
         nodeHistory: {
@@ -1461,7 +1463,7 @@ async function check(page, options, collected) {
           JSON.stringify(articleAfterReplayLeft) ===
             JSON.stringify([true, true, true, true]),
       })
-      // Value: protects=a keyboard learner on the selected content tab keeping a focused control when a selected test replay hides the content tabs: the focus goes to the test replay's transport, not to the document body; fails_when=the pane hands the lost focus to the selected content tab, which the test replay hid, so nothing takes it and the keyboard rests on the body; why_new=F567 (hosted CodeRabbit on #121); why_changed=F570 (local CodeRabbit CLI): the case publishes its own starting message instead of relying on the state the case before it left; seam=none; no_claim=which transport control the host enables for a real history (stand-ins: the Study messages the host posts, and the flow's test replay message nodeReader)
+      // Value: protects=a keyboard learner on the selected content tab keeping a focused control when a selected test replay hides the content tabs: the focus goes to the summary's fallback (the step heading, else the title heading; Cycle 0051, DS-E), not to the document body; fails_when=the pane hands the lost focus to the selected content tab, which the test replay hid, so nothing takes it and the keyboard rests on the body; why_new=F567 (hosted CodeRabbit on #121); why_changed=F570 (local CodeRabbit CLI): the case publishes its own starting message instead of relying on the state the case before it left; seam=none; no_claim=which transport control the host enables for a real history (stand-ins: the Study messages the host posts, and the flow's test replay message nodeReader)
       // Arrange: no test replay is selected, so the article and its content tabs show; the keyboard stands on the selected content tab.
       await publish({ ...options.message, revision: revisionAt(7) })
       const selectedTab = page.locator('[role=tab][aria-selected=true]')
@@ -1472,11 +1474,12 @@ async function check(page, options, collected) {
       const focusWhileReplaySelected = await focusName()
       // Assert
       cases.push({
-        name: 'the keyboard on the selected content tab goes to the test replay’s transport when the selected test replay hides the tabs',
+        name: 'the keyboard on the selected content tab goes to the summary’s title heading when the selected test replay hides the tabs and shows no step heading',
         actual: { focusBeforeReplay, focusWhileReplaySelected },
         passed:
           focusBeforeReplay === 'live-tab' &&
-          focusWhileReplaySelected === 'node-history-moment-previous',
+          // The summary's fallback (Cycle 0051, DS-E): the moment block's step heading, else the title heading.
+          focusWhileReplaySelected === 'title',
       })
       // Value: protects=a selected stop whose values are not loaded offers Inspect in native debugger beside the hint and Show Variables (DS6), not only in the collapsed event list, and a press asks the host to select that stop; the control leaves with the hint once values load and is not offered for a stop whose captured source does not match; fails_when=the row has no Inspect once the session ended, it shows an action while the debugger already shows the stop, it stays after the values load or for a source mismatch, or its press sends another stop or nothing; why_new=F121: Inspect lived in the collapsed event list only; why_changed=F348 (PR-2 /ship Step 11 Codex adversarial): the case published a state the host never sends (no debugger with values not loaded); the host's two states are now checked: the debugger showing the stop with values not loaded (pressed), and the session ended (offered); seam=none; no_claim=the host's selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
       // Arrange
@@ -1860,8 +1863,10 @@ async function check(page, options, collected) {
           nodeFocusOnReturn === 'button: Debugger stop selected',
       })
       // Arrange: a Node playhead scrub that ends without a change event (Cycle 0044, 0031-U6).
+      // Two events: a history of one event has no usable slider (Cycle 0051, DS-C).
       const nodeTimeline = {
         ...nodeReader,
+        nodeHistoryEventCount: 2,
         nodeHistoryPosition: nodeStop,
         nodeHistoryPlayback: {
           mode: 'paused',
@@ -1873,7 +1878,7 @@ async function check(page, options, collected) {
         },
       }
       await publish(nodeTimeline)
-      await page.locator('#node-history-playhead').evaluate((playhead) => {
+      await page.locator('#playhead').evaluate((playhead) => {
         playhead.value = '150000'
         playhead.dispatchEvent(new Event('input', { bubbles: true }))
         playhead.dispatchEvent(new Event('blur'))
@@ -1887,7 +1892,7 @@ async function check(page, options, collected) {
         },
       })
       const nodePlayheadAfterStep = await page
-        .locator('#node-history-playhead')
+        .locator('#playhead')
         .evaluate((playhead) => ({
           value: playhead.value,
           valueText: playhead.getAttribute('aria-valuetext'),
@@ -1903,10 +1908,9 @@ async function check(page, options, collected) {
       // Arrange
       const loadingReadout = () =>
         page.evaluate(() => ({
-          readout: document.querySelector('#node-history-playback-position')
-            ?.textContent,
+          readout: document.querySelector('#playback-position')?.textContent,
           spoken: document
-            .querySelector('#node-history-playhead')
+            .querySelector('#playhead')
             ?.getAttribute('aria-valuetext'),
         }))
       // Act
@@ -1932,26 +1936,26 @@ async function check(page, options, collected) {
         name: 'the test time readout and its spoken time say loading beside the requested time until the moment commits',
         actual: { readoutWhilePending, readoutCommitted },
         passed:
-          readoutWhilePending.readout ===
-            'Recorded test time · 120.64 s · loading…' &&
+          // The shared transport's readout names the selected and the last test time (Cycle 0051, DS-C).
+          readoutWhilePending.readout === '120.64 s / 400.00 s · loading…' &&
           readoutWhilePending.spoken ===
             '120.64 s of recorded test time · loading…' &&
-          readoutCommitted.readout === 'Recorded test time · 120.64 s' &&
+          readoutCommitted.readout === '120.64 s / 400.00 s' &&
           readoutCommitted.spoken === '120.64 s of recorded test time',
       })
       // Arrange: the thumb of the Node playhead is moved and the host has not answered yet (SD-5).
       await publish(nodeTimeline)
-      await page.locator('#node-history-playhead').evaluate((playhead) => {
+      await page.locator('#playhead').evaluate((playhead) => {
         playhead.value = '150000'
         playhead.dispatchEvent(new Event('input', { bubbles: true }))
       })
       const spokenUnderThumb = await page
-        .locator('#node-history-playhead')
+        .locator('#playhead')
         .getAttribute('aria-valuetext')
       // Act: a Study message for another reason arrives while the thumb is still held.
       await publish({ ...nodeTimeline, busy: true })
       const spokenDuringScrub = await page
-        .locator('#node-history-playhead')
+        .locator('#playhead')
         .getAttribute('aria-valuetext')
       // What Chrome's own accessibility tree holds for the same thumb, beside the attribute (row NF-18, 0031-U6).
       // The tree a debugging client is given carries the role, the name and the range, and has no field for `aria-valuetext`
@@ -1960,7 +1964,7 @@ async function check(page, options, collected) {
       const { root } = await accessibility.send('DOM.getDocument')
       const { nodeId: playheadNodeId } = await accessibility.send(
         'DOM.querySelector',
-        { nodeId: root.nodeId, selector: '#node-history-playhead' },
+        { nodeId: root.nodeId, selector: '#playhead' },
       )
       const { nodes: playheadAccessibility } = await accessibility.send(
         'Accessibility.getPartialAXTree',
@@ -1979,7 +1983,7 @@ async function check(page, options, collected) {
         maximum: rangeProperty('valuemax'),
       }
       await page
-        .locator('#node-history-playhead')
+        .locator('#playhead')
         .dispatchEvent('pointercancel', { bubbles: true })
       // Assert
       cases.push({
@@ -1990,11 +1994,12 @@ async function check(page, options, collected) {
           spokenDuringScrub === '150.00 s of recorded test time',
       })
       cases.push({
-        name: 'Chrome’s accessibility tree gives the Node playhead as a slider named Recorded test time whose value is the time under the thumb',
+        name: 'Chrome’s accessibility tree gives the test replay’s slider as a slider named Recorded position whose value is the time under the thumb',
         actual: readFromAccessibilityTree,
         passed:
           readFromAccessibilityTree.role === 'slider' &&
-          readFromAccessibilityTree.name === 'Recorded test time' &&
+          // The shared slider keeps its one label for both families (Cycle 0051, DS-C); its spoken value names the family's time.
+          readFromAccessibilityTree.name === 'Recorded position' &&
           readFromAccessibilityTree.value === 150000 &&
           readFromAccessibilityTree.minimum === 0 &&
           readFromAccessibilityTree.maximum === 400000,
@@ -2228,6 +2233,9 @@ async function check(page, options, collected) {
           startMs: 100,
           endMs: 900,
           loading: false,
+          // The host's whole-history first and last events (Cycle 0051, DS-C).
+          firstSequence: 1,
+          lastSequence: 4,
         },
       })
       const atFirstOutput = testReplayAt(
@@ -2388,14 +2396,14 @@ async function check(page, options, collected) {
       await publish(atFirstOutput)
       const readCoverage = () =>
         page.evaluate(() => {
-          const strip = document.getElementById('node-history-coverage')
+          const strip = document.getElementById('history-coverage')
           return {
             hidden: strip.hidden,
             gaps: strip.querySelectorAll('.history-gap').length,
             stops: strip.querySelectorAll('.history-stop').length,
             gapWidth: strip.querySelector('.history-gap')?.style.width ?? '',
             stopLeft: strip.querySelector('.history-stop')?.style.left ?? '',
-            legend: document.getElementById('node-history-coverage-label')
+            legend: document.getElementById('history-coverage-label')
               .textContent,
             name: strip.getAttribute('aria-label'),
             // The strip is drawn inside the slider's track, below the slider.
@@ -2458,86 +2466,79 @@ async function check(page, options, collected) {
             },
           }),
       })
-      // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
-      // Value: protects=a test replay's open putting its section in view once, so the Study's article above it does not push the transport out of sight, while the learner's later scroll is left alone and the next open scrolls again; fails_when=the message's scroll token is ignored, is honoured at every message (the learner cannot scroll away), or the next open does not scroll; why_new=F156 (the test replay section started far below the article); seam=none; no_claim=where the host places the pane (the native check)
-      // Arrange: a short pane (240 px), the section below the fold, the page at its top; at the end of the page the section's top is its header's height from the pane's top, inside the pane.
+      // Value: protects=a test replay's open putting its summary in view from its top once (the section follows the summary's title in region 2, Cycle 0051, DS-B), while the learner's later scroll is left alone and the next open scrolls again; fails_when=the message's scroll token is ignored, is honoured at every message (the learner cannot scroll away), the next open does not scroll, or the open scrolls the title out of sight; why_new=F156 (the test replay section started far below the article), changed in Cycle 0051 (moves with D8, F123): the article's controls follow the summary now; seam=none; no_claim=where the host places the pane (the native check)
+      // Arrange: a short pane (240 px) scrolled to the end of the page, as a learner who read the event list leaves it.
       const shortPaneHeight = 240
       await page.setViewportSize({ width: 600, height: shortPaneHeight })
-      let topBeforeOpen, topAtOpen, topAfterLearnerScroll, topAtNextOpen
+      let scrollBeforeOpen,
+        scrollAtOpen,
+        scrollAfterLearnerScroll,
+        scrollAtNextOpen
       try {
         await publish(atFirstOutput)
-        await page.evaluate(() => window.scrollTo(0, 0))
-        const sectionTop = () =>
-          page.evaluate(() =>
-            Math.round(
-              document.getElementById('node-history').getBoundingClientRect()
-                .top,
-            ),
-          )
-        topBeforeOpen = await sectionTop()
+        const scrollToEnd = () =>
+          page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+        const scrolled = () => page.evaluate(() => Math.round(scrollY))
+        await scrollToEnd()
+        scrollBeforeOpen = await scrolled()
         // Act
         await publish({ ...atFirstOutput, nodeHistoryScrollToken: 11 })
-        topAtOpen = await sectionTop()
-        await page.evaluate(() => window.scrollTo(0, 0))
+        scrollAtOpen = await scrolled()
+        // The learner scrolls to the middle of the page: a scroll at its very end would follow a change of the page's height.
+        await page.evaluate(() => window.scrollTo(0, 300))
+        const learnersScroll = await scrolled()
         await publish({ ...atFirstOutput, nodeHistoryScrollToken: 11 })
-        topAfterLearnerScroll = await sectionTop()
+        scrollAfterLearnerScroll = (await scrolled()) - learnersScroll
         await publish({ ...atFirstOutput, nodeHistoryScrollToken: 12 })
-        topAtNextOpen = await sectionTop()
+        scrollAtNextOpen = await scrolled()
       } finally {
         // The next cases need the 800 px pane even when a step above threw.
         await page.setViewportSize({ width: 600, height: 800 })
       }
-      // Assert: the section starts below the 240 px pane, so only a scroll to it brings its top inside.
+      // Assert
       cases.push({
-        name: 'a test replay’s open scrolls its section into view once, and a later message of the same open leaves the learner’s scroll alone',
+        name: 'a test replay’s open shows its summary from the top once, and a later message of the same open leaves the learner’s scroll alone',
         actual: {
-          topBeforeOpen,
-          topAtOpen,
-          topAfterLearnerScroll,
-          topAtNextOpen,
+          scrollBeforeOpen,
+          scrollAtOpen,
+          scrollAfterLearnerScroll,
+          scrollAtNextOpen,
         },
         passed:
-          topBeforeOpen >= shortPaneHeight &&
-          topAtOpen < topBeforeOpen &&
-          topAtOpen < shortPaneHeight &&
-          topAfterLearnerScroll === topBeforeOpen &&
-          topAtNextOpen < topAfterLearnerScroll &&
-          topAtNextOpen < shortPaneHeight,
+          scrollBeforeOpen > 0 &&
+          scrollAtOpen === 0 &&
+          // The same open's later message leaves the learner's own scroll where the learner put it.
+          scrollAfterLearnerScroll === 0 &&
+          scrollAtNextOpen === 0,
       })
-      // Value: protects=a test replay's open token surviving a message that names no section yet, so the section that arrives next is scrolled into view; fails_when=the token is spent on a message without the section and the open never scrolls (F371); why_new=F371, the F156 case sends its token with the section already shown; seam=none; no_claim=when the host sends the section (studyWorkspace tests)
-      // Arrange: the 240 px pane with the page at its top, the replay selected but its section not worded yet.
+      // Value: protects=a test replay's open token surviving a message that names no section yet, so the open shows the summary from its top once the section arrives; fails_when=the token is spent on a message without the section and the open never scrolls (F371); why_new=F371, the F156 case sends its token with the section already shown; changed in Cycle 0051 (moves with D8, F123): the open shows the summary from its top; seam=none; no_claim=when the host sends the section (studyWorkspace tests)
+      // Arrange: the 240 px pane scrolled to the end, the replay selected but its section not worded yet.
       await page.setViewportSize({ width: 600, height: shortPaneHeight })
-      let topWithoutSection, topWhenSectionArrives
+      let scrollWithoutSection, scrollWhenSectionArrives
       try {
+        await publish(atFirstOutput)
+        await page.evaluate(() =>
+          window.scrollTo(0, document.body.scrollHeight),
+        )
         await publish({
           ...atFirstOutput,
           nodeHistorySection: undefined,
           nodeHistoryScrollToken: 21,
         })
-        await page.evaluate(() => window.scrollTo(0, 0))
-        topWithoutSection = await page.evaluate(() =>
-          Math.round(
-            document.getElementById('node-history').getBoundingClientRect().top,
-          ),
-        )
+        scrollWithoutSection = await page.evaluate(() => Math.round(scrollY))
         // Act
         await publish({ ...atFirstOutput, nodeHistoryScrollToken: 21 })
-        topWhenSectionArrives = await page.evaluate(() =>
-          Math.round(
-            document.getElementById('node-history').getBoundingClientRect().top,
-          ),
+        scrollWhenSectionArrives = await page.evaluate(() =>
+          Math.round(scrollY),
         )
       } finally {
         await page.setViewportSize({ width: 600, height: 800 })
       }
       // Assert
       cases.push({
-        name: 'a test replay’s open token that arrives before its section is worded scrolls the section into view once the section arrives',
-        actual: { topWithoutSection, topWhenSectionArrives },
-        passed:
-          topWithoutSection >= shortPaneHeight &&
-          topWhenSectionArrives < topWithoutSection &&
-          topWhenSectionArrives < shortPaneHeight,
+        name: 'a test replay’s open token that arrives before its section is worded shows the summary from its top once the section arrives',
+        actual: { scrollWithoutSection, scrollWhenSectionArrives },
+        passed: scrollWithoutSection > 0 && scrollWhenSectionArrives === 0,
       })
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
       // Value: protects=a closed Application pane is named in the test replay section with a way back: the row with Show recorded output appears, its click asks the host for the pane (`focus-app`), and the row goes once the pane is back; fails_when=the row stays hidden while the pane is closed, the button sends another action (`arrange`, which could not bring the pane back), or the row stays after the pane is back; why_new=Step 9 pass 1b's QA critical (Show recorded output could not bring the pane back) and pass 2's testing review: no DOM case showed the row or clicked it; seam=none; no_claim=that the host builds the pane again, which studyWorkspaceTestReplayOutput.test.ts proves
@@ -2585,7 +2586,7 @@ async function check(page, options, collected) {
             rowShownWhenBack: false,
           }),
       })
-      // Arrange: the keyboard alone, from the opened replay (DS17): Step details, a step of the stop, Next stop, Previous stop, a seek and Pause.
+      // Arrange: the keyboard alone, from the opened replay (DS17): Step details, a step of the stop, Next stop, Previous stop, End on the slider (the last event, C2) and Pause.
       await publish(atFirstOutput)
       await page.evaluate(() => {
         window.sent = []
@@ -2594,13 +2595,13 @@ async function check(page, options, collected) {
       await toggleByKeyboard('node-learning-steps-details')
       await page.locator('#node-learning-steps [data-node-step="keep"]').focus()
       await page.keyboard.press('Enter')
-      await page.locator('#node-history-stop-next').focus()
+      await page.locator('#next-moment').focus()
       await page.keyboard.press('Enter')
       await publish(atResult)
-      await page.locator('#node-history-stop-previous').focus()
+      await page.locator('#previous-moment').focus()
       await page.keyboard.press('Enter')
       await publish(atStop)
-      await page.locator('#node-history-playhead').focus()
+      await page.locator('#playhead').focus()
       await page.keyboard.press('End')
       await publish(
         testReplayAt(
@@ -2610,7 +2611,7 @@ async function check(page, options, collected) {
           420,
         ),
       )
-      await page.locator('#node-history-playback-toggle').focus()
+      await page.locator('#playback-toggle').focus()
       await page.keyboard.press('Enter')
       const keyboardRequests = await page.evaluate(() =>
         window.sent
@@ -2628,7 +2629,7 @@ async function check(page, options, collected) {
       // Moves with D8 (the later region-2 composition): this Study-pane pin follows the test replay section to wherever D8 places it.
       // Value: protects=the keyboard alone opens Step details, selects a step of the stop, moves by Next stop and Previous stop, seeks and pauses, each press sending the one request the control names; fails_when=a control cannot be pressed by keyboard or sends another request; why_new=PR-B1 (Design 8, DS17) rebuilt the transport and the summary; seam=none; no_claim=the host's answer to each request and the Application pane's output region (the next case reaches it)
       cases.push({
-        name: 'the keyboard alone opens Step details, selects a step of the stop, moves by Next stop and Previous stop, seeks and pauses a test replay (Design 8)',
+        name: 'the keyboard alone opens Step details, selects a step of the stop, moves by Next stop and Previous stop, selects the last event by End and pauses a test replay (Design 8)',
         actual: keyboardRequests,
         passed:
           JSON.stringify(keyboardRequests) ===
@@ -2636,7 +2637,8 @@ async function check(page, options, collected) {
             { type: 'node-history-event', sequence: 3, stepId: 'keep' },
             { type: 'node-history-step', direction: 'next', unit: 'stop' },
             { type: 'node-history-step', direction: 'previous', unit: 'stop' },
-            { type: 'node-history-playback', action: 'seek' },
+            // End on the shared slider selects the history's last event by its sequence (Cycle 0051, C2).
+            { type: 'node-history-event', sequence: 4 },
             { type: 'node-history-playback', action: 'pause' },
           ]),
       })
@@ -2702,10 +2704,10 @@ async function check(page, options, collected) {
           '#node-learning-steps-details > summary',
           atFirstOutput,
         ],
-        ['nextStop', '#node-history-stop-next', atFirstOutput],
-        ['previousStop', '#node-history-stop-previous', atResult],
-        ['playhead', '#node-history-playhead', atStop],
-        ['pause', '#node-history-playback-toggle', atStop],
+        ['nextStop', '#next-moment', atFirstOutput],
+        ['previousStop', '#previous-moment', atResult],
+        ['playhead', '#playhead', atStop],
+        ['pause', '#playback-toggle', atStop],
       ]) {
         await publish(openedAt(at))
         listedWhileOpen.push({
@@ -2819,10 +2821,10 @@ async function check(page, options, collected) {
         page.evaluate(() =>
           Object.fromEntries(
             [
-              ['previousStop', 'node-history-stop-previous'],
-              ['nextStop', 'node-history-stop-next'],
-              ['previousEvent', 'node-history-moment-previous'],
-              ['nextEvent', 'node-history-moment-next'],
+              ['previousStop', 'previous-moment'],
+              ['nextStop', 'next-moment'],
+              ['previousEvent', 'previous-event'],
+              ['nextEvent', 'next-event'],
             ].map(([move, id]) => [
               move,
               !document.getElementById(id).disabled,
@@ -3023,7 +3025,8 @@ async function check(page, options, collected) {
       // Act
       await publish(hostileStop)
       const hostileReading = await page.evaluate(() => {
-        const block = document.getElementById('node-history-learning')
+        // The summary's learning material spans the section (Cycle 0051, DS-B): the title, the clamped texts, the diagram and Step details.
+        const block = document.getElementById('node-history')
         return {
           elements: block.querySelectorAll('img, script, b').length,
           invented: window.invented === true,
@@ -3036,7 +3039,7 @@ async function check(page, options, collected) {
       await publish(atStop)
       // Assert
       cases.push({
-        name: 'markup in a test replay’s learning material is shown as text in the Study section and never becomes an element',
+        name: 'markup in a test replay’s learning material is shown as text in its Learning summary and never becomes an element',
         actual: hostileReading,
         passed:
           hostileReading.elements === 0 &&
@@ -3058,7 +3061,7 @@ async function check(page, options, collected) {
       await publish(atStop)
       const readStickyBars = () =>
         page.evaluate(() => {
-          const transport = document.getElementById('node-history-transport'),
+          const transport = document.getElementById('recording-transport'),
             strip = document.querySelector('.live-strip'),
             transportBox = transport.getBoundingClientRect(),
             focusedBox = document.activeElement.getBoundingClientRect()
@@ -3075,6 +3078,10 @@ async function check(page, options, collected) {
             focusedId: document.activeElement.id,
             focusedInTransport: transport.contains(document.activeElement),
             focusedTop: Math.round(focusedBox.top),
+            focusedBottom: Math.round(focusedBox.bottom),
+            focusedInSection: document
+              .getElementById('node-history')
+              .contains(document.activeElement),
           }
         })
       // Act: Shift+Tab from the event list back to Step details, reading where each focused control lies.
@@ -3125,32 +3132,34 @@ async function check(page, options, collected) {
       await publish({ ...atStop, liveState: undefined })
       await page.setViewportSize({ width: 600, height: 800 })
       // Assert
+      // The transport stands below the section, so Shift+Tab from the event list climbs through the section into the header: the controls of the section are the ones the bars could cover.
       const scrolledBelowBothBars = withBothBars.filter(
-        (reading) => !reading.focusedInTransport,
+        (reading) => reading.focusedInSection,
       )
       const scrolledBelowTransport = focusReadings.filter(
-        (reading) => !reading.focusedInTransport,
+        (reading) => reading.focusedInSection,
       )
       cases.push({
-        name: 'a control reached by Shift+Tab is never scrolled under the test replay transport, a pane too short for a fixed bar flows it, and a running study keeps it below the live strip',
+        name: 'a control reached by Shift+Tab is never scrolled under the test replay’s transport fixed at the bottom, in a short pane too, and a running study keeps it clear of the live strip',
         actual: { focusReadings, inShortPane, withRunningStudy, withBothBars },
+        // The shared transport is the browser replay's, fixed at the pane's bottom with its own scroll room (Cycle 0051, DS-C): a focused control lies above it.
         passed:
           scrolledBelowTransport.length >= 3 &&
           scrolledBelowTransport.every(
             (reading) =>
-              reading.position === 'sticky' &&
-              reading.transportTop === 0 &&
-              reading.focusedTop >= reading.transportBottom - 1,
+              reading.position === 'fixed' &&
+              reading.focusedBottom <= reading.transportTop + 1,
           ) &&
-          inShortPane.position === 'static' &&
+          inShortPane.position === 'fixed' &&
           withRunningStudy.stripSticky &&
           withRunningStudy.transportTop >= withRunningStudy.stripBottom - 1 &&
-          // Both bars pinned: the focused control lies below the lower of the two (a focus scroll room without the strip scrolls it under the transport).
+          // Both bars pinned: the focused control lies between the strip and the transport.
           scrolledBelowBothBars.length >= 3 &&
           scrolledBelowBothBars.every(
             (reading) =>
               reading.stripSticky &&
-              reading.focusedTop >= reading.transportBottom - 1,
+              reading.focusedTop >= reading.stripBottom - 1 &&
+              reading.focusedBottom <= reading.transportTop + 1,
           ),
       })
       // Arrange: the section's states before it has a replay or an event to show (DS7), in the pane's fixed words (the String catalog): no replay saved, replays saved and none chosen, then a replay with no event selected and no saved learning, then the same replay with its learning again.
@@ -5943,9 +5952,10 @@ async function check(page, options, collected) {
       await publish(nodeWithNativeValues)
       // Assert
       cases.push({
-        name: 'after Show Variables is pressed by keyboard and the values load, focus rests on Play, not on the document body (Node test history)',
+        name: 'after Show Variables is pressed by keyboard and the values load, focus rests on the summary’s title heading, not on the document body (Node test history)',
         actual: await focusedControl(),
-        passed: (await focusedControl()) === 'node-history-playback-toggle',
+        // The summary's fallback (Cycle 0051, DS-E): the moment block's step heading, else the title heading; this stop has no saved learning, so no step heading.
+        passed: (await focusedControl()) === 'title',
       })
 
       // Value: protects=a keyboard learner on Inspect in native debugger keeps the pane's focus when the control is hidden (the stop's values load, or Play moves to an output), as with Show Variables: it goes to the first usable control of the transport, never to the document body; fails_when=Inspect is hidden through `hidden` alone, so the focused control disappears and the focus falls to the body; why_new=F292 (OCR batch C): the Inspect control was hidden with no focus handling; seam=none; no_claim=the host's answer to the press or native pixels
@@ -5961,17 +5971,18 @@ async function check(page, options, collected) {
         inspectHidden: document.getElementById('node-history-inspect').hidden,
         focusedId: document.activeElement?.id ?? '',
         inTransport: document
-          .getElementById('node-history-transport')
+          .getElementById('recording-transport')
           .contains(document.activeElement),
       }))
       // Assert
       cases.push({
-        name: 'when Inspect in native debugger is hidden while the keyboard stands on it, the focus goes to the test replay transport, not to the document body',
+        name: 'when Inspect in native debugger is hidden while the keyboard stands on it, the focus goes to the summary’s fallback heading, not to the document body',
         actual: { inspectFocused, afterInspectHidden },
         passed:
           inspectFocused === 'node-history-inspect' &&
           afterInspectHidden.inspectHidden &&
-          afterInspectHidden.inTransport,
+          // The summary's fallback (Cycle 0051, DS-E): no saved learning, so the title heading.
+          afterInspectHidden.focusedId === 'title',
       })
 
       // Act: Play cannot take the focus at the end of a recording (PC-3.7).
@@ -6039,17 +6050,17 @@ async function check(page, options, collected) {
       })
       const focusWithSingleEvent = await page.evaluate(() => ({
         transportDisabled: [
-          'node-history-playback-toggle',
-          'node-history-playhead',
-          'node-history-moment-previous',
-          'node-history-moment-next',
+          'playback-toggle',
+          'playhead',
+          'previous-event',
+          'next-event',
         ].every((id) => document.getElementById(id).disabled),
-        focused: document.activeElement.textContent,
+        focused: document.activeElement.id,
         focusedSequence: document.activeElement.dataset.nodeHistorySequence,
       }))
       // Assert
       cases.push({
-        name: "when Play cannot be used as Show Variables leaves, focus goes to the first transport control that can: at the end of a recording and while a moment loads; in a history with a single event it goes to the collapsed event list's summary, Events (1)",
+        name: "when Play cannot be used as Show Variables leaves, focus goes to the first transport control that can: at the end of a recording and while a moment loads; in a history with a single event it goes to the summary's title heading",
         actual: {
           focusAtRecordingEnd,
           focusWhileLoading,
@@ -6061,7 +6072,8 @@ async function check(page, options, collected) {
           focusWhileLoading.focused === 'playback-toggle' &&
           focusWhileLoading.label === 'Pause' &&
           focusWithSingleEvent.transportDisabled &&
-          focusWithSingleEvent.focused === 'Events (1)' &&
+          // The summary's fallback (Cycle 0051, DS-E): the title heading, the shared transport having no usable control for one event.
+          focusWithSingleEvent.focused === 'title' &&
           focusWithSingleEvent.focusedSequence === undefined,
       })
       await publish({ ...replay, revision: revisionAt(10) })
@@ -6431,9 +6443,10 @@ async function check(page, options, collected) {
             }),
       })
 
-      // Arrange: a retained Node journal must not add another transport to application replay (row 509).
+      // Arrange: a retained Node journal must not add another transport to application replay (row 509); the host shows a selected test replay in the summary composition (Cycle 0051, DS-A).
       const nodeJournalWithoutReplay = {
         ...options.message,
+        replayFamily: 'test',
         nodeHistory: {
           header: { studyId: 'node-study' },
           status: 'complete',
@@ -6482,6 +6495,7 @@ async function check(page, options, collected) {
       await publish({
         ...panelReplay,
         ...nodeJournalWithoutReplay,
+        replayFamily: 'browser',
         recording: panelReplay.recording,
       })
       // Act: inspect the unrelated controls and status regions, then return to the independent Node reader.
@@ -6496,15 +6510,6 @@ async function check(page, options, collected) {
           .evaluate((section) =>
             Math.round(section.getBoundingClientRect().height),
           ),
-        nodePlayVisible: await page
-          .locator('#node-history-playback-toggle')
-          .isVisible(),
-        nodePlayDisabled: await page
-          .locator('#node-history-playback-toggle')
-          .isDisabled(),
-        nodeTimelineVisible: await page
-          .locator('#node-history-playhead')
-          .isVisible(),
         applicationPlayVisible: await page
           .locator('#playback-toggle')
           .isVisible(),
@@ -6513,20 +6518,20 @@ async function check(page, options, collected) {
       await publish(nodeJournalWithoutReplay)
       const nodeAfterApplicationReplay = {
         status: await page.locator('#node-history-status').textContent(),
-        nodePlayVisible: await page
-          .locator('#node-history-playback-toggle')
-          .isVisible(),
-        nodePlayEnabled: await page
-          .locator('#node-history-playback-toggle')
-          .isEnabled(),
-        nodeTimelineVisible: await page
-          .locator('#node-history-playhead')
-          .isVisible(),
+        sectionHeight: await page
+          .locator('#node-history')
+          .evaluate((section) =>
+            Math.round(section.getBoundingClientRect().height),
+          ),
+        playVisible: await page.locator('#playback-toggle').isVisible(),
+        playEnabled: await page.locator('#playback-toggle').isEnabled(),
+        timelineVisible: await page.locator('#playhead').isVisible(),
+        eventStepsVisible: await page.locator('#next-event').isVisible(),
         understood: await page.locator('#node-history-understood').isChecked(),
       }
       // Assert: empty rendered status nodes take no space; the normal Node reader keeps its own controls.
       cases.push({
-        name: 'application replay in the bottom panel shows one transport and empty rendered Node status regions; leaving it restores the independent Node journal without marking understanding',
+        name: 'application replay in the bottom panel shows one transport and empty rendered Node status regions; leaving it for the test replay shows the shared transport alone, without marking understanding',
         actual: { nodeDuringApplicationReplay, nodeAfterApplicationReplay },
         passed:
           JSON.stringify(nodeDuringApplicationReplay) ===
@@ -6537,19 +6542,18 @@ async function check(page, options, collected) {
                 emptyRegion('node-history-hint'),
               ],
               height: 0,
-              nodePlayVisible: false,
-              nodePlayDisabled: true,
-              nodeTimelineVisible: false,
               applicationPlayVisible: true,
               looks: { moved: [], samePixels: true },
             }) &&
+          // The test replay in the bottom panel shows the shared transport with its event steps and no second copy of the section (Cycle 0051, DS-D).
           JSON.stringify(nodeAfterApplicationReplay) ===
             JSON.stringify({
-              status:
-                'No result recorded · capture complete · 0 of 0 stops explained',
-              nodePlayVisible: true,
-              nodePlayEnabled: true,
-              nodeTimelineVisible: true,
+              status: '',
+              sectionHeight: 0,
+              playVisible: true,
+              playEnabled: true,
+              timelineVisible: true,
+              eventStepsVisible: true,
               understood: false,
             }),
       })
@@ -6600,6 +6604,7 @@ async function check(page, options, collected) {
       await publish({
         ...panelReplay,
         ...journalWithLearning,
+        replayFamily: 'browser',
         recording: panelReplay.recording,
       })
       const learningDuringReplay = await learningBlock()
@@ -6607,8 +6612,9 @@ async function check(page, options, collected) {
       const learningAfterReplay = await learningBlock()
       // Assert
       cases.push({
-        name: 'while a browser replay holds the bottom panel the test replay’s learning block and its missing-material line are not drawn, and the block returns when the replay is left',
+        name: 'while a replay of either family holds the bottom panel the test replay’s learning block and its missing-material line are not drawn there',
         actual: { learningDuringReplay, learningAfterReplay },
+        // The test replay's learning block is the Learning summary's; the bottom panel shows its transport alone (Cycle 0051, DS-D).
         passed:
           JSON.stringify(learningDuringReplay) ===
             JSON.stringify({
@@ -6618,9 +6624,9 @@ async function check(page, options, collected) {
             }) &&
           JSON.stringify(learningAfterReplay) ===
             JSON.stringify({
-              blockHidden: false,
+              blockHidden: true,
               noMaterialHidden: true,
-              missingEventLines: 1,
+              missingEventLines: 0,
             }),
       })
       // Value: protects=a test replay's open token surviving a browser replay that holds the bottom panel, so the section is scrolled into view once it shows instead of the token being spent while it is not; fails_when=the token is spent on the first message that names it while the replay is shown, so the open never scrolls once the replay is left (F371); why_new=F371, the F156 case sends its token with the section already shown; seam=none; no_claim=where the host places the panes or that a hidden bottom-panel section scrolls anything (native check)
@@ -9854,6 +9860,1613 @@ async function check(page, options, collected) {
       railStrip.railScrollHeight <= railStrip.railHeight &&
       railStrip.groupBottomBelowRailBottom <= 0,
   })
+  {
+    // Cycle 0051: a test replay in the region-2 composition of the v9 image (DS-A to DS-G; AC2 to AC5, AC11, AC13, AC14). Each case loads a fresh document of its pane, so no earlier case's focus or scroll reaches it.
+    /** Loads a fresh document of one pane kind at a viewport, with a recorder of what it sends, and waits for its ready message. */
+    const freshPane = async (kind, viewport = { width: 420, height: 720 }) => {
+      await page.setViewportSize(viewport)
+      await page.goto(options.url)
+      await page.evaluate(() => {
+        window.sent = []
+        window.acquireVsCodeApi = () => ({
+          getState: () => undefined,
+          setState() {},
+          postMessage: (message) => window.sent.push(message),
+        })
+      })
+      await page.setContent(options.html[kind])
+      await page.waitForFunction(() =>
+        window.sent.some((message) => message.type === 'ready'),
+      )
+    }
+    let regionTwoRevision = 200
+    const c51Hash = 'c'.repeat(64)
+    /** One recorded stop of the revenue query's test replay. */
+    const c51Stop = (sequence, index, elapsedMs, line) => ({
+      type: 'stop',
+      sequence,
+      index,
+      elapsedMs,
+      source: { path: 'app/lib/data.ts', hash: c51Hash, line, column: 3 },
+      frame: { name: 'fetchRevenue', line, column: 3 },
+      facts: [],
+      debuggerSnapshot: {
+        frames: [
+          {
+            line,
+            column: 3,
+            source: { name: 'app/lib/data.ts', hash: c51Hash, line },
+          },
+        ],
+        variables: [],
+      },
+    })
+    const c51Entries = [
+      {
+        type: 'output',
+        sequence: 1,
+        elapsedMs: 100,
+        channel: 'stdout',
+        text: 'RUN app/lib/data.test.ts\n',
+      },
+      c51Stop(2, 0, 300, 12),
+      {
+        type: 'output',
+        sequence: 3,
+        elapsedMs: 450,
+        channel: 'stdout',
+        text: 'revenue rows: 12\n',
+      },
+      c51Stop(4, 1, 600, 18),
+      {
+        type: 'result',
+        sequence: 5,
+        elapsedMs: 900,
+        exitCode: 0,
+        signal: null,
+        outputTail: '',
+      },
+    ]
+    const c51Content = {
+      question: 'Which months does the revenue query return?',
+      title: 'How the revenue query reads its rows',
+      summary:
+        'The test calls fetchRevenue, which reads the rows and returns them in month order.',
+      participants: [
+        { id: 'test', label: 'Revenue test' },
+        { id: 'query', label: 'fetchRevenue' },
+        { id: 'db', label: 'Database' },
+      ],
+      steps: [
+        {
+          id: 'call',
+          from: 'test',
+          to: 'query',
+          label: 'Call fetchRevenue',
+          explanation: 'The test calls the query.',
+          evidence: 'observed',
+          reference: { type: 'stop', sequence: 2, sourceHash: c51Hash },
+        },
+        {
+          id: 'rows',
+          from: 'query',
+          to: 'db',
+          label: 'Read the rows',
+          explanation: 'The query reads twelve rows.',
+          evidence: 'observed',
+          reference: { type: 'stop', sequence: 4, sourceHash: c51Hash },
+        },
+        {
+          id: 'verdict',
+          from: 'query',
+          to: 'test',
+          label: 'Return the rows',
+          explanation: 'The rows come back and the test passes.',
+          evidence: 'observed',
+          reference: { type: 'result', sequence: 5 },
+        },
+      ],
+    }
+    const c51Positions = [
+      { stepId: 'call', elapsedMs: 300, sequence: 2 },
+      { stepId: 'rows', elapsedMs: 600, sequence: 4 },
+      { stepId: 'verdict', elapsedMs: 900, sequence: 5 },
+    ]
+    const notRecordedLine = 'Source and debugger not recorded at this moment.'
+    // What the host says at each moment (projectNodeTestSection), by sequence.
+    const c51Moments = {
+      1: {
+        position: 'Output · 0.10 s',
+        notRecorded: notRecordedLine,
+        previousStop: false,
+        nextStop: true,
+      },
+      2: {
+        position: 'Stop 1 of 2 · 0.30 s',
+        explanation: 'The test calls the query.',
+        selectedStepId: 'call',
+        previousStop: false,
+        nextStop: true,
+      },
+      3: {
+        position: 'Output · 0.45 s',
+        notRecorded: notRecordedLine,
+        previousStop: true,
+        nextStop: true,
+      },
+      4: {
+        position: 'Stop 2 of 2 · 0.60 s',
+        explanation: 'The query reads twelve rows.',
+        selectedStepId: 'rows',
+        previousStop: true,
+        nextStop: false,
+      },
+      5: {
+        position: 'Result · Test passed · exit code 0 · 0.90 s',
+        explanation: 'The rows come back and the test passes.',
+        notRecorded: notRecordedLine,
+        selectedStepId: 'verdict',
+        previousStop: true,
+        nextStop: false,
+      },
+    }
+    /**
+     * Builds the Study message of the revenue query's test replay at one moment, as the host sends it in the summary composition: the family named, the whole-history first and last events, the transport in this pane unless `extra` says the bottom panel holds it.
+     */
+    const regionTwoAt = (sequence, extra = {}) => {
+      const entry = c51Entries.find(
+        (candidate) => candidate.sequence === sequence,
+      )
+      return {
+        ...options.message,
+        revision: revisionAt(regionTwoRevision++),
+        replayFamily: 'test',
+        playbackPanelVisible: false,
+        nodeHistoryEventCount: c51Entries.length,
+        nodeHistory: {
+          header: { studyId: 'revenue-study' },
+          status: 'complete',
+          entries: c51Entries,
+        },
+        nodeHistoryCatalog: [
+          {
+            studyId: 'revenue-study',
+            testFile: 'app/lib/data.test.ts',
+            testTitles: ['revenue', 'returns twelve months'],
+          },
+        ],
+        nodeHistoryLearningSummary: {
+          content: c51Content,
+          positions: c51Positions,
+        },
+        nodeHistoryPosition:
+          entry.type === 'stop'
+            ? {
+                sequence,
+                eventIndex: sequence - 1,
+                sourceAvailable: true,
+                debuggerAvailable: true,
+              }
+            : { sequence, eventIndex: sequence - 1 },
+        nodeHistorySection: {
+          status:
+            'Test passed · exit code 0 · capture complete · 2 of 2 stops explained',
+          pointer: 'Output up to this moment is in the Application pane.',
+          applicationClosed: false,
+          sameMomentStepIds: [],
+          stepActions: {
+            call: 'Inspect stop 1 · 0.30 s',
+            rows: 'Inspect stop 2 · 0.60 s',
+            verdict: 'Inspect result · 0.90 s',
+          },
+          events: 'Events (5)',
+          verdict: 'Test passed · exit code 0',
+          timeline: {
+            startMs: 100,
+            endMs: 900,
+            gaps: [{ startMs: 100, endMs: 900 }],
+            recordedPoints: [300, 600],
+          },
+          ...c51Moments[sequence],
+        },
+        nodeHistoryPlayback: {
+          mode: 'paused',
+          sequence,
+          positionMs: entry.elapsedMs,
+          startMs: 100,
+          endMs: 900,
+          loading: false,
+          firstSequence: 1,
+          lastSequence: 5,
+        },
+        ...extra,
+      }
+    }
+    /** A browser replay's Study message in the summary composition, paused at 5 s of a 20 s recording. */
+    const browserReplayAt = (extra = {}) => ({
+      ...options.message,
+      revision: revisionAt(regionTwoRevision++),
+      contentTab: 'recording',
+      replayFamily: 'browser',
+      playbackPanelVisible: false,
+      recording: {
+        revision: revisionAt(regionTwoRevision++),
+        mode: 'paused',
+        readiness: 'ready',
+        cleared: false,
+        presentedMs: 5000,
+        range: { startMs: 0, endMs: 20000, endKnown: true },
+        recordingStatus: 'finalized',
+      },
+      ...extra,
+    })
+    /** Reads the node-history messages the pane sent since the recorder was last cleared, in the fields a request carries. */
+    const nodeRequests = () =>
+      page.evaluate(() =>
+        window.sent
+          .filter((message) => message.type.startsWith('node-history'))
+          .map(({ type, direction, unit, action, sequence, positionMs }) => ({
+            type,
+            ...(direction === undefined ? {} : { direction }),
+            ...(unit === undefined ? {} : { unit }),
+            ...(action === undefined ? {} : { action }),
+            ...(sequence === undefined ? {} : { sequence }),
+            ...(positionMs === undefined ? {} : { positionMs }),
+          })),
+      )
+    const clearSent = () =>
+      page.evaluate(() => {
+        window.sent = []
+      })
+    /** Reads which of the summary's parts are shown, in the order the page holds them (DS-B). */
+    const summaryOrder = () =>
+      page.evaluate(() => {
+        const ids = [
+          'title',
+          'node-learning-title',
+          'node-history-status',
+          'node-history-capture-reason',
+          'node-learning-question',
+          'node-learning-summary',
+          'node-learning-sequence',
+          'node-learning-steps-details',
+          'node-history-step-heading',
+          'node-history-position',
+          'node-history-explanation',
+          'node-history-not-recorded',
+          'node-history-unverified',
+          'node-history-pointer',
+          'node-history-understood',
+          'node-history-events-details',
+        ]
+        return ids
+          .map((id) => document.getElementById(id))
+          .filter((element) => element.checkVisibility())
+          .sort((a, b) =>
+            a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING
+              ? -1
+              : 1,
+          )
+          .map((element) => element.id)
+      })
+    /** Reads the drawing's marked step: each marked node by tag and step, and how the marked label is drawn. */
+    const drawingMark = () =>
+      page.evaluate(() => {
+        const marked = Array.from(
+          document.querySelectorAll(
+            '#node-learning-sequence [aria-current="step"]',
+          ),
+        )
+        const label = marked.find((node) => node.tagName === 'text')
+        return {
+          marked: marked.map((node) => `${node.tagName}:${node.dataset.step}`),
+          classed: marked.every((node) =>
+            node.classList.contains('current-step'),
+          ),
+          weight: label ? getComputedStyle(label).fontWeight : '',
+          underline: label
+            ? getComputedStyle(label).textDecorationLine.includes('underline')
+            : false,
+          heading: document.getElementById('node-history-step-heading').hidden
+            ? ''
+            : document.getElementById('node-history-step-heading').textContent,
+          detailsOpen: document.getElementById('node-learning-steps-details')
+            .open,
+        }
+      })
+
+    const longText = (start) =>
+      `${start} ${'month rows are read in order and checked against the expected list. '.repeat(120)}`.slice(
+        0,
+        8192,
+      )
+    const longRegionTwo = (sequence, extra = {}) =>
+      regionTwoAt(sequence, {
+        nodeHistoryLearningSummary: {
+          content: {
+            ...c51Content,
+            question:
+              'Which months does the revenue query return, in which order, and what does the test compare them with before it passes?',
+            summary: longText('The test calls fetchRevenue.'),
+            participants: [
+              ...c51Content.participants,
+              { id: 'cache', label: 'Revenue cache' },
+              { id: 'clock', label: 'Clock' },
+              { id: 'log', label: 'Logger' },
+            ],
+          },
+          positions: c51Positions,
+        },
+        nodeHistorySection: {
+          ...regionTwoAt(sequence).nodeHistorySection,
+          status:
+            'Test passed · exit code 0 · capture partial · 2 of 2 stops explained',
+          captureReason: longText('Capture interrupted:'),
+        },
+        ...extra,
+      })
+    const clampReading = () =>
+      page.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-show-more]')).map(
+          (control) => {
+            const target = document.getElementById(control.dataset.showMore)
+            return {
+              id: target.id,
+              controlShown: !control.hidden,
+              expanded: control.getAttribute('aria-expanded'),
+              label: control.textContent,
+              clamped: target.classList.contains('clamp'),
+              cut: target.scrollHeight > target.clientHeight + 1,
+            }
+          },
+        ),
+      )
+    /** Reads the shown controls of the transport's playback row, in order, by id or name. */
+    const playbackRow = () =>
+      page.evaluate(() =>
+        Array.from(
+          document.querySelectorAll(
+            '#recording-transport .playback-row button, #recording-transport .playback-row input',
+          ),
+        )
+          .filter((control) => control.checkVisibility())
+          .map(
+            (control) =>
+              control.id ||
+              control.getAttribute('aria-label') ||
+              control.textContent,
+          ),
+      )
+    const transportControls = () =>
+      page.evaluate(() =>
+        Array.from(
+          document.querySelectorAll(
+            '#recording-transport button, #recording-transport input, #recording-transport summary',
+          ),
+        )
+          .filter((control) => control.checkVisibility())
+          .map(
+            (control) =>
+              `${control.id || control.getAttribute('aria-label') || control.textContent.trim()}`,
+          ),
+      )
+    /** Reads the browser seeks the pane sent since the recorder was cleared. */
+    const playbackSeeks = () =>
+      page.evaluate(() =>
+        window.sent
+          .filter(
+            (message) =>
+              message.type === 'playback' && message.action === 'seek',
+          )
+          .map((message) => message.positionMs),
+      )
+    const hostileLabel = 'Read <b>"rows"</b></text><text y="0">injected'
+    /** Runs one case group of this block, and records a group that throws (a control or line it reads is missing, as on a build without the change) as one failed case, so every group gives its own result. */
+    const regionTwoCase = async (group, body) => {
+      try {
+        await body()
+      } catch (error) {
+        cases.push({
+          name: `a Cycle 0051 case group threw: ${group}`,
+          actual: String(error).slice(0, 400),
+          passed: false,
+        })
+      }
+    }
+    // Value: protects=a test replay's Learning summary in region 2's order (DS-B): title, status and question, summary, diagram and Step details, the moment block with its step heading, the understanding check and the event list, for a stop, an output and the result; fails_when=a part is missing, out of order, or the step heading names the step of another moment; why_new=Cycle 0051 AC2: the parts stood in the Study pane's section in another order; seam=none; no_claim=the host's wording of each line (projectNodeTestSection's tests)
+    await regionTwoCase(
+      "a test replay's Learning summary in region 2's order (DS-B): title, status and question, summary, diagram and Step detai",
+      async () => {
+        await freshPane('context')
+        for (const [sequence, kind, expected, heading] of [
+          [
+            2,
+            'a stop',
+            [
+              'title',
+              'node-learning-title',
+              'node-history-status',
+              'node-learning-question',
+              'node-learning-summary',
+              'node-learning-sequence',
+              'node-learning-steps-details',
+              'node-history-step-heading',
+              'node-history-position',
+              'node-history-explanation',
+              'node-history-pointer',
+              'node-history-understood',
+              'node-history-events-details',
+            ],
+            'Step 1 · Call fetchRevenue',
+          ],
+          [
+            3,
+            'an output',
+            [
+              'title',
+              'node-learning-title',
+              'node-history-status',
+              'node-learning-question',
+              'node-learning-summary',
+              'node-learning-sequence',
+              'node-learning-steps-details',
+              'node-history-position',
+              'node-history-not-recorded',
+              'node-history-pointer',
+              'node-history-understood',
+              'node-history-events-details',
+            ],
+            '',
+          ],
+          [
+            5,
+            'the result',
+            [
+              'title',
+              'node-learning-title',
+              'node-history-status',
+              'node-learning-question',
+              'node-learning-summary',
+              'node-learning-sequence',
+              'node-learning-steps-details',
+              'node-history-step-heading',
+              'node-history-position',
+              'node-history-explanation',
+              'node-history-not-recorded',
+              'node-history-pointer',
+              'node-history-understood',
+              'node-history-events-details',
+            ],
+            'Step 3 · Return the rows',
+          ],
+        ]) {
+          // Arrange & Act
+          await publish(regionTwoAt(sequence))
+          const order = await summaryOrder()
+          const reading = await drawingMark()
+          // Assert
+          cases.push({
+            name: `a test replay’s Learning summary at ${kind} shows region 2’s parts in its order, with the step heading of that moment only`,
+            actual: { order, heading: reading.heading },
+            passed:
+              JSON.stringify(order) === JSON.stringify(expected) &&
+              reading.heading === heading,
+          })
+        }
+      },
+    )
+    // Value: protects=the drawing marks the selected step on its arrow and label with aria-current="step" and a cue that is not color alone (weight 600, underline), with Step details collapsed, and the moment block's heading names it; fails_when=the mark needs the opened Step details, rides on color alone, or names another step; why_new=Cycle 0051 DS-B (AC2): the PNG marks its current arrow, and only the numbered steps were marked; seam=none; no_claim=native pixels
+    await regionTwoCase(
+      'the drawing marks the selected step on its arrow and label with aria-current="step" and a cue that is not color alone (w',
+      async () => {
+        await publish(regionTwoAt(4))
+        const markAtStop = await drawingMark()
+        cases.push({
+          name: 'a test replay’s drawing marks the selected step’s arrow and label with Step details collapsed, by weight and underline as well as color, and the step heading names it',
+          actual: markAtStop,
+          passed:
+            JSON.stringify(markAtStop) ===
+            JSON.stringify({
+              marked: ['path:rows', 'text:rows'],
+              classed: true,
+              weight: '600',
+              underline: true,
+              heading: 'Step 2 · Read the rows',
+              detailsOpen: false,
+            }),
+        })
+      },
+    )
+    // Value: protects=an event no step references (an output) marks no step and shows no step heading, never the step of an earlier moment; fails_when=the mark or the heading of the stop before stays; why_new=Cycle 0051 DS-B (AC2); seam=none; no_claim=none beyond protects
+    await regionTwoCase(
+      'an event no step references (an output) marks no step and shows no step heading, never the step of an earlier moment',
+      async () => {
+        await publish(regionTwoAt(3))
+        const markAtOutput = await drawingMark()
+        cases.push({
+          name: 'a test replay’s output marks no step in the drawing and shows no step heading after a stop that had one',
+          actual: markAtOutput,
+          passed:
+            markAtOutput.marked.length === 0 &&
+            markAtOutput.heading === '' &&
+            !markAtOutput.detailsOpen,
+        })
+      },
+    )
+    // Value: protects=a pending moment (D29) withholds the step heading, the explanation and the drawing's mark although the host's section still names the step; fails_when=the mark or the heading shows the moment before it commits; why_new=Cycle 0051 DS-G (AC14): the mark is new; seam=none; no_claim=native paint timing
+    await regionTwoCase(
+      "a pending moment (D29) withholds the step heading, the explanation and the drawing's mark although the host's section st",
+      async () => {
+        await publish(regionTwoAt(4))
+        await publish(
+          regionTwoAt(4, {
+            nodeHistoryPosition: { sequence: 5, eventIndex: 4, pending: true },
+            nodeHistorySection: {
+              ...regionTwoAt(5).nodeHistorySection,
+              explanation: undefined,
+            },
+          }),
+        )
+        const markWhilePending = await drawingMark()
+        const explanationWhilePending = await page
+          .locator('#node-history-explanation')
+          .textContent()
+        cases.push({
+          name: 'a pending test replay moment withholds the step heading, the explanation and the drawing’s mark',
+          actual: { markWhilePending, explanationWhilePending },
+          passed:
+            markWhilePending.marked.length === 0 &&
+            markWhilePending.heading === '' &&
+            explanationWhilePending === '',
+        })
+      },
+    )
+    // Value: protects=the mark moves by attribute on the drawing that stays, so a move keeps the diagram's own scroll position (and the focus inside it); fails_when=each move draws the diagram again, which resets its scroll; why_new=Cycle 0051 DS-B, the Eng review's finding; seam=none; no_claim=none beyond protects
+    await regionTwoCase(
+      "the mark moves by attribute on the drawing that stays, so a move keeps the diagram's own scroll position (and the focus ",
+      async () => {
+        await page.setViewportSize({ width: 298, height: 885 })
+        await publish(regionTwoAt(2))
+        await page.evaluate(() => {
+          const area = document.querySelector(
+            '#node-learning-sequence .sequence-diagram',
+          )
+          window.regionTwoDrawing = area.querySelector('svg')
+          area.scrollLeft = 40
+          area.scrollTop = 10
+        })
+        const scrollBefore = await page.evaluate(() => {
+          const area = document.querySelector(
+            '#node-learning-sequence .sequence-diagram',
+          )
+          return { left: area.scrollLeft, top: area.scrollTop }
+        })
+        await publish(regionTwoAt(4))
+        const afterMove = await page.evaluate(() => {
+          const area = document.querySelector(
+            '#node-learning-sequence .sequence-diagram',
+          )
+          return {
+            sameDrawing: area.querySelector('svg') === window.regionTwoDrawing,
+            left: area.scrollLeft,
+            top: area.scrollTop,
+          }
+        })
+        const markAfterMove = await drawingMark()
+        cases.push({
+          name: 'a test replay move marks the next step on the drawing that stays, keeping the diagram’s scroll position',
+          actual: { scrollBefore, afterMove, marked: markAfterMove.marked },
+          passed:
+            scrollBefore.left > 0 &&
+            afterMove.sameDrawing &&
+            afterMove.left === scrollBefore.left &&
+            afterMove.top === scrollBefore.top &&
+            JSON.stringify(markAfterMove.marked) ===
+              JSON.stringify(['path:rows', 'text:rows']),
+        })
+      },
+    )
+    // Value: protects=markup in a step label and an output line (`<`, `"`, `</text>`) shown as text in the summary's SVG, Step details and the event list, never as an element; fails_when=innerHTML or unescaped SVG text turns it into markup; why_new=Cycle 0051 AC2: the strings moved into a new view; seam=none; no_claim=CSP enforcement in the real webview
+    await regionTwoCase(
+      'markup in a step label and an output line (`<`, `"`, `</text>`) shown as text in the summary\'s SVG, Step details and the',
+      async () => {
+        await freshPane('context')
+        await publish(
+          regionTwoAt(4, {
+            nodeHistory: {
+              header: { studyId: 'revenue-study' },
+              status: 'complete',
+              entries: c51Entries.map((entry) =>
+                entry.sequence === 3
+                  ? { ...entry, text: `${hostileLabel}\n` }
+                  : entry,
+              ),
+            },
+            nodeHistoryLearningSummary: {
+              content: {
+                ...c51Content,
+                steps: c51Content.steps.map((step) =>
+                  step.id === 'rows' ? { ...step, label: hostileLabel } : step,
+                ),
+              },
+              positions: c51Positions,
+            },
+          }),
+        )
+        await page.evaluate(() => {
+          document.getElementById('node-history-events-details').open = true
+        })
+        const hostileRegionTwo = await page.evaluate(
+          (label) => ({
+            elements: document.querySelectorAll('#node-history b').length,
+            drawnLabel:
+              document.querySelector(
+                '#node-learning-sequence text[data-step="rows"]',
+              )?.textContent ?? '',
+            svgTexts: document.querySelectorAll('#node-learning-sequence text')
+              .length,
+            heading: document.getElementById('node-history-step-heading')
+              .textContent,
+            eventListHoldsText: document
+              .getElementById('node-history-events')
+              .textContent.includes(label),
+          }),
+          hostileLabel,
+        )
+        cases.push({
+          name: 'markup in a test replay’s step label and output line is shown as text in the summary’s drawing, step heading and event list',
+          actual: hostileRegionTwo,
+          passed:
+            hostileRegionTwo.elements === 0 &&
+            // The drawing sets a label as one span per word after its number, so its text reads without the spaces; three participants and three steps make its six text elements, none of them the injected one.
+            hostileRegionTwo.drawnLabel ===
+              `2. ${hostileLabel.replace(/\s/g, '')}` &&
+            hostileRegionTwo.svgTexts === 6 &&
+            hostileRegionTwo.heading === `Step 2 · ${hostileLabel}` &&
+            hostileRegionTwo.eventListHoldsText,
+        })
+      },
+    )
+    // Value: protects=the question, the processing summary and the capture reason each clamped to three lines with Show more, which shows the whole text in place and Show less takes back; fails_when=a long text pushes the moment block down unclamped, the control is missing, or it does not expand and collapse; why_new=Cycle 0051 DS-B, the Eng review's finding (schema-length texts); seam=none; no_claim=native fonts
+    await regionTwoCase(
+      'the question, the processing summary and the capture reason each clamped to three lines with Show more, which shows the ',
+      async () => {
+        await freshPane('context', { width: 298, height: 885 })
+        await publish(longRegionTwo(4))
+        const clampedTexts = await clampReading()
+        await page.locator('[data-show-more="node-learning-summary"]').click()
+        const expandedSummary = (await clampReading()).find(
+          (reading) => reading.id === 'node-learning-summary',
+        )
+        await page.locator('[data-show-more="node-learning-summary"]').click()
+        const collapsedSummary = (await clampReading()).find(
+          (reading) => reading.id === 'node-learning-summary',
+        )
+        cases.push({
+          name: 'a test replay’s long processing summary and capture reason are clamped to three lines with Show more, which expands one in place and Show less takes back',
+          actual: { clampedTexts, expandedSummary, collapsedSummary },
+          passed:
+            ['node-history-capture-reason', 'node-learning-summary'].every(
+              (id) =>
+                clampedTexts.some(
+                  (reading) =>
+                    reading.id === id &&
+                    reading.controlShown &&
+                    reading.expanded === 'false' &&
+                    reading.label === 'Show more' &&
+                    reading.clamped &&
+                    reading.cut,
+                ),
+            ) &&
+            expandedSummary.expanded === 'true' &&
+            expandedSummary.label === 'Show less' &&
+            !expandedSummary.clamped &&
+            !expandedSummary.cut &&
+            collapsedSummary.expanded === 'false' &&
+            collapsedSummary.clamped,
+        })
+      },
+    )
+    // Value: protects=the first viewport at task 2's measured summary sizes (VS Code 298 × 885, Cursor 440 × 965): with a three-line question, schema-length summary and capture reason and six participants, the moment block's step heading starts inside the view without scrolling; fails_when=the long texts or the diagram push the moment below the fold; why_new=Cycle 0051 DS-B (AC2); seam=none; no_claim=sizes in hosts other than task 2's measurement
+    await regionTwoCase(
+      "the first viewport at task 2's measured summary sizes (VS Code 298 × 885, Cursor 440 × 965): with a three-line question,",
+      async () => {
+        const firstViewport = {}
+        for (const [host, viewport] of [
+          ['VS Code', { width: 298, height: 885 }],
+          ['Cursor', { width: 440, height: 965 }],
+        ]) {
+          await freshPane('context', viewport)
+          await publish(longRegionTwo(4, { playbackPanelVisible: true }))
+          await page.evaluate(() => window.scrollTo(0, 0))
+          firstViewport[host] = await page.evaluate(() => {
+            const box = document
+              .getElementById('node-history-step-heading')
+              .getBoundingClientRect()
+            return {
+              top: Math.round(box.top),
+              bottom: Math.round(box.bottom),
+              viewportHeight: innerHeight,
+            }
+          })
+        }
+        cases.push({
+          name: 'at the measured Learning summary sizes the moment block’s step heading starts in the first viewport with schema-length texts and six participants',
+          actual: firstViewport,
+          passed: Object.values(firstViewport).every(
+            (reading) =>
+              reading.top >= 0 && reading.bottom <= reading.viewportHeight,
+          ),
+        })
+      },
+    )
+    // Value: protects=each of the shared transport's seven move controls sends the test replay's own request (DS-C): Replay from start the first event by sequence, the stop and event buttons their steps, Play the playback, the slider a seek; fails_when=a control sends the browser's request, another test replay request, or nothing; why_new=Cycle 0051 AC3: the test replay had a transport of its own; seam=none; no_claim=the host's answer (studyWorkspace tests)
+    await regionTwoCase(
+      "each of the shared transport's seven move controls sends the test replay's own request (DS-C): Replay from start the fir",
+      async () => {
+        await freshPane('context')
+        await publish(regionTwoAt(3))
+        for (const [control, act, expected] of [
+          [
+            'Replay from start',
+            () => page.locator('[data-playback="start"]').click(),
+            { type: 'node-history-event', sequence: 1 },
+          ],
+          [
+            'Previous recorded stop',
+            () => page.locator('#previous-moment').click(),
+            { type: 'node-history-step', direction: 'previous', unit: 'stop' },
+          ],
+          [
+            'Play',
+            () => page.locator('#playback-toggle').click(),
+            { type: 'node-history-playback', action: 'play' },
+          ],
+          [
+            'Next recorded stop',
+            () => page.locator('#next-moment').click(),
+            { type: 'node-history-step', direction: 'next', unit: 'stop' },
+          ],
+          [
+            'the slider',
+            () =>
+              page.locator('#playhead').evaluate((playhead) => {
+                playhead.value = '700'
+                playhead.dispatchEvent(new Event('input', { bubbles: true }))
+                playhead.dispatchEvent(new Event('change', { bubbles: true }))
+              }),
+            { type: 'node-history-playback', action: 'seek', positionMs: 700 },
+          ],
+          [
+            'Previous event',
+            () => page.locator('#previous-event').click(),
+            { type: 'node-history-step', direction: 'previous', unit: 'event' },
+          ],
+          [
+            'Next event',
+            () => page.locator('#next-event').click(),
+            { type: 'node-history-step', direction: 'next', unit: 'event' },
+          ],
+        ]) {
+          // Arrange
+          await publish(regionTwoAt(3))
+          await clearSent()
+          // Act
+          await act()
+          const requests = await nodeRequests()
+          // Assert
+          cases.push({
+            name: `the shared transport’s ${control} sends the test replay’s own request`,
+            actual: requests,
+            passed: JSON.stringify(requests) === JSON.stringify([expected]),
+          })
+        }
+      },
+    )
+    // Value: protects=the transport's order and groups per family (DS-C): ?, Replay from start, Previous stop, Play, Next stop, the slider, then for a test replay only the event group; fails_when=the event steps show for a browser replay, stand before the slider, or a control moves; why_new=Cycle 0051 AC3; seam=none; no_claim=native layout
+    await regionTwoCase(
+      "the transport's order and groups per family (DS-C): ?, Replay from start, Previous stop, Play, Next stop, the slider, th",
+      async () => {
+        await publish(regionTwoAt(3))
+        const testReplayRow = await playbackRow()
+        cases.push({
+          name: 'a test replay’s transport row reads ?, Replay from start, Previous stop, Play, Next stop, the slider, then Previous event and Next event',
+          actual: testReplayRow,
+          passed:
+            JSON.stringify(testReplayRow) ===
+            JSON.stringify([
+              'Keyboard shortcuts',
+              'Replay from start',
+              'previous-moment',
+              'playback-toggle',
+              'next-moment',
+              'playhead',
+              'previous-event',
+              'next-event',
+            ]),
+        })
+        await publish(browserReplayAt())
+        const browserReplayRow = await playbackRow()
+        cases.push({
+          name: 'a browser replay’s transport row keeps its controls and order with no event steps',
+          actual: browserReplayRow,
+          passed:
+            JSON.stringify(browserReplayRow) ===
+            JSON.stringify([
+              'Keyboard shortcuts',
+              'Replay from start',
+              'previous-moment',
+              'playback-toggle',
+              'next-moment',
+              'playhead',
+            ]),
+        })
+      },
+    )
+    // Value: protects=a browser replay's transport in the Learning summary keeps exactly today's controls (ids, order, labels): the 5A button stands in the bottom panel's transport only; fails_when=any browser control is added, removed, renamed or reordered in the summary; why_new=Cycle 0051 AC3 (a closed list); seam=none; no_claim=the bottom panel (its own case)
+    await regionTwoCase(
+      "a browser replay's transport in the Learning summary keeps exactly today's controls (ids, order, labels): the 5A button ",
+      async () => {
+        const browserSummaryControls = await transportControls()
+        cases.push({
+          name: 'a browser replay’s transport in the Learning summary keeps exactly its controls, ids, order and labels',
+          actual: browserSummaryControls,
+          passed:
+            JSON.stringify(browserSummaryControls) ===
+            JSON.stringify([
+              'Keyboard shortcuts',
+              'Replay from start',
+              'previous-moment',
+              'playback-toggle',
+              'next-moment',
+              'playhead',
+              'Playback details',
+            ]),
+        })
+      },
+    )
+    // Value: protects=a test replay transport after a browser replay redraws for its family (AC13): the event steps, the slider's test wording and family mark, and back again for the browser replay; fails_when=the slider keeps the other family's tooltip or wording, or the event steps stay; why_new=Cycle 0051 AC13; seam=none; no_claim=none beyond protects
+    await regionTwoCase(
+      "a test replay transport after a browser replay redraws for its family (AC13): the event steps, the slider's test wording",
+      async () => {
+        await publish(regionTwoAt(3))
+        const testReplaySlider = await page.evaluate(() => ({
+          family:
+            document.getElementById('playhead').dataset.replayFamily ?? '',
+          spoken: document
+            .getElementById('playhead')
+            .getAttribute('aria-valuetext'),
+          eventSteps: document
+            .getElementById('playback-events')
+            .checkVisibility(),
+          keys: document
+            .getElementById('playhead')
+            .getAttribute('aria-keyshortcuts'),
+        }))
+        await publish(browserReplayAt())
+        const browserSlider = await page.evaluate(() => ({
+          family:
+            document.getElementById('playhead').dataset.replayFamily ?? '',
+          spoken: document
+            .getElementById('playhead')
+            .getAttribute('aria-valuetext'),
+          eventSteps: document
+            .getElementById('playback-events')
+            .checkVisibility(),
+          keys: document
+            .getElementById('playhead')
+            .getAttribute('aria-keyshortcuts'),
+          titleNamesRecording: document
+            .getElementById('playhead')
+            .title.includes('Focused recording timeline'),
+        }))
+        cases.push({
+          name: 'the shared transport redraws for each family: a test replay after a browser replay shows its event steps and test wording, and the browser replay after it its own',
+          actual: { testReplaySlider, browserSlider },
+          passed:
+            JSON.stringify(testReplaySlider) ===
+              JSON.stringify({
+                family: 'test',
+                spoken: '0.45 s of recorded test time',
+                eventSteps: true,
+                keys: 'ArrowLeft ArrowRight ArrowUp ArrowDown PageUp PageDown Home End',
+              }) &&
+            JSON.stringify(browserSlider) ===
+              JSON.stringify({
+                family: '',
+                spoken: '5.00 s presented',
+                eventSteps: false,
+                keys: null,
+                titleNamesRecording: true,
+              }),
+        })
+      },
+    )
+    // Value: protects=each key of the focused test replay slider (C2): arrows step by event, Page keys by stop (Page Up forward), Home and End select the first and last event by sequence; fails_when=a key seeks by time, steps the other unit or direction, or sends nothing; why_new=Cycle 0051 AC11 (C2): the browser keys seek by time and a test replay's moments are events; seam=none; no_claim=the host's answer (studyWorkspace tests)
+    await regionTwoCase(
+      'each key of the focused test replay slider (C2): arrows step by event, Page keys by stop (Page Up forward), Home and End',
+      async () => {
+        for (const [key, expected] of [
+          [
+            'ArrowLeft',
+            { type: 'node-history-step', direction: 'previous', unit: 'event' },
+          ],
+          [
+            'ArrowDown',
+            { type: 'node-history-step', direction: 'previous', unit: 'event' },
+          ],
+          [
+            'ArrowRight',
+            { type: 'node-history-step', direction: 'next', unit: 'event' },
+          ],
+          [
+            'ArrowUp',
+            { type: 'node-history-step', direction: 'next', unit: 'event' },
+          ],
+          [
+            'PageDown',
+            { type: 'node-history-step', direction: 'previous', unit: 'stop' },
+          ],
+          [
+            'PageUp',
+            { type: 'node-history-step', direction: 'next', unit: 'stop' },
+          ],
+          ['Home', { type: 'node-history-event', sequence: 1 }],
+          ['End', { type: 'node-history-event', sequence: 5 }],
+        ]) {
+          // Arrange
+          await publish(regionTwoAt(3))
+          await page.locator('#playhead').focus()
+          await clearSent()
+          // Act
+          await page.keyboard.press(key)
+          const requests = await nodeRequests()
+          // Assert
+          cases.push({
+            name: `${key} on the focused test replay slider sends ${expected.type === 'node-history-event' ? `the event of sequence ${expected.sequence}` : `a step to the ${expected.direction} ${expected.unit}`}`,
+            actual: requests,
+            passed: JSON.stringify(requests) === JSON.stringify([expected]),
+          })
+        }
+      },
+    )
+    // Value: protects=modifier keys, IME composition and an event already handled move nothing on the test replay slider; fails_when=a chord or a composing key moves the replay; why_new=Cycle 0051 AC11; seam=none; no_claim=a real IME
+    await regionTwoCase(
+      'modifier keys, IME composition and an event already handled move nothing on the test replay slider',
+      async () => {
+        await publish(regionTwoAt(3))
+        await page.locator('#playhead').focus()
+        await clearSent()
+        for (const chord of [
+          'Shift+ArrowRight',
+          'Control+End',
+          'Alt+PageUp',
+          'Meta+Home',
+        ])
+          await page.keyboard.press(chord)
+        await page.evaluate(() => {
+          const playhead = document.getElementById('playhead')
+          playhead.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: 'ArrowRight',
+              isComposing: true,
+              bubbles: true,
+              cancelable: true,
+            }),
+          )
+          const handled = new KeyboardEvent('keydown', {
+            key: 'End',
+            bubbles: true,
+            cancelable: true,
+          })
+          handled.preventDefault()
+          playhead.dispatchEvent(handled)
+        })
+        const ignoredRequests = await nodeRequests()
+        // The same key without a modifier still moves the replay: the slider handles its keys, and only the chords are ignored.
+        await page.keyboard.press('ArrowRight')
+        const plainRequests = await nodeRequests()
+        cases.push({
+          name: 'modifier chords, IME composition and an already handled key move nothing on the test replay slider, while the plain key moves it',
+          actual: { ignoredRequests, plainRequests },
+          passed:
+            ignoredRequests.length === 0 &&
+            JSON.stringify(plainRequests) ===
+              JSON.stringify([
+                { type: 'node-history-step', direction: 'next', unit: 'event' },
+              ]),
+        })
+      },
+    )
+    // Value: protects=the browser replay's slider keys as before (C2 keeps them): arrows seek one second, Page keys ten seconds with Page Up forward, Home and End the recording's ends; fails_when=a browser key steps by event or seeks another time; why_new=Cycle 0051 AC11 (three regression cases); seam=none; no_claim=native timing
+    await regionTwoCase(
+      "the browser replay's slider keys as before (C2 keeps them): arrows seek one second, Page keys ten seconds with Page Up f",
+      async () => {
+        for (const [kind, keys, expected] of [
+          [
+            'arrows',
+            ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'],
+            [6000, 4000, 6000, 4000],
+          ],
+          ['Page keys', ['PageUp', 'PageDown'], [15000, 0]],
+          ['Home and End', ['Home', 'End'], [0, 20000]],
+        ]) {
+          // Arrange
+          await publish(browserReplayAt())
+          await page.locator('#playhead').focus()
+          await clearSent()
+          // Act
+          for (const key of keys) await page.keyboard.press(key)
+          const seeks = await playbackSeeks()
+          // Assert
+          cases.push({
+            name: `the browser replay’s slider ${kind} seek as before`,
+            actual: seeks,
+            passed: JSON.stringify(seeks) === JSON.stringify(expected),
+          })
+        }
+      },
+    )
+    // Value: protects=the shortcut list shows the six test replay timeline entries with their context, beside the recording timeline's, so the list, the tooltips and the keys agree (D035); fails_when=an entry is missing or names no context; why_new=Cycle 0051 AC11; seam=none; no_claim=the host's own keybindings
+    await regionTwoCase(
+      "the shortcut list shows the six test replay timeline entries with their context, beside the recording timeline's, so the",
+      async () => {
+        await publish(regionTwoAt(3))
+        await page.locator('#recording-transport [data-shortcut-help]').click()
+        // The list groups its entries under a heading per context.
+        const listedTestReplayKeys = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('.shortcut-list section'))
+            .filter(
+              (group) =>
+                group.querySelector('h3')?.textContent ===
+                'Focused test replay timeline',
+            )
+            .flatMap((group) =>
+              Array.from(group.querySelectorAll('.shortcut-row'), (row) =>
+                row.textContent.replace(/\s+/g, ' ').trim(),
+              ),
+            ),
+        )
+        await page.keyboard.press('Escape')
+        cases.push({
+          name: 'the Keyboard shortcuts list shows the six test replay timeline entries with their context',
+          actual: listedTestReplayKeys,
+          passed:
+            listedTestReplayKeys.length === 6 &&
+            [
+              'Previous event',
+              'Next event',
+              'Previous stop',
+              'Next stop',
+              'First event',
+              'Last event',
+            ].every((entry) =>
+              listedTestReplayKeys.some((text) => text.includes(entry)),
+            ),
+        })
+      },
+    )
+    // Value: protects=Replay from start and Home reach the first event by sequence when the first two events share one time, from any page of the event list, and End the history's last event; fails_when=either seeks by time (selecting the second event) or takes the page's own first or last entry; why_new=Cycle 0051 DS-C, the Eng review's findings (equal times, pages of 20); seam=none; no_claim=the host's projection (studyWorkspace tests)
+    await regionTwoCase(
+      'Replay from start and Home reach the first event by sequence when the first two events share one time, from any page of ',
+      async () => {
+        const sameTimeEntries = c51Entries.map((entry) =>
+          entry.sequence === 2 ? { ...entry, elapsedMs: 100 } : entry,
+        )
+        await publish(
+          regionTwoAt(3, {
+            nodeHistory: {
+              header: { studyId: 'revenue-study' },
+              status: 'complete',
+              entries: sameTimeEntries,
+            },
+          }),
+        )
+        await clearSent()
+        await page.locator('[data-playback="start"]').click()
+        await page.locator('#playhead').focus()
+        await page.keyboard.press('Home')
+        const firstEventRequests = await nodeRequests()
+        const secondPageEntries = Array.from({ length: 20 }, (_, index) => ({
+          type: 'output',
+          sequence: index + 21,
+          elapsedMs: (index + 21) * 10,
+          channel: 'stdout',
+          text: `row ${index + 21}\n`,
+        }))
+        await publish(
+          regionTwoAt(3, {
+            nodeHistoryEventCount: 41,
+            nodeHistoryPage: 1,
+            nodeHistoryPageCount: 3,
+            nodeHistory: {
+              header: { studyId: 'revenue-study' },
+              status: 'complete',
+              entries: secondPageEntries,
+            },
+            nodeHistoryPosition: { sequence: 30, eventIndex: 29 },
+            nodeHistoryPlayback: {
+              mode: 'paused',
+              sequence: 30,
+              positionMs: 300,
+              startMs: 10,
+              endMs: 410,
+              loading: false,
+              firstSequence: 1,
+              lastSequence: 41,
+            },
+          }),
+        )
+        await clearSent()
+        await page.locator('#playhead').focus()
+        await page.keyboard.press('Home')
+        await page.keyboard.press('End')
+        const pagedRequests = await nodeRequests()
+        cases.push({
+          name: 'Replay from start and Home reach the first event by sequence when two events share its time, and Home and End reach the whole history’s ends from the event list’s second page',
+          actual: { firstEventRequests, pagedRequests },
+          passed:
+            JSON.stringify(firstEventRequests) ===
+              JSON.stringify([
+                { type: 'node-history-event', sequence: 1 },
+                { type: 'node-history-event', sequence: 1 },
+              ]) &&
+            JSON.stringify(pagedRequests) ===
+              JSON.stringify([
+                { type: 'node-history-event', sequence: 1 },
+                { type: 'node-history-event', sequence: 41 },
+              ]),
+        })
+      },
+    )
+    // Value: protects=a history whose events all share one time keeps the slider enabled and focusable for its keys, and a drag sends no seek; fails_when=the zero time range disables the slider (today's rule) or a drag seeks; why_new=Cycle 0051 DS-C, the Eng review's finding; seam=none; no_claim=none beyond protects
+    await regionTwoCase(
+      'a history whose events all share one time keeps the slider enabled and focusable for its keys, and a drag sends no seek',
+      async () => {
+        const zeroRangeEntries = c51Entries.map((entry) => ({
+          ...entry,
+          elapsedMs: 100,
+        }))
+        await publish(
+          regionTwoAt(3, {
+            nodeHistory: {
+              header: { studyId: 'revenue-study' },
+              status: 'complete',
+              entries: zeroRangeEntries,
+            },
+            nodeHistoryPlayback: {
+              ...regionTwoAt(3).nodeHistoryPlayback,
+              positionMs: 100,
+              startMs: 100,
+              endMs: 100,
+            },
+          }),
+        )
+        await clearSent()
+        const zeroRangeSlider = await page.evaluate(() => ({
+          disabled: document.getElementById('playhead').disabled,
+        }))
+        await page.locator('#playhead').focus()
+        await page.keyboard.press('ArrowRight')
+        await page.locator('#playhead').evaluate((playhead) => {
+          playhead.dispatchEvent(new Event('input', { bubbles: true }))
+          playhead.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        const zeroRangeRequests = await nodeRequests()
+        const zeroRangeFocused = await focusName()
+        cases.push({
+          name: 'a test replay whose events share one time keeps its slider enabled for its keys, and a drag sends no seek',
+          actual: { zeroRangeSlider, zeroRangeRequests, zeroRangeFocused },
+          passed:
+            !zeroRangeSlider.disabled &&
+            zeroRangeFocused === 'playhead' &&
+            JSON.stringify(zeroRangeRequests) ===
+              JSON.stringify([
+                { type: 'node-history-step', direction: 'next', unit: 'event' },
+              ]),
+        })
+      },
+    )
+    // Value: protects=a key move speaks once: the slider's spoken value changes once with the host's answer and the status line, a live region, says nothing for a move; fails_when=the status line repeats the moment, or the spoken value changes twice; why_new=Cycle 0051 DS-C; seam=none; no_claim=a real screen reader
+    await regionTwoCase(
+      "a key move speaks once: the slider's spoken value changes once with the host's answer and the status line, a live region",
+      async () => {
+        await publish(regionTwoAt(3))
+        await page.locator('#playhead').focus()
+        await page.evaluate(() => {
+          window.spokenChanges = 0
+          window.statusChanges = 0
+          new MutationObserver(() => {
+            window.spokenChanges++
+          }).observe(document.getElementById('playhead'), {
+            attributes: true,
+            attributeFilter: ['aria-valuetext'],
+          })
+          new MutationObserver(() => {
+            window.statusChanges++
+          }).observe(document.getElementById('recording-status'), {
+            childList: true,
+            characterData: true,
+            subtree: true,
+          })
+        })
+        await page.keyboard.press('ArrowRight')
+        await publish(regionTwoAt(4))
+        const speaking = await page.evaluate(() => ({
+          spokenChanges: window.spokenChanges,
+          statusChanges: window.statusChanges,
+          status: document.getElementById('recording-status').textContent,
+        }))
+        cases.push({
+          name: 'a test replay key move changes the slider’s spoken value once and leaves the transport’s status line as it was',
+          actual: speaking,
+          passed:
+            speaking.spokenChanges === 1 &&
+            speaking.statusChanges === 0 &&
+            speaking.status === 'Test replay paused',
+        })
+      },
+    )
+    // Value: protects=a refused or failed move shows the host's sentence in the transport's status line (role=status), which is read with the summary hidden too, and the committed moment stays; fails_when=the sentence reaches only the error lines, or the moment changes; why_new=Cycle 0051 DS-G (AC14); seam=none; no_claim=the host's wording (studyWorkspace tests)
+    await regionTwoCase(
+      "a refused or failed move shows the host's sentence in the transport's status line (role=status), which is read with the ",
+      async () => {
+        await publish(
+          regionTwoAt(2, {
+            nodeHistoryRefusal:
+              'There is no previous stop in this test replay.',
+          }),
+        )
+        const refusalLine = await page.evaluate(() => ({
+          status: document.getElementById('recording-status').textContent,
+          role: document
+            .getElementById('recording-status')
+            .getAttribute('role'),
+          position: document.getElementById('node-history-position')
+            .textContent,
+        }))
+        cases.push({
+          name: 'a refused test replay move shows the host’s sentence in the transport’s status line and keeps the moment',
+          actual: refusalLine,
+          passed:
+            JSON.stringify(refusalLine) ===
+            JSON.stringify({
+              status:
+                'Test replay paused · There is no previous stop in this test replay.',
+              role: 'status',
+              position: 'Stop 1 of 2 · 0.30 s',
+            }),
+        })
+      },
+    )
+    // Value: protects=a test replay's transport hides the browser-only recovery: Reload saved recording, Recording error details, the pending and reason lines and the covered-application remedy; fails_when=a browser control or line shows for a test replay; why_new=Cycle 0051 DS-G (AC14); seam=none; no_claim=none beyond protects
+    await regionTwoCase(
+      "a test replay's transport hides the browser-only recovery: Reload saved recording, Recording error details, the pending ",
+      async () => {
+        await publish(
+          browserReplayAt({
+            recording: {
+              ...browserReplayAt().recording,
+              applicationCovered: true,
+              nativeValuesUninspected: true,
+            },
+          }),
+        )
+        await publish(regionTwoAt(2))
+        const browserRecovery = await page.evaluate(() => ({
+          transportShown: document
+            .getElementById('recording-transport')
+            .checkVisibility(),
+          status: document.getElementById('recording-status').textContent,
+          details: document
+            .getElementById('playback-options')
+            .checkVisibility(),
+          reload: document
+            .querySelector('[data-action="reload-recording"]')
+            .checkVisibility(),
+          pending: document.getElementById('playback-pending').textContent,
+          reason: document.getElementById('playback-reason').textContent,
+          remedy: document.getElementById('application-covered-remedy')
+            .textContent,
+          hint: document.getElementById('playback-hint').textContent,
+        }))
+        cases.push({
+          name: 'a test replay’s transport hides the browser replay’s recovery controls and lines, also after a browser replay showed them',
+          actual: browserRecovery,
+          passed:
+            JSON.stringify(browserRecovery) ===
+            JSON.stringify({
+              transportShown: true,
+              status: 'Test replay paused',
+              details: false,
+              reload: false,
+              pending: '',
+              reason: '',
+              remedy: '',
+              hint: '',
+            }),
+        })
+      },
+    )
+    // Value: protects=the step mark and the event buttons' text keep a contrast of at least 4.5:1 against the editor background in the four supported themes' variable sets, and the mark keeps its non-color cue; fails_when=a theme's link or button color falls below 4.5:1, or the cue is color alone; why_new=Cycle 0051 AC14; seam=the four themes' variable sets (fixtures); no_claim=installed themes (N51 (f) covers two per host)
+    await regionTwoCase(
+      "the step mark and the event buttons' text keep a contrast of at least 4.5:1 against the editor background in the four su",
+      async () => {
+        await publish(regionTwoAt(3))
+        await publish(regionTwoAt(4))
+        const themeContrast = await page.evaluate(() => {
+          const sets = {
+            dark: { editor: '#1f1f1f', link: '#4daafc', button: '#cccccc' },
+            light: { editor: '#ffffff', link: '#005fb8', button: '#3b3b3b' },
+            highContrastDark: {
+              editor: '#000000',
+              link: '#21a6ff',
+              button: '#ffffff',
+            },
+            highContrastLight: {
+              editor: '#ffffff',
+              link: '#0f4a85',
+              button: '#292929',
+            },
+          }
+          /** Gives the relative luminance of a CSS color the page computed. */
+          const luminance = (color) => {
+            const [red, green, blue] = color
+              .match(/\d+(\.\d+)?/g)
+              .slice(0, 3)
+              .map((value) => Number(value) / 255)
+              .map((value) =>
+                value <= 0.03928
+                  ? value / 12.92
+                  : ((value + 0.055) / 1.055) ** 2.4,
+              )
+            return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+          }
+          const ratio = (first, second) => {
+            const [lighter, darker] = [
+              luminance(first),
+              luminance(second),
+            ].sort((a, b) => b - a)
+            return (lighter + 0.05) / (darker + 0.05)
+          }
+          const root = document.documentElement
+          const results = {}
+          for (const [name, set] of Object.entries(sets)) {
+            root.style.setProperty('--vscode-editor-background', set.editor)
+            root.style.setProperty('--vscode-textLink-foreground', set.link)
+            root.style.setProperty(
+              '--vscode-button-secondaryForeground',
+              set.button,
+            )
+            const label = document.querySelector(
+              '#node-learning-sequence text.current-step',
+            )
+            // The page's background is the root's (`:root`), which the body shows through.
+            const background = getComputedStyle(root).backgroundColor
+            results[name] = {
+              mark:
+                Math.round(
+                  ratio(getComputedStyle(label).fill, background) * 10,
+                ) / 10,
+              eventButton:
+                Math.round(
+                  ratio(
+                    getComputedStyle(document.getElementById('previous-event'))
+                      .color,
+                    background,
+                  ) * 10,
+                ) / 10,
+              underline:
+                getComputedStyle(label).textDecorationLine.includes(
+                  'underline',
+                ),
+            }
+          }
+          for (const variable of [
+            '--vscode-editor-background',
+            '--vscode-textLink-foreground',
+            '--vscode-button-secondaryForeground',
+          ])
+            root.style.removeProperty(variable)
+          return results
+        })
+        cases.push({
+          name: 'the step mark and the event buttons keep a contrast of at least 4.5:1 in the four themes’ variable sets, and the mark keeps its underline',
+          actual: themeContrast,
+          passed: Object.values(themeContrast).every(
+            (reading) =>
+              reading.mark >= 4.5 &&
+              reading.eventButton >= 4.5 &&
+              reading.underline,
+          ),
+        })
+      },
+    )
+    // Value: protects=5A's reopen for a paused test replay and a paused browser replay keeps the control the summary held and its reading position (DS-E); fails_when=the reopen drops the focus on the body, moves it, or scrolls the summary; why_new=Cycle 0051 AC5; seam=leavePane and returnToPane as the host's hide and Show Learning Summary; no_claim=the hosts' own hide and focus (N51 (c))
+    await regionTwoCase(
+      "5A's reopen for a paused test replay and a paused browser replay keeps the control the summary held and its reading posi",
+      async () => {
+        for (const [family, message, control] of [
+          [
+            'test',
+            () => regionTwoAt(2),
+            '#node-learning-steps-details > summary',
+          ],
+          ['browser', () => browserReplayAt(), '#playback-options > summary'],
+        ]) {
+          // Arrange
+          await freshPane('context', { width: 420, height: 500 })
+          await publish(message())
+          await page.locator(control).focus()
+          const before = await page.evaluate(() => ({
+            scroll: Math.round(scrollY),
+          }))
+          const focusBefore = await focusName()
+          // Act
+          await leavePane()
+          await returnToPane()
+          const after = await page.evaluate(() => ({
+            scroll: Math.round(scrollY),
+          }))
+          const focusAfter = await focusName()
+          // Assert
+          cases.push({
+            name: `5A’s reopen of a paused ${family} replay’s summary gives the keyboard back to the control it held and keeps the reading position`,
+            actual: { before, after, focusBefore, focusAfter },
+            passed:
+              focusAfter === focusBefore &&
+              focusAfter !== 'body' &&
+              after.scroll === before.scroll,
+          })
+        }
+      },
+    )
+    // Value: protects=the summary's focus fallback on reopen (DS-E): with no control held before (the first open) the title heading takes the focus, and a held control gone at the reopen (Inspect hidden after playback moved to a stop) gives it to the moment block's step heading, both without scrolling; fails_when=the focus rests on the body, or the reopen scrolls; why_new=Cycle 0051 AC5: the removed transport was the last resort; seam=leavePane and returnToPane; no_claim=the hosts' focus timing (N51 (c))
+    await regionTwoCase(
+      "the summary's focus fallback on reopen (DS-E): with no control held before (the first open) the title heading takes the ",
+      async () => {
+        await freshPane('context', { width: 420, height: 500 })
+        await publish(regionTwoAt(2))
+        await returnToPane()
+        const firstOpenFocus = await focusName()
+        await freshPane('context', { width: 420, height: 500 })
+        await publish(
+          regionTwoAt(2, {
+            nodeHistoryPosition: {
+              ...regionTwoAt(2).nodeHistoryPosition,
+              nativeValuesUninspected: true,
+            },
+          }),
+        )
+        await page.locator('#node-history-inspect').focus()
+        const heldControl = await focusName()
+        await leavePane()
+        await publish(regionTwoAt(4))
+        const scrollAtReopen = await page.evaluate(() => Math.round(scrollY))
+        await returnToPane()
+        const goneControlFocus = await focusName()
+        const scrollAfterReopen = await page.evaluate(() => Math.round(scrollY))
+        cases.push({
+          name: 'the reopened summary focuses its title heading with no control held before, and the step heading when the held Inspect is gone',
+          actual: {
+            firstOpenFocus,
+            heldControl,
+            goneControlFocus,
+            scrollAtReopen,
+            scrollAfterReopen,
+          },
+          passed:
+            firstOpenFocus === 'title' &&
+            heldControl === 'node-history-inspect' &&
+            goneControlFocus === 'node-history-step-heading' &&
+            scrollAfterReopen === scrollAtReopen,
+        })
+      },
+    )
+    // Value: protects=the bottom panel during a test replay shows the shared transport alone (DS-D): no Saved studies, no Observed moments, no copy of the test replay section, with its event steps and 5A's Learning summary button; fails_when=the panel draws a second working copy of the Study pane or misses the transport; why_new=Cycle 0051 task 7 (AC4), the entry audit's finding; seam=none; no_claim=the panel's title (host tests)
+    await regionTwoCase(
+      'the bottom panel during a test replay shows the shared transport alone (DS-D): no Saved studies, no Observed moments, no',
+      async () => {
+        await freshPane('moments', { width: 1200, height: 260 })
+        await publish(regionTwoAt(2, { playbackPanelVisible: true }))
+        const bottomPanel = await page.evaluate(() => ({
+          transport: document
+            .getElementById('recording-transport')
+            .checkVisibility(),
+          eventSteps: document
+            .getElementById('playback-events')
+            .checkVisibility(),
+          learningSummaryButton: document
+            .getElementById('show-learning-summary')
+            .checkVisibility(),
+          savedStudies: document
+            .getElementById('saved-studies')
+            .checkVisibility(),
+          observedMoments: document
+            .getElementById('observed-moments')
+            .checkVisibility(),
+          sectionHeight: Math.round(
+            document.getElementById('node-history').getBoundingClientRect()
+              .height,
+          ),
+          header: document.querySelector('.learning-header').checkVisibility(),
+        }))
+        cases.push({
+          name: 'during a test replay the bottom panel shows only the shared transport, with its event steps and the Learning summary button',
+          actual: bottomPanel,
+          passed:
+            JSON.stringify(bottomPanel) ===
+            JSON.stringify({
+              transport: true,
+              eventSteps: true,
+              learningSummaryButton: true,
+              savedStudies: false,
+              observedMoments: false,
+              sectionHeight: 0,
+              header: false,
+            }),
+        })
+      },
+    )
+    // Value: protects=5A's Learning summary button in the bottom panel: labelled Learning summary with the accessible name Show learning summary, outside the status line's live region, and its press asks the host to show the summary; fails_when=the button is missing, sits in the live region, or sends another action; why_new=Cycle 0051 DS-E (AC5); seam=none; no_claim=the host's Show Learning Summary (host tests)
+    await regionTwoCase(
+      "5A's Learning summary button in the bottom panel: labelled Learning summary with the accessible name Show learning summa",
+      async () => {
+        await clearSent()
+        await page.locator('#show-learning-summary').click()
+        const learningSummaryButton = await page.evaluate(() => {
+          const button = document.getElementById('show-learning-summary')
+          return {
+            label: button.textContent,
+            name: button.getAttribute('aria-label'),
+            tooltip: button.title,
+            inLiveRegion: Boolean(button.closest('[role=status],[aria-live]')),
+            sent: window.sent
+              .filter((message) => message.type === 'action')
+              .map((message) => message.action),
+          }
+        })
+        cases.push({
+          name: 'the bottom panel’s Learning summary button is named Show learning summary, stands outside the status line’s live region and asks the host to show the summary',
+          actual: learningSummaryButton,
+          passed:
+            JSON.stringify(learningSummaryButton) ===
+            JSON.stringify({
+              label: 'Learning summary',
+              name: 'Show learning summary',
+              tooltip: 'Show learning summary',
+              inLiveRegion: false,
+              sent: ['focus-context'],
+            }),
+        })
+      },
+    )
+    // Value: protects=a browser replay's transport in the bottom panel is today's controls plus the Learning summary button, in a closed list; fails_when=any other browser control changes; why_new=Cycle 0051 AC3; seam=none; no_claim=native layout
+    await regionTwoCase(
+      "a browser replay's transport in the bottom panel is today's controls plus the Learning summary button, in a closed list",
+      async () => {
+        await publish(browserReplayAt({ playbackPanelVisible: true }))
+        const browserPanelControls = await transportControls()
+        cases.push({
+          name: 'a browser replay’s transport in the bottom panel is its controls plus the Learning summary button',
+          actual: browserPanelControls,
+          passed:
+            JSON.stringify(browserPanelControls) ===
+            JSON.stringify([
+              'Keyboard shortcuts',
+              'Replay from start',
+              'previous-moment',
+              'playback-toggle',
+              'next-moment',
+              'playhead',
+              'Playback details',
+              'show-learning-summary',
+            ]),
+        })
+      },
+    )
+    await page.setViewportSize({ width: 420, height: 720 })
+  }
 }
 
 /**

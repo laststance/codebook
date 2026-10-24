@@ -19,6 +19,8 @@ import { NODE_TEST_REPLAY_TEXT } from '../utils/describeNodeTestReplay'
 import type { ShortcutHelpEntry } from '../utils/installShortcutHelp'
 const STUDY_FOCUS_MARGIN_PX = 4
 const STUDY_COMPACT_READER_MAX_WIDTH_PX = 759
+/** The height a test replay's sequence diagram takes in its Learning summary before its own area scrolls (DS-B), so the moment block starts in the first viewport at the measured summary sizes (VS Code 298 × 885 px, Cursor 440 × 965 px); the whole drawing stays reachable by that area's scroll. */
+const TEST_REPLAY_DIAGRAM_MAX_HEIGHT_PX = 150
 const STUDY_SEQUENCE_LAYOUT = {
   minWidthPx: 320,
   columnWidthPx: 160,
@@ -40,6 +42,26 @@ const STUDY_SEQUENCE_LAYOUT = {
   arrowHeightPx: 5,
   numberGapPx: 8,
 }
+/** The shared slider while it shows a browser recording: the page marks it `data-replay-family="test"` during a test replay (DS-C), so each family's shortcut entries name only its own slider. */
+const BROWSER_PLAYHEAD_SELECTOR = '#playhead:not([data-replay-family="test"])'
+/** The shared slider while it shows a test replay. */
+const TEST_PLAYHEAD_SELECTOR = '#playhead[data-replay-family="test"]'
+/** The test replay timeline's keys (C2 and DS-C): arrows step by event, Page keys by stop (Page Up forward, as for a recording), Home and End select the first and last event. */
+const TEST_REPLAY_TIMELINE_SHORTCUTS: ShortcutHelpEntry[] = (
+  [
+    ['Previous event', '← / ↓'],
+    ['Next event', '→ / ↑'],
+    ['Previous stop', 'Page Down'],
+    ['Next stop', 'Page Up'],
+    ['First event', 'Home'],
+    ['Last event', 'End'],
+  ] as const
+).map(([action, keys]) => ({
+  action,
+  keys,
+  context: 'Focused test replay timeline',
+  selector: TEST_PLAYHEAD_SELECTOR,
+}))
 export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
   {
     action: 'Keyboard shortcuts',
@@ -56,38 +78,39 @@ export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
     action: 'Seek backward one second',
     keys: '← / ↓',
     context: 'Focused recording timeline',
-    selector: '#playhead',
+    selector: BROWSER_PLAYHEAD_SELECTOR,
   },
   {
     action: 'Seek forward one second',
     keys: '→ / ↑',
     context: 'Focused recording timeline',
-    selector: '#playhead',
+    selector: BROWSER_PLAYHEAD_SELECTOR,
   },
   {
     action: `Seek backward ${PLAYBACK_PAGE_STEP_MS / MILLISECONDS_PER_SECOND} seconds`,
     keys: 'Page Down',
     context: 'Focused recording timeline',
-    selector: '#playhead',
+    selector: BROWSER_PLAYHEAD_SELECTOR,
   },
   {
     action: `Seek forward ${PLAYBACK_PAGE_STEP_MS / MILLISECONDS_PER_SECOND} seconds`,
     keys: 'Page Up',
     context: 'Focused recording timeline',
-    selector: '#playhead',
+    selector: BROWSER_PLAYHEAD_SELECTOR,
   },
   {
     action: 'Seek recording start',
     keys: 'Home',
     context: 'Focused recording timeline',
-    selector: '#playhead',
+    selector: BROWSER_PLAYHEAD_SELECTOR,
   },
   {
     action: 'Seek recording end',
     keys: 'End',
     context: 'Focused recording timeline',
-    selector: '#playhead',
+    selector: BROWSER_PLAYHEAD_SELECTOR,
   },
+  ...TEST_REPLAY_TIMELINE_SHORTCUTS,
   {
     action: 'Previous / next content tab',
     keys: '← / →',
@@ -170,6 +193,16 @@ export const STUDY_UI_OPTIONS = {
   },
   // The name that makes the replay transport's section a landmark. The pane gives it only while it shows the transport: the section stays rendered and empty otherwise, and an unnamed section is no landmark.
   replayTransportLabel: 'Recorded playback',
+  // The 5A button of the transport's status row (Cycle 0051, DS-E): its visible label is the name PRODUCT_GOAL.md gives it, and its accessible name and tooltip say what pressing it does, containing the label (WCAG 2.5.3).
+  learningSummaryButton: 'Learning summary',
+  showLearningSummary: 'Show learning summary',
+  // The shared slider's tooltip while it shows a test replay, in the format of the recording timeline's tooltip, so the tooltip, the shortcut list and the keys agree (D035).
+  testReplayTimelineTitle: TEST_REPLAY_TIMELINE_SHORTCUTS.map(
+    (entry) => `${entry.action} — ${entry.keys} (${entry.context})`,
+  ).join('; '),
+  // The shared slider's keyboard shortcuts while it shows a test replay, for its `aria-keyshortcuts`.
+  testReplayTimelineKeys:
+    'ArrowLeft ArrowRight ArrowUp ArrowDown PageUp PageDown Home End',
   playbackFailureRecovery:
     'Reload the saved recording to try again. If it still fails, ask your agent for a new recording.',
   nativeValuesHint: `Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “${REPLAY_DEBUG_SESSION_NAME}” first.`,
@@ -188,18 +221,12 @@ export const STUDY_UI_OPTIONS = {
     '#previous-moment',
     '#next-moment',
     '#playhead',
+    // A test replay's event steps, shown for that family only.
+    '#previous-event',
+    '#next-event',
   ],
-  nodeTransportFocus: [
-    '#node-history-stop-next',
-    '#node-history-stop-previous',
-    '#node-history-playback-toggle',
-    '#node-history-playhead',
-    '#node-history-moment-previous',
-    '#node-history-moment-next',
-    // A history with a single event has no usable transport control: its selected event's own control takes the focus, which sends nothing when pressed, or, while the event list is collapsed, the list's summary.
-    '#node-history-events [aria-pressed="true"]',
-    '#node-history-events-summary',
-  ],
+  // Where a lost focus goes in a test replay's Learning summary when no disclosure around the control that left is shown (DS-E): the moment block's step heading, else the summary's title heading, both focusable by script only.
+  summaryFocusFallback: ['#node-history-step-heading', '#title'],
 }
 export const STUDY_STYLES = `
 .shortcut-dialog{width:min(640px,90vw);max-height:85vh;overflow:auto;background:var(--vscode-editor-background,#181818);color:var(--vscode-foreground,#ddd);border:1px solid var(--vscode-panel-border,#777);border-radius:8px;padding:20px}.shortcut-dialog::backdrop{background:rgb(0 0 0 / .5)}.shortcut-dialog input{display:block;width:100%;padding:10px;margin:16px 0;background:var(--vscode-input-background,#333);color:var(--vscode-input-foreground,#fff);border:1px solid var(--vscode-input-border,#777)}.shortcut-row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--vscode-panel-border,#444)}.shortcut-list section{padding:12px 0;border:0}.shortcut-list h3{font-size:13px;color:var(--vscode-descriptionForeground,#aaa);margin:0 0 8px}kbd{font:inherit;white-space:nowrap;border:1px solid var(--vscode-panel-border,#777);border-radius:4px;padding:2px 6px}.shortcut-tooltip{position:fixed;z-index:10;left:16px;right:16px;bottom:12px;max-height:40vh;overflow:auto;padding:8px 12px;background:var(--vscode-editorHoverWidget-background,#333);color:var(--vscode-editorHoverWidget-foreground,#fff);border:1px solid var(--vscode-editorHoverWidget-border,#777);pointer-events:none}
@@ -210,7 +237,7 @@ export const STUDY_STYLES = `
 /* A status region stays rendered while it is empty and takes no room, so its first text changes a region assistive technology already knows; only lines that are no status region leave the page while empty. */
 .error:empty:not([role=status]){display:none}[role=status]:empty{margin:0;padding:0;border:0}#observation{border:0;padding:0;margin:8px 0 12px;color:var(--vscode-descriptionForeground,#aaa)}@media(min-width:900px){.live-strip{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 12px}.live-strip>.row{justify-content:flex-end}.live-strip>#deadline{grid-column:1/-1}}
 :root{color-scheme:light dark;font-family:var(--vscode-font-family,system-ui);color:var(--vscode-foreground,#d4d4d4);background:var(--vscode-editor-background,#181818);font-size:16px;line-height:1.5;scroll-padding-top:calc(var(--codebook-sticky-height,0px) + ${STUDY_FOCUS_MARGIN_PX}px);scroll-padding-bottom:calc(var(--playback-height,0px) + ${STUDY_FOCUS_MARGIN_PX}px)}
-#save-state{display:block;margin-top:4px}#flow{display:flex;flex-wrap:wrap;gap:8px 16px}.live-strip.flowing,#node-history-transport.flowing{position:static}[role=tablist]{flex-wrap:wrap}[role=tab]{overflow-wrap:normal}
+#save-state{display:block;margin-top:4px}#flow{display:flex;flex-wrap:wrap;gap:8px 16px}.live-strip.flowing{position:static}[role=tablist]{flex-wrap:wrap}[role=tab]{overflow-wrap:normal}
 /* The host styles body directly; inherit the reading scale explicitly. */
 /* Titles keep twelve characters per line: body wraps anywhere, and a pane squeezed during arrangement would show them one character per line. */
 *{box-sizing:border-box}body{margin:0;padding:16px;overflow-wrap:anywhere;font-size:inherit;line-height:inherit}h1{font-size:20px;line-height:1.25;margin:16px 0 8px;min-width:12ch}h2{font-size:16px;margin:0 0 12px}p{margin:8px 0 16px}button,input,select{font:inherit}button{cursor:pointer;padding:6px 10px;border:1px solid var(--vscode-button-border,var(--vscode-contrastBorder,transparent));border-radius:4px;background:var(--vscode-button-secondaryBackground,#333);color:var(--vscode-button-secondaryForeground,#eee)}button.primary{background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff)}button:hover:not(:disabled):not([aria-disabled=true]){filter:brightness(1.12)}button:disabled,button[aria-disabled=true]{opacity:.6;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.muted{color:var(--vscode-descriptionForeground,#aaa)}.status{border:1px solid var(--vscode-contrastBorder,var(--vscode-panel-border,#555));padding:8px 12px;margin:12px 0}.error{color:var(--vscode-editorError-foreground,var(--vscode-foreground,#d4d4d4));white-space:pre-wrap}section{padding:20px 0;border-bottom:1px solid var(--vscode-panel-border,#444)}[role=tablist]{display:flex;gap:8px;border-bottom:1px solid var(--vscode-panel-border,#444);padding-bottom:12px}[role=tab][aria-selected=true]{border-bottom:3px solid var(--vscode-focusBorder,#007fd4)}.link{background:none;border:0;color:var(--vscode-textLink-foreground,#4daafc);text-decoration:underline;padding:4px 0}.link.visited{color:var(--vscode-textLink-activeForeground,#9b8cdd)}label{display:flex;align-items:flex-start;gap:12px;margin:12px 0}input[type=checkbox]{width:20px;height:20px;accent-color:var(--vscode-focusBorder,#007fd4)}.interpretation{white-space:pre-wrap}img{display:block;max-width:100%;height:auto;border:1px solid var(--vscode-panel-border,#444)}.moments{display:flex;gap:8px;flex-wrap:wrap}.moments button[aria-current=true]{outline:2px solid var(--vscode-focusBorder,#007fd4)}.live-strip{position:sticky;top:0;z-index:1;padding:12px;background:var(--vscode-editor-background,#181818);border-bottom:1px solid var(--vscode-panel-border,#444)}body.moments-only{padding:8px 16px}body.moments-only .live-strip{position:static;padding:0 0 8px}body.moments-only section{padding:8px 0}select{max-width:100%;padding:6px;background:var(--vscode-dropdown-background,#333);color:var(--vscode-dropdown-foreground,#eee);border:1px solid var(--vscode-dropdown-border,#666)}[hidden]{display:none!important}@media(max-width:360px){body{padding:12px}.row{gap:8px}}body.vscode-high-contrast button,body.vscode-high-contrast-light button{border-color:var(--vscode-contrastBorder)}
@@ -231,16 +258,22 @@ body.moments-only #recording-transport{display:flex;flex-wrap:wrap;align-items:c
 .timeline-track{position:relative;flex:1;min-width:100px;display:flex;flex-direction:column;align-items:stretch}.timeline-track #playhead{width:100%;flex:none}.timeline-track #history-coverage,.timeline-track .history-coverage{position:relative;height:6px;margin:0 8px;overflow:hidden;background:var(--vscode-panel-border,#555)}.timeline-track .history-gap{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,var(--vscode-editorWarning-foreground,#d7ba7d) 0 3px,transparent 3px 6px)}.timeline-track .history-stop{position:absolute;top:0;bottom:0;width:3px;background:var(--vscode-focusBorder,#007fd4)}#history-coverage-label,.history-coverage-label{font-size:11px;line-height:1.2}
 .playback-status-row{display:flex;justify-content:space-between;gap:12px;align-items:start;font-size:12px}.playback-status-row summary{padding:13px 0}.playback-status-row>#recording-status{margin-top:13px}body.moments-only .playback-status-row{flex-wrap:wrap;row-gap:0}body.moments-only #application-covered-remedy{order:1;flex-basis:100%}.playback-status-row p{margin:8px 0}#playback-pending:empty,#playback-reason:empty{display:none}#playback-hint:empty,#node-history-hint:empty{margin:0}#playback-pending,#playback-reason,#playback-hint,#node-history-hint{margin:6px 0 0;font-size:12px}
 /* The live strip and the replay transport stay in the page while this pane does not show them, so the status regions inside exist before their first text. Each shows nothing and takes no room exactly while its own status is empty: #runtime for the strip, #recording-status for the transport. */
-.live-strip:has(>#runtime:empty),#recording-transport:has(#recording-status:empty){padding:0;border:0}.live-strip:has(>#runtime:empty)>:not(#runtime),#recording-transport:has(#recording-status:empty)>:not(.playback-status-row,[role=status]),#recording-transport:has(#recording-status:empty) #playback-options{display:none}.playback-status-row>#recording-status:empty{margin:0}
+.live-strip:has(>#runtime:empty),#recording-transport:has(#recording-status:empty){padding:0;border:0}.live-strip:has(>#runtime:empty)>:not(#runtime),#recording-transport:has(#recording-status:empty)>:not(.playback-status-row,[role=status]),#recording-transport:has(#recording-status:empty) #playback-options,#recording-transport:has(#recording-status:empty) #show-learning-summary{display:none}.playback-status-row>#recording-status:empty{margin:0}
 
 #saved-studies select{width:100%}#delete-study-row,#study-unopenable,#study-newer,#study-repairable,#delete-study-reason,#delete-study-status,#study-files{margin:8px 0 0}#delete-study-reason:empty{display:none}#delete-study-status:empty{margin:0}#study-files-list{margin:0 0 8px;padding-left:20px}#study-files-note{margin:0 0 8px}#copy-study-files-status{margin:8px 0 0}#copy-study-files-status:empty{margin:0}
 #learning-summary,.sequence-steps p{white-space:pre-wrap}.sequence-diagram{overflow:auto;max-height:420px;border:1px solid var(--vscode-panel-border,#444);padding:8px}.sequence-diagram svg{display:block;max-width:none;font-size:12px}.sequence-diagram text{fill:var(--vscode-foreground,#ddd)}.sequence-lifeline{stroke:var(--vscode-descriptionForeground,#aaa);stroke-dasharray:4 4}.sequence-arrow{fill:none;stroke:var(--vscode-textLink-foreground,#4daafc);stroke-width:2}.sequence-arrow.source-derived{stroke-dasharray:6 4}.sequence-arrow.unknown{stroke-dasharray:2 5;stroke:var(--vscode-descriptionForeground,#aaa)}.sequence-steps{padding-left:24px}.sequence-steps li{padding:10px 0}.sequence-steps p{margin:6px 0}.sequence-steps [aria-current=true]{font-weight:bold}
 /* Each event card's text wraps inside the reader, and scrolls there if a line still cannot, instead of widening the page (Cycle 0044, 0031-W1 and 0038-W). */
 .node-history-event pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;overflow:auto}
 /* A test replay's transport stays in view while its summary and steps scroll under it (DS16); Previous stop and Next stop lead it (DS12). */
-#node-history-transport{position:sticky;top:0;z-index:2;background:var(--vscode-editor-background,#181818);padding:4px 0;border-bottom:1px solid var(--vscode-panel-border,#444)}#node-history-transport .row{margin:4px 0 0}#node-history-moment p{margin:4px 0}#node-history-explanation:empty,#node-history-not-recorded:empty,#node-history-unverified:empty,#node-history-capture-reason:empty{display:none}.same-moment{color:var(--vscode-descriptionForeground,#aaa);font-size:12px}
+#node-history-moment p{margin:4px 0}#node-history-explanation:empty,#node-history-not-recorded:empty,#node-history-unverified:empty,#node-history-capture-reason:empty{display:none}.same-moment{color:var(--vscode-descriptionForeground,#aaa);font-size:12px}
 #node-history-moment>p:empty{margin:0;padding:0;border:0}
 #node-learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#node-learning-title:focus{display:block;overflow:visible}#node-learning-title:focus-visible,#test-output-test:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
+/* A test replay's Learning summary (Cycle 0051, DS-B, DS-E): long texts clamped to three lines with Show more, a capped diagram, the moment's step heading, the drawing's step mark (not color alone) and the summary's focusable headings. */
+.clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}.clamped-text>p{margin:4px 0}.clamped-text>.show-more{min-height:24px;padding:0;margin:0 0 8px}#node-learning-sequence .sequence-diagram{max-height:${TEST_REPLAY_DIAGRAM_MAX_HEIGHT_PX}px}.sequence-diagram text.current-step{fill:var(--vscode-textLink-foreground,#4daafc);font-weight:600;text-decoration:underline}.sequence-arrow.current-step{stroke-width:3}#node-history-step-heading{font-size:14px;margin:8px 0 4px}#node-history-step-heading:focus-visible,#title:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}body[data-replay=true] #node-history-heading{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+/* A test replay's summary leads with its own content (DS-B): the learning title has no section padding of its own, and the article's pane controls follow the summary instead of standing above it. */
+#node-history-learning{padding:0;border:0}body[data-replay-family=test] #node-history{padding-top:0}#node-learning-title{margin-top:0}body[data-replay-family=test] .learning-header{display:flex;flex-wrap:wrap;align-items:start;gap:0 8px}body[data-replay-family=test] #reader-kind{flex-basis:100%}body[data-replay-family=test] .learning-header h1{flex:1}body[data-replay-family=test] .learning-header [data-shortcut-help]{flex:none}body[data-replay-family=test] #study-content{display:flex;flex-direction:column}body[data-replay-family=test] #study-content>div:has(>#content-tabs){order:1}
+/* The shared transport's event group wraps as one: it takes its own line before the slider shrinks below its minimum width (DS-C); the 5A button ends the status row, apart from the move controls. */
+.playback-events{display:inline-flex;gap:6px;flex:none}.playback-status-row #show-learning-summary{flex:none;margin-left:auto;min-height:32px;padding:4px 8px}
 /* A test replay's Application pane: the header and footer stay pinned and the output region is the only scroller (DS4); a standard-error line starts with a mark in the terminal's red, and the mark, never the color alone, says so. */
 body.test-output{height:100vh;padding:0;overflow:hidden}body.test-output main{display:flex;flex-direction:column;height:100%;min-height:0;padding:12px 16px}#test-output-test{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#test-output-test:focus{display:block;overflow:visible}#test-output{flex:1;min-height:0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0;padding:8px;border:1px solid var(--vscode-panel-border,#444)}#test-output:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4)}.stderr-mark{color:var(--vscode-terminal-ansiRed,#f14c4c)}#test-output-jump{align-self:flex-start}body.test-output p{margin:4px 0}
 /* A Learning summary in a narrow side bar keeps a long title to two lines and its sequence in view; the full title stays in its tooltip, and a title the clamp cuts is a tab stop that is shown whole while it has the keyboard focus. A wider summary shows the title whole. */
