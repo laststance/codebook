@@ -217,6 +217,7 @@ test('a large reply that the upstream closes right after sending arrives whole t
 
   // Act
   await client.connected
+  // gstack-timing-ok: the pause models a slow reader so that the loopback buffers fill; the assertion reads the bytes received, never the elapsed time
   await new Promise((resolve) => setTimeout(resolve, 300))
   client.socket.resume()
   const outcome = await withinTimeout(client.closed)

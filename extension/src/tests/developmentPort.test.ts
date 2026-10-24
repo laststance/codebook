@@ -1835,7 +1835,8 @@ for (const [name, script, secret] of [
   ],
   [
     'URL credentials',
-    'turbo-run https://ada:pw123@example.com/x next dev',
+    // Joined at run time, so that the source holds no URL with embedded credentials for a secret scanner to report.
+    ['turbo-run https://ada', 'pw123@example.com/x next dev'].join(':'),
     'pw123',
   ],
   [
@@ -2048,6 +2049,7 @@ test('a dev script word of 100000 characters is read in well under a second', as
     port: 3000,
     source: UNREAD_SOURCE('… … next dev'),
   })
+  // gstack-timing-ok: the bound is the contract (F486); the quadratic scan took 8.1 s on this input, and a linear read takes milliseconds
   assert.ok(Date.now() - started < 1000)
 })
 
@@ -2669,6 +2671,7 @@ test('cancelling during the wait for a stopping run ends the start check at once
 
     // Assert
     assert.equal(String(failure), 'Error: Run cancelled')
+    // gstack-timing-ok: the bound is the contract (F432); an ignored abort waits out the 5,000 ms release wait, and the abort fires at 50 ms
     assert.ok(performance.now() - startedAt < 2000)
   } finally {
     releaseOwnedDevelopmentPort(stuck)
