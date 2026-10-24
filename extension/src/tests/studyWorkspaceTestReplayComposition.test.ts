@@ -535,12 +535,14 @@ test('Return to Live from a test replay sends the Learning summary no Study mess
   const harness = await workspaceHarness()
   try {
     await openByOpenReplay(harness)
-    const summaryFamilies = recordStudyFamilies(harness.summary)
+    const summaryFamilies = recordStudyFamilies(harness.summary),
+      bottomPanelFamilies = recordStudyFamilies(harness.playbackPanel)
 
     // Act
     await harness.reader.action('return-current')
 
-    // Assert
+    // Assert: the bottom panel, which every publish reaches, observed the return.
+    assert.equal(bottomPanelFamilies.length > 0, true)
     assert.deepEqual(summaryFamilies, [])
   } finally {
     await harness.close()
@@ -560,7 +562,8 @@ test('Return to Live from a browser replay never shows the test replay transport
     // Act
     await harness.reader.action('return-current')
 
-    // Assert
+    // Assert: the bottom panel, which every publish reaches, observed the return.
+    assert.equal(bottomPanelFamilies.length > 0, true)
     assert.deepEqual(
       [...summaryFamilies, ...bottomPanelFamilies].filter(
         (family) => family === 'test',
@@ -1504,6 +1507,7 @@ test('a first Open replay that fails after the summary got its document leaves t
 test('another open during a same-study Reload keeps the Reload’s Learning summary', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)
+  let release = (): void => {}
   try {
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
@@ -1511,7 +1515,6 @@ test('another open during a same-study Reload keeps the Reload’s Learning summ
       replaceUnavailableReplayDebugger: (signal?: AbortSignal) => Promise<void>
     }
     const replace = reader.replaceUnavailableReplayDebugger.bind(harness.reader)
-    let release = (): void => {}
     const held = new Promise<void>((resolve) => {
       release = resolve
     })
@@ -1544,6 +1547,7 @@ test('another open during a same-study Reload keeps the Reload’s Learning summ
       false,
     )
   } finally {
+    release()
     await harness.close()
   }
 })

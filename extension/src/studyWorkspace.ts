@@ -840,8 +840,8 @@ export class StudyWorkspace {
   private nodeSourceSlotShownRequest = 0
   /** How many times the recorded-source slot was retired ({@link retireNodeSourceSlot}); a show that began before a retirement is closed when it completes ({@link settleLateSlotShow}, F364). */
   private nodeSourceSlotRetirements = 0
-  /** Whether a retired test replay's recorded-source tabs were left open because the editor area was hidden when a saved study was chosen over it: a close of the tab a group shows brings the area back, so they close once the area is shown again or the wait for it ends ({@link closeSlotTabsAwaitingArea}, Cycle 0052 task 15). */
-  private nodeSourceSlotTabsAwaitingArea = false
+  /** The retired test replay's recorded-source tabs, held as the editor's tab objects, that were left open because the editor area was hidden when a saved study was chosen over it: a close of the tab a group shows brings the area back, so they close once the area is shown again or the wait for it ends ({@link closeSlotTabsAwaitingArea}, Cycle 0052 task 15). A slot tab of a replay opened later is never among them. */
+  private nodeSourceSlotTabsAwaitingArea?: ReadonlySet<vscode.Tab>
   private playback?: PlaybackController
   private replayDebugger?: ReplayDebugger
   /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
@@ -1478,6 +1478,8 @@ export class StudyWorkspace {
         'STALE_PRESENTATION',
         'The reader content changed. Read current presentation state before returning to live execution.',
       )
+    // A Return supersedes every test replay entry still waiting for its turn, also one that finds the reader in Live already (Cycle 0052 task 12).
+    this.nodeHistoryEntryRequest++
     // A return can change the selection while native source rendering fails; report that partial state honestly.
     // A failed native source open leaves the selection current, so explicit retry must render it again.
     // A selected Node journal masks the live application even while the selection still follows the run.
@@ -1488,11 +1490,8 @@ export class StudyWorkspace {
       this.selection.tab !== 'live' ||
       !this.liveComposition ||
       !this.sourceReady()
-    ) {
-      // A Return supersedes every test replay entry still waiting for its turn (Cycle 0052 task 12).
-      this.nodeHistoryEntryRequest++
+    )
       await this.returnCurrentSelection(requester)
-    }
     const state = this.presentationState()
     // A closed Study only remembers the current run, and a Close while the Return ran ended the named reader: neither displays a source (row 697).
     const closedReaderAnswer = this.closedReaderReturnAnswer(lifetime, state)
@@ -9489,7 +9488,7 @@ export class StudyWorkspace {
     this.repositoryRecordingOpen = undefined
     this.recordingReloadStudyId = undefined
     // The reader's close closes its owned tabs, the slot's among them.
-    this.nodeSourceSlotTabsAwaitingArea = false
+    this.nodeSourceSlotTabsAwaitingArea = undefined
     // A test replay entry still waiting for its turn belongs to the closed reader and never opens it again (Cycle 0052 task 12).
     this.nodeHistoryEntryRequest++
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
@@ -12839,7 +12838,17 @@ export class StudyWorkspace {
     this.clearNodeSourceSlotDecorations()
     try {
       // A saved study chosen with the editor area hidden keeps the slot's tabs, which read the placeholder below, until the area is back: closing the tab a group shows would bring the area back (Cycle 0052 task 15).
-      if (keepTabsForHiddenArea) this.nodeSourceSlotTabsAwaitingArea = true
+      if (keepTabsForHiddenArea)
+        this.nodeSourceSlotTabsAwaitingArea = new Set(
+          vscode.window.tabGroups.all
+            .flatMap((group) => group.tabs)
+            .filter(
+              (tab) =>
+                tab.input instanceof vscode.TabInputText &&
+                isNodeSourceSlotPath(tab.input.uri.path) &&
+                this.ownsCapturedSourceTab(tab),
+            ),
+        )
       // The retired replay's recorded-source slot goes with it, with any slot tab a rename still opening or one that failed left.
       else await this.closeNodeSourceSlotTabs()
     } catch (error) {
@@ -24619,11 +24628,14 @@ export class StudyWorkspace {
    * @example await this.closeSlotTabsAwaitingArea()
    */
   private async closeSlotTabsAwaitingArea(): Promise<void> {
-    if (!this.nodeSourceSlotTabsAwaitingArea) return
-    this.nodeSourceSlotTabsAwaitingArea = false
+    const retired = this.nodeSourceSlotTabsAwaitingArea
+    if (!retired) return
+    this.nodeSourceSlotTabsAwaitingArea = undefined
     try {
-      // A test replay shown meanwhile keeps its own slot tab.
-      await this.closeNodeSourceSlotTabs(this.nodeSourceSlot?.uri)
+      // Only the retired replay's own tabs close; a test replay shown meanwhile keeps its slot tab.
+      await this.closeCapturedSourceTabs(
+        (uri, tab) => isNodeSourceSlotPath(uri.path) && retired.has(tab),
+      )
     } catch (error) {
       this.reportSlotCloseFailure(error)
     }
