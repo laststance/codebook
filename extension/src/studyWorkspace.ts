@@ -25558,11 +25558,19 @@ export class StudyWorkspace {
     const live = new Set(
       vscode.window.tabGroups.all.flatMap((group) => group.tabs),
     )
+    // The address exclusions stand for the closed record's replaced tab objects only; a record a later leave made holds other tabs (F498).
+    const currentIsClosedRecord = [...current.keys()].every((tab) =>
+      closedRecord.has(tab),
+    )
     const rest = new Map(
       [...current].filter(
         ([tab, address]) =>
           !closedRecord.has(tab) &&
-          !(replacedAddresses.has(address) && !live.has(tab)),
+          !(
+            currentIsClosedRecord &&
+            replacedAddresses.has(address) &&
+            !live.has(tab)
+          ),
       ),
     )
     this.retiredBrowserReplayTabs = rest.size ? rest : undefined
