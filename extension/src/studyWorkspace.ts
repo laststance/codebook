@@ -1486,8 +1486,11 @@ export class StudyWorkspace {
       this.selection.tab !== 'live' ||
       !this.liveComposition ||
       !this.sourceReady()
-    )
+    ) {
+      // A Return supersedes every test replay entry still waiting for its turn (Cycle 0052 task 12).
+      this.nodeHistoryEntryRequest++
       await this.returnCurrentSelection(requester)
+    }
     const state = this.presentationState()
     // A closed Study only remembers the current run, and a Close while the Return ran ended the named reader: neither displays a source (row 697).
     const closedReaderAnswer = this.closedReaderReturnAnswer(lifetime, state)
@@ -8912,7 +8915,11 @@ export class StudyWorkspace {
       }
       return
     }
-    if (action === 'return-current') await this.returnCurrentSelection()
+    if (action === 'return-current') {
+      // The learner's Return supersedes every test replay entry still waiting for its turn (Cycle 0052 task 12).
+      this.nodeHistoryEntryRequest++
+      await this.returnCurrentSelection()
+    }
     if (action === 'source') {
       // A test replay's source is its recorded-source slot; the Study's own selection shows no article source (F156), so Focus source fronts the slot (F383).
       if (this.testReplayHoldsComposition()) await this.focusNodeSourceSlot()
@@ -9479,6 +9486,8 @@ export class StudyWorkspace {
     this.presentationReason = undefined
     this.repositoryRecordingOpen = undefined
     this.recordingReloadStudyId = undefined
+    // A test replay entry still waiting for its turn belongs to the closed reader and never opens it again (Cycle 0052 task 12).
+    this.nodeHistoryEntryRequest++
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
     this.selectedNodeHistoryRequest++
     // The cut-off selection no longer clears its requested moment (its token is gone), so the bump gives it back.
@@ -11722,6 +11731,11 @@ export class StudyWorkspace {
       studyId,
       revision ?? this.revision,
     )
+    if (outcome.status === 'superseded') {
+      // A superseded open leaves the summary composition it entered when no newer replay stands in it, as a failed open does (Cycle 0052 task 13).
+      await this.leaveEmptySummaryComposition()
+      return
+    }
     if (outcome.status !== 'failed') {
       // The learner's own replay open, after the replay is shown: the summary moves beside the chat once per profile (F209).
       await this.moveSummaryBesideChatOnce()

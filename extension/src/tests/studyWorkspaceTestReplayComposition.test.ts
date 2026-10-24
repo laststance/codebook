@@ -1242,3 +1242,152 @@ test('a test replay whose recorded-source tab stands in another group than the s
     await harness.close()
   }
 })
+
+// Value: protects=Close retires every test replay entry still waiting for its turn, so a reader the learner closed is never reopened by an earlier Open replay; fails_when=dismissing a one-replay-at-a-time notice after Close lets the waiting entry open the closed reader (Codex P2 in Cycle 0051's /ship, N51 carried); why_new=Cycle 0052 task 12: neither Close nor Return to Live bumped the entry ticket; seam=recordedReaderHarness, answerWarningDialogs holding the first notice; no_claim=the native notification's own dismissal
+test('Close retires a waiting Open replay entry, so dismissing its notice reopens nothing', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const first = await saveTwoStopNodeHistory(store)
+    const second = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      READER_RESULT_BOUND_MS,
+    )
+    const answers: Array<(choice: string | undefined) => void> = []
+    let noticesShown = 0
+    harness.answerWarningDialogs(() => {
+      noticesShown++
+      return answers.length === 0
+        ? new Promise((resolve) => {
+            answers.push(resolve)
+          })
+        : Promise.resolve(undefined)
+    })
+    const firstEntry = harness.reader.openLearningReplay(first.studyId)
+    await waitUntil(
+      () => answers.length === 1,
+      'the first notice is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    const secondEntry = harness.reader.openLearningReplay(second.studyId)
+
+    // Act: the learner closes the reader, then dismisses the first notice.
+    await harness.reader.close()
+    answers[0]!(undefined)
+    await Promise.all([firstEntry, secondEntry])
+
+    // Assert
+    assert.deepEqual(
+      {
+        noticesShown,
+        opened: harness.reader.inspect().opened,
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      },
+      { noticesShown: 1, opened: false, testReplay: undefined },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Return to Live retires every test replay entry still waiting for its turn, so the learner's return is not undone by an earlier Open replay; fails_when=dismissing the notice after Return to Live lets the waiting entry enter the summary composition again; why_new=Cycle 0052 task 12; seam=recordedReaderHarness, answerWarningDialogs holding the first notice; no_claim=the native notification's own dismissal
+test('Return to Live retires a waiting Open replay entry, so dismissing its notice opens no test replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const first = await saveTwoStopNodeHistory(store)
+    const second = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      READER_RESULT_BOUND_MS,
+    )
+    const answers: Array<(choice: string | undefined) => void> = []
+    harness.answerWarningDialogs(() =>
+      answers.length === 0
+        ? new Promise((resolve) => {
+            answers.push(resolve)
+          })
+        : Promise.resolve(undefined),
+    )
+    const firstEntry = harness.reader.openLearningReplay(first.studyId)
+    await waitUntil(
+      () => answers.length === 1,
+      'the first notice is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    const secondEntry = harness.reader.openLearningReplay(second.studyId)
+
+    // Act: the learner returns to Live, then dismisses the first notice.
+    await harness.reader.action('return-current')
+    answers[0]!(undefined)
+    await Promise.all([firstEntry, secondEntry])
+
+    // Assert
+    assert.deepEqual(
+      {
+        testReplay: harness.reader.inspect().view?.nodeHistory?.header.studyId,
+        bottomPanelFamily: harness.playbackPanelMessages.at(-1)?.replayFamily,
+      },
+      { testReplay: undefined, bottomPanelFamily: undefined },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Saved studies choice of a test replay whose open a newer reader revision supersedes while it enters the summary composition, with no newer replay to show, gives the Study pane back instead of an empty summary composition; fails_when=the superseded open counts as success and the reader stays in a summary composition that shows no replay (Cycle 0051 /ship review); why_new=Cycle 0052 task 13: openNodeHistoryFromHost left the composition only after a failed open; seam=the reader's revision advanced once the entry stood in the composition, as a repository navigation or another reader change does meanwhile; no_claim=which change advances it natively
+test('a Saved studies choice of a test replay superseded while it enters the composition gives the Study pane back', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const reader = harness.reader as unknown as {
+      enterSummaryCompositionForReplay: () => Promise<void>
+      revision: number
+    }
+    const enter = reader.enterSummaryCompositionForReplay.bind(harness.reader)
+    let entered!: () => void
+    const standsInComposition = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    reader.enterSummaryCompositionForReplay = async (): Promise<void> => {
+      await enter()
+      // Another reader change lands while the entry stands in the composition.
+      reader.revision++
+      entered()
+    }
+
+    // Act
+    harness.receiveContext({
+      type: 'node-history',
+      revision: lastView(harness)!.revision,
+      studyId: history.studyId,
+    })
+    await standsInComposition
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.studyContext') !== undefined &&
+        harness.reader.inspect().view?.nodeHistory === undefined,
+      'the Study pane comes back with no test replay selected',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(harness.playbackPanelMessages.at(-1)?.replayFamily, undefined)
+  } finally {
+    await harness.close()
+  }
+})
