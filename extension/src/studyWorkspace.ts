@@ -313,6 +313,7 @@ import {
 } from './utils/projectNodeTestApplication'
 import { projectNodeTestSection } from './utils/projectNodeTestSection'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
+import { pruneClosedTabRecord } from './utils/pruneClosedTabRecord'
 import { readNodeTestOutputReport } from './utils/readNodeTestOutputReport'
 import {
   type OpenRequestSettled,
@@ -11767,9 +11768,9 @@ export class StudyWorkspace {
     entry: number,
   ): Promise<boolean> {
     if (entry !== this.nodeHistoryEntryRequest) return false
-    // The learner's test replay supersedes a saved study that waits for the hidden editor area, and the record of slot tabs waiting with it, so its own slot tab is never closed as an earlier one's (Cycle 0052 task 15).
+    // The learner's test replay supersedes a saved study that waits for the hidden editor area: the slot tabs that waited with it close now, before its own slot shows, so its tab is never closed as an earlier one's and a failed open leaves none behind (Cycle 0052 task 15).
     this.studyAwaitingEditorArea = undefined
-    this.nodeSourceSlotTabsAwaitingArea = undefined
+    await this.closeSlotTabsAwaitingArea()
     if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
     if (entry !== this.nodeHistoryEntryRequest) return false
     try {
@@ -13805,8 +13806,9 @@ export class StudyWorkspace {
     }
     // An explicit source request revokes pending chat returns before source I/O can yield.
     if (!preserveFocus) this.keyboardOutsideEditors = undefined
-    // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer.
+    // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer, nor do the slot tabs that waited with it (Cycle 0052 task 15).
     this.studyAwaitingEditorArea = undefined
+    await this.closeSlotTabsAwaitingArea()
     const lifetime = this.lifetime
     await this.refreshCitations()
     // Citation I/O can outlive Close or a later Open; it cannot create a new rendering revision afterward.
@@ -25920,8 +25922,8 @@ export class StudyWorkspace {
   private forgetClosedRetiredBrowserReplayTabs(
     closed: readonly vscode.Tab[],
   ): void {
-    const retired = this.retiredBrowserReplayTabs
-    if (!retired) return
+    if (!this.retiredBrowserReplayTabs && !this.nodeSourceSlotTabsAwaitingArea)
+      return
     const live = new Set(
       vscode.window.tabGroups.all.flatMap((group) => group.tabs),
     )
@@ -25929,19 +25931,21 @@ export class StudyWorkspace {
       tab.input instanceof vscode.TabInputText
         ? tab.input.uri.toString()
         : undefined
-    const liveAddresses = new Set([...live].map(addressOf))
-    const kept = new Map(retired)
-    for (const tab of closed) {
-      if (kept.delete(tab)) continue
-      // A tab object the editor rebuilt (Cursor) is in no entry: the learner closing it by hand ends the entry its address stands for, unless another tab still shows that address (F494).
-      const address = addressOf(tab)
-      if (address === undefined || liveAddresses.has(address)) continue
-      const stale = [...kept].find(
-        ([entry, entryAddress]) => entryAddress === address && !live.has(entry),
+    // A tab the learner closes by hand leaves each record, also as a tab object Cursor rebuilt (F494); a waiting slot tab closed so never takes one opened later at its address (Cycle 0052 task 15).
+    if (this.retiredBrowserReplayTabs)
+      this.retiredBrowserReplayTabs = pruneClosedTabRecord(
+        this.retiredBrowserReplayTabs,
+        closed,
+        live,
+        addressOf,
       )
-      if (stale) kept.delete(stale[0])
-    }
-    if (kept.size !== retired.size) this.retiredBrowserReplayTabs = kept
+    if (this.nodeSourceSlotTabsAwaitingArea)
+      this.nodeSourceSlotTabsAwaitingArea = pruneClosedTabRecord(
+        this.nodeSourceSlotTabsAwaitingArea,
+        closed,
+        live,
+        addressOf,
+      )
   }
 
   /**
