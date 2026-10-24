@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.2.39.0] - 2026-10-24 (development candidate)
+
+Cycle 0051 ([Issue #122](https://github.com/laststance/codebook/issues/122)): a test replay opens in the learning-replay composition a browser replay has, with the Learning summary in the chat's place, one transport for both replay families, and a Learning summary button that shows a hidden summary again (approved choice 5A).
+
+**A test replay in the learning-replay composition.**
+
+- **Open replay and Saved studies** open a test replay as a browser replay opens: the Study pane closes, the Application pane shows the recorded test output above the recorded-source tab, Run and Debug shows the recorded stop, and the **Learning summary** stands in the chat's place. In VS Code the summary moves once into the chat's side bar; in Cursor it keeps its own container and offers Move View. Opening a replay during a live run leaves the Live arrangement for it, and Return to Live gives the Live arrangement back.
+- **The latest choice wins.** Two Open replay presses, or a test replay chosen while another one is opening, open the replay you chose last, and an answer to an earlier one-replay-at-a-time notice closes nothing.
+- **A failed open** gives the Study pane back on Saved studies and tells the failure once, with its Saved studies sentence.
+- **An agent cannot open a test replay**: `codebook_playback` still refuses it, and the chat asks you to open it from Open replay or Saved studies.
+
+**The Learning summary of a test replay.**
+
+- **One reading order.** The test's file and title path, the learning title, the result, the capture and its reason, the question and the processing summary, the sequence diagram, then the moment: a `Step <n> · <label>` heading, its position, explanation and lines, the values hint, **I understand this test history** and the event list.
+- **The selected step is marked on the diagram** in the link color, bold and underlined, and the mark moves with the replay without redrawing the diagram, so its scroll position stays. An output or the result marks no step.
+- **Long texts stay short.** The question, the summary and the capture reason show at most three lines with **Show more**, which shows the whole text in place, and the diagram scrolls inside its own region.
+
+**One transport for both replay families.**
+
+- **The bottom panel reads Learning replay** during a test replay and shows the transport alone; with the bottom panel hidden, the transport stands at the foot of the summary.
+- **A test replay's controls**: Replay from start, Previous stop, Play, Next stop, the slider with its coverage marks and a `<t> s / <total> s` readout, and **Previous event** and **Next event** for outputs and the result. Replay from start, Home and End reach the first and last event from any page of the event list, also when several events share one time.
+- **Keys on the focused slider**: for a test replay, ← and → move by event, Page Up and Page Down by stop, Home and End to the first and last event; the browser replay's keys are unchanged. The Keyboard shortcuts list names both sets.
+- **The status line** reads `Test replay playing` or `Test replay paused` and names a refused or failed move; when the replay debugger does not start on a move, it says the last moment is still shown and how to restart it.
+
+**Hiding and showing the Learning summary (5A).** The transport's status row ends with a **Learning summary** button for both replay families: it shows a summary you hid, collapsed or whose container you closed, and brings the keyboard to a shown one. The moment, the replay debugger's frame and the summary's scroll position stay, a playing replay goes on playing, and the keyboard returns to the control the summary last held.
+
+**Compatibility.** The MCP API stays 1.8, the bundled skill is unchanged and no stored format changes.
+
+**Checked so far.** The host and Reader DOM tests above. A native smoke check in VS Code 1.142.0 and Cursor 3.27.12 on macOS ran on a development candidate of this branch; the native round of this release's candidate (N51) is recorded in [Issue #122](https://github.com/laststance/codebook/issues/122). Windows and Linux are not run.
+
 ## [0.2.38.0] - 2026-10-24 (development candidate)
 
 Cycle 0050's third pull request ([Issue #118](https://github.com/laststance/codebook/issues/118)): a test replay's recorded-source tab and the moves between its moments, opening a replay, Cursor's Learning summary, the browser replay's frames, and a repository-browser run on the project's own port. With it, every defect Cycle 0049 carried is fixed or closed with evidence.
