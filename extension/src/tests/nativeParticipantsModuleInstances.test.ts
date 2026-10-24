@@ -5,7 +5,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { StudyService } from '../service'
 
 import { debuggerPausedEvent } from './utils/debuggerPausedEvent'
 import { nativeParticipantsHarness } from './utils/nativeParticipantsHarness'
@@ -99,7 +101,7 @@ test('a server stop is captured when its line runs in the module parsed for anot
   assert.equal(harness.run.view().snapshots.length, 1)
 })
 
-// Value: protects=the recorded JavaScript and source map of a server stop captured in another webpack layer's instance of its module being that instance's own, so the run's historical source resources (`snapshots/<id>/source/javascript` and `…/map`) pass their hash check and the run's evidence keeps the bytes those hashes name; fails_when=`source(item, snapshotId)` serves the sealed module's bundle, whose hashes differ from the snapshot's `javascriptHash` and `mapHash`, so the resource read fails with EvidenceIntegrityError, or the instance's code and map are not written beside the snapshot; why_new=F565 (hosted CodeRabbit on #121); seam=none; no_claim=that a real Next layer's instance differs from the sealed module in these bytes (native trial)
+// Value: protects=the recorded JavaScript and source map of a server stop captured in another webpack layer's instance of its module being that instance's own, so the run's historical source resources (`snapshots/<id>/source/javascript` and `…/map`) answer them and pass their hash check, and the run's evidence keeps the bytes those hashes name; fails_when=`source(item, snapshotId)` serves the sealed module's bundle, whose hashes differ from the snapshot's `javascriptHash` and `mapHash`, so the resource read fails with EvidenceIntegrityError, or the instance's code and map are not written beside the snapshot; why_new=F565 (hosted CodeRabbit on #121); why_changed=F569 (local CodeRabbit CLI): the resources are read as an agent reads them, not through `source()`; seam=a service stand-in for the run's record, with StudyService's own `uri` and `snapshot`; no_claim=that a real Next layer's instance differs from the sealed module in these bytes (native trial)
 test('a server stop captured in another webpack layer’s module serves and keeps that module’s own JavaScript and source map', async (context) => {
   // Arrange: the (middleware) copy's text starts with "use strict", so its generated code and map differ from the sealed module's.
   const harness = await nativeParticipantsHarness(context, ['server'])
@@ -116,13 +118,31 @@ test('a server stop captured in another webpack layer’s module serves and keep
   )
   harness.pauseInScript('server', 'middleware', 1, 0)
   const server = await pauseReady(harness)
+  const runId = '00000000-0000-4000-8000-000000000565'
+  const record = {
+    id: runId,
+    profile: 'repository-browser',
+    runtime: harness.run,
+  }
+  const service = {
+    instanceId: 'instance',
+    record: () => record,
+    assertEvidenceReadable: () => {},
+    uri: StudyService.prototype.uri,
+    snapshot: StudyService.prototype.snapshot,
+  } as unknown as StudyService
+  const snapshotUri = `codebook://instance/runs/${runId}/snapshots/${encodeURIComponent(server.id)}`
+  const textOf = (content: Awaited<ReturnType<typeof readResource>>) =>
+    'text' in content ? content.text : ''
   const sha256 = (text: string) =>
     createHash('sha256').update(text).digest('hex')
 
   // Act
-  const source = harness.run.source(
-    harness.definition.descriptor.itemId,
-    server.id,
+  const javascript = textOf(
+    await readResource(service, `${snapshotUri}/source/javascript`),
+  )
+  const sourceMap = textOf(
+    await readResource(service, `${snapshotUri}/source/map`),
   )
   const keptJavaScript = await readFile(
     join(harness.run.view().artifactDirectory, 'snapshot-server-1-module.js'),
@@ -138,12 +158,11 @@ test('a server stop captured in another webpack layer’s module serves and keep
 
   // Assert
   assert.equal(server.source.scriptId, 'middleware')
-  assert.ok(source)
-  assert.ok(source.javascript.startsWith('"use strict";\n'))
-  assert.equal(sha256(source.javascript), server.source.javascriptHash)
-  assert.equal(sha256(source.sourceMap), server.source.mapHash)
-  assert.equal(keptJavaScript, source.javascript)
-  assert.equal(keptMap, source.sourceMap)
+  assert.ok(javascript.startsWith('"use strict";\n'))
+  assert.equal(sha256(javascript), server.source.javascriptHash)
+  assert.equal(sha256(sourceMap), server.source.mapHash)
+  assert.equal(keptJavaScript, javascript)
+  assert.equal(keptMap, sourceMap)
 })
 
 // Value: protects=a stop registered before the executing layer's module loads still being captured when that module is parsed right before the pause, while its text is still being read; fails_when=a pause that arrives before the new script is accepted stays held as a foreign pause and the stop times out; no_claim=how long js-debug takes to pause after it parses a script

@@ -1461,13 +1461,14 @@ async function check(page, options, collected) {
           JSON.stringify(articleAfterReplayLeft) ===
             JSON.stringify([true, true, true, true]),
       })
-      // Value: protects=a keyboard learner on the selected content tab keeping a focused control when a selected test replay hides the content tabs: the focus goes to the test replay's transport, not to the document body; fails_when=the pane hands the lost focus to the selected content tab, which the test replay hid, so nothing takes it and the keyboard rests on the body; why_new=F567 (hosted CodeRabbit on #121); seam=none; no_claim=which transport control the host enables for a real history (stand-ins: the Study messages the host posts)
-      // Arrange: the article is shown again and the keyboard stands on its selected content tab.
+      // Value: protects=a keyboard learner on the selected content tab keeping a focused control when a selected test replay hides the content tabs: the focus goes to the test replay's transport, not to the document body; fails_when=the pane hands the lost focus to the selected content tab, which the test replay hid, so nothing takes it and the keyboard rests on the body; why_new=F567 (hosted CodeRabbit on #121); why_changed=F570 (local CodeRabbit CLI): the case publishes its own starting message instead of relying on the state the case before it left; seam=none; no_claim=which transport control the host enables for a real history (stand-ins: the Study messages the host posts, and the flow's test replay message nodeReader)
+      // Arrange: no test replay is selected, so the article and its content tabs show; the keyboard stands on the selected content tab.
+      await publish({ ...options.message, revision: revisionAt(7) })
       const selectedTab = page.locator('[role=tab][aria-selected=true]')
       await selectedTab.focus()
       const focusBeforeReplay = await focusName()
       // Act: a test replay is selected, which hides the content tabs.
-      await publish({ ...nodeReader, revision: revisionAt(7) })
+      await publish({ ...nodeReader, revision: revisionAt(8) })
       const focusWhileReplaySelected = await focusName()
       // Assert
       cases.push({
