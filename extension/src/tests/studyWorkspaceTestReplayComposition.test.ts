@@ -1391,3 +1391,159 @@ test('a Saved studies choice of a test replay superseded while it enters the com
     await harness.close()
   }
 })
+
+// Value: protects=Open replay always ends with the Learning summary shown, also when the learner had hidden the summary and the bottom panel while another test replay was shown; fails_when=the entry finds the reader in the summary composition, skips its reveal and leaves no visible UI for the replay it opened (Cycle 0051 /ship review); why_new=Cycle 0052 task 14: enterSummaryCompositionForReplay returned early without showing the summary; seam=hideSummary and hidePlaybackPanel; no_claim=the native views' placement
+test('Open replay with the Learning summary and the bottom panel hidden shows the summary again', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openByOpenReplay(harness)
+    harness.hideSummary()
+    harness.hidePlaybackPanel()
+
+    // Act
+    await harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () =>
+        lastView(harness)?.nodeHistory?.header.studyId === second.studyId &&
+        !lastView(harness)?.loading,
+      'the second replay is shown',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(harness.summary.visible, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Learning summary reveal that a newer replay selection supersedes ends quietly: the learner's newer choice wins and no failure is told for the older reveal; fails_when=Show Learning Summary rejects with STALE_PRESENTATION ('The selected learning changed while opening its summary.') because the learner chose another replay while the reveal waited (Cycle 0051 /ship Red Team); why_new=Cycle 0052 task 16: assertCurrent threw out of the reveal on any identity change; seam=holdNextCommand on codebook.learningSummary.focus; no_claim=the native view's timing
+test('a Learning summary reveal superseded by another replay’s open ends without an error', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openByOpenReplay(harness)
+    harness.hideSummary()
+    const held = harness.holdNextCommand('codebook.learningSummary.focus')
+    release = held.release
+    const reveal = harness.reader.showLearningSummary()
+    await held.started
+
+    // Act: the learner opens another replay while the reveal waits for the view.
+    const secondEntry = harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+        second.studyId,
+      'the second replay is selected',
+      READER_RESULT_BOUND_MS,
+    )
+    held.release()
+    const revealOutcome = await reveal.then(
+      () => 'ended',
+      (error: unknown) => String(error),
+    )
+    await secondEntry
+
+    // Assert
+    assert.equal(revealOutcome, 'ended')
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=a first entry that fails after the Learning summary received the replay's document withdraws that document, so no summary with controls that answer nothing stays beside the chat on a closed reader; fails_when=forgetUnopenedComposition drops the composition but leaves the replay's document in the summary (Cycle 0051 /ship review); why_new=Cycle 0052 task 18; seam=the reader's summary placement offer made to fail once, after the summary got its document; no_claim=which native step fails after the reveal
+test('a first Open replay that fails after the summary got its document leaves the summary placeholder', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const reader = harness.reader as unknown as {
+      offerSummaryPlacement: (...args: unknown[]) => void
+    }
+    const offer = reader.offerSummaryPlacement.bind(harness.reader)
+    let failed = false
+    reader.offerSummaryPlacement = (...args: unknown[]): void => {
+      if (failed) return offer(...args)
+      failed = true
+      throw new Error('The editor refused the summary placement.')
+    }
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+
+    // Assert
+    assert.deepEqual(
+      {
+        failed,
+        opened: harness.reader.inspect().opened,
+        placeholder: harness.summary.webview.html.includes(
+          'Open saved learning from Codebook to view its summary.',
+        ),
+      },
+      { failed: true, opened: false, placeholder: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a same-study Reload keeps its Learning summary while it loads, also when another open of the reader (Restore, Arrange) runs in that gap; fails_when=the other open sees no recording and no test replay, leaves the summary composition and blanks the summary the Reload kept for its loading and retry messages (Cycle 0051 /ship review); why_new=Cycle 0052 task 18; seam=the reload held at its debugger replacement, the reader's own open() during the hold; no_claim=which native action opens the reader in that gap
+test('another open during a same-study Reload keeps the Reload’s Learning summary', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const reader = harness.reader as unknown as {
+      replaceUnavailableReplayDebugger: (signal?: AbortSignal) => Promise<void>
+    }
+    const replace = reader.replaceUnavailableReplayDebugger.bind(harness.reader)
+    let release = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered = (): void => {}
+    const reloadWaits = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    reader.replaceUnavailableReplayDebugger = async (
+      signal?: AbortSignal,
+    ): Promise<void> => {
+      entered()
+      await held
+      return replace(signal)
+    }
+
+    // Act
+    const reload = harness.reader.action('reload-recording')
+    await reloadWaits
+    await harness.reader.open()
+    const summaryDuringReload = harness.summary.webview.html
+    release()
+    await reload
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(
+      summaryDuringReload.includes(
+        'Open saved learning from Codebook to view its summary.',
+      ),
+      false,
+    )
+  } finally {
+    await harness.close()
+  }
+})

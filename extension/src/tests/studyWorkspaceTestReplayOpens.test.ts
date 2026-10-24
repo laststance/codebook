@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
+  readerSeams,
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
@@ -754,6 +755,92 @@ test('closing the reader waits for a reader-position write that is still running
     // Assert
     assert.equal(closedWhileWriting, false)
     assert.equal(await store.readReaderPosition(history.studyId), 4)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved browser study chosen in the bottom panel's Saved studies while a test replay is shown and the bottom panel is maximized waits for the editor area, as a choice from the Study pane does: the panel stays maximized and the chosen study is selected in it; fails_when=leaving the summary composition opens the Study pane at once, which brings the hidden editor area back and takes the panel out of its maximized state (Cycle 0051 /ship review); why_new=Cycle 0052 task 15: showChosenStudy left the summary composition past the studyAwaitingEditorArea deferral; seam=recordedReaderHarness with a maximized bottom panel, the bottom panel's history message; no_claim=the native editor's own restore of the area
+test('a browser study chosen from a test replay with the bottom panel maximized keeps the panel maximized', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await openReplayBesideBrowserStudy(harness)
+    harness.maximizePanel()
+
+    // Act
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: lastView(harness)!.revision,
+      studyId: harness.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory === undefined &&
+        harness.reader.inspect().view?.model.selection.studyId ===
+          harness.studyId &&
+        !harness.reader.inspect().view?.loading,
+      'the browser study is chosen',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        panelMaximized: harness.isPanelMaximized(),
+        studyPaneShown:
+          harness.panelColumn('codebook.studyContext') !== undefined,
+      },
+      { panelMaximized: true, studyPaneShown: false },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=once the learner restores the maximized bottom panel, the browser study chosen over a test replay shows in the Study composition and the retired replay's recorded-source tab closes; fails_when=the deferred arrangement never runs, or the slot tab stays open beside the study; why_new=Cycle 0052 task 15: the slot's close waits for the editor area with the chosen study; seam=recordedReaderHarness, restorePanel and the reader's refresh; no_claim=the native editor's own restore of the area
+test('restoring the panel after a browser study was chosen from a maximized test replay shows the Study pane and closes the slot tab', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await openReplayBesideBrowserStudy(harness)
+    harness.maximizePanel()
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: lastView(harness)!.revision,
+      studyId: harness.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory === undefined &&
+        harness.reader.inspect().view?.model.selection.studyId ===
+          harness.studyId &&
+        !harness.reader.inspect().view?.loading,
+      'the browser study is chosen',
+      READER_RESULT_BOUND_MS,
+    )
+
+    const slotTabCount = (): number =>
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .filter((tab) =>
+          JSON.stringify(tab.input).includes('/node-history-slot/'),
+        ).length
+    const slotTabsWhileMaximized = slotTabCount()
+
+    // Act
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.panelColumn('codebook.studyContext') !== undefined &&
+        slotTabCount() === 0,
+      'the Study pane shows and the slot tab closes',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(slotTabsWhileMaximized, 1)
   } finally {
     await harness.close()
   }
