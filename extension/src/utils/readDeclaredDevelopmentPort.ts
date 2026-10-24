@@ -1,13 +1,17 @@
 import { access, open } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import {
   DEVELOPMENT_BUN_ENV_UNREAD_REASON,
+  DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS,
   DEVELOPMENT_BUN_LOCKFILES,
+  DEVELOPMENT_BUN_PACKAGE_MANAGER_PREFIX,
+  DEVELOPMENT_BUN_SHELL_UNREAD_REASON,
   DEVELOPMENT_CMD_UNREAD_REASON,
+  DEVELOPMENT_EMPTY_SCRIPT_SOURCE,
   DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES,
   DEVELOPMENT_SCRIPT_NESTING_LIMIT,
-  DEVELOPMENT_SCRIPT_PACKAGE_MANAGER_COMMANDS,
+  DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES,
   DEVELOPMENT_SCRIPT_UNREAD_SEGMENT_MAX_CHARS,
   DEVELOPMENT_SCRIPT_UNSAFE_ASSIGNMENT_NAME,
   DEVELOPMENT_SCRIPT_VALUELESS_NEXT_FLAGS,
@@ -59,17 +63,53 @@ async function readProjectFile(path: string): Promise<string | undefined> {
   }
 }
 
-/** Whether the repository root holds a Bun lockfile; only existence is checked, no content is read (F499). */
-async function hasBunLockfile(root: string): Promise<boolean> {
-  const found = await Promise.all(
-    DEVELOPMENT_BUN_LOCKFILES.map((name) =>
-      access(join(root, name)).then(
-        () => true,
-        () => false,
-      ),
-    ),
+/** Whether a folder holds the named file or folder; only existence is checked. */
+async function exists(path: string): Promise<boolean> {
+  return access(path).then(
+    () => true,
+    () => false,
   )
-  return found.includes(true)
+}
+
+/**
+ * Whether the project is a Bun project: a Bun lockfile in the opened folder or in a folder above it up to the Git root (the first folder that holds `.git`, at most {@link DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS} folders up; without a Git root in that range only the opened folder counts), or a `packageManager` of the opened `package.json` that starts with {@link DEVELOPMENT_BUN_PACKAGE_MANAGER_PREFIX} (F514). Only existence is checked for lockfiles; no content is read (F499).
+ *
+ * Called by {@link readDeclaredDevelopmentPort} once per read.
+ *
+ * @param root - The opened folder that holds `package.json`.
+ * @param packageManager - The `packageManager` field of that `package.json`, if any.
+ */
+async function isBunProject(
+  root: string,
+  packageManager: unknown,
+): Promise<boolean> {
+  if (
+    typeof packageManager === 'string' &&
+    packageManager.startsWith(DEVELOPMENT_BUN_PACKAGE_MANAGER_PREFIX)
+  )
+    return true
+  // Folders from the opened one up to the Git root (inclusive); the opened folder alone when no Git root is found in range.
+  const folders: string[] = []
+  let folder = root
+  let reachedGitRoot = false
+  for (
+    let climbed = 0;
+    climbed < DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS;
+    climbed += 1
+  ) {
+    folders.push(folder)
+    if (await exists(join(folder, '.git'))) {
+      reachedGitRoot = true
+      break
+    }
+    const parent = dirname(folder)
+    if (parent === folder) break
+    folder = parent
+  }
+  for (const candidate of reachedGitRoot ? folders : [root])
+    for (const name of DEVELOPMENT_BUN_LOCKFILES)
+      if (await exists(join(candidate, name))) return true
+  return false
 }
 
 /** What a line is read against: the project's `scripts`. */
@@ -158,10 +198,16 @@ function readNextDevFlags(words: readonly string[]): number | undefined {
 /** The words after the launcher when the program is `next` reached by an allowed launcher (`next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next`, a `node_modules/.bin/next` path), else `undefined`. */
 function nextArguments(
   program: string[],
-  scripts: Scripts,
+  scope: LineScope,
 ): string[] | undefined {
+  const { scripts } = scope
   const [first, second, third] = program
-  if (NEXT_PROGRAM.test(first ?? '')) return program.slice(1)
+  if (NEXT_PROGRAM.test(first ?? '')) {
+    // `cmd` cannot run a program written as a relative path with `/`; only bare `next` is read there (F513).
+    if (scope.windows && first!.includes('/'))
+      throw new UnreadScriptError([], 'cmd')
+    return program.slice(1)
+  }
   if ((first === 'npx' || first === 'bunx') && NEXT_PROGRAM.test(second ?? ''))
     return program.slice(2)
   if (first === 'pnpm' && second === 'exec' && NEXT_PROGRAM.test(third ?? ''))
@@ -190,7 +236,7 @@ function readNextDevCommand(
   return {}
 }
 
-/** The script a delegation without arguments names: `npm run x`, `pnpm x`, `pnpm run x`, `yarn x`, `yarn run x`, `bun run x`; `undefined` for any other program. */
+/** The script a delegation without arguments names: `npm run x`, `pnpm run x`, `yarn run x`, `bun run x`, and `pnpm x` or `yarn x` only for a name in {@link DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES} or containing `:` (D76, F510); `undefined` for any other program. */
 function delegatedScriptName(program: string[]): string | undefined {
   const [manager, first, second] = program
   const viaRun =
@@ -202,8 +248,8 @@ function delegatedScriptName(program: string[]): string | undefined {
     program.length === 2 &&
     (manager === 'pnpm' || manager === 'yarn') &&
     first !== undefined &&
-    !first.startsWith('-') &&
-    !DEVELOPMENT_SCRIPT_PACKAGE_MANAGER_COMMANDS.has(first)
+    (DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES.has(first) ||
+      first.includes(':'))
   return bare ? first : undefined
 }
 
@@ -262,12 +308,16 @@ function readConcurrently(
 function readAssignments(
   words: string[],
   env: PortEnv,
+  windows: boolean,
 ): { rest: string[]; env: PortEnv } {
   let port = env.port
   let index = 0
   for (; index < words.length; index += 1) {
     const match = ASSIGNMENT.exec(words[index]!)
     if (!match) break
+    // Windows environment names ignore case, so `port=4000` likely sets `PORT` there; `cmd` meaning is not modeled (F512).
+    if (windows && match[1] !== 'PORT' && /^port$/i.test(match[1]!))
+      throw new UnreadScriptError([], 'cmd')
     if (match[1] === 'PORT') port = parsePort(match[2])
     else if (DEVELOPMENT_SCRIPT_UNSAFE_ASSIGNMENT_NAME.test(match[1]!))
       throw new UnreadScriptError()
@@ -281,7 +331,7 @@ function readPrefix(
   env: PortEnv,
   scope: LineScope,
 ): { program: string[]; env: PortEnv } {
-  const first = readAssignments(words, env)
+  const first = readAssignments(words, env, scope.windows)
   // Under `cmd` a leading `NAME=value` and `env` are commands, not a prefix (F502, D74); `cross-env` parses its own arguments and stays read.
   if (
     scope.windows &&
@@ -290,7 +340,7 @@ function readPrefix(
     throw new UnreadScriptError([], 'cmd')
   const wrapped = first.rest[0] === 'cross-env' || first.rest[0] === 'env'
   if (!wrapped) return { program: first.rest, env: first.env }
-  const second = readAssignments(first.rest.slice(1), first.env)
+  const second = readAssignments(first.rest.slice(1), first.env, scope.windows)
   return { program: second.rest, env: second.env }
 }
 
@@ -300,12 +350,15 @@ function readProgram(
   env: PortEnv,
   scope: LineScope,
 ): DevelopmentCommand | undefined {
-  const args = nextArguments(program, scope.scripts)
+  const args = nextArguments(program, scope)
   if (args) return readNextDevCommand(args, env, scope)
   if (program[0] === 'concurrently')
     return readConcurrently(program.slice(1), env, scope)
   const name = delegatedScriptName(program)
   if (name === undefined) throw new UnreadScriptError()
+  // On Windows `bun run` uses Bun Shell, or `cmd` with `run.shell = "system"`; the text means different things (D75).
+  if (scope.windows && program[0] === 'bun')
+    throw new UnreadScriptError([], 'bun-shell')
   return readDelegation(name, env, scope, program[0] === 'bun')
 }
 
@@ -391,6 +444,8 @@ function describeUnread(
 ): string {
   if (reason === 'bun-env')
     return `${DEVELOPMENT_BUN_ENV_UNREAD_REASON}: "${cutForSource(segment)}"`
+  if (reason === 'bun-shell')
+    return `${DEVELOPMENT_BUN_SHELL_UNREAD_REASON}: "${cutForSource(segment)}"`
   if (reason === 'cmd')
     return `${DEVELOPMENT_CMD_UNREAD_REASON}: "${cutForSource(segment)}"`
   return `Next's default port, taken because the dev script has a form Codebook does not read: "${cutForSource(segment)}"`
@@ -409,6 +464,9 @@ function readDevScript(
   | { command: DevelopmentCommand }
   | { unread: readonly string[]; reason?: UnreadReason } {
   try {
+    // A Bun project runs its scripts with Bun Shell on Windows (or `cmd` by setting), whatever the script says (D75, F514).
+    if (windows && bun)
+      throw new UnreadScriptError(dev.split(/\s+/).filter(Boolean), 'bun-shell')
     const command = readLine(dev, {}, { scripts, depth: 0, bun, windows })
     // A chain that never runs `next dev` has nothing to read a port from.
     if (!command)
@@ -433,8 +491,8 @@ function readDevScript(
  * Finds the port the project's own `dev` script would start `next dev` on, so the app runs on the origin its auth and callback settings point to.
  *
  * Called during repository-browser preparation by {@link ConfiguredBrowserRun}, before {@link launchDevelopmentServer}.
- * The script is read as text, never run, against a fixed grammar (D72): statements joined by `&&` or `;`, each an assignment (`PORT=4000`, `export PORT=4000`), a `next dev` command (reached by `next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next` or a `node_modules/.bin/next` path, after `cross-env` or `env` with assignments only, with Next's own `dev` flags and literal values; the last `-p`/`--port` wins), a delegation without arguments (`npm run x`, `pnpm x`, `pnpm run x`, `yarn x`, `yarn run x`, `bun run x`, followed down to {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} levels) or one `concurrently` whose quoted commands are read by the same grammar. The port is the last `-p`/`--port`, else the `PORT` the script exports or assigns before the command, else Next's default 3000 (the sources D67 names). `.env*` files are not read because Next reads `PORT` before it loads them; but Bun loads them into the environment of the scripts it runs, so a `next dev` without a port flag and without a `PORT` assigned in the script is unread when it is reached by `bun run` or the root holds `bun.lock` or `bun.lockb` (F499).
- * The script is read with the meaning of the shell that runs it (D74): `sh` on macOS and Linux, `cmd` on `win32`, where single quotes, `NAME=value` prefixes, `export`, `env` and `;` are unread with a note naming `cmd`. One trailing `;` is allowed, and a word with a quote before its `=` is no assignment.
+ * The script is read as text, never run, against a fixed grammar (D72): statements joined by `&&` or `;`, each an assignment (`PORT=4000`, `export PORT=4000`), a `next dev` command (reached by `next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next` or a `node_modules/.bin/next` path, after `cross-env` or `env` with assignments only, with Next's own `dev` flags and literal values; the last `-p`/`--port` wins), a delegation without arguments (`npm run x`, `pnpm run x`, `yarn run x`, `bun run x`, and `pnpm x` or `yarn x` only for the names of {@link DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES} or a name with `:` (D76), followed down to {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} levels) or one `concurrently` whose quoted commands are read by the same grammar. The port is the last `-p`/`--port`, else the `PORT` the script exports or assigns before the command, else Next's default 3000 (the sources D67 names). `.env*` files are not read because Next reads `PORT` before it loads them; but Bun loads them into the environment of the scripts it runs, so a `next dev` without a port flag and without a `PORT` assigned in the script is unread when it is reached by `bun run` or the project is a Bun project (a lockfile up to the Git root or `packageManager: bun@`, F514; F499).
+ * The script is read with the meaning of the shell that runs it (D74): `sh` on macOS and Linux, `cmd` on `win32`, where single quotes, `NAME=value` prefixes, `export`, `env`, `;`, a `port` variable in another case than `PORT` and a program path with `/` are unread with a note naming `cmd`; a Bun project and `bun run` are unread there with a note naming Bun's shell (D75). An empty script is told as empty (F511). One trailing `;` is allowed, and a word with a quote before its `=` is no assignment.
  * Anything outside the grammar makes the script unread: no port is asserted, Next's default 3000 is returned, and the source quotes the structure of the statement that left the grammar (program and flag names only).
  *
  * @param root - The trusted workspace root that holds `package.json`.
@@ -452,8 +510,12 @@ export async function readDeclaredDevelopmentPort(
 ): Promise<DeclaredDevelopmentPort> {
   const packageText = await readProjectFile(join(root, 'package.json'))
   let scripts: Scripts
+  let packageManager: unknown
   try {
-    const declared: unknown = JSON.parse(packageText ?? '')?.scripts
+    const parsed: unknown = JSON.parse(packageText ?? '')
+    const declared = (parsed as { scripts?: unknown } | null)?.scripts
+    packageManager = (parsed as { packageManager?: unknown } | null)
+      ?.packageManager
     if (declared && typeof declared === 'object')
       scripts = declared as Record<string, unknown>
   } catch {
@@ -463,10 +525,13 @@ export async function readDeclaredDevelopmentPort(
   const fallback = { port: DEVELOPMENT_SERVER_DEFAULT_PORT }
   if (typeof dev !== 'string')
     return { ...fallback, source: "Next's default port" }
+  // An empty or blank script runs nothing; say so instead of quoting an empty text (F511).
+  if (dev.trim() === '')
+    return { ...fallback, source: DEVELOPMENT_EMPTY_SCRIPT_SOURCE }
   const read = readDevScript(
     dev,
     scripts,
-    await hasBunLockfile(root),
+    await isBunProject(root, packageManager),
     platform === 'win32',
   )
   if ('unread' in read)

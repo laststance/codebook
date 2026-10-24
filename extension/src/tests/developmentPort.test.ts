@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import type { Socket } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
@@ -32,6 +32,28 @@ async function declaredPortOf(
     for (const [name, text] of Object.entries(files))
       await writeFile(join(root, name), text)
     return await readDeclaredDevelopmentPort(root, platform)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+/** Makes a folder tree from relative file paths (a path ending in `/` makes an empty folder), reads the port of the folder `opened` inside it and removes the tree. */
+async function declaredPortOfTree(
+  files: Record<string, string>,
+  opened: string,
+  platform: NodeJS.Platform = 'linux',
+) {
+  const root = await mkdtemp(join(tmpdir(), 'codebook-port-tree-'))
+  try {
+    for (const [name, text] of Object.entries(files)) {
+      if (name.endsWith('/')) {
+        await mkdir(join(root, name), { recursive: true })
+        continue
+      }
+      await mkdir(dirname(join(root, name)), { recursive: true })
+      await writeFile(join(root, name), text)
+    }
+    return await readDeclaredDevelopmentPort(join(root, opened), platform)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -252,7 +274,7 @@ for (const [name, files, segment] of [
     {
       'package.json': packageScripts({
         dev: 'bun run a',
-        a: 'pnpm b',
+        a: 'pnpm run b',
         b: 'next dev --turbo',
       }),
     },
@@ -354,7 +376,7 @@ for (const [name, files, expected] of [
   })
 
 const CMD_NOTE =
-  "Next's default port, taken because npm runs the dev script with cmd on Windows, where this form (single quotes, a PORT= or NAME= prefix, export, env or ;) does not mean what it means in sh"
+  "Next's default port, taken because npm runs the dev script with cmd on Windows, where this form (single quotes, a PORT= or NAME= prefix, export, env, ;, a PORT variable written in another case, or a program written as a path with /) does not mean what it means in sh"
 
 // Value: protects=on Windows, where npm, pnpm and yarn run the script with cmd, the forms whose meaning differs from sh (single quotes, PORT=/NAME= prefixes, export, env, `;`) are unread with a note naming cmd, in the script and in a script it delegates to (F502, D74); fails_when=the reader asserts a port that cmd would never pass to next, or the note does not name cmd; why_new=F502 (OCR low, to verify on Windows, of the review of 673b2923..7fc7c8fb); seam=temporary project folders with the platform set to win32, so the Windows rows run on any host; no_claim=what a real cmd does (not run here)
 for (const [name, scripts, segment] of [
@@ -470,6 +492,318 @@ for (const [name, scripts] of [
     // Assert
     assert.equal(declared.port, 3000)
     assert.ok(declared.source.startsWith(`${UNREAD_NOTE}: "`), declared.source)
+  })
+
+const BUN_SHELL_NOTE =
+  "Next's default port, taken because on Windows Bun runs scripts with its own shell, or with cmd when run.shell is set to system in bunfig.toml, so the form can mean different things"
+
+// Value: protects=a name that pnpm or yarn can run as its own command in some version (rebuild since pnpm 11) staying unread, and a Windows `bun run` of a PORT= prefix staying unread, because the same text means different things by version or Bun setting (D75, F508, F509); fails_when=the reader follows pnpm rebuild or bun run on Windows and asserts a port the project's command may not use; why_new=F508 and F509 (CodeRabbit CLI minor x2), regression guards that pass on the previous head; seam=temporary project folders, platform win32 for Bun; no_claim=the installed pnpm version or Bun configuration
+for (const [name, scripts, platform, segment, note] of [
+  [
+    'pnpm rebuild with a script named rebuild',
+    { dev: 'pnpm rebuild', rebuild: 'next dev -p 4000' },
+    'linux',
+    'pnpm rebuild',
+    UNREAD_NOTE,
+  ],
+  [
+    'bun run of a PORT prefix on Windows',
+    { dev: 'bun run serve', serve: 'PORT=4000 next dev' },
+    'win32',
+    'bun run serve',
+    BUN_SHELL_NOTE,
+  ],
+] as const)
+  test(`${name} is unread and takes Next's default 3000`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files, platform)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source: `${note}: "${segment}"` })
+  })
+
+// Value: protects=pnpm <name> and yarn <name> without run being followed only for dev, start, serve, web, app, client, frontend and a name with a colon, and every package-manager command or alias (deploy, t, ci, access) staying unread even when the project has a script of that name (D76, F510); fails_when=the reader follows a name that pnpm 12 or yarn runs as a builtin and reports the port of a script nothing runs; why_new=F510 (OCR medium: about 60 pnpm 12 builtins were missing from the deny-list); seam=temporary project folders; no_claim=the installed package managers (the real-shell table runs the followed names)
+for (const [name, scripts, segment] of [
+  [
+    'pnpm deploy',
+    { dev: 'pnpm deploy', deploy: 'next dev -p 5000' },
+    'pnpm deploy',
+  ],
+  ['pnpm t', { dev: 'pnpm t', t: 'next dev -p 5001' }, 'pnpm t'],
+  ['pnpm ci', { dev: 'pnpm ci', ci: 'next dev -p 5002' }, 'pnpm ci'],
+  [
+    'yarn access',
+    { dev: 'yarn access', access: 'next dev -p 5003' },
+    'yarn access',
+  ],
+  ['pnpm docs', { dev: 'pnpm docs', docs: 'next dev -p 5004' }, 'pnpm docs'],
+  [
+    'yarn stage',
+    { dev: 'yarn stage', stage: 'next dev -p 5005' },
+    'yarn stage',
+  ],
+  ['a script that is missing', { dev: 'pnpm web' }, 'pnpm …'],
+] as const)
+  test(`${name} is unread and takes Next's default 3000`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, {
+      port: 3000,
+      source: UNREAD_SOURCE(segment),
+    })
+  })
+
+// Value: protects=the names pnpm and yarn run as scripts (dev, start, serve, web, app, client, frontend, a colon name) being read without run, and pnpm run / yarn run being read for a package-manager command's name (D76, F510); fails_when=the allow-list loses a name or run stops following builtin names; why_new=F510; seam=temporary project folders; no_claim=the installed package managers (checked with pnpm 12.14.0 and yarn 1.22.22 in the task ledger)
+for (const [name, scripts, port] of [
+  ['pnpm start', { dev: 'pnpm start', start: 'next dev -p 5011' }, 5011],
+  ['pnpm serve', { dev: 'pnpm serve', serve: 'next dev -p 5012' }, 5012],
+  ['pnpm web', { dev: 'pnpm web', web: 'next dev -p 5013' }, 5013],
+  ['pnpm app', { dev: 'pnpm app', app: 'next dev -p 5014' }, 5014],
+  ['pnpm client', { dev: 'pnpm client', client: 'next dev -p 5015' }, 5015],
+  [
+    'pnpm frontend',
+    { dev: 'pnpm frontend', frontend: 'next dev -p 5016' },
+    5016,
+  ],
+  [
+    'pnpm with a colon name',
+    { dev: 'pnpm dev:web', 'dev:web': 'next dev -p 5017' },
+    5017,
+  ],
+  [
+    'yarn with a colon name',
+    { dev: 'yarn build:dev', 'build:dev': 'next dev -p 5018' },
+    5018,
+  ],
+  ['yarn app', { dev: 'yarn app', app: 'next dev -p 5019' }, 5019],
+  [
+    'pnpm run deploy',
+    { dev: 'pnpm run deploy', deploy: 'next dev -p 5020' },
+    5020,
+  ],
+  [
+    'yarn run access',
+    { dev: 'yarn run access', access: 'next dev -p 5021' },
+    5021,
+  ],
+] as const)
+  test(`${name} reads the script of that name`, async () => {
+    // Arrange
+    const files = { 'package.json': packageScripts(scripts) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.equal(declared.port, port)
+  })
+
+// Value: protects=an empty or blank dev script saying that it is empty and never quoting an empty text (F511); fails_when=the source quotes "" or does not say the script is empty; why_new=F511 (OCR low, against F503); seam=temporary project folders; no_claim=other empty statements (quoted by the statement before them)
+for (const [name, script] of [
+  ['an empty string', ''],
+  ['blanks', '   '],
+  ['a tab and a line break', '\t\n'],
+] as const)
+  test(`a dev script of ${name} says the dev script is empty`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, {
+      port: 3000,
+      source:
+        "Next's default port, taken because the dev script in package.json is empty",
+    })
+  })
+
+// Value: protects=on Windows, where environment names ignore case, an assignment of port in another case being unread with the cmd note, and being an ordinary variable on Linux (F512); fails_when=cross-env port=4000 next dev reads Next's default 3000 with no note on Windows; why_new=F512 (OCR low, D74); seam=temporary project folders with the platform set; no_claim=what a real cmd or cross-env does
+for (const [name, script, platform, source] of [
+  [
+    'a lower-case port after cross-env',
+    'cross-env port=4000 next dev',
+    'win32',
+    `${CMD_NOTE}: "cross-env port=… next dev"`,
+  ],
+  [
+    'a mixed-case Port after PORT',
+    'cross-env PORT=4001 Port=4002 next dev',
+    'win32',
+    `${CMD_NOTE}: "cross-env PORT=… Port=… next dev"`,
+  ],
+  [
+    'a lower-case port on Linux',
+    'cross-env port=4000 next dev',
+    'linux',
+    "Next's default port",
+  ],
+] as const)
+  test(`${name} on ${platform} reads Next's default 3000 with source ${source}`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files, platform)
+
+    // Assert
+    assert.deepEqual(declared, { port: 3000, source })
+  })
+
+// Value: protects=on Windows only bare next and the npx-style launchers being read, and a program written as a path with / being unread with the cmd note, while macOS and Linux still read the path (F513); fails_when=the reader asserts a port for a path cmd cannot run; why_new=F513 (OCR low); seam=temporary project folders with the platform set; no_claim=what a real cmd does
+for (const [name, script, platform, expected] of [
+  [
+    'a node_modules path',
+    'node_modules/.bin/next dev -p 4000',
+    'win32',
+    { port: 3000, source: `${CMD_NOTE}: "next dev -p …"` },
+  ],
+  [
+    'a ./node_modules path',
+    './node_modules/.bin/next dev -p 4000',
+    'win32',
+    { port: 3000, source: `${CMD_NOTE}: "next dev -p …"` },
+  ],
+  [
+    'bare next',
+    'next dev -p 4861',
+    'win32',
+    { port: 4861, source: 'the dev script in package.json' },
+  ],
+  [
+    'npx next',
+    'npx next dev -p 4862',
+    'win32',
+    { port: 4862, source: 'the dev script in package.json' },
+  ],
+  [
+    'a node_modules path on Linux',
+    'node_modules/.bin/next dev -p 4863',
+    'linux',
+    { port: 4863, source: 'the dev script in package.json' },
+  ],
+] as const)
+  test(`${name} on ${platform} gives port ${expected.port}`, async () => {
+    // Arrange
+    const files = { 'package.json': devScript(script) }
+
+    // Act
+    const declared = await declaredPortOf(files, platform)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
+// Value: protects=a Bun project being found by a lockfile in a folder above the opened one up to the Git root and by packageManager bun@, a lockfile beyond the Git root not counting, and a Bun project on Windows being unread with the Bun shell note (D75, F514); fails_when=a monorepo with bun.lock at its root or a bun@ packageManager reads a plain next dev without the Bun note, or Windows gives the cmd note for Bun; why_new=F514 (OCR low, F499's fix); seam=temporary folder trees with a .git folder, platform set; no_claim=Bun itself
+for (const [name, files, opened, platform, expected] of [
+  [
+    'a bun.lock at the Git root above the opened folder',
+    {
+      '.git/': '',
+      'bun.lock': '',
+      'apps/web/package.json': devScript('next dev'),
+    },
+    'apps/web',
+    'linux',
+    { port: 3000, source: `${BUN_ENV_NOTE}: "next dev"` },
+  ],
+  [
+    'a bun.lockb in a folder between the opened one and the Git root',
+    {
+      '.git/': '',
+      'apps/bun.lockb': '',
+      'apps/web/package.json': devScript('next dev'),
+    },
+    'apps/web',
+    'linux',
+    { port: 3000, source: `${BUN_ENV_NOTE}: "next dev"` },
+  ],
+  [
+    'a bun.lock above the Git root',
+    {
+      'bun.lock': '',
+      'repo/.git/': '',
+      'repo/package.json': devScript('next dev'),
+    },
+    'repo',
+    'linux',
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'a Git file instead of a folder as the Git root',
+    {
+      'bun.lock': '',
+      'repo/.git': 'gitdir: ../elsewhere',
+      'repo/web/package.json': devScript('next dev'),
+    },
+    'repo/web',
+    'linux',
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'packageManager bun@ with no lockfile',
+    {
+      'package.json': JSON.stringify({
+        packageManager: 'bun@1.2.0',
+        scripts: { dev: 'next dev' },
+      }),
+    },
+    '.',
+    'linux',
+    { port: 3000, source: `${BUN_ENV_NOTE}: "next dev"` },
+  ],
+  [
+    'packageManager pnpm@ with no lockfile',
+    {
+      'package.json': JSON.stringify({
+        packageManager: 'pnpm@9.0.0',
+        scripts: { dev: 'next dev' },
+      }),
+    },
+    '.',
+    'linux',
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'a Bun project on Windows with a plain script',
+    {
+      'bun.lock': '',
+      'package.json': devScript('next dev -p 4871'),
+    },
+    '.',
+    'win32',
+    { port: 3000, source: `${BUN_SHELL_NOTE}: "next dev -p …"` },
+  ],
+  [
+    'packageManager bun@ on Windows',
+    {
+      'package.json': JSON.stringify({
+        packageManager: 'bun@1.2.0',
+        scripts: { dev: 'cross-env PORT=4872 next dev' },
+      }),
+    },
+    '.',
+    'win32',
+    { port: 3000, source: `${BUN_SHELL_NOTE}: "cross-env PORT=… next dev"` },
+  ],
+] as const)
+  test(`${name} gives port ${expected.port} with source ${expected.source}`, async () => {
+    // Arrange: the tree above
+
+    // Act
+    const declared = await declaredPortOfTree(files, opened, platform)
+
+    // Assert
+    assert.deepEqual(declared, expected)
   })
 
 // Value: protects=pnpm run <name> and yarn run <name> still reading a script whose name a builtin shadows (F500); fails_when=the builtin list also unreads the explicit run form; why_new=F500; seam=temporary project folders; no_claim=the package manager itself
@@ -1129,8 +1463,8 @@ test('a delegation chain of exactly the nesting limit is read', async () => {
   // Arrange
   const files = {
     'package.json': packageScripts({
-      dev: 'pnpm a',
-      a: 'pnpm b',
+      dev: 'pnpm run a',
+      a: 'pnpm run b',
       b: 'PORT=4132 next dev',
     }),
   }
@@ -1289,7 +1623,7 @@ for (const [name, script, unread] of [
     }
   })
 
-/** A fake package manager or launcher for the real-shell test: a Node program, installed under every name it plays, that does what the real one does for the forms of the grammar (runs a `package.json` script with `/bin/sh`, runs the command it is given, sets `cross-env` assignments, runs each `concurrently` argument) and prints nothing else. A builtin name of pnpm and yarn (`info`) runs no script. */
+/** A fake package manager or launcher for the real-shell test: a Node program, installed under every name it plays, that does what the real one does for the forms of the grammar (runs a `package.json` script with `/bin/sh`, runs the command it is given, sets `cross-env` assignments, runs each `concurrently` argument) and prints nothing else. For `pnpm <name>` and `yarn <name>` it runs the script of that name when there is one, as the real tools do for the names the reader follows (dev, start, serve, web, app, client, frontend, a name with a colon; verified with pnpm 12.14.0 and yarn 1.22.22, F510); it models no builtin, since the reader follows no other name. */
 const FAKE_LAUNCHER = `#!${process.execPath}
 const { spawnSync } = require('node:child_process')
 const { readFileSync } = require('node:fs')
@@ -1297,7 +1631,6 @@ const { basename } = require('node:path')
 const name = basename(process.argv[1])
 const args = process.argv.slice(2)
 const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts ?? {}
-const BUILTINS = ['info', 'env', 'audit', 'install', 'workspaces']
 const sh = (text) => spawnSync('/bin/sh', ['-c', text], { stdio: 'inherit' })
 const run = (command, rest) => spawnSync(command, rest, { stdio: 'inherit' })
 const runScript = (script) => {
@@ -1309,7 +1642,6 @@ if (name === 'npm' || name === 'bun') {
 } else if (name === 'pnpm' || name === 'yarn') {
   if (args[0] === 'run') runScript(args[1])
   else if (name === 'pnpm' && args[0] === 'exec') run(args[1], args.slice(2))
-  else if (BUILTINS.includes(args[0])) process.exit(0)
   else if (typeof scripts[args[0]] === 'string') runScript(args[0])
   else if (name === 'yarn') run(args[0], args.slice(1))
 } else if (name === 'npx' || name === 'bunx') {
@@ -1343,7 +1675,7 @@ async function portOfRealShellInProject(
   return /^\d+$/.test(last) ? Number(last) : undefined
 }
 
-// Value: protects=for delegations (npm, pnpm, yarn, bun reading the package.json), cross-env, concurrently, the npx, bunx, pnpm exec and yarn launchers and quoting, the reader's port is the port a real /bin/sh starts, and a builtin that shadows a script reaches no port (D72 rule 3; F507, F500); fails_when=the reader asserts a port the shell does not start, or reads a script nothing runs; why_new=F507 (OCR low, test gap: the agreement test covered only bare next, env and PORT prefixes); seam=temporary folders, a real /bin/sh and fake launchers that run the package.json scripts, a PATH-only environment, skipped on Windows; no_claim=the real npm, pnpm, yarn, bun, cross-env and concurrently
+// Value: protects=for delegations (npm, pnpm, yarn, bun reading the package.json), cross-env, concurrently, the npx, bunx, pnpm exec and yarn launchers and quoting, the reader's port is the port a real /bin/sh starts, and the plain pnpm and yarn names reach the port (D72 rule 3; F507, F500, F510); fails_when=the reader asserts a port the shell does not start, or reads a script nothing runs; why_new=F507 (OCR low, test gap: the agreement test covered only bare next, env and PORT prefixes); seam=temporary folders, a real /bin/sh and fake launchers that run the package.json scripts, a PATH-only environment, skipped on Windows; no_claim=the real npm, pnpm, yarn, bun, cross-env and concurrently
 for (const [name, scripts, expected] of [
   ['npm run', { dev: 'npm run web', web: 'next dev -p 4701' }, 4701],
   [
@@ -1368,7 +1700,7 @@ for (const [name, scripts, expected] of [
   ],
   [
     'a delegation through two scripts',
-    { dev: 'npm run a', a: 'pnpm b', b: 'next dev -p 4711' },
+    { dev: 'npm run a', a: 'pnpm run b', b: 'next dev -p 4711' },
     4711,
   ],
   ['cross-env', { dev: 'cross-env PORT=4712 next dev' }, 4712],
@@ -1396,15 +1728,17 @@ for (const [name, scripts, expected] of [
   ['a single-quoted flag value', { dev: "next dev --port '4722'" }, 4722],
   ['a quoted assignment value', { dev: 'PORT="4723" next dev' }, 4723],
   [
-    'pnpm info shadowing a script',
-    { dev: 'pnpm info', info: 'next dev -p 4724' },
-    undefined,
+    'pnpm with a colon name',
+    { dev: 'pnpm dev:web', 'dev:web': 'next dev -p 4728' },
+    4728,
   ],
   [
-    'yarn info shadowing a script',
-    { dev: 'yarn info', info: 'next dev -p 4725' },
-    undefined,
+    'yarn with a colon name',
+    { dev: 'yarn dev:web', 'dev:web': 'next dev -p 4729' },
+    4729,
   ],
+  ['pnpm start', { dev: 'pnpm start', start: 'next dev -p 4730' }, 4730],
+  ['yarn serve', { dev: 'yarn serve', serve: 'next dev -p 4731' }, 4731],
   [
     'pnpm run naming the shadowed script',
     { dev: 'pnpm run info', info: 'next dev -p 4726' },

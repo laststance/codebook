@@ -1276,12 +1276,22 @@ export const DEVELOPMENT_BUN_LOCKFILES: readonly string[] = [
   'bun.lock',
   'bun.lockb',
 ]
+/** Bounds how many folders the Bun lockfile search climbs from the opened folder while it looks for the Git root (a count): the search stops at the first folder that holds `.git`, and without one inside this bound only the opened folder counts (F514). */
+export const DEVELOPMENT_BUN_LOCKFILE_SEARCH_MAX_FOLDERS = 16
+/** The `packageManager` prefix of a `package.json` that makes the project a Bun project without a lockfile (F514). */
+export const DEVELOPMENT_BUN_PACKAGE_MANAGER_PREFIX = 'bun@'
+/** The reason the `applicationPortSource` gives when the `dev` script is unread on Windows because Bun runs it with Bun Shell by default and with `cmd` when `run.shell` is `system` in `bunfig.toml`, so the same text means different things (D75, F509, F514); the quoted statement follows it. */
+export const DEVELOPMENT_BUN_SHELL_UNREAD_REASON =
+  "Next's default port, taken because on Windows Bun runs scripts with its own shell, or with cmd when run.shell is set to system in bunfig.toml, so the form can mean different things"
+/** The `applicationPortSource` when the `dev` script is empty or only blanks (F511). */
+export const DEVELOPMENT_EMPTY_SCRIPT_SOURCE =
+  "Next's default port, taken because the dev script in package.json is empty"
 /** The reason the `applicationPortSource` gives when the `dev` script is unread because Bun loads `.env` files (F499); the quoted statement follows it. */
 export const DEVELOPMENT_BUN_ENV_UNREAD_REASON =
   "Next's default port, taken because Bun loads .env files into the dev script's environment and a PORT there can decide the port when no -p/--port flag is given"
 /** The reason the `applicationPortSource` gives when the `dev` script has a form whose meaning differs under `cmd`, the shell npm, pnpm and yarn use on Windows (F502, D74); the quoted statement follows it. */
 export const DEVELOPMENT_CMD_UNREAD_REASON =
-  "Next's default port, taken because npm runs the dev script with cmd on Windows, where this form (single quotes, a PORT= or NAME= prefix, export, env or ;) does not mean what it means in sh"
+  "Next's default port, taken because npm runs the dev script with cmd on Windows, where this form (single quotes, a PORT= or NAME= prefix, export, env, ;, a PORT variable written in another case, or a program written as a path with /) does not mean what it means in sh"
 /** Bounds how deep the `dev` script reader descends (a count, not a duration): every step into another command line grows the same depth, whether it is a quoted `concurrently` command or another script (`npm run x`, `pnpm x`). The `dev` script is depth 0; no step is taken from depth {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}, so a delegation cycle stops there and the script is reported as unread. */
 export const DEVELOPMENT_SCRIPT_NESTING_LIMIT = 2
 /** Bounds the part of an unread `dev` script that `applicationPortSource` quotes (code points, not bytes). */
@@ -1329,71 +1339,9 @@ export const DEVELOPMENT_SCRIPT_SHOWN_FLAGS: ReadonlySet<string> = new Set([
 /** The flags of `next dev` that take no value (D72). */
 export const DEVELOPMENT_SCRIPT_VALUELESS_NEXT_FLAGS: ReadonlySet<string> =
   new Set(['--turbo', '--turbopack', '--webpack', '--experimental-https'])
-/** The `pnpm` and `yarn` commands that run before a script of the same name, so `pnpm <name>` is no delegation to a script of that name; only `<manager> run <name>` names the script (D72, F500). The names are the builtins of pnpm 12 and of yarn classic and berry. */
-export const DEVELOPMENT_SCRIPT_PACKAGE_MANAGER_COMMANDS: ReadonlySet<string> =
-  new Set([
-    'add',
-    'audit',
-    'autoclean',
-    'bin',
-    'cache',
-    'check',
-    'config',
-    'constraints',
-    'create',
-    'dedupe',
-    'dlx',
-    'env',
-    'exec',
-    'explain',
-    'fetch',
-    'generate-lock-entry',
-    'global',
-    'help',
-    'i',
-    'import',
-    'info',
-    'init',
-    'install',
-    'licenses',
-    'link',
-    'list',
-    'login',
-    'logout',
-    'ls',
-    'node',
-    'npm',
-    'outdated',
-    'owner',
-    'pack',
-    'patch',
-    'plugin',
-    'policies',
-    'prune',
-    'publish',
-    'rebuild',
-    'remove',
-    'rm',
-    'root',
-    'run',
-    'search',
-    'set',
-    'store',
-    'tag',
-    'team',
-    'unlink',
-    'unplug',
-    'up',
-    'update',
-    'upgrade',
-    'upgrade-interactive',
-    'version',
-    'versions',
-    'why',
-    'whoami',
-    'workspace',
-    'workspaces',
-  ])
+/** The names for which `pnpm <name>` and `yarn <name>` (without `run`) are read as a delegation to the script of that name (D76, F510). Each was run with pnpm 12.14.0 and yarn 1.22.22 in a project with a script of that name and ran the script; a name containing `:` is also read (no builtin has one). Every other name is unread: pnpm and yarn have about 60 builtins and aliases that change between versions, and some run a same-named script only in some versions, so a list of builtins to exclude can never be complete. `<manager> run <name>` names the script of any name. */
+export const DEVELOPMENT_SCRIPT_PLAIN_DELEGATION_NAMES: ReadonlySet<string> =
+  new Set(['dev', 'start', 'serve', 'web', 'app', 'client', 'frontend'])
 /** Variables whose assignment before or beside a `next dev` command can change which program runs, what it loads or which port it takes, so the reader does not read past one (D72): the loader and path variables, `NODE_OPTIONS` (preloads), and the `npm_config_*` settings. */
 export const DEVELOPMENT_SCRIPT_UNSAFE_ASSIGNMENT_NAME =
   /^(?:NODE_OPTIONS|NODE_PATH|PATH|ENV|SHELLOPTS|IFS|npm_config_.*|LD_.*|DYLD_.*|BASH_.*)$/i
