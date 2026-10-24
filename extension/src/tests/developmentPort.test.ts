@@ -1161,6 +1161,63 @@ for (const [name, dev, platform, expected] of [
     assert.deepEqual(declared, expected)
   })
 
+// Value: protects=Berry's shell staying with the scripts Yarn runs in a Yarn Berry project on macOS and Linux: `npm run`, `pnpm run` and `concurrently` read their script with `sh`, where `export PORT=4000 &&` sets the port, and a `yarn run` reached through `npm run` reads with Berry's shell again, which has no `export` (F525); fails_when=`npm run b`, `pnpm run b` or `concurrently "export PORT=4000 && next dev"` in a Berry project reads 3000 with the Yarn-shell note though `sh` runs 4000 (Berry's shell leaking into the step), or `yarn run c` after `npm run b` stops getting the Yarn-shell note, or `npm run c` after `yarn run b` stops reading 4000; why_new=F525 (OCR on 2bcd9145..5ab5cca4: F524's rows use `PORT=4000 next dev`, which both shells read alike, so the leak passed every test); seam=temporary folder trees with the platform injected; no_claim=npm, pnpm, concurrently or Yarn themselves
+const C_SCRIPT_SOURCE =
+  'a PORT assignment in the "c" script that the dev script runs in package.json'
+for (const [name, scripts, platform, expected] of [
+  [
+    'npm run of an export in a Berry project on Linux',
+    { dev: 'npm run b', b: 'export PORT=4000 && next dev' },
+    'linux',
+    { port: 4000, source: B_SCRIPT_SOURCE },
+  ],
+  [
+    'pnpm run of an export in a Berry project on macOS',
+    { dev: 'pnpm run b', b: 'export PORT=4000 && next dev' },
+    'darwin',
+    { port: 4000, source: B_SCRIPT_SOURCE },
+  ],
+  [
+    'concurrently with a quoted export in a Berry project on Linux',
+    { dev: 'concurrently "export PORT=4000 && next dev"' },
+    'linux',
+    {
+      port: 4000,
+      source: 'a PORT assignment in the dev script in package.json',
+    },
+  ],
+  [
+    'yarn run reached through npm run in a Berry project on Linux',
+    {
+      dev: 'npm run b',
+      b: 'yarn run c',
+      c: 'export PORT=4000 && next dev',
+    },
+    'linux',
+    { port: 3000, source: `${YARN_SHELL_NOTE}: "export PORT=…"` },
+  ],
+  [
+    'npm run reached through yarn run in a Berry project on Linux',
+    {
+      dev: 'yarn run b',
+      b: 'npm run c',
+      c: 'export PORT=4000 && next dev',
+    },
+    'linux',
+    { port: 4000, source: C_SCRIPT_SOURCE },
+  ],
+] as const)
+  test(`${name} is read with the shell of the program that runs each script`, async () => {
+    // Arrange
+    const files = { 'package.json': berryPackage(scripts) }
+
+    // Act
+    const declared = await declaredPortOfTree(files, '.', platform)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
 // Value: protects=the node_modules/.bin/next path being read after bare next and `pnpm exec` only, and unread after npx and bunx, which take a package name (F516); fails_when=`npx node_modules/.bin/next dev -p 4000` reads 4000 though npx fails with ENOTDIR; why_new=F516 (OCR low, pre-existing; npx and bunx confirmed to fail on the path); seam=temporary project folders; no_claim=npx or bunx themselves
 for (const [name, script, expected] of [
   [
