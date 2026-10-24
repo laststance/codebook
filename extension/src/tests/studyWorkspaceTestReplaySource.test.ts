@@ -4331,3 +4331,61 @@ test('a Play step withdrawn after its slot showed shows the committed stop in th
     await harness.close()
   }
 })
+
+// Value: protects=a Retry of a failed recorded-source slot that a newer seek overtakes while Retry's tab is still being shown leaves the seek's moment alone on every surface: the seek owns the slot (its sealed source, line and label), the replay debugger and the Study position, and the tab Retry's late show opens is closed, so no second slot tab stays; fails_when=the overtaken Retry's late show is never cleaned up, so a slot tab of the file Retry was showing stays beside the seek's slot, or Retry's commit replaces the seek's moment; why_new=F549 (pass-3 state-machines cell: Retry of a failed slot was tested at its commit and at a failed presentation, not overtaken while its slot show is in flight); seam=the workspace harness's injected failure of a non-file document open, its held text document show of Retry's slot (the editor puts the tab in front only on release) and the playback controller's seek; no_claim=a Retry whose show is overtaken before the editor opens the document, which opens no tab to clean
+test('a Retry of a failed slot that a newer seek overtakes while its tab is shown leaves the seek’s moment alone with one slot tab', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveTwoFileNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await openReplayAt(harness, history.studyId, 2)
+    harness.failCurrentSourceOpen()
+    await selectMoment(harness, history.studyId, 4)
+    harness.restoreCurrentSourceOpen()
+    const retrySlot = slotTabs(harness)[0]!.replace(
+      /Captured-theme\.ts$/,
+      'Captured-theme-next.ts',
+    )
+    const held = harness.holdNextTextDocumentShow({ uri: retrySlot })
+    const retry = harness.reader.action('retry')
+    await held.started
+
+    // Act: a seek onto the first stop arrives while Retry's slot is shown; Retry's show then ends.
+    await harness.reader['nodeHistoryPlaybackController']!.seek(200)
+    held.release()
+    const retryOutcome = await retry.then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+    await waitUntil(
+      () => slotTabs(harness).length === 1,
+      'the tab of the overtaken Retry is closed',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.equal(retryOutcome, 'resolved')
+    assert.equal(lastView(harness)?.nodeHistoryPosition?.sequence, 2)
+    assert.equal(harness.reader['selectedNodeHistorySequence'], 2)
+    assert.equal(harness.reader['requestedNodeHistorySequence'], undefined)
+    const tabs = slotTabs(harness)
+    assert.match(tabs[0]!, /\/Captured-theme\.ts$/)
+    assert.equal(await harness.readCapturedSource(tabs[0]!), THEME_TEXT)
+    assert.deepEqual(slotLabels(harness), [
+      '  Recorded: src/theme.ts:1 · 0.20 s',
+    ])
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.label,
+      'Recorded test stop 1 · src/theme.ts:1',
+    )
+    assert.equal(
+      harness.historicalDebugPresentations.at(-1)?.sourceDocument?.uri,
+      tabs[0],
+    )
+    assert.equal(lastView(harness)?.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
