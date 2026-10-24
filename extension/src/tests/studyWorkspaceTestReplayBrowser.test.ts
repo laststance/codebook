@@ -160,6 +160,59 @@ test('Next stop in a test replay reopened after a browser recording cut off a sl
   }
 })
 
+// Value: protects=a browser recording opened while a test replay's open still reads its history leaving only the recording selected: the late open is superseded, so no Study message carries both the recording and the test replay, and the pane keeps the recording's own article lines; fails_when=the pending open commits its history after the recording loaded, so a message carries `recording` and `nodeHistory` and the pane hides the recording's observation and source lines; why_new=F566 (hosted CodeRabbit on #121, to verify); seam=the history store's read, held for the test replay's open; no_claim=the browser replay's own pages
+test('a browser recording opened while a test replay is still being read leaves only the recording selected', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const store = harness.service.nodeHistoryStore!
+    const history = await saveTwoStopNodeHistory(store)
+    await harness.reader.action('retry')
+    const read = store.read.bind(store)
+    let readStarted = (): void => {}
+    const started = new Promise<void>((resolve) => {
+      readStarted = resolve
+    })
+    let releaseRead = (): void => {}
+    const released = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let holdNextRead = true
+    store.read = async (studyId) => {
+      // Only the test replay open's first read of its history is held.
+      if (holdNextRead && studyId === history.studyId) {
+        holdNextRead = false
+        readStarted()
+        await released
+      }
+      return read(studyId)
+    }
+    const opening = harness.reader.openLearningReplay(history.studyId)
+    await started
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    releaseRead()
+    await opening
+    await harness.controller.settle()
+
+    // Assert
+    const view = harness.reader['message']()
+    assert.equal(view.nodeHistory, undefined)
+    assert.equal(view.contentTab, 'recording')
+    assert.notEqual(view.recording, undefined)
+    assert.equal(
+      harness
+        .postedMessages()
+        .filter((message) => message.recording && message.nodeHistory).length,
+      0,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a browser recording that replaces a selected test replay also ends the replay's recorded-source slot: its tab closes and its document reads the placeholder, not the last stop; fails_when=the load keeps the slot while the browser replay owns the surfaces, so a pinned or restored slot tab keeps the last stop's bytes; why_new=F184 (nothing tested that a browser recording ends the slot); seam=none; no_claim=the browser replay's own panes
 test('a browser recording opened over a selected test replay ends its recorded-source slot', async () => {
   // Arrange

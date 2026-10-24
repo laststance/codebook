@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -94,6 +97,53 @@ test('a server stop is captured when its line runs in the module parsed for anot
     'webpack-internal:///(middleware)/./src/mode.ts',
   )
   assert.equal(harness.run.view().snapshots.length, 1)
+})
+
+// Value: protects=the recorded JavaScript and source map of a server stop captured in another webpack layer's instance of its module being that instance's own, so the run's historical source resources (`snapshots/<id>/source/javascript` and `…/map`) pass their hash check and the run's evidence keeps the bytes those hashes name; fails_when=`source(item, snapshotId)` serves the sealed module's bundle, whose hashes differ from the snapshot's `javascriptHash` and `mapHash`, so the resource read fails with EvidenceIntegrityError, or the instance's code and map are not written beside the snapshot; why_new=F565 (hosted CodeRabbit on #121); seam=none; no_claim=that a real Next layer's instance differs from the sealed module in these bytes (native trial)
+test('a server stop captured in another webpack layer’s module serves and keeps that module’s own JavaScript and source map', async (context) => {
+  // Arrange: the (middleware) copy's text starts with "use strict", so its generated code and map differ from the sealed module's.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await startActionWithoutPause(harness)
+  harness.announceModuleInAnotherLayer(
+    'server',
+    'middleware',
+    'middleware',
+    ';AAAA',
+  )
+  await waitUntil(
+    () => hasEvent(harness, 'stop.instance-sealed'),
+    'the other layer accepted as an instance of the module',
+  )
+  harness.pauseInScript('server', 'middleware', 1, 0)
+  const server = await pauseReady(harness)
+  const sha256 = (text: string) =>
+    createHash('sha256').update(text).digest('hex')
+
+  // Act
+  const source = harness.run.source(
+    harness.definition.descriptor.itemId,
+    server.id,
+  )
+  const keptJavaScript = await readFile(
+    join(harness.run.view().artifactDirectory, 'snapshot-server-1-module.js'),
+    'utf8',
+  )
+  const keptMap = await readFile(
+    join(
+      harness.run.view().artifactDirectory,
+      'snapshot-server-1-module.map.json',
+    ),
+    'utf8',
+  )
+
+  // Assert
+  assert.equal(server.source.scriptId, 'middleware')
+  assert.ok(source)
+  assert.ok(source.javascript.startsWith('"use strict";\n'))
+  assert.equal(sha256(source.javascript), server.source.javascriptHash)
+  assert.equal(sha256(source.sourceMap), server.source.mapHash)
+  assert.equal(keptJavaScript, source.javascript)
+  assert.equal(keptMap, source.sourceMap)
 })
 
 // Value: protects=a stop registered before the executing layer's module loads still being captured when that module is parsed right before the pause, while its text is still being read; fails_when=a pause that arrives before the new script is accepted stays held as a foreign pause and the stop times out; no_claim=how long js-debug takes to pause after it parses a script

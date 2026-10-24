@@ -353,6 +353,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private acceptedStop = false
   private stopIndex = 0
   private readonly snapshots: ConfiguredRuntimeSnapshot[] = []
+  /** The bundle each committed snapshot ran in, by snapshot id: the sealed module's, or another layer's instance whose generated code and map differ ({@link source}, F565). */
+  private readonly snapshotBundles = new Map<string, BundleSource>()
   private pendingDapStop?: {
     participant: Participant
     event: DebugProtocol.Event
@@ -5589,7 +5591,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       ...facts,
     }
     this.snapshotCaptures[snapshot.id] = { ...this.captures[phase] }
+    this.snapshotBundles.set(snapshot.id, executedModule.bundle)
     try {
+      // A stop captured in another layer's instance keeps that instance's generated code and map, which its hashes name, beside the sealed ones.
+      if (executedModule !== stop) {
+        await this.evidence.save(
+          `snapshot-${stop.participant}-${pause.generation}-module.js`,
+          executedModule.bundle.javascript,
+        )
+        await this.evidence.save(
+          `snapshot-${stop.participant}-${pause.generation}-module.map.json`,
+          executedModule.bundle.sourceMap,
+        )
+      }
       await this.evidence.save(
         `snapshot-${stop.participant}-${pause.generation}.json`,
         snapshot,
@@ -6171,14 +6185,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     })
   }
-  /** Returns only sealed bytes for this exact learning identity, independent of later files. @example run.source(itemId)?.javascript */
+  /**
+   * Returns only sealed bytes for this exact learning identity, independent of later files: the first stop's sealed module without a snapshot, and with one the module the snapshot ran in, whose JavaScript and map its `javascriptHash` and `mapHash` name (another webpack layer's instance for a stop captured there, F565). The run's historical source resources read it.
+   * @param item - The learning item; another item has no source here.
+   * @param snapshotId - A committed snapshot of this run.
+   * @returns The bundle, or `undefined` for another item or an unknown snapshot.
+   * @example run.source(itemId, snapshot.id)?.javascript // the (middleware) instance's code for a stop captured there
+   */
   source(item: string, snapshotId?: string): BundleSource | undefined {
     if (item !== this.definition.descriptor.itemId) return undefined
     if (snapshotId === undefined) return this.stops[0]?.bundle
-    const index = this.snapshots.findIndex(
-      (snapshot) => snapshot.id === snapshotId,
-    )
-    return index < 0 ? undefined : this.stops[index]?.bundle
+    return this.snapshotBundles.get(snapshotId)
   }
   /** Exposes bounded descriptors and immutable references; service signatures never serialize full modules or maps. @example run.view().participants.browser.pause */
   view(): ConfiguredRuntimeView {

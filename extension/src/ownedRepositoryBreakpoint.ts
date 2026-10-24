@@ -575,14 +575,14 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Asks the adapter where it has this breakpoint now and refuses a verified binding away from the declared position, for an owner whose first reply was pending and named no position; {@link OwnedNodeTestRun} calls it before it resumes the test.
+   * Asks the adapter where it has this breakpoint now and refuses a verified binding on another line than the declared one, for an owner whose first reply was pending and named no position; {@link OwnedNodeTestRun} calls it before it resumes the test.
    * A binding the adapter does not report, or one that is still unverified, decides nothing: the pause check remains.
-   * Both editors answer a breakpoint requested at column 1 without a column once the adapter sent news about it, so the binding is read as {@link ConfiguredBrowserRun} reads it: a missing column is taken from the adapter's own report ({@link reportedPlace}, {@link completeBindingPlace}), and without one the line decides. A verified binding on the declared line that names no column names no other column either: it refuses nothing here, and the owner's check of its pause at the declared column remains.
+   * Both editors answer a breakpoint requested at column 1 without a column once the adapter sent news about it, so the binding is read as {@link ConfiguredBrowserRun} reads it: a missing column is taken from the adapter's own report ({@link reportedPlace}, {@link completeBindingPlace}), and without one the line decides. A verified binding on the declared line refuses nothing here, at any column or with none, and the owner's check of its pause at the declared column remains.
    * @param session - The debug session whose adapter holds the breakpoint.
    * @param signal - The caller's cancellation: an adapter that never answers this read must not hold a run that is being stopped.
-   * @throws When the adapter reports the breakpoint verified at another line or column than declared ({@link boundElsewhereRefusalText}); the text names both positions, or the bound line when no column is known. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
+   * @throws When the adapter reports the breakpoint verified on another line than declared ({@link boundElsewhereRefusalText}); the text names both positions, or the bound line when no column is known. Any column of the declared line is accepted. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
    * @example
-   * await owned.assertBoundAsDeclared(session, signal) // throws 'Declared breakpoint 20:5 is bound at 20:12; …'
+   * await owned.assertBoundAsDeclared(session, signal) // throws 'Declared breakpoint 20:5 is bound at 21:12; …'
    */
   async assertBoundAsDeclared(
     session: vscode.DebugSession,

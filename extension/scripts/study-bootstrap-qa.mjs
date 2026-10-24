@@ -1461,6 +1461,22 @@ async function check(page, options, collected) {
           JSON.stringify(articleAfterReplayLeft) ===
             JSON.stringify([true, true, true, true]),
       })
+      // Value: protects=a keyboard learner on the selected content tab keeping a focused control when a selected test replay hides the content tabs: the focus goes to the test replay's transport, not to the document body; fails_when=the pane hands the lost focus to the selected content tab, which the test replay hid, so nothing takes it and the keyboard rests on the body; why_new=F567 (hosted CodeRabbit on #121); seam=none; no_claim=which transport control the host enables for a real history (stand-ins: the Study messages the host posts)
+      // Arrange: the article is shown again and the keyboard stands on its selected content tab.
+      const selectedTab = page.locator('[role=tab][aria-selected=true]')
+      await selectedTab.focus()
+      const focusBeforeReplay = await focusName()
+      // Act: a test replay is selected, which hides the content tabs.
+      await publish({ ...nodeReader, revision: revisionAt(7) })
+      const focusWhileReplaySelected = await focusName()
+      // Assert
+      cases.push({
+        name: 'the keyboard on the selected content tab goes to the test replay’s transport when the selected test replay hides the tabs',
+        actual: { focusBeforeReplay, focusWhileReplaySelected },
+        passed:
+          focusBeforeReplay === 'live-tab' &&
+          focusWhileReplaySelected === 'node-history-moment-previous',
+      })
       // Value: protects=a selected stop whose values are not loaded offers Inspect in native debugger beside the hint and Show Variables (DS6), not only in the collapsed event list, and a press asks the host to select that stop; the control leaves with the hint once values load and is not offered for a stop whose captured source does not match; fails_when=the row has no Inspect once the session ended, it shows an action while the debugger already shows the stop, it stays after the values load or for a source mismatch, or its press sends another stop or nothing; why_new=F121: Inspect lived in the collapsed event list only; why_changed=F348 (PR-2 /ship Step 11 Codex adversarial): the case published a state the host never sends (no debugger with values not loaded); the host's two states are now checked: the debugger showing the stop with values not loaded (pressed), and the session ended (offered); seam=none; no_claim=the host's selection of the stop (studyWorkspace tests) (stand-ins: the Study messages the host posts and the pane's sent messages)
       // Arrange
       const rowInspect = page.locator('#node-history-inspect')

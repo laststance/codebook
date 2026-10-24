@@ -1890,7 +1890,7 @@ function studyClient(
    * Gives the control of the pane that stays and takes a lost focus when no disclosure around the control that left is shown; read by {@link focusTargetFor}.
    * @param leaving - The control that left while it held the focus.
    * @returns
-   * - In the Study pane: the selected content tab
+   * - In the Study pane: the selected content tab while it is shown; while a selected test replay hides the content tabs ({@link hideArticleForTestReplay}), the first test replay transport control that can be used (F567)
    * - In the bottom panel's pane, which has no content tabs: Play or the next transport control that can be used while the transport is shown, else the first control the pane shows
    * @example stayingControl(button('stop')!)?.id // => 'live-tab'
    */
@@ -1901,10 +1901,16 @@ function studyClient(
         preferred: options.replayTransportFocus,
         section: 'study-content',
       })
-    return (
-      document.querySelector<HTMLElement>('[role=tab][aria-selected=true]') ??
-      undefined
+    const tab = document.querySelector<HTMLElement>(
+      '[role=tab][aria-selected=true]',
     )
+    // A hidden tab cannot take the focus, which would then rest on the document body.
+    if (tab?.checkVisibility()) return tab
+    return usableTransportControl({
+      leaving,
+      preferred: options.nodeTransportFocus,
+      section: 'node-history',
+    })
   }
   // The pane's memory of the control the learner left it at, which it shares with the Repository Wiki pane ({@link installPaneFocusMemory}). The control the learner left stays the holder of the pane's focus while the learner is away: the editor took the focus from it, as the page does from a control it disables. On return it takes the focus again when it is still shown, or the place its part or the pane's general rule ({@link settleFocus}) gives it when it left. The memory's listener for the window's focus event is added here, after the ones of the parts that place a focus of their own, so the pane's general rule runs last.
   const {
