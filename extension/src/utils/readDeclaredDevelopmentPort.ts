@@ -535,8 +535,7 @@ function readLine(
   )
   // The whole read shares one statement budget, so breadth cannot multiply through delegations (F550).
   scope.budget.remaining -= statements.length
-  if (scope.budget.remaining < 0)
-    throw new UnreadScriptError([], 'too-long')
+  if (scope.budget.remaining < 0) throw new UnreadScriptError([], 'too-long')
   for (const words of statements) {
     const step = readStatement(words, current, scope)
     current = step.env
