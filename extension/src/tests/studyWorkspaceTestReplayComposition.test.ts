@@ -1365,6 +1365,7 @@ test('a Saved studies choice of a test replay superseded while it enters the com
     }
     const enter = reader.enterSummaryCompositionForReplay.bind(harness.reader)
     let entered!: () => void
+    let messagesAtSupersession = 0
     const standsInComposition = new Promise<void>((resolve) => {
       entered = resolve
     })
@@ -1372,6 +1373,7 @@ test('a Saved studies choice of a test replay superseded while it enters the com
       await enter()
       // Another reader change lands while the entry stands in the composition.
       reader.revision++
+      messagesAtSupersession = harness.playbackPanelMessages.length
       entered()
     }
 
@@ -1390,8 +1392,12 @@ test('a Saved studies choice of a test replay superseded while it enters the com
       READER_RESULT_BOUND_MS,
     )
 
-    // Assert
-    assert.equal(harness.playbackPanelMessages.at(-1)?.replayFamily, undefined)
+    // Assert: the reader published again after the supersession, and its last message names no replay family.
+    const publishedAfter = harness.playbackPanelMessages.slice(
+      messagesAtSupersession,
+    )
+    assert.equal(publishedAfter.length > 0, true)
+    assert.equal(publishedAfter.at(-1)?.replayFamily, undefined)
   } finally {
     await harness.close()
   }

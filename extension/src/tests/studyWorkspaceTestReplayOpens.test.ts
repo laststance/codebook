@@ -946,3 +946,146 @@ test('a second Saved studies choice while the first waits for the editor area ke
     await harness.close()
   }
 })
+
+/**
+ * Opens a saved test replay beside a saved browser study, maximizes the bottom panel and chooses the browser study there, so the study waits for the hidden editor area with the replay's slot tab; the round-3 tests of Cycle 0052 task 15 start from it.
+ * @param harness - The recorded reader harness.
+ * @returns The test replay's header.
+ * @example const history = await chooseBrowserStudyWithPanelMaximized(harness)
+ */
+async function chooseBrowserStudyWithPanelMaximized(
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+) {
+  const history = await openReplayBesideBrowserStudy(harness)
+  harness.maximizePanel()
+  harness.receivePlaybackPanel({
+    type: 'history',
+    revision: lastView(harness)!.revision,
+    studyId: harness.studyId,
+  })
+  await waitUntil(
+    () =>
+      harness.reader.inspect().view?.nodeHistory === undefined &&
+      harness.reader.inspect().view?.model.selection.studyId ===
+        harness.studyId &&
+      !harness.reader.inspect().view?.loading,
+    'the browser study is chosen',
+    READER_RESULT_BOUND_MS,
+  )
+  return history
+}
+
+/**
+ * Counts the recorded-source slot tabs in every group.
+ * @param harness - The recorded reader harness.
+ * @returns How many slot tabs stand open.
+ * @example slotTabCount(harness) // => 1
+ */
+function slotTabCount(
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+): number {
+  return harness.groups
+    .flatMap((group) => group.tabs)
+    .filter((tab) => JSON.stringify(tab.input).includes('/node-history-slot/'))
+    .length
+}
+
+// Value: protects=the same test replay opened again while a chosen browser study waits for the editor area keeps its reused slot tab when the panel is restored; fails_when=the end of the wait closes the reused tab as the earlier wait's (local CodeRabbit round 3, minor); why_new=Cycle 0052 task 15; seam=recordedReaderHarness with a maximized bottom panel, restorePanel and the reader's refresh; no_claim=the native editor's own restore of the area
+test('the same test replay opened again while a chosen browser study waits keeps its slot tab when the panel is restored', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    const history = await chooseBrowserStudyWithPanelMaximized(harness)
+
+    // Act
+    await harness.reader.openLearningReplay(history.studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          history.studyId && !harness.reader.inspect().view?.loading,
+      'the test replay is shown again',
+      READER_RESULT_BOUND_MS,
+    )
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.equal(slotTabCount(harness), 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the retired replay's waiting slot tab closes when the panel is restored also after Cursor rebuilt the tab objects meanwhile; fails_when=the record holds only the old tab objects, so nothing matches and the slot tab stays beside the chosen study (local CodeRabbit round 3, minor); why_new=Cycle 0052 task 15; seam=rebuildTabObjectsNow (Cursor's whole new tab model), restorePanel and the reader's refresh; no_claim=Cursor's own timing of the rebuild
+test('a waiting slot tab closes on the panel’s restore also after Cursor rebuilt the tab objects', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    harness.useHostAppName('Cursor')
+    await chooseBrowserStudyWithPanelMaximized(harness)
+    const slotTabsWhileWaiting = slotTabCount(harness)
+    harness.rebuildTabObjectsNow()
+
+    // Act
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () => harness.panelColumn('codebook.studyContext') !== undefined,
+      'the Study pane shows',
+      READER_RESULT_BOUND_MS,
+    )
+
+    // Assert
+    assert.deepEqual(
+      { slotTabsWhileWaiting, slotTabsAfter: slotTabCount(harness) },
+      { slotTabsWhileWaiting: 1, slotTabsAfter: 0 },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a Saved studies choice that a newer test replay entry overtakes while it reads whether the editor area is hidden retires nothing: the newer replay and its debugger stay; fails_when=the old choice retires the replay the learner opened during its read (local CodeRabbit round 3, minor); why_new=Cycle 0052 task 15's area read before the retirement; seam=holdNextCommand on vscode.getEditorLayout; no_claim=the native editor's answer time
+test('a Saved studies choice overtaken during its editor-area read retires nothing', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  let release = (): void => {}
+  try {
+    await openReplayBesideBrowserStudy(harness)
+    const second = await saveTwoStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const held = harness.holdNextCommand('vscode.getEditorLayout')
+    release = held.release
+    harness.receivePlaybackPanel({
+      type: 'history',
+      revision: lastView(harness)!.revision,
+      studyId: harness.studyId,
+    })
+    await held.started
+
+    // Act: the learner opens another test replay while the choice reads the layout.
+    const entry = harness.reader.openLearningReplay(second.studyId)
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.nodeHistory?.header.studyId ===
+          second.studyId && !harness.reader.inspect().view?.loading,
+      'the second test replay is shown',
+      READER_RESULT_BOUND_MS,
+    )
+    held.release()
+    await entry
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.equal(
+      harness.reader.inspect().view?.nodeHistory?.header.studyId,
+      second.studyId,
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})

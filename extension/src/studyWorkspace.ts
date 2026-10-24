@@ -840,8 +840,8 @@ export class StudyWorkspace {
   private nodeSourceSlotShownRequest = 0
   /** How many times the recorded-source slot was retired ({@link retireNodeSourceSlot}); a show that began before a retirement is closed when it completes ({@link settleLateSlotShow}, F364). */
   private nodeSourceSlotRetirements = 0
-  /** The retired test replay's recorded-source tabs, held as the editor's tab objects, that were left open because the editor area was hidden when a saved study was chosen over it: a close of the tab a group shows brings the area back, so they close once the area is shown again or the wait for it ends ({@link closeSlotTabsAwaitingArea}, Cycle 0052 task 15). A slot tab of a replay opened later is never among them. */
-  private nodeSourceSlotTabsAwaitingArea?: ReadonlySet<vscode.Tab>
+  /** The retired test replay's recorded-source tabs, held as the editor's tab objects with the address each had, that were left open because the editor area was hidden when a saved study was chosen over it: a close of the tab a group shows brings the area back, so they close once the area is shown again or the wait for it ends ({@link closeSlotTabsAwaitingArea}, Cycle 0052 task 15). A tab object the editor rebuilt (Cursor) matches by its address; a test replay entry ends the record, so a slot tab of a replay opened later is never among them. */
+  private nodeSourceSlotTabsAwaitingArea?: ReadonlyMap<vscode.Tab, string>
   private playback?: PlaybackController
   private replayDebugger?: ReplayDebugger
   /** The disposal of replaced historical debuggers that is still running; the editor accepts the next owner only once it has settled. */
@@ -11767,6 +11767,9 @@ export class StudyWorkspace {
     entry: number,
   ): Promise<boolean> {
     if (entry !== this.nodeHistoryEntryRequest) return false
+    // The learner's test replay supersedes a saved study that waits for the hidden editor area, and the record of slot tabs waiting with it, so its own slot tab is never closed as an earlier one's (Cycle 0052 task 15).
+    this.studyAwaitingEditorArea = undefined
+    this.nodeSourceSlotTabsAwaitingArea = undefined
     if (!(await this.closeBrowserReplayForTestReplay(entry))) return false
     if (entry !== this.nodeHistoryEntryRequest) return false
     try {
@@ -12848,15 +12851,16 @@ export class StudyWorkspace {
       // A saved study chosen with the editor area hidden keeps the slot's tabs, which read the placeholder below, until the area is back: closing the tab a group shows would bring the area back (Cycle 0052 task 15).
       if (keepTabsForHiddenArea)
         // A later choice made while the area is still hidden keeps the earlier wait's tabs waiting too.
-        this.nodeSourceSlotTabsAwaitingArea = new Set([
+        this.nodeSourceSlotTabsAwaitingArea = new Map([
           ...(this.nodeSourceSlotTabsAwaitingArea ?? []),
           ...vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
-            .filter(
-              (tab) =>
-                tab.input instanceof vscode.TabInputText &&
-                isNodeSourceSlotPath(tab.input.uri.path) &&
-                this.ownsCapturedSourceTab(tab),
+            .flatMap((tab): [vscode.Tab, string][] =>
+              tab.input instanceof vscode.TabInputText &&
+              isNodeSourceSlotPath(tab.input.uri.path) &&
+              this.ownsCapturedSourceTab(tab)
+                ? [[tab, tab.input.uri.toString()]]
+                : [],
             ),
         ])
       else {
@@ -23384,12 +23388,14 @@ export class StudyWorkspace {
     if (this.isStaleHistoryRead(request, message.revision)) return
     this.pendingHistory = undefined
     // Browser selection retires the separate Node journal and its historical debugger context; with the editor area hidden its slot tabs wait for the area, as the chosen study does (Cycle 0052 task 15).
-    await this.retireNodeHistorySelection(
+    const keepSlotTabs =
       (Boolean(this.selectedNodeHistory) ||
         this.nodeSourceSlotTabsAwaitingArea !== undefined) &&
-        this.replayReaderOpen &&
-        (await this.editorAreaHidden()),
-    )
+      this.replayReaderOpen &&
+      (await this.editorAreaHidden())
+    // A newer choice made during the area read owns the reader: this one retires nothing.
+    if (!this.isLatestHistoryRequest(request)) return
+    await this.retireNodeHistorySelection(keepSlotTabs)
     // Closing a native preview can publish a new reader revision; the owned history request still controls this switch.
     if (!this.isLatestHistoryRequest(request)) return
     await this.showSavedStudy(archive)
@@ -24645,10 +24651,21 @@ export class StudyWorkspace {
     const retired = this.nodeSourceSlotTabsAwaitingArea
     if (!retired) return
     this.nodeSourceSlotTabsAwaitingArea = undefined
+    const live = new Set(
+      vscode.window.tabGroups.all.flatMap((group) => group.tabs),
+    )
+    // A tab object the editor rebuilt meanwhile (Cursor) is in no entry: its address stands for it.
+    const replacedAddresses = new Set(
+      [...retired]
+        .filter(([tab]) => !live.has(tab))
+        .map(([, address]) => address),
+    )
     try {
-      // Only the retired replay's own tabs close; a test replay shown meanwhile keeps its slot tab.
+      // Only the retired replay's own tabs close.
       await this.closeCapturedSourceTabs(
-        (uri, tab) => isNodeSourceSlotPath(uri.path) && retired.has(tab),
+        (uri, tab) =>
+          isNodeSourceSlotPath(uri.path) &&
+          (retired.has(tab) || replacedAddresses.has(uri.toString())),
       )
     } catch (error) {
       this.reportSlotCloseFailure(error)
