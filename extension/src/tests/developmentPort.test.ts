@@ -234,6 +234,122 @@ for (const [name, scripts, expected] of [
     })
   })
 
+const BUN_ENV_NOTE =
+  "Next's default port, taken because Bun loads .env files into the dev script's environment and a PORT there can decide the port when no -p/--port flag is given"
+
+// Value: protects=a `next dev` without a port flag that Bun runs (through `bun run <script>`, or in a repository with a Bun lockfile) being unread with a note naming Bun's .env loading, so the reader never reports 3000 for an app that starts on a .env PORT (F499); fails_when=the reader reports Next's default 3000 with the plain source, or the unread note does not name Bun's .env loading; why_new=F499 (CodeRabbit CLI major of the review of 673b2923..7fc7c8fb: Bun loads .env files into a script's environment before next starts); seam=temporary project folders with and without a Bun lockfile; no_claim=that Bun's .env loading is observed here (the file content is never read)
+for (const [name, files, segment] of [
+  [
+    'bun run delegating to next dev',
+    { 'package.json': packageScripts({ dev: 'bun run web', web: 'next dev' }) },
+    'next dev',
+  ],
+  [
+    'bun run through another delegation',
+    {
+      'package.json': packageScripts({
+        dev: 'bun run a',
+        a: 'pnpm b',
+        b: 'next dev --turbo',
+      }),
+    },
+    'next dev --turbo',
+  ],
+  [
+    'next dev in a repository with bun.lock',
+    { 'package.json': devScript('next dev'), 'bun.lock': '' },
+    'next dev',
+  ],
+  [
+    'next dev in a repository with bun.lockb',
+    { 'package.json': devScript('next dev --webpack'), 'bun.lockb': '' },
+    'next dev --webpack',
+  ],
+  [
+    'a delegation to next dev in a repository with bun.lock',
+    {
+      'package.json': packageScripts({ dev: 'npm run web', web: 'next dev' }),
+      'bun.lock': '',
+    },
+    'next dev',
+  ],
+] as const)
+  test(`${name} without a port flag is unread and names Bun's .env loading`, async () => {
+    // Arrange: the files above
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, {
+      port: 3000,
+      source: `${BUN_ENV_NOTE}: "${segment}"`,
+    })
+  })
+
+// Value: protects=a port the script itself declares (a -p/--port flag, or a PORT assigned in the script) still being read when Bun runs it, and a Bun-free project's plain next dev still taking 3000 without a note (F499); fails_when=the Bun rule makes a declared port unread, or marks a project without Bun; why_new=F499; seam=temporary project folders with and without a Bun lockfile; no_claim=that Bun's .env loading is observed here
+for (const [name, files, expected] of [
+  [
+    'bun run with a port flag',
+    {
+      'package.json': packageScripts({
+        dev: 'bun run web',
+        web: 'next dev -p 4611',
+      }),
+    },
+    {
+      port: 4611,
+      source: 'the "web" script that the dev script runs in package.json',
+    },
+  ],
+  [
+    'bun.lock with a long port flag',
+    { 'package.json': devScript('next dev --port=4612'), 'bun.lock': '' },
+    { port: 4612, source: 'the dev script in package.json' },
+  ],
+  [
+    'bun.lockb with a short port flag',
+    { 'package.json': devScript('next dev -p4613'), 'bun.lockb': '' },
+    { port: 4613, source: 'the dev script in package.json' },
+  ],
+  [
+    'bun run with a PORT assigned before it',
+    {
+      'package.json': packageScripts({
+        dev: 'PORT=4614 bun run web',
+        web: 'next dev',
+      }),
+    },
+    {
+      port: 4614,
+      source:
+        'a PORT assignment in the "web" script that the dev script runs in package.json',
+    },
+  ],
+  [
+    'a plain next dev with no lockfile',
+    { 'package.json': devScript('next dev') },
+    { port: 3000, source: "Next's default port" },
+  ],
+  [
+    'a delegation without bun and without a lockfile',
+    {
+      'package.json': packageScripts({ dev: 'pnpm web', web: 'next dev' }),
+      'pnpm-lock.yaml': '',
+    },
+    { port: 3000, source: "Next's default port" },
+  ],
+] as const)
+  test(`${name} is read as declared`, async () => {
+    // Arrange: the files above
+
+    // Act
+    const declared = await declaredPortOf(files)
+
+    // Assert
+    assert.deepEqual(declared, expected)
+  })
+
 // Value: protects=a `next dev` with no port anywhere is read, so the run takes Next's default 3000 with no unread note (D72); fails_when=a plain next dev or a PORT-free chain is reported as unread; why_new=D72 grammar; seam=temporary project folders; no_claim=that 3000 is free
 for (const [name, script] of [
   ['a plain next dev', 'next dev'],

@@ -4,9 +4,13 @@ import { DEVELOPMENT_SCRIPT_ALLOWED_CHARACTERS } from '../constants'
  * Says that the `dev` script has a form outside the grammar the reader asserts a port for (D72); thrown by {@link tokenizeDevelopmentScript} and the readers of {@link readDeclaredDevelopmentPort}, caught only there.
  *
  * @param words - The words of the statement that left the grammar, as the tokenizer saw them; empty when the thrower does not know the statement yet (the statement reader fills it in).
+ * @param bunEnv - Whether the statement is unread only because Bun loads `.env` files into the script's environment, where a `PORT` can decide the port of a `next dev` without a port flag (F499).
  */
 export class UnreadScriptError extends Error {
-  constructor(readonly words: readonly string[] = []) {
+  constructor(
+    readonly words: readonly string[] = [],
+    readonly bunEnv = false,
+  ) {
     super('The dev script has a form outside the grammar.')
   }
 }

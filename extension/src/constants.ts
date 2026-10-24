@@ -1271,6 +1271,14 @@ export const DEVELOPMENT_PORT_PROBE_CONNECT_TIMEOUT_MS = 500
 export const DEVELOPMENT_PORT_RELEASE_WAIT_MS = 5_000
 /** The pause between two checks while {@link DEVELOPMENT_PORT_RELEASE_WAIT_MS} runs. */
 export const DEVELOPMENT_PORT_RELEASE_POLL_MS = 100
+/** The lockfiles that make a repository a Bun project: Bun loads the project's `.env` files into the environment of the scripts it runs, so a `next dev` without a port flag may start on a `PORT` from them (F499). Only their existence is checked. */
+export const DEVELOPMENT_BUN_LOCKFILES: readonly string[] = [
+  'bun.lock',
+  'bun.lockb',
+]
+/** The reason the `applicationPortSource` gives when the `dev` script is unread because Bun loads `.env` files (F499); the quoted statement follows it. */
+export const DEVELOPMENT_BUN_ENV_UNREAD_REASON =
+  "Next's default port, taken because Bun loads .env files into the dev script's environment and a PORT there can decide the port when no -p/--port flag is given"
 /** Bounds how deep the `dev` script reader descends (a count, not a duration): every step into another command line grows the same depth, whether it is a quoted `concurrently` command or another script (`npm run x`, `pnpm x`). The `dev` script is depth 0; no step is taken from depth {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}, so a delegation cycle stops there and the script is reported as unread. */
 export const DEVELOPMENT_SCRIPT_NESTING_LIMIT = 2
 /** Bounds the part of an unread `dev` script that `applicationPortSource` quotes (code points, not bytes). */

@@ -1,7 +1,9 @@
-import { open } from 'node:fs/promises'
+import { access, open } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
+  DEVELOPMENT_BUN_ENV_UNREAD_REASON,
+  DEVELOPMENT_BUN_LOCKFILES,
   DEVELOPMENT_PORT_SOURCE_LIMIT_BYTES,
   DEVELOPMENT_SCRIPT_NESTING_LIMIT,
   DEVELOPMENT_SCRIPT_PACKAGE_MANAGER_COMMANDS,
@@ -53,6 +55,19 @@ async function readProjectFile(path: string): Promise<string | undefined> {
   } finally {
     await handle.close()
   }
+}
+
+/** Whether the repository root holds a Bun lockfile; only existence is checked, no content is read (F499). */
+async function hasBunLockfile(root: string): Promise<boolean> {
+  const found = await Promise.all(
+    DEVELOPMENT_BUN_LOCKFILES.map((name) =>
+      access(join(root, name)).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  )
+  return found.includes(true)
 }
 
 /** What a line is read against: the project's `scripts`. */
@@ -159,12 +174,18 @@ function nextArguments(
   return undefined
 }
 
-/** Reads a `next dev` command: only `dev` and the allowed flags. @throws {@link UnreadScriptError} For `next build`, a positional word or any other flag. */
-function readNextDevCommand(args: string[], env: PortEnv): DevelopmentCommand {
+/** Reads a `next dev` command: only `dev` and the allowed flags. @throws {@link UnreadScriptError} For `next build`, a positional word or any other flag, and, when Bun runs the line, for a command with no port flag and no `PORT` assigned in the script, since a `.env` file may set it (F499). */
+function readNextDevCommand(
+  args: string[],
+  env: PortEnv,
+  scope: LineScope,
+): DevelopmentCommand {
   if (args[0] !== 'dev') throw new UnreadScriptError()
   const port = readNextDevFlags(args.slice(1))
   if (port !== undefined) return { port, via: 'flag' }
-  return env.port === undefined ? {} : { port: env.port, via: 'assignment' }
+  if (env.port !== undefined) return { port: env.port, via: 'assignment' }
+  if (scope.bun) throw new UnreadScriptError([], true)
+  return {}
 }
 
 /** The script a delegation without arguments names: `npm run x`, `pnpm x`, `pnpm run x`, `yarn x`, `yarn run x`, `bun run x`; `undefined` for any other program. */
@@ -184,8 +205,8 @@ function delegatedScriptName(program: string[]): string | undefined {
   return bare ? first : undefined
 }
 
-/** What one line is read with: the project's scripts and how deep the reader already is. */
-type LineScope = { scripts: Scripts; depth: number }
+/** What one line is read with: the project's scripts, how deep the reader already is, and whether Bun runs it (a Bun project, or a script reached by `bun run`), so that its `.env` files may set `PORT` (F499). */
+type LineScope = { scripts: Scripts; depth: number; bun: boolean }
 
 /** Steps into another command line one level deeper. @throws {@link UnreadScriptError} At {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT}. */
 function descend(scope: LineScope): LineScope {
@@ -199,12 +220,17 @@ function readDelegation(
   name: string,
   env: PortEnv,
   scope: LineScope,
+  viaBun: boolean,
 ): DevelopmentCommand | undefined {
   const script = Object.hasOwn(scope.scripts ?? {}, name)
     ? scope.scripts?.[name]
     : undefined
   if (typeof script !== 'string') throw new UnreadScriptError()
-  const inner = readLine(script, env, descend(scope))
+  // A script reached by `bun run` runs with Bun's `.env` loading, whatever starts it further down (F499).
+  const inner = readLine(script, env, {
+    ...descend(scope),
+    bun: scope.bun || viaBun,
+  })
   return inner && { ...inner, delegate: inner.delegate ?? name }
 }
 
@@ -261,12 +287,12 @@ function readProgram(
   scope: LineScope,
 ): DevelopmentCommand | undefined {
   const args = nextArguments(program, scope.scripts)
-  if (args) return readNextDevCommand(args, env)
+  if (args) return readNextDevCommand(args, env, scope)
   if (program[0] === 'concurrently')
     return readConcurrently(program.slice(1), env, scope)
   const name = delegatedScriptName(program)
   if (name === undefined) throw new UnreadScriptError()
-  return readDelegation(name, env, scope)
+  return readDelegation(name, env, scope, program[0] === 'bun')
 }
 
 /**
@@ -298,7 +324,7 @@ function readStatement(
     return { env, command: readProgram(prefix.program, prefix.env, scope) }
   } catch (error) {
     if (error instanceof UnreadScriptError && !error.words.length)
-      throw new UnreadScriptError(words)
+      throw new UnreadScriptError(words, error.bunEnv)
     throw error
   }
 }
@@ -343,7 +369,9 @@ function cutForSource(text: string): string {
 }
 
 /** Says why Next's default was taken when the script is outside the grammar: the quoted structure of the statement that left it (D72 rule 2). */
-function describeUnread(segment: string): string {
+function describeUnread(segment: string, bunEnv: boolean): string {
+  if (bunEnv)
+    return `${DEVELOPMENT_BUN_ENV_UNREAD_REASON}: "${cutForSource(segment)}"`
   return `Next's default port, taken because the dev script has a form Codebook does not read: "${cutForSource(segment)}"`
 }
 
@@ -354,15 +382,19 @@ function describeUnread(segment: string): string {
 function readDevScript(
   dev: string,
   scripts: Scripts,
-): { command: DevelopmentCommand } | { unread: readonly string[] } {
+  bun: boolean,
+):
+  | { command: DevelopmentCommand }
+  | { unread: readonly string[]; bunEnv: boolean } {
   try {
-    const command = readLine(dev, {}, { scripts, depth: 0 })
+    const command = readLine(dev, {}, { scripts, depth: 0, bun })
     // A chain that never runs `next dev` has nothing to read a port from.
     if (!command)
       throw new UnreadScriptError(tokenizeDevelopmentScript(dev).flat())
     return { command }
   } catch (error) {
-    if (error instanceof UnreadScriptError) return { unread: error.words }
+    if (error instanceof UnreadScriptError)
+      return { unread: error.words, bunEnv: error.bunEnv }
     throw error
   }
 }
@@ -371,7 +403,7 @@ function readDevScript(
  * Finds the port the project's own `dev` script would start `next dev` on, so the app runs on the origin its auth and callback settings point to.
  *
  * Called during repository-browser preparation by {@link ConfiguredBrowserRun}, before {@link launchDevelopmentServer}.
- * The script is read as text, never run, against a fixed grammar (D72): statements joined by `&&` or `;`, each an assignment (`PORT=4000`, `export PORT=4000`), a `next dev` command (reached by `next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next` or a `node_modules/.bin/next` path, after `cross-env` or `env` with assignments only, with Next's own `dev` flags and literal values; the last `-p`/`--port` wins), a delegation without arguments (`npm run x`, `pnpm x`, `pnpm run x`, `yarn x`, `yarn run x`, `bun run x`, followed down to {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} levels) or one `concurrently` whose quoted commands are read by the same grammar. The port is the last `-p`/`--port`, else the `PORT` the script exports or assigns before the command, else Next's default 3000 (the sources D67 names). `.env*` files are not read because Next reads `PORT` before it loads them.
+ * The script is read as text, never run, against a fixed grammar (D72): statements joined by `&&` or `;`, each an assignment (`PORT=4000`, `export PORT=4000`), a `next dev` command (reached by `next`, `npx next`, `bunx next`, `pnpm exec next`, `yarn next` or a `node_modules/.bin/next` path, after `cross-env` or `env` with assignments only, with Next's own `dev` flags and literal values; the last `-p`/`--port` wins), a delegation without arguments (`npm run x`, `pnpm x`, `pnpm run x`, `yarn x`, `yarn run x`, `bun run x`, followed down to {@link DEVELOPMENT_SCRIPT_NESTING_LIMIT} levels) or one `concurrently` whose quoted commands are read by the same grammar. The port is the last `-p`/`--port`, else the `PORT` the script exports or assigns before the command, else Next's default 3000 (the sources D67 names). `.env*` files are not read because Next reads `PORT` before it loads them; but Bun loads them into the environment of the scripts it runs, so a `next dev` without a port flag and without a `PORT` assigned in the script is unread when it is reached by `bun run` or the root holds `bun.lock` or `bun.lockb` (F499).
  * Anything outside the grammar makes the script unread: no port is asserted, Next's default 3000 is returned, and the source quotes the structure of the statement that left the grammar (program and flag names only).
  *
  * @param root - The trusted workspace root that holds `package.json`.
@@ -398,12 +430,13 @@ export async function readDeclaredDevelopmentPort(
   const fallback = { port: DEVELOPMENT_SERVER_DEFAULT_PORT }
   if (typeof dev !== 'string')
     return { ...fallback, source: "Next's default port" }
-  const read = readDevScript(dev, scripts)
+  const read = readDevScript(dev, scripts, await hasBunLockfile(root))
   if ('unread' in read)
     return {
       ...fallback,
       source: describeUnread(
         showDevelopmentScriptSegment(read.unread, scripts),
+        read.bunEnv,
       ),
     }
   if (read.command.port !== undefined)
