@@ -740,6 +740,7 @@ test('choosing another saved test replay while the first plays with its summary 
     await harness.reader.openLearningReplay(second.studyId)
     await landsOn(harness, 2, 'the second replay lands on its first stop')
     const shownAfterOpen = lastView(harness)?.nodeHistory?.header.studyId
+    // gstack-timing-ok: a stopped timer is shown by nothing happening; 600 ms outlasts the whole 400 ms history's playback.
     await new Promise((resolve) => setTimeout(resolve, 600))
 
     // Assert
@@ -769,6 +770,7 @@ test('Return to Live while a test replay plays with its summary hidden stops its
     // Act
     await harness.reader.action('return-current')
     const messagesAtReturn = harness.playbackPanelMessages.length
+    // gstack-timing-ok: a stopped timer is shown by nothing happening; 600 ms outlasts the whole 400 ms history's playback.
     await new Promise((resolve) => setTimeout(resolve, 600))
 
     // Assert
@@ -912,6 +914,7 @@ test('moves from the bottom panel and the Learning summary while a move presents
     })
     await landsOn(harness, 5, 'the latest request reaches the result')
     held.reject(new Error('Historical debugger presentation was superseded.'))
+    // gstack-timing-ok: the superseded presentation's rejection settles in the next turns, and the case shows that it reports nothing.
     await new Promise((resolve) => setTimeout(resolve, 100))
 
     // Assert

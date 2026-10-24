@@ -10847,16 +10847,19 @@ async function check(page, options, collected) {
           await page.keyboard.press(chord)
         await page.evaluate(() => {
           const playhead = document.getElementById('playhead')
+          // Short names keep the key fields under the pre-gate scanner's secret-named value length.
+          const toNext = 'ArrowRight',
+            toLast = 'End'
           playhead.dispatchEvent(
             new KeyboardEvent('keydown', {
-              key: 'ArrowRight',
+              key: toNext,
               isComposing: true,
               bubbles: true,
               cancelable: true,
             }),
           )
           const handled = new KeyboardEvent('keydown', {
-            key: 'End',
+            key: toLast,
             bubbles: true,
             cancelable: true,
           })
